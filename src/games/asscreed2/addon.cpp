@@ -193,7 +193,7 @@ renodx::utils::settings::Settings settings = {
         .key = "GammaCorrection",
         .binding = &shader_injection.gamma_correction,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f,
+        .default_value = 0.f,
         .label = "SDR EOTF Emulation",
         .section = "Tone Mapping",
         .tooltip = "Emulates output decoding used on SDR displays.",
@@ -371,7 +371,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "TransitionLimiterFPS",
         .binding = &transition_limiter_fps,
-        .default_value = 30.f,
+        .default_value = 20.f,
         .label = "Loading Safety FPS",
         .section = "Stability",
         .tooltip = "FPS cap used only while the loading safety limiter is active.",
@@ -474,7 +474,7 @@ void OnPresetOff() {
       {"FxGrainStrength", 0.f},
       {"FxVideoAutoHDR", 1.f},
       {"TransitionLimiterEnabled", 1.f},
-      {"TransitionLimiterFPS", 25.f},
+      {"TransitionLimiterFPS", 20.f},
       {"TransitionLimiterDrawThreshold", 95.f},
       {"TransitionLimiterSeconds", 10.f},
   });

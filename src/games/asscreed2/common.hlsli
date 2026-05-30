@@ -47,6 +47,44 @@ float ComputeLUTCompressionScale(float3 untonemapped) {
   return lerp(1.f, compression_scale, blend);
 }
 
+float3 AC2GamutCompressBT2020(float3 color_bt2020) {
+  float grayscale = renodx::color::y::from::BT2020(color_bt2020);
+
+  const float mid_gray_linear = 1.f / pow(10.f, 0.75f);
+  const float mid_gray_percent = 0.5f;
+  const float encode_gamma = log(mid_gray_linear) / log(mid_gray_percent);
+
+  float3 encoded = renodx::color::gamma::EncodeSafe(color_bt2020, encode_gamma);
+  float encoded_gray = renodx::color::gamma::Encode(grayscale, encode_gamma);
+  float3 compressed = renodx::color::correct::GamutCompress(encoded, encoded_gray);
+
+  return renodx::color::gamma::DecodeSafe(compressed, encode_gamma);
+}
+
+float3 AC2GamutCompressBT709ToBT2020(float3 color_bt709) {
+  float3 color_bt2020 = renodx::color::bt2020::from::BT709(color_bt709);
+  color_bt2020 = AC2GamutCompressBT2020(color_bt2020);
+  return renodx::color::bt709::clamp::BT2020(renodx::color::bt709::from::BT2020(color_bt2020));
+}
+
+float3 AC2ClampFinalBT709ToBT2020(float3 color_bt709) {
+  return renodx::color::bt709::clamp::BT2020(color_bt709);
+}
+
+float3 AC2ScaleAndEncodeOutput(float3 color) {
+  color = AC2ClampFinalBT709ToBT2020(color);
+  color *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
+  color = AC2ClampFinalBT709ToBT2020(color);
+
+  if (RENODX_GAMMA_CORRECTION == 1.f) {
+    return renodx::color::gamma::EncodeSafe(color, 2.2f);
+  } else if (RENODX_GAMMA_CORRECTION == 2.f) {
+    return renodx::color::gamma::EncodeSafe(color, 2.4f);
+  } else {
+    return renodx::color::srgb::EncodeSafe(color);
+  }
+}
+
 float3 AC2LUTCoord(float3 gamma_color) {
   return saturate(gamma_color) * 0.9375f + 0.03125f;
 }
@@ -238,6 +276,7 @@ float3 ApplyToneMap(float3 untonemapped) {
   }
 
   graded = ApplySaturationBlowoutHueCorrectionHighlightSaturation(graded, hue_correction_source, y, config);
+  graded = AC2GamutCompressBT709ToBT2020(graded);
 
   if (RENODX_TONE_MAP_TYPE == 1.f) {
     return graded;
@@ -245,11 +284,13 @@ float3 ApplyToneMap(float3 untonemapped) {
 
   const float peak = RENODX_PEAK_WHITE_NITS / RENODX_DIFFUSE_WHITE_NITS;
   const float white_clip = GetNeutwoWhiteClip();
-  return renodx::color::bt709::from::BT2020(
-      renodx::tonemap::neutwo::MaxChannel(
-          renodx::color::bt2020::from::BT709(graded),
-          peak,
-          white_clip));
+  float3 tonemapped_bt2020 = renodx::tonemap::neutwo::MaxChannel(
+      renodx::color::bt2020::from::BT709(graded),
+      peak,
+      white_clip);
+  tonemapped_bt2020 = AC2GamutCompressBT2020(tonemapped_bt2020);
+
+  return renodx::color::bt709::from::BT2020(tonemapped_bt2020);
 }
 
 float3 ApplyFilmGrain(float3 color, float2 position) {
@@ -262,6 +303,7 @@ float3 ApplyFilmGrain(float3 color, float2 position) {
 float3 ApplyToneMapAndGrain(float3 color, float2 position, bool use_grain = true) {
   color = ApplyToneMap(color);
   if (use_grain) color = ApplyFilmGrain(color, position);
+  color = AC2ClampFinalBT709ToBT2020(color);
   return color;
 }
 
@@ -269,20 +311,14 @@ float3 ToneMapAndRenderIntermediatePass(float3 color, float2 position, bool use_
   if (RENODX_GAMMA_CORRECTION == 1.f) {
     color = renodx::color::gamma::DecodeSafe(color, 2.2f);
     color = ApplyToneMapAndGrain(color, position, use_grain);
-    color *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
-    color = renodx::color::gamma::EncodeSafe(color, 2.2f);
   } else if (RENODX_GAMMA_CORRECTION == 2.f) {
     color = renodx::color::gamma::DecodeSafe(color, 2.4f);
     color = ApplyToneMapAndGrain(color, position, use_grain);
-    color *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
-    color = renodx::color::gamma::EncodeSafe(color, 2.4f);
   } else {
     color = renodx::color::srgb::DecodeSafe(color);
     color = ApplyToneMapAndGrain(color, position, use_grain);
-    color *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
-    color = renodx::color::srgb::EncodeSafe(color);
   }
-  return color;
+  return AC2ScaleAndEncodeOutput(color);
 }
 
 float3 ApplyToneMapAndScale(float3 color, float2 position, bool use_grain = true) {
@@ -306,20 +342,14 @@ float3 ClampAndRenderIntermediatePass(float3 color) {
   if (RENODX_GAMMA_CORRECTION == 1.f) {
     color = renodx::color::gamma::DecodeSafe(color, 2.2f);
     color = ClampIntermediatePass(color);
-    color *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
-    color = renodx::color::gamma::EncodeSafe(color, 2.2f);
   } else if (RENODX_GAMMA_CORRECTION == 2.f) {
     color = renodx::color::gamma::DecodeSafe(color, 2.4f);
     color = ClampIntermediatePass(color);
-    color *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
-    color = renodx::color::gamma::EncodeSafe(color, 2.4f);
   } else {
     color = renodx::color::srgb::DecodeSafe(color);
     color = ClampIntermediatePass(color);
-    color *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
-    color = renodx::color::srgb::EncodeSafe(color);
   }
-  return color;
+  return AC2ScaleAndEncodeOutput(color);
 }
 
 float3 AC2ClampIntermediateToBT2020(float3 color) {
