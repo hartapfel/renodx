@@ -1,0 +1,18 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/gh/clshortfuse/renodx/renodx-metadata-schema.json",
+  "id": "asscreed2",
+  "title": "Assassin's Creed II",
+  "maintainers": [
+    "Vik"
+  ],
+  "status": "WIP",
+  "notes": [
+    "DX9 game without native HDR. Uses the swapchain proxy path for HDR presentation."
+  ],
+  "deploy": {
+    "steam_appid": 33230,
+    "architecture": [
+      "x86"
+    ]
+  }
+}
