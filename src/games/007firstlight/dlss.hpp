@@ -1,7 +1,6 @@
 #pragma once
 
 #include <sstream>
-#include <tuple>
 #include <vector>
 
 #include "../../utils/dlss/streamline_v2.hpp"
@@ -11,7 +10,6 @@
 namespace firstlight::dlss {
 
 inline float dlssg_hud_ghosting_fix = 1.f;
-inline bool logged_dlssg_override = false;
 inline bool attached = false;
 inline bool hook_installed = false;
 inline bool logged_waiting_for_streamline = false;
@@ -108,32 +106,7 @@ inline const std::vector<renodx::utils::vtable::HookItem> kStreamlineDLSSGOption
     {"slSetTagForFrame",
      reinterpret_cast<void**>(&Real_slSetTagForFrame),
      reinterpret_cast<void*>(&HookedSlSetTagForFrame)},
-    {"slGetFeatureFunction",
-     reinterpret_cast<void**>(&renodx::utils::streamline::v2::Real_slGetFeatureFunction),
-     reinterpret_cast<void*>(&renodx::utils::streamline::v2::Hooked_slGetFeatureFunction)},
 };
-
-inline void OverrideDLSSGSetOptions(const sl::ViewportHandle& viewport, sl::DLSSGOptions& options) {
-  (void)viewport;
-
-  if (dlssg_hud_ghosting_fix != 0.f) {
-    // The game's HDR UI separation buffers cause DLSS Frame Generation to create UI/object
-    // ghosts. Hide them from Streamline and let FG operate on the final backbuffer instead.
-    options.uiBufferFormat = 0u;
-    options.hudLessBufferFormat = 0u;
-    options.flags &= ~sl::DLSSGFlags::eEnableFullscreenMenuDetection;
-  }
-
-  if (!logged_dlssg_override) {
-    logged_dlssg_override = true;
-    std::stringstream s;
-    s << "007 DLSSG: HUD ghosting fix " << (dlssg_hud_ghosting_fix != 0.f ? "enabled" : "disabled")
-      << ", uiBufferFormat=" << options.uiBufferFormat
-      << ", hudLessBufferFormat=" << options.hudLessBufferFormat
-      << ", flags=0x" << std::hex << static_cast<uint32_t>(options.flags);
-    reshade::log::message(reshade::log::level::info, s.str().c_str());
-  }
-}
 
 inline void TryInstallStreamlineHook() {
   if (hook_installed) return;
@@ -149,14 +122,14 @@ inline void TryInstallStreamlineHook() {
 
   if (renodx::utils::vtable::Hook(sl_interposer, kStreamlineDLSSGOptionsHooks)) {
     hook_installed = true;
-    renodx::utils::log::i("007 DLSSG: Streamline slDLSSGSetOptions hook installed.");
+    renodx::utils::log::i("007 DLSSG: Streamline UI/HUD tag suppression hook installed.");
   } else {
     renodx::utils::log::w("007 DLSSG: Streamline hook was not installed.");
   }
 }
 
 inline void OnInitDevice(reshade::api::device* device) {
-  (void)device;
+  if (device == nullptr || device->get_api() != reshade::api::device_api::d3d12) return;
   TryInstallStreamlineHook();
 }
 
@@ -165,18 +138,14 @@ inline void Use(DWORD fdw_reason) {
     case DLL_PROCESS_ATTACH:
       if (attached) return;
       attached = true;
-      renodx::utils::streamline::v2::override_dlssg_set_options = &OverrideDLSSGSetOptions;
       reshade::register_event<reshade::addon_event::init_device>(OnInitDevice);
-      TryInstallStreamlineHook();
       break;
     case DLL_PROCESS_DETACH:
       if (!attached) return;
       attached = false;
       reshade::unregister_event<reshade::addon_event::init_device>(OnInitDevice);
-      renodx::utils::streamline::v2::override_dlssg_set_options = nullptr;
       hook_installed = false;
       logged_waiting_for_streamline = false;
-      logged_dlssg_override = false;
       logged_ui_tag_suppression = false;
       break;
     default:
