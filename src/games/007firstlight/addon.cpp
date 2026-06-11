@@ -16,8 +16,8 @@
 #include "../../mods/shader.hpp"
 #include "../../utils/date.hpp"
 #include "../../utils/settings.hpp"
-#include "dlss.hpp"
 #include "isfast_noise.hpp"
+#include "dlss.hpp"
 #include "shared.h"
 
 namespace {
@@ -415,14 +415,12 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);  // detect peak nits
       reshade::register_event<reshade::addon_event::init_device>(firstlight::isfast::OnInitDevice);
       reshade::register_event<reshade::addon_event::destroy_device>(firstlight::isfast::OnDestroyDevice);
-      firstlight::dlss::Use(fdw_reason);
 
       break;
     case DLL_PROCESS_DETACH:
       reshade::unregister_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);  // detect peak nits
       reshade::unregister_event<reshade::addon_event::init_device>(firstlight::isfast::OnInitDevice);
       reshade::unregister_event<reshade::addon_event::destroy_device>(firstlight::isfast::OnDestroyDevice);
-      firstlight::dlss::Use(fdw_reason);
 
       reshade::unregister_addon(h_module);
       break;
@@ -430,6 +428,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
 
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
+  firstlight::dlss::Use(fdw_reason);
 
   return TRUE;
 }
