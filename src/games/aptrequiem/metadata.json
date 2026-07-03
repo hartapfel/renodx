@@ -1,0 +1,12 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/gh/clshortfuse/renodx/renodx-metadata-schema.json",
+  "id": "aptrequiem",
+  "title": "A Plague Tale: Requiem",
+  "maintainers": [
+    "Hartapfel"
+  ],
+  "status": "wip",
+  "deploy": {
+    "steam_appid": 1182900
+  }
+}
