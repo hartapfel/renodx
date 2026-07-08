@@ -10,6 +10,7 @@ struct ShaderInjectData {
   float tone_map_type;
   float peak_white_nits;
   float diffuse_white_nits;
+  float auto_exposure_enabled;
 
   float tone_map_exposure;
   float tone_map_gamma;
@@ -20,6 +21,9 @@ struct ShaderInjectData {
   float tone_map_highlight_saturation;
   float tone_map_blowout;
   float tone_map_flare;
+
+  float auto_exposure_bright_reduction;
+  float auto_exposure_dark_boost;
 };
 
 #ifndef __cplusplus
@@ -34,6 +38,7 @@ cbuffer shader_injection : register(b13) {
 #define RENODX_TONE_MAP_TYPE shader_injection.tone_map_type
 #define RENODX_PEAK_WHITE_NITS shader_injection.peak_white_nits
 #define RENODX_DIFFUSE_WHITE_NITS shader_injection.diffuse_white_nits
+#define RENODX_AUTO_EXPOSURE_ENABLED shader_injection.auto_exposure_enabled
 
 #define RENODX_TONE_MAP_EXPOSURE shader_injection.tone_map_exposure
 #define RENODX_TONE_MAP_GAMMA shader_injection.tone_map_gamma
@@ -44,6 +49,9 @@ cbuffer shader_injection : register(b13) {
 #define RENODX_TONE_MAP_HIGHLIGHT_SATURATION shader_injection.tone_map_highlight_saturation
 #define RENODX_TONE_MAP_BLOWOUT shader_injection.tone_map_blowout
 #define RENODX_TONE_MAP_FLARE shader_injection.tone_map_flare
+
+#define RENODX_AUTO_EXPOSURE_BRIGHT_REDUCTION shader_injection.auto_exposure_bright_reduction
+#define RENODX_AUTO_EXPOSURE_DARK_BOOST shader_injection.auto_exposure_dark_boost
 
 #include "../../shaders/renodx.hlsl"
 #endif

@@ -155,6 +155,38 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "AutoExposure",
+        .binding = &shader_injection.auto_exposure_enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .label = "Auto Exposure",
+        .section = "Auto Exposure",
+        .tooltip = "Uses the game's exposure signal to darken over-bright scenes and slightly lift under-exposed scenes before LUT grading.",
+        .is_enabled = []() { return IsVanillaPlus(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "AutoExposureBrightReduction",
+        .binding = &shader_injection.auto_exposure_bright_reduction,
+        .default_value = 40.f,
+        .label = "Bright Scene Reduction",
+        .section = "Auto Exposure",
+        .tooltip = "Reduces exposure in scenes the game meters as very bright.",
+        .max = 100.f,
+        .is_enabled = []() { return shader_injection.auto_exposure_enabled != 0.f && IsVanillaPlus(); },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "AutoExposureDarkBoost",
+        .binding = &shader_injection.auto_exposure_dark_boost,
+        .default_value = 10.f,
+        .label = "Dark Scene Boost",
+        .section = "Auto Exposure",
+        .tooltip = "Raises exposure in scenes the game meters as very dark.",
+        .max = 100.f,
+        .is_enabled = []() { return shader_injection.auto_exposure_enabled != 0.f && IsVanillaPlus(); },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Reset All",
         .section = "Options",
@@ -222,6 +254,9 @@ void OnPresetOff() {
       {"ColorGradeHighlightSaturation", 50.f},
       {"ColorGradeBlowout", 0.f},
       {"ColorGradeFlare", 0.f},
+      {"AutoExposure", 0.f},
+      {"AutoExposureBrightReduction", 40.f},
+      {"AutoExposureDarkBoost", 10.f},
   });
 }
 

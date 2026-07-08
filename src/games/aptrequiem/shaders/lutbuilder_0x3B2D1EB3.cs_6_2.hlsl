@@ -429,6 +429,10 @@ void main(
   float _454 = _453 + 1.0f;
   float _455 = log2(_454);
   float _456 = _455 * 0.07434873282909393f;
+  float apt_auto_exposure_scale = APTAutoExposureScale(_456);
+  _445 *= apt_auto_exposure_scale;
+  _446 *= apt_auto_exposure_scale;
+  _447 *= apt_auto_exposure_scale;
   float _457 = _445 * 0.2125999927520752f;
   float _458 = mad(0.7152000069618225f, _446, _457);
   float _459 = mad(0.0722000002861023f, _447, _458);
