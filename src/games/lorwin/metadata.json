@@ -1,0 +1,17 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/gh/clshortfuse/renodx/renodx-metadata-schema.json",
+  "id": "lorwin",
+  "title": "The Lord of the Rings: War in the North - Legacy Edition",
+  "maintainers": [
+    "Hartapfel"
+  ],
+  "status": "wip",
+  "notes": [
+    "DirectX 12 game without native HDR. Initial scaffold only; shader replacements will be added after final scene/output shaders are identified."
+  ],
+  "deploy": {
+    "architecture": [
+      "x64"
+    ]
+  }
+}
