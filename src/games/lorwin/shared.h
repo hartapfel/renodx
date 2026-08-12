@@ -18,12 +18,11 @@ struct ShaderInjectData {
   float tone_map_blowout;
   float tone_map_flare;
 
-  float tone_map_hue_correction;
   float tone_map_hue_shift;
-  float tone_map_working_color_space;
+  float tone_map_white_clip;
   float tone_map_clamp_color_space;
-
   float tone_map_clamp_peak;
+
   float tone_map_hue_processor;
   float tone_map_per_channel;
   float gamma_correction;
@@ -58,9 +57,8 @@ cbuffer shader_injection : register(b13) {
 #define RENODX_TONE_MAP_HIGHLIGHT_SATURATION shader_injection.tone_map_highlight_saturation
 #define RENODX_TONE_MAP_BLOWOUT              shader_injection.tone_map_blowout
 #define RENODX_TONE_MAP_FLARE                shader_injection.tone_map_flare
-#define RENODX_TONE_MAP_HUE_CORRECTION       shader_injection.tone_map_hue_correction
 #define RENODX_TONE_MAP_HUE_SHIFT            shader_injection.tone_map_hue_shift
-#define RENODX_TONE_MAP_WORKING_COLOR_SPACE  shader_injection.tone_map_working_color_space
+#define RENODX_TONE_MAP_WHITE_CLIP           shader_injection.tone_map_white_clip
 #define RENODX_TONE_MAP_CLAMP_COLOR_SPACE    shader_injection.tone_map_clamp_color_space
 #define RENODX_TONE_MAP_CLAMP_PEAK           shader_injection.tone_map_clamp_peak
 #define RENODX_TONE_MAP_HUE_PROCESSOR        shader_injection.tone_map_hue_processor

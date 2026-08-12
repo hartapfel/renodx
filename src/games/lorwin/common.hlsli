@@ -21,7 +21,7 @@ float3 ApplyUserColorGrading(float3 color, bool apply_saturation = true) {
       0.10f * pow(RENODX_TONE_MAP_FLARE, 10.f),
       apply_saturation ? GetSettingOrDefault(RENODX_TONE_MAP_SATURATION, 1.f) : 1.f,
       0.f,
-      0.f,
+      RENODX_TONE_MAP_HUE_SHIFT,
       0.f.xxx,
       renodx::color::grade::config::hue_correction_type::INPUT,
       -1.f * (RENODX_TONE_MAP_HIGHLIGHT_SATURATION - 1.f));
@@ -33,6 +33,10 @@ float GetPeakRatio() {
   return max(
       RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f),
       1.f + 1e-3f);
+}
+
+float GetNeutwoWhiteClip(float peak) {
+  return max(RENODX_TONE_MAP_WHITE_CLIP, peak + 0.001f);
 }
 
 float3 ClampBT709ToBT2020(float3 color) {
@@ -56,15 +60,17 @@ float3 ApplyNeutwo(float3 untonemapped) {
 
   float3 graded = ApplyUserColorGrading(untonemapped, true);
   const float peak_ratio = GetPeakRatio();
+  const float white_clip = GetNeutwoWhiteClip(peak_ratio);
 
   float3 tonemapped;
   if (RENODX_TONE_MAP_PER_CHANNEL == 1.f) {
-    tonemapped = renodx::tonemap::neutwo::PerChannel(graded, peak_ratio.xxx);
+    tonemapped = renodx::tonemap::neutwo::PerChannel(graded, peak_ratio.xxx, white_clip.xxx);
   } else {
     tonemapped = renodx::color::bt709::from::BT2020(
         renodx::tonemap::neutwo::BT2020(
             renodx::color::bt2020::from::BT709(graded),
-            peak_ratio));
+            peak_ratio,
+            white_clip));
   }
 
   const float y = renodx::color::y::from::BT709(tonemapped) / peak_ratio;
