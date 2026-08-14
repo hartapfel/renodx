@@ -34,6 +34,11 @@ struct ShaderInjectData {
 
   float swap_chain_encoding;
   float swap_chain_encoding_color_space;
+
+  float scene_grade_strength;
+  float custom_film_grain_type;
+  float custom_film_grain_strength;
+  float custom_random;
 };
 
 #ifndef __cplusplus
@@ -64,6 +69,10 @@ cbuffer shader_injection : register(b13) {
 #define RENODX_TONE_MAP_HUE_PROCESSOR        shader_injection.tone_map_hue_processor
 #define RENODX_TONE_MAP_PER_CHANNEL          shader_injection.tone_map_per_channel
 #define RENODX_GAMMA_CORRECTION              shader_injection.gamma_correction
+#define RENODX_SCENE_GRADE_STRENGTH          shader_injection.scene_grade_strength
+#define CUSTOM_FILM_GRAIN_TYPE               shader_injection.custom_film_grain_type
+#define CUSTOM_FILM_GRAIN_STRENGTH           shader_injection.custom_film_grain_strength
+#define CUSTOM_RANDOM                        shader_injection.custom_random
 #define RENODX_SWAP_CHAIN_DECODING           (RENODX_GAMMA_CORRECTION + 1.f)
 #define RENODX_SWAP_CHAIN_GAMMA_CORRECTION   2.2f
 #define RENODX_SWAP_CHAIN_CUSTOM_COLOR_SPACE renodx::color::convert::COLOR_SPACE_BT709

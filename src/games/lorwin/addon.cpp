@@ -16,6 +16,7 @@
 #include "../../mods/swapchain.hpp"
 #include "../../utils/date.hpp"
 #include "../../utils/platform.hpp"
+#include "../../utils/random.hpp"
 #include "../../utils/settings.hpp"
 #include "../../utils/swapchain.hpp"
 #include "shared.h"
@@ -201,6 +202,39 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "ColorGradeScene",
+        .binding = &shader_injection.scene_grade_strength,
+        .default_value = 100.f,
+        .label = "Scene Grading",
+        .section = "Color Grading",
+        .tooltip = "Controls the strength of the game's own scene grading and tint.",
+        .max = 100.f,
+        .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxFilmGrain",
+        .binding = &shader_injection.custom_film_grain_type,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .label = "Film Grain",
+        .section = "Effects",
+        .tooltip = "Selects between the game's vanilla noise and RenoDX perceptual film grain.",
+        .labels = {"Vanilla Noise", "Perceptual"},
+        .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxFilmGrainStrength",
+        .binding = &shader_injection.custom_film_grain_strength,
+        .default_value = 50.f,
+        .label = "Film Grain Strength",
+        .section = "Effects",
+        .tooltip = "Controls perceptual film grain strength.",
+        .max = 100.f,
+        .is_enabled = []() { return shader_injection.tone_map_type != 0.f && shader_injection.custom_film_grain_type != 0.f; },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Reset All",
         .section = "Options",
@@ -278,6 +312,9 @@ void OnPresetOff() {
       {"ColorGradeHighlightSaturation", 50.f},
       {"ColorGradeBlowout", 0.f},
       {"ColorGradeFlare", 0.f},
+      {"ColorGradeScene", 100.f},
+      {"FxFilmGrain", 0.f},
+      {"FxFilmGrainStrength", 50.f},
   });
 }
 
@@ -335,7 +372,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
 
         reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
 
-        renodx::mods::swapchain::resource_upgrade_infos.push_back({
+/*         renodx::mods::swapchain::resource_upgrade_infos.push_back({
             .old_format = reshade::api::format::r8g8b8a8_typeless,
             .new_format = reshade::api::format::r10g10b10a2_typeless,
             .ignore_size = false,
@@ -343,7 +380,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
             .view_upgrades = renodx::utils::resource::VIEW_UPGRADES_R10G10B10A2_UNORM,
             .usage_include = reshade::api::resource_usage::render_target,
             .name = "Scene Intermediate",
-        });
+        }); */
 
         initialized = true;
       }
@@ -356,6 +393,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
   }
 
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
+  renodx::utils::random::Use(fdw_reason, {&shader_injection.custom_random});
   renodx::mods::swapchain::Use(fdw_reason, &shader_injection);
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
 

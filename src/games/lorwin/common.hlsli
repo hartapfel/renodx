@@ -55,6 +55,25 @@ float3 ApplyBlowout(float3 color, float reference_luminance) {
   return renodx::color::bt709::from::OkLab(perceptual);
 }
 
+bool UseVanillaFilmGrain() {
+  return RENODX_TONE_MAP_TYPE == TONE_MAP_TYPE_VANILLA || CUSTOM_FILM_GRAIN_TYPE == 0.f;
+}
+
+float3 ApplySceneGrading(float3 ungraded_color, float3 graded_color) {
+  if (RENODX_TONE_MAP_TYPE == TONE_MAP_TYPE_VANILLA) return graded_color;
+  return lerp(ungraded_color, graded_color, RENODX_SCENE_GRADE_STRENGTH);
+}
+
+float3 ApplyPerceptualFilmGrain(float3 color, float2 position) {
+  if (RENODX_TONE_MAP_TYPE == TONE_MAP_TYPE_VANILLA || CUSTOM_FILM_GRAIN_TYPE == 0.f || CUSTOM_FILM_GRAIN_STRENGTH <= 0.f) return color;
+
+  return renodx::effects::ApplyFilmGrain(
+      color,
+      position,
+      CUSTOM_RANDOM,
+      CUSTOM_FILM_GRAIN_STRENGTH * 0.03f);
+}
+
 float3 ApplyNeutwo(float3 untonemapped) {
   untonemapped = max(untonemapped, 0.f.xxx);
 

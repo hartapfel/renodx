@@ -90,15 +90,18 @@ float4 main(
 #endif
 
 #if defined(NOISE_EFFECT)
-  float2 noiseUvs = float2(
-      (vScreenPosition.x * g_ConstantsRandA.z) + g_ConstantsRandB.x,
-      (vScreenPosition.y * g_ConstantsRandA.w) + g_ConstantsRandB.y);
-  float3 noiseTint = g_NoiseTexture.Sample(g_SamplerLinearWrap, noiseUvs).rgb;
-  noiseTint = (noiseTint * g_ConstantsRandA.xxx) + g_ConstantsRandA.yyy;
-  output *= noiseTint;
+  if (lorwin::UseVanillaFilmGrain()) {
+    float2 noiseUvs = float2(
+        (vScreenPosition.x * g_ConstantsRandA.z) + g_ConstantsRandB.x,
+        (vScreenPosition.y * g_ConstantsRandA.w) + g_ConstantsRandB.y);
+    float3 noiseTint = g_NoiseTexture.Sample(g_SamplerLinearWrap, noiseUvs).rgb;
+    noiseTint = (noiseTint * g_ConstantsRandA.xxx) + g_ConstantsRandA.yyy;
+    output *= noiseTint;
+  }
 #endif
 
 #if defined(CONTRAST_SATURATION)
+  float3 ungradedOutput = output;
   output += (output - 0.5f) * g_Contrast.x;
 
   float rgbMin = min(output.r, min(output.g, output.b));
@@ -107,6 +110,7 @@ float4 main(
   output += (output - rgbMedian) * g_Contrast.y;
 
   output *= g_SceneTint.rgb;
+  output = lorwin::ApplySceneGrading(ungradedOutput, output);
 #endif
 
 #if defined(GAMMA_CORRECTION)
@@ -119,6 +123,8 @@ float4 main(
     output = lorwin::ToneMapAndRenderIntermediatePass(output);
   }
 #endif
+
+  output = lorwin::ApplyPerceptualFilmGrain(output, vScreenPosition);
 
   return float4(output, 1.f);
 }
