@@ -50,13 +50,26 @@ struct Resources {
   reshade::api::pipeline compute_pipeline = {0u};
   reshade::api::sampler linear_clamp_sampler = {0u};
   reshade::api::resource dlaa_input = {0u};
+  reshade::api::resource_view dlaa_input_srv = {0u};
   reshade::api::resource dlaa_output = {0u};
   reshade::api::resource_view dlaa_output_srv = {0u};
+  reshade::api::resource previous_color = {0u};
+  reshade::api::resource_view previous_color_srv = {0u};
+  reshade::api::resource bias_current_color_mask = {0u};
+  reshade::api::resource_view bias_current_color_mask_srv = {0u};
+  reshade::api::resource_view bias_current_color_mask_uav = {0u};
+  reshade::api::pipeline_layout bias_mask_layout = {0u};
+  reshade::api::pipeline bias_mask_pipeline = {0u};
+  reshade::api::sampler bias_mask_sampler = {0u};
   uint32_t dlaa_width = 0u;
   uint32_t dlaa_height = 0u;
   reshade::api::format dlaa_format = reshade::api::format::unknown;
   reshade::api::resource_usage dlaa_input_state = reshade::api::resource_usage::undefined;
   reshade::api::resource_usage dlaa_output_state = reshade::api::resource_usage::undefined;
+  reshade::api::resource_usage previous_color_state = reshade::api::resource_usage::undefined;
+  reshade::api::resource_usage bias_mask_state = reshade::api::resource_usage::undefined;
+  std::array<float, 2> previous_color_jitter = {};
+  bool previous_color_valid = false;
 };
 
 struct __declspec(uuid("50df9126-a507-4d94-ac3e-af0d214388e5")) CommandListData {
@@ -111,6 +124,9 @@ inline float enabled = 0.f;
 inline float render_preset = 0.f;
 inline float motion_vector_axes = 3.f;
 inline float motion_vector_scale = 1.f;
+inline float motion_vector_dilation = 1.f;
+inline float bias_current_color_mask = 1.f;
+inline float bias_current_color_strength = 1.f;
 inline float jitter_axes = 0.f;
 inline float jitter_scale = 1.f;
 inline float depth_inverted = 0.f;
@@ -120,8 +136,12 @@ inline float auto_exposure = 1.f;
 inline bool is_nvidia_device = false;
 inline reshade::api::device* detected_d3d12_device = nullptr;
 inline int last_motion_vector_axes = -1;
+inline int last_motion_vector_dilation = -1;
+inline int last_bias_current_color_mask = -1;
 inline int last_jitter_axes = -1;
+inline int last_camera_jitter_pattern = -1;
 inline float last_motion_vector_scale = std::numeric_limits<float>::quiet_NaN();
+inline float last_bias_current_color_strength = std::numeric_limits<float>::quiet_NaN();
 inline float last_jitter_scale = std::numeric_limits<float>::quiet_NaN();
 inline bool installed_callbacks = false;
 inline bool installed_events = false;
@@ -454,17 +474,33 @@ inline void ReleaseFeature() {
 inline void DestroyDlaaTextures(reshade::api::device* device) {
   if (device == nullptr) return;
   ReleaseFeature();
+  if (resources.bias_current_color_mask_srv.handle != 0u) device->destroy_resource_view(resources.bias_current_color_mask_srv);
+  if (resources.bias_current_color_mask_uav.handle != 0u) device->destroy_resource_view(resources.bias_current_color_mask_uav);
+  if (resources.previous_color_srv.handle != 0u) device->destroy_resource_view(resources.previous_color_srv);
+  if (resources.dlaa_input_srv.handle != 0u) device->destroy_resource_view(resources.dlaa_input_srv);
   if (resources.dlaa_output_srv.handle != 0u) device->destroy_resource_view(resources.dlaa_output_srv);
+  if (resources.bias_current_color_mask.handle != 0u) device->destroy_resource(resources.bias_current_color_mask);
+  if (resources.previous_color.handle != 0u) device->destroy_resource(resources.previous_color);
   if (resources.dlaa_input.handle != 0u) device->destroy_resource(resources.dlaa_input);
   if (resources.dlaa_output.handle != 0u) device->destroy_resource(resources.dlaa_output);
   resources.dlaa_input = {0u};
+  resources.dlaa_input_srv = {0u};
   resources.dlaa_output = {0u};
   resources.dlaa_output_srv = {0u};
+  resources.previous_color = {0u};
+  resources.previous_color_srv = {0u};
+  resources.bias_current_color_mask = {0u};
+  resources.bias_current_color_mask_srv = {0u};
+  resources.bias_current_color_mask_uav = {0u};
   resources.dlaa_width = 0u;
   resources.dlaa_height = 0u;
   resources.dlaa_format = reshade::api::format::unknown;
   resources.dlaa_input_state = reshade::api::resource_usage::undefined;
   resources.dlaa_output_state = reshade::api::resource_usage::undefined;
+  resources.previous_color_state = reshade::api::resource_usage::undefined;
+  resources.bias_mask_state = reshade::api::resource_usage::undefined;
+  resources.previous_color_jitter = {};
+  resources.previous_color_valid = false;
 }
 
 inline void ReleaseNgx() {
@@ -539,7 +575,13 @@ inline bool EnsureDlaaTextures(
     reshade::api::format format) {
   if (device == nullptr || width == 0u || height == 0u) return false;
   if (resources.dlaa_input.handle != 0u
+      && resources.dlaa_input_srv.handle != 0u
       && resources.dlaa_output.handle != 0u
+      && resources.previous_color.handle != 0u
+      && resources.previous_color_srv.handle != 0u
+      && resources.bias_current_color_mask.handle != 0u
+      && resources.bias_current_color_mask_srv.handle != 0u
+      && resources.bias_current_color_mask_uav.handle != 0u
       && resources.dlaa_width == width
       && resources.dlaa_height == height
       && resources.dlaa_format == format) {
@@ -553,21 +595,61 @@ inline bool EnsureDlaaTextures(
   desc.heap = reshade::api::memory_heap::gpu_only;
   desc.usage = reshade::api::resource_usage::shader_resource
                | reshade::api::resource_usage::unordered_access
+               | reshade::api::resource_usage::copy_source
                | reshade::api::resource_usage::copy_dest;
   desc.flags = reshade::api::resource_flags::none;
 
   const auto srv_desc = reshade::api::resource_view_desc(
       reshade::api::resource_view_type::texture_2d, format, 0u, 1u, 0u, 1u);
+  reshade::api::resource_desc mask_desc = desc;
+  mask_desc.texture.format = reshade::api::format::r8_unorm;
+  mask_desc.usage = reshade::api::resource_usage::shader_resource | reshade::api::resource_usage::unordered_access;
+  const auto mask_view_desc = reshade::api::resource_view_desc(
+      reshade::api::resource_view_type::texture_2d,
+      reshade::api::format::r8_unorm,
+      0u,
+      1u,
+      0u,
+      1u);
   if (!device->create_resource(
           desc, nullptr, reshade::api::resource_usage::copy_dest, &resources.dlaa_input)
+      || !device->create_resource_view(
+          resources.dlaa_input,
+          reshade::api::resource_usage::shader_resource,
+          srv_desc,
+          &resources.dlaa_input_srv)
       || !device->create_resource(
           desc, nullptr, reshade::api::resource_usage::unordered_access, &resources.dlaa_output)
       || !device->create_resource_view(
           resources.dlaa_output,
           reshade::api::resource_usage::shader_resource,
           srv_desc,
-          &resources.dlaa_output_srv)) {
-    reshade::log::message(reshade::log::level::error, "LORWIN DLAA: failed to create typed input/output textures.");
+          &resources.dlaa_output_srv)
+      || !device->create_resource(
+          desc, nullptr, reshade::api::resource_usage::copy_dest, &resources.previous_color)
+      || !device->create_resource_view(
+          resources.previous_color,
+          reshade::api::resource_usage::shader_resource,
+          srv_desc,
+          &resources.previous_color_srv)
+      || !device->create_resource(
+          mask_desc,
+          nullptr,
+          reshade::api::resource_usage::shader_resource,
+          &resources.bias_current_color_mask)
+      || !device->create_resource_view(
+          resources.bias_current_color_mask,
+          reshade::api::resource_usage::shader_resource,
+          mask_view_desc,
+          &resources.bias_current_color_mask_srv)
+      || !device->create_resource_view(
+          resources.bias_current_color_mask,
+          reshade::api::resource_usage::unordered_access,
+          mask_view_desc,
+          &resources.bias_current_color_mask_uav)) {
+    reshade::log::message(
+        reshade::log::level::error,
+        "LORWIN DLAA: failed to create typed input/output, color-history, or bias-mask textures.");
     DestroyDlaaTextures(device);
     enabled = 0.f;
     return false;
@@ -578,11 +660,16 @@ inline bool EnsureDlaaTextures(
   resources.dlaa_format = format;
   resources.dlaa_input_state = reshade::api::resource_usage::copy_dest;
   resources.dlaa_output_state = reshade::api::resource_usage::unordered_access;
+  resources.previous_color_state = reshade::api::resource_usage::copy_dest;
+  resources.bias_mask_state = reshade::api::resource_usage::shader_resource;
+  resources.previous_color_valid = false;
   SetResourceState(resources.dlaa_input, resources.dlaa_input_state);
   SetResourceState(resources.dlaa_output, resources.dlaa_output_state);
+  SetResourceState(resources.previous_color, resources.previous_color_state);
+  SetResourceState(resources.bias_current_color_mask, resources.bias_mask_state);
   std::stringstream s;
-  s << "LORWIN DLAA: created typed staging/output textures " << width << "x" << height
-    << " format=" << static_cast<uint32_t>(format);
+  s << "LORWIN DLAA: created typed staging/output, color-history, and R8 bias-mask textures "
+    << width << "x" << height << " color_format=" << static_cast<uint32_t>(format);
   reshade::log::message(reshade::log::level::info, s.str().c_str());
   return true;
 }
@@ -656,11 +743,22 @@ inline void DestroyComputePipeline(reshade::api::device* device) {
   resources.linear_clamp_sampler = {0u};
 }
 
+inline void DestroyBiasMaskPipeline(reshade::api::device* device) {
+  if (device == nullptr) return;
+  if (resources.bias_mask_pipeline.handle != 0u) device->destroy_pipeline(resources.bias_mask_pipeline);
+  if (resources.bias_mask_layout.handle != 0u) device->destroy_pipeline_layout(resources.bias_mask_layout);
+  if (resources.bias_mask_sampler.handle != 0u) device->destroy_sampler(resources.bias_mask_sampler);
+  resources.bias_mask_pipeline = {0u};
+  resources.bias_mask_layout = {0u};
+  resources.bias_mask_sampler = {0u};
+}
+
 inline void Destroy(reshade::api::device* device) {
   if (device == nullptr || resources.device != device) return;
   ReleaseNgx();
   DestroyDlaaTextures(device);
   DestroyMotionVectorTexture(device);
+  DestroyBiasMaskPipeline(device);
   DestroyComputePipeline(device);
   resources = {};
   last_dispatch_frame = std::numeric_limits<uint64_t>::max();
@@ -679,7 +777,7 @@ inline bool EnsureComputePipeline(reshade::api::device* device) {
   }
   DestroyComputePipeline(device);
 
-  std::array<reshade::api::pipeline_layout_param, 4> params = {};
+  std::array<reshade::api::pipeline_layout_param, 5> params = {};
   params[0].type = reshade::api::pipeline_layout_param_type::push_descriptors;
   params[0].push_descriptors.count = 1u;
   params[0].push_descriptors.type = reshade::api::descriptor_type::sampler;
@@ -708,6 +806,12 @@ inline bool EnsureComputePipeline(reshade::api::device* device) {
   params[3].push_descriptors.dx_register_space = 0u;
   params[3].push_descriptors.visibility = reshade::api::shader_stage::compute;
 
+  params[4].type = reshade::api::pipeline_layout_param_type::push_constants;
+  params[4].push_constants.count = 4u;
+  params[4].push_constants.dx_register_index = 1u;
+  params[4].push_constants.dx_register_space = 0u;
+  params[4].push_constants.visibility = reshade::api::shader_stage::compute;
+
   if (!device->create_pipeline_layout(static_cast<uint32_t>(params.size()), params.data(), &resources.compute_layout)
       || !device->create_sampler({}, &resources.linear_clamp_sampler)) {
     if (ShouldLog(last_failure_log)) {
@@ -734,7 +838,82 @@ inline bool EnsureComputePipeline(reshade::api::device* device) {
     return false;
   }
 
-  reshade::log::message(reshade::log::level::info, "LORWIN DLAA: created the motion-vector compute pipeline.");
+  reshade::log::message(
+      reshade::log::level::info,
+      "LORWIN DLAA: created the AC3R-style depth-neighborhood motion-vector compute pipeline.");
+  return true;
+}
+
+inline bool EnsureBiasMaskPipeline(reshade::api::device* device) {
+  if (device == nullptr || device->get_api() != reshade::api::device_api::d3d12) return false;
+  if (resources.bias_mask_layout.handle != 0u
+      && resources.bias_mask_pipeline.handle != 0u
+      && resources.bias_mask_sampler.handle != 0u) {
+    return true;
+  }
+  DestroyBiasMaskPipeline(device);
+
+  std::array<reshade::api::pipeline_layout_param, 4> params = {};
+  params[0].type = reshade::api::pipeline_layout_param_type::push_descriptors;
+  params[0].push_descriptors.count = 1u;
+  params[0].push_descriptors.type = reshade::api::descriptor_type::sampler;
+  params[0].push_descriptors.dx_register_index = 0u;
+  params[0].push_descriptors.dx_register_space = 0u;
+  params[0].push_descriptors.visibility = reshade::api::shader_stage::compute;
+
+  params[1].type = reshade::api::pipeline_layout_param_type::push_descriptors;
+  params[1].push_descriptors.count = 4u;
+  params[1].push_descriptors.type = reshade::api::descriptor_type::texture_shader_resource_view;
+  params[1].push_descriptors.dx_register_index = 0u;
+  params[1].push_descriptors.dx_register_space = 0u;
+  params[1].push_descriptors.visibility = reshade::api::shader_stage::compute;
+
+  params[2].type = reshade::api::pipeline_layout_param_type::push_descriptors;
+  params[2].push_descriptors.count = 1u;
+  params[2].push_descriptors.type = reshade::api::descriptor_type::texture_unordered_access_view;
+  params[2].push_descriptors.dx_register_index = 0u;
+  params[2].push_descriptors.dx_register_space = 0u;
+  params[2].push_descriptors.visibility = reshade::api::shader_stage::compute;
+
+  params[3].type = reshade::api::pipeline_layout_param_type::push_constants;
+  params[3].push_constants.count = 8u;
+  params[3].push_constants.dx_register_index = 0u;
+  params[3].push_constants.dx_register_space = 0u;
+  params[3].push_constants.visibility = reshade::api::shader_stage::compute;
+
+  if (!device->create_pipeline_layout(static_cast<uint32_t>(params.size()), params.data(), &resources.bias_mask_layout)
+      || !device->create_sampler({}, &resources.bias_mask_sampler)) {
+    if (ShouldLog(last_failure_log)) {
+      reshade::log::message(
+          reshade::log::level::warning,
+          "LORWIN DLAA: failed to create the synthetic bias-mask compute layout or sampler.");
+    }
+    DestroyBiasMaskPipeline(device);
+    return false;
+  }
+
+  reshade::api::shader_desc shader_desc = {
+      .code = __bias_current_color_mask.data(),
+      .code_size = __bias_current_color_mask.size(),
+  };
+  const reshade::api::pipeline_subobject shader = {
+      .type = reshade::api::pipeline_subobject_type::compute_shader,
+      .count = 1u,
+      .data = &shader_desc,
+  };
+  if (!device->create_pipeline(resources.bias_mask_layout, 1u, &shader, &resources.bias_mask_pipeline)) {
+    if (ShouldLog(last_failure_log)) {
+      reshade::log::message(
+          reshade::log::level::warning,
+          "LORWIN DLAA: failed to create the synthetic bias-mask compute pipeline.");
+    }
+    DestroyBiasMaskPipeline(device);
+    return false;
+  }
+
+  reshade::log::message(
+      reshade::log::level::info,
+      "LORWIN DLAA: created synthetic BiasCurrentColorMask compute pipeline.");
   return true;
 }
 
@@ -869,6 +1048,20 @@ inline bool RunMotionVectorPrepass(reshade::api::command_list* cmd_list) {
         i,
         updates[i]);
   }
+  const auto pixel_jitter = jitter::GetEvaluationPixelJitter();
+  const std::array<float, 4> dilation_constants = {
+      pixel_jitter[0],
+      pixel_jitter[1],
+      depth_inverted,
+      motion_vector_dilation,
+  };
+  cmd_list->push_constants(
+      reshade::api::shader_stage::all_compute,
+      resources.compute_layout,
+      4u,
+      0u,
+      static_cast<uint32_t>(dilation_constants.size()),
+      dilation_constants.data());
   cmd_list->bind_pipeline(reshade::api::pipeline_stage::all_compute, resources.compute_pipeline);
   cmd_list->dispatch((resources.width + 7u) / 8u, (resources.height + 7u) / 8u, 1u);
   cmd_list->barrier(
@@ -881,9 +1074,138 @@ inline bool RunMotionVectorPrepass(reshade::api::command_list* cmd_list) {
   return true;
 }
 
+inline void CopyCurrentColorToHistory(reshade::api::command_list* cmd_list) {
+  TransitionResource(
+      cmd_list,
+      resources.dlaa_input,
+      reshade::api::resource_usage::copy_source,
+      resources.dlaa_input_state);
+  TransitionResource(
+      cmd_list,
+      resources.previous_color,
+      reshade::api::resource_usage::copy_dest,
+      resources.previous_color_state);
+  cmd_list->copy_resource(resources.dlaa_input, resources.previous_color);
+  TransitionResource(
+      cmd_list,
+      resources.dlaa_input,
+      reshade::api::resource_usage::shader_resource,
+      reshade::api::resource_usage::copy_source);
+  TransitionResource(
+      cmd_list,
+      resources.previous_color,
+      reshade::api::resource_usage::shader_resource,
+      reshade::api::resource_usage::copy_dest);
+  resources.dlaa_input_state = reshade::api::resource_usage::shader_resource;
+  resources.previous_color_state = reshade::api::resource_usage::shader_resource;
+}
+
+inline bool RunBiasCurrentColorMaskPrepass(
+    reshade::api::command_list* cmd_list,
+    reshade::api::resource_view depth_srv,
+    const std::array<float, 2>& pixel_jitter,
+    bool reset_color_history) {
+  if (bias_current_color_mask == 0.f) {
+    resources.previous_color_valid = false;
+    return false;
+  }
+  if (cmd_list == nullptr
+      || depth_srv.handle == 0u
+      || resources.dlaa_input_srv.handle == 0u
+      || resources.previous_color_srv.handle == 0u
+      || resources.motion_vectors_srv.handle == 0u
+      || resources.bias_current_color_mask_uav.handle == 0u
+      || !EnsureBiasMaskPipeline(cmd_list->get_device())) {
+    resources.previous_color_valid = false;
+    return false;
+  }
+
+  const bool history_available = resources.previous_color_valid && !reset_color_history;
+  if (!history_available) CopyCurrentColorToHistory(cmd_list);
+
+  const PreviousComputeState previous_compute_state = CaptureComputeState(cmd_list);
+  const std::array<reshade::api::resource_view, 4> input_srvs = {
+      resources.dlaa_input_srv,
+      resources.previous_color_srv,
+      depth_srv,
+      resources.motion_vectors_srv,
+  };
+  const std::array<reshade::api::descriptor_table_update, 3> updates = {
+      reshade::api::descriptor_table_update{
+          .table = {},
+          .binding = 0u,
+          .array_offset = 0u,
+          .count = 1u,
+          .type = reshade::api::descriptor_type::sampler,
+          .descriptors = &resources.bias_mask_sampler,
+      },
+      reshade::api::descriptor_table_update{
+          .table = {},
+          .binding = 0u,
+          .array_offset = 0u,
+          .count = static_cast<uint32_t>(input_srvs.size()),
+          .type = reshade::api::descriptor_type::texture_shader_resource_view,
+          .descriptors = input_srvs.data(),
+      },
+      reshade::api::descriptor_table_update{
+          .table = {},
+          .binding = 0u,
+          .array_offset = 0u,
+          .count = 1u,
+          .type = reshade::api::descriptor_type::texture_unordered_access_view,
+          .descriptors = &resources.bias_current_color_mask_uav,
+      },
+  };
+  const std::array<float, 8> constants = {
+      history_available ? 1.f : 0.f,
+      bias_current_color_strength,
+      0.08f,
+      0.002f,
+      (resources.previous_color_jitter[0] - pixel_jitter[0]) / static_cast<float>(resources.dlaa_width),
+      (resources.previous_color_jitter[1] - pixel_jitter[1]) / static_cast<float>(resources.dlaa_height),
+      0.f,
+      0.f,
+  };
+
+  TransitionResource(
+      cmd_list,
+      resources.bias_current_color_mask,
+      reshade::api::resource_usage::unordered_access,
+      resources.bias_mask_state);
+  resources.bias_mask_state = reshade::api::resource_usage::unordered_access;
+  for (uint32_t i = 0u; i < updates.size(); ++i) {
+    cmd_list->push_descriptors(
+        reshade::api::shader_stage::all_compute,
+        resources.bias_mask_layout,
+        i,
+        updates[i]);
+  }
+  cmd_list->push_constants(
+      reshade::api::shader_stage::all_compute,
+      resources.bias_mask_layout,
+      3u,
+      0u,
+      static_cast<uint32_t>(constants.size()),
+      constants.data());
+  cmd_list->bind_pipeline(reshade::api::pipeline_stage::all_compute, resources.bias_mask_pipeline);
+  cmd_list->dispatch((resources.dlaa_width + 7u) / 8u, (resources.dlaa_height + 7u) / 8u, 1u);
+  TransitionResource(
+      cmd_list,
+      resources.bias_current_color_mask,
+      reshade::api::resource_usage::shader_resource,
+      reshade::api::resource_usage::unordered_access);
+  resources.bias_mask_state = reshade::api::resource_usage::shader_resource;
+
+  if (history_available) CopyCurrentColorToHistory(cmd_list);
+  resources.previous_color_jitter = pixel_jitter;
+  resources.previous_color_valid = true;
+  RestoreComputeState(cmd_list, previous_compute_state);
+  return true;
+}
+
 inline bool RunDlaa(reshade::api::command_list* cmd_list) {
   if (shader_injection != nullptr) shader_injection->dlaa_enabled = 0.f;
-  if (enabled == 0.f || cmd_list == nullptr || !is_nvidia_device) return true;
+  if (cmd_list == nullptr) return true;
   std::scoped_lock lock(runtime_mutex);
 
   auto* device = cmd_list->get_device();
@@ -903,6 +1225,9 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
                      : binding_srvs;
   const auto& scene_srv = srvs[0];
   const auto& depth_srv = srvs[3];
+  const auto depth = renodx::utils::resource::GetResourceFromView(device, depth_srv.view);
+  if (depth.handle != 0u) jitter::SetPostprocessDepthResource(depth);
+  if (enabled == 0.f || !is_nvidia_device) return true;
   if (scene_srv.view.handle == 0u
       || depth_srv.view.handle == 0u
       || resources.motion_vectors.handle == 0u
@@ -918,7 +1243,6 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
   }
 
   const auto source = renodx::utils::resource::GetResourceFromView(device, scene_srv.view);
-  const auto depth = renodx::utils::resource::GetResourceFromView(device, depth_srv.view);
   if (source.handle == 0u || depth.handle == 0u) return true;
   const auto source_desc = renodx::utils::resource::GetResourceDesc(device, source);
   const auto source_view_desc = renodx::utils::resource::GetResourceViewDesc(device, scene_srv.view);
@@ -983,39 +1307,66 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
   const bool source_changed = last_source_resource.handle != 0u && last_source_resource != source;
   const bool discontinuous = last_evaluation_frame == std::numeric_limits<uint64_t>::max()
                              || current_frame != last_evaluation_frame + 1u;
-  const auto pixel_jitter = jitter::GetPixelJitter();
+  const auto pixel_jitter = jitter::GetEvaluationPixelJitter();
   const int selected_motion_vector_axes = static_cast<int>(std::round(motion_vector_axes));
+  const int selected_motion_vector_dilation = motion_vector_dilation != 0.f ? 1 : 0;
+  const int selected_bias_current_color_mask = bias_current_color_mask != 0.f ? 1 : 0;
   const int selected_jitter_axes = static_cast<int>(std::round(jitter_axes));
+  const int selected_camera_jitter_pattern = jitter::WasMainSceneJitteredThisFrame()
+                                                 ? jitter::GetSelectedPattern()
+                                                 : 0;
   const auto motion_vector_signs = GetAxisSigns(motion_vector_axes);
   const auto jitter_signs = GetAxisSigns(jitter_axes);
   const bool tuning_changed = selected_motion_vector_axes != last_motion_vector_axes
+                              || selected_motion_vector_dilation != last_motion_vector_dilation
+                              || selected_bias_current_color_mask != last_bias_current_color_mask
                               || selected_jitter_axes != last_jitter_axes
+                              || selected_camera_jitter_pattern != last_camera_jitter_pattern
                               || motion_vector_scale != last_motion_vector_scale
+                              || bias_current_color_strength != last_bias_current_color_strength
                               || jitter_scale != last_jitter_scale;
   if (tuning_changed) {
     last_motion_vector_axes = selected_motion_vector_axes;
+    last_motion_vector_dilation = selected_motion_vector_dilation;
+    last_bias_current_color_mask = selected_bias_current_color_mask;
     last_jitter_axes = selected_jitter_axes;
+    last_camera_jitter_pattern = selected_camera_jitter_pattern;
     last_motion_vector_scale = motion_vector_scale;
+    last_bias_current_color_strength = bias_current_color_strength;
     last_jitter_scale = jitter_scale;
     reset_history = true;
 
     std::stringstream s;
     s << "LORWIN DLAA: live input tuning mv_axes=" << selected_motion_vector_axes
       << " mv_scale=" << motion_vector_scale
+      << " mv_dilation=" << (selected_motion_vector_dilation != 0 ? "on" : "off")
+      << " bias_mask=" << (selected_bias_current_color_mask != 0 ? "on" : "off")
+      << " bias_mask_strength=" << bias_current_color_strength
+      << " camera_jitter_pattern=" << selected_camera_jitter_pattern
+      << " jitter_raw=(" << pixel_jitter[0] << ", " << pixel_jitter[1] << ")"
       << " jitter_axes=" << selected_jitter_axes
       << " jitter_scale=" << jitter_scale;
     reshade::log::message(reshade::log::level::info, s.str().c_str());
   }
+  const bool evaluation_reset = reset_history.exchange(false) || source_changed || discontinuous;
+  const bool bias_mask_ready = RunBiasCurrentColorMaskPrepass(
+      cmd_list,
+      depth_srv.view,
+      pixel_jitter,
+      evaluation_reset);
   NVSDK_NGX_D3D12_DLSS_Eval_Params eval = {};
   eval.Feature.pInColor = reinterpret_cast<ID3D12Resource*>(resources.dlaa_input.handle);
   eval.Feature.pInOutput = reinterpret_cast<ID3D12Resource*>(resources.dlaa_output.handle);
   eval.pInDepth = reinterpret_cast<ID3D12Resource*>(depth.handle);
   eval.pInMotionVectors = reinterpret_cast<ID3D12Resource*>(resources.motion_vectors.handle);
+  eval.pInBiasCurrentColorMask = bias_mask_ready
+                                     ? reinterpret_cast<ID3D12Resource*>(resources.bias_current_color_mask.handle)
+                                     : nullptr;
   eval.InJitterOffsetX = pixel_jitter[0] * jitter_signs[0] * jitter_scale;
   eval.InJitterOffsetY = pixel_jitter[1] * jitter_signs[1] * jitter_scale;
   eval.InRenderSubrectDimensions.Width = source_desc.texture.width;
   eval.InRenderSubrectDimensions.Height = source_desc.texture.height;
-  eval.InReset = reset_history.exchange(false) || source_changed || discontinuous ? 1 : 0;
+  eval.InReset = evaluation_reset ? 1 : 0;
   eval.InMVScaleX = static_cast<float>(source_desc.texture.width) * motion_vector_signs[0] * motion_vector_scale;
   eval.InMVScaleY = static_cast<float>(source_desc.texture.height) * motion_vector_signs[1] * motion_vector_scale;
   eval.InPreExposure = 1.f;
@@ -1050,6 +1401,7 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
       << " jitter_raw=(" << pixel_jitter[0] << ", " << pixel_jitter[1] << ")"
       << " jitter_ngx=(" << eval.InJitterOffsetX << ", " << eval.InJitterOffsetY << ")"
       << " mv_scale=(" << eval.InMVScaleX << ", " << eval.InMVScaleY << ")"
+      << " bias_mask=" << (bias_mask_ready ? "on" : "off")
       << " flags=" << GetFeatureFlagsName(ngx.feature_flags)
       << " preset=" << GetRenderPresetName(ngx.render_preset);
     reshade::log::message(reshade::log::level::info, s.str().c_str());
@@ -1065,6 +1417,11 @@ inline reshade::api::resource_view GetMotionVectorSrv(reshade::api::command_list
 inline reshade::api::resource_view GetDlaaOutputSrv(reshade::api::command_list*) {
   std::scoped_lock lock(runtime_mutex);
   return resources.dlaa_output_srv;
+}
+
+inline reshade::api::resource_view GetBiasCurrentColorMaskSrv(reshade::api::command_list*) {
+  std::scoped_lock lock(runtime_mutex);
+  return resources.bias_current_color_mask_srv;
 }
 
 inline void InstallCallbacks(
@@ -1095,6 +1452,12 @@ inline void InstallCallbacks(
         .slot = 1u,
         .space = 50u,
         .get_view = GetDlaaOutputSrv,
+    });
+    shader->second.views.push_back({
+        .type = reshade::api::descriptor_type::texture_shader_resource_view,
+        .slot = 2u,
+        .space = 50u,
+        .get_view = GetBiasCurrentColorMaskSrv,
     });
   }
   installed_callbacks = true;
@@ -1163,6 +1526,7 @@ inline void OnBarrier(
 }
 
 inline void OnDestroyResource(reshade::api::device*, reshade::api::resource resource) {
+  jitter::ForgetDepthResource(resource);
   const std::unique_lock lock(resource_state_mutex);
   resource_states.erase(resource.handle);
 }

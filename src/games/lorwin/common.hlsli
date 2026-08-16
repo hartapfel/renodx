@@ -6,6 +6,7 @@
 #if ((__SHADER_TARGET_MAJOR == 5 && __SHADER_TARGET_MINOR >= 1) || __SHADER_TARGET_MAJOR >= 6)
 Texture2D<float2> g_RenoDXMotionVectors : register(t0, space50);
 Texture2D<float4> g_RenoDXDlaaOutput : register(t1, space50);
+Texture2D<float> g_RenoDXBiasCurrentColorMask : register(t2, space50);
 
 #define LORWIN_DEFINE_SCENE_SAMPLER()                                               \
   float3 SampleLORWINScene(float2 uv) {                                             \
@@ -90,6 +91,11 @@ float3 ApplyPerceptualFilmGrain(float3 color, float2 position) {
 float3 ApplyDLAADebugView(float3 color, float4 position) {
 #if ((__SHADER_TARGET_MAJOR == 5 && __SHADER_TARGET_MINOR >= 1) || __SHADER_TARGET_MAJOR >= 6)
   if (CUSTOM_DLAA_DEBUG_VIEW == 0.f) return color;
+
+  if (CUSTOM_DLAA_DEBUG_VIEW == 3.f) {
+    if (CUSTOM_DLAA_ENABLED == 0.f) return 0.f.xxx;
+    return g_RenoDXBiasCurrentColorMask.Load(int3(uint2(position.xy), 0)).xxx;
+  }
 
   const float2 motion_vector = g_RenoDXMotionVectors.Load(int3(uint2(position.xy), 0));
   if (CUSTOM_DLAA_DEBUG_VIEW == 1.f) {
