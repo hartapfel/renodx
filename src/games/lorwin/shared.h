@@ -41,6 +41,7 @@ struct ShaderInjectData {
   float custom_random;
   float dlaa_debug_view;
   float dlaa_enabled;
+  float hdr_output_active;
 };
 
 #ifndef __cplusplus
@@ -52,7 +53,8 @@ cbuffer shader_injection : register(b13) {
   ShaderInjectData shader_injection : packoffset(c0);
 }
 
-#define RENODX_TONE_MAP_TYPE                 shader_injection.tone_map_type
+#define RENODX_HDR_OUTPUT_ACTIVE             shader_injection.hdr_output_active
+#define RENODX_TONE_MAP_TYPE                 (RENODX_HDR_OUTPUT_ACTIVE != 0.f ? shader_injection.tone_map_type : 0.f)
 #define RENODX_PEAK_WHITE_NITS               shader_injection.peak_white_nits
 #define RENODX_DIFFUSE_WHITE_NITS            shader_injection.diffuse_white_nits
 #define RENODX_GRAPHICS_WHITE_NITS           shader_injection.graphics_white_nits
@@ -81,7 +83,7 @@ cbuffer shader_injection : register(b13) {
 #define RENODX_SWAP_CHAIN_GAMMA_CORRECTION   2.2f
 #define RENODX_SWAP_CHAIN_CUSTOM_COLOR_SPACE renodx::color::convert::COLOR_SPACE_BT709
 #define RENODX_SWAP_CHAIN_CLAMP_COLOR_SPACE  renodx::color::convert::COLOR_SPACE_BT2020
-#define RENODX_SWAP_CHAIN_OUTPUT_PRESET      renodx::draw::SWAP_CHAIN_OUTPUT_PRESET_HDR10
+#define RENODX_SWAP_CHAIN_OUTPUT_PRESET      (RENODX_HDR_OUTPUT_ACTIVE != 0.f ? renodx::draw::SWAP_CHAIN_OUTPUT_PRESET_HDR10 : renodx::draw::SWAP_CHAIN_OUTPUT_PRESET_SDR)
 
 #include "../../shaders/renodx.hlsl"
 

@@ -7,6 +7,9 @@
 
 #define RENODX_MODS_SWAPCHAIN_VERSION 2
 
+#include <optional>
+#include <sstream>
+
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>
 
@@ -31,6 +34,68 @@ renodx::mods::shader::CustomShaders custom_shaders = {
 };
 
 ShaderInjectData shader_injection;
+float dlaa_debug = 0.f;
+bool hdr_output_active = false;
+bool hdr_output_state_known = false;
+
+bool IsDlaaDebugEnabled() {
+  return dlaa_debug != 0.f;
+}
+
+bool IsHDROutputActive() {
+  return !hdr_output_state_known || hdr_output_active;
+}
+
+void SetHDROutputState(bool active, const char* source) {
+  const bool changed = !hdr_output_state_known || hdr_output_active != active;
+  hdr_output_state_known = true;
+  hdr_output_active = active;
+  shader_injection.hdr_output_active = active ? 1.f : 0.f;
+  if (!changed) return;
+
+  std::stringstream s;
+  s << "LORWIN output: Windows HDR is " << (active ? "enabled" : "disabled")
+    << " via " << source << "; HDR tonemapping and swapchain proxy "
+    << (active ? "enabled." : "disabled, vanilla SDR tonemapping forced.");
+  reshade::log::message(reshade::log::level::info, s.str().c_str());
+}
+
+std::optional<bool> GetWindowHDRState(HWND window) {
+  if (window == nullptr || IsWindow(window) == FALSE) return std::nullopt;
+  const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+  if (monitor == nullptr) return std::nullopt;
+  const auto path = renodx::utils::platform::GetPathInfo(monitor);
+  if (!path.has_value()) return std::nullopt;
+  return renodx::utils::swapchain::GetHDREnabled(path.value());
+}
+
+#if RESHADE_API_VERSION >= 17
+bool OnCreateSwapchain(reshade::api::device_api device_api, reshade::api::swapchain_desc& desc, void* hwnd) {
+#else
+bool OnCreateSwapchain(reshade::api::swapchain_desc& desc, void* hwnd) {
+  const auto device_api = reshade::api::device_api::d3d12;
+#endif
+  if (device_api != reshade::api::device_api::d3d12) return false;
+  const auto window = static_cast<HWND>(hwnd);
+  if (!renodx::mods::swapchain::ShouldModifySwapchain(window, device_api)) return false;
+
+  const auto hdr_enabled = GetWindowHDRState(window);
+  if (!hdr_enabled.has_value()) return false;
+  SetHDROutputState(hdr_enabled.value(), "swapchain creation");
+
+  if (hdr_enabled.value()) {
+    renodx::mods::swapchain::SetUseHDR10(true);
+    renodx::mods::swapchain::use_resource_cloning = true;
+    renodx::mods::swapchain::use_resize_buffer = false;
+    renodx::mods::swapchain::set_color_space = true;
+  } else {
+    renodx::mods::swapchain::target_format = desc.back_buffer.texture.format;
+    renodx::mods::swapchain::use_resource_cloning = false;
+    renodx::mods::swapchain::use_resize_buffer = true;
+    renodx::mods::swapchain::set_color_space = false;
+  }
+  return false;
+}
 
 renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
@@ -43,6 +108,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Tone Mapping",
         .tooltip = "Sets the tone mapper type.",
         .labels = {"Vanilla", "Neutwo"},
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapPeakNits",
@@ -54,6 +120,7 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Sets the value of peak white in nits.",
         .min = 48.f,
         .max = 4000.f,
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapGameNits",
@@ -64,6 +131,7 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Sets the value of 100% white in nits.",
         .min = 48.f,
         .max = 500.f,
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapUINits",
@@ -75,6 +143,7 @@ renodx::utils::settings::Settings settings = {
         .min = 48.f,
         .max = 500.f,
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "GammaCorrection",
@@ -86,6 +155,7 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Emulates output decoding used on SDR displays.",
         .labels = {"None", "2.2", "BT.1886"},
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapScaling",
@@ -97,6 +167,7 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Luminance scales colors consistently while per-channel saturates and clips sooner.",
         .labels = {"Luminance", "Per Channel"},
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapHueShift",
@@ -109,6 +180,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
         .parse = [](float value) { return value * 0.01f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapWhiteClip",
@@ -120,6 +192,7 @@ renodx::utils::settings::Settings settings = {
         .min = 0.f,
         .max = 100.f,
         .is_enabled = []() { return shader_injection.tone_map_type == 1.f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeExposure",
@@ -130,6 +203,7 @@ renodx::utils::settings::Settings settings = {
         .max = 2.f,
         .format = "%.2f",
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeHighlights",
@@ -140,6 +214,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
         .parse = [](float value) { return value * 0.02f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeShadows",
@@ -150,6 +225,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
         .parse = [](float value) { return value * 0.02f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeContrast",
@@ -160,6 +236,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
         .parse = [](float value) { return value * 0.02f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeSaturation",
@@ -170,6 +247,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
         .parse = [](float value) { return value * 0.02f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeHighlightSaturation",
@@ -181,6 +259,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
         .parse = [](float value) { return value * 0.02f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeBlowout",
@@ -192,6 +271,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
         .parse = [](float value) { return value * 0.01f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeFlare",
@@ -203,6 +283,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
         .parse = [](float value) { return value * 0.01f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeScene",
@@ -214,6 +295,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
         .parse = [](float value) { return value * 0.01f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "FxFilmGrain",
@@ -225,6 +307,7 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Selects between the game's vanilla noise and RenoDX perceptual film grain.",
         .labels = {"Vanilla Noise", "Perceptual"},
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "FxFilmGrainStrength",
@@ -236,6 +319,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return shader_injection.tone_map_type != 0.f && shader_injection.custom_film_grain_type != 0.f; },
         .parse = [](float value) { return value * 0.01f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAAEnabled",
@@ -258,8 +342,19 @@ renodx::utils::settings::Settings settings = {
         .label = "DLAA Render Preset",
         .section = "DLAA",
         .tooltip = "Selects the NVIDIA DLSS model preset. K is the recommended Transformer 1 preset; L and M use Transformer 2.",
-        .labels = {"K (Recommended)", "J (Transformer 1)", "F (Legacy CNN)", "L (Transformer 2)", "M (Transformer 2)"},
+        .labels = {"K (Transformer 1)", "J (Transformer 1)", "F (Legacy CNN)", "L (Transformer 2)", "M (Recommended)"},
         .is_enabled = []() { return lorwin::dlaa::is_nvidia_device && lorwin::dlaa::enabled != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAADebug",
+        .binding = &dlaa_debug,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 0.f,
+        .can_reset = true,
+        .label = "Debug",
+        .section = "DLAA Debugging",
+        .tooltip = "Shows advanced DLAA diagnostic views, input overrides, and logging controls.",
+        .labels = {"Off", "On"},
     },
     new renodx::utils::settings::Setting{
         .key = "DLAADebugView",
@@ -268,9 +363,10 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .can_reset = true,
         .label = "DLAA Input Debug View",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Visualizes the pre-postprocess motion vectors or synthetic history-rejection mask. White mask pixels ask DLAA to favor the current frame.",
         .labels = {"Off", "Motion Direction", "Motion Magnitude", "History Rejection Mask"},
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAAMotionVectorDilation",
@@ -279,9 +375,10 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .can_reset = true,
         .label = "Depth-Neighborhood MV Dilation",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Uses AC3 Remastered-style 3x3 far-depth motion-vector dilation and jitter-quadrant selection at disocclusion edges.",
         .labels = {"Off (Raw Camera Vectors)", "On (Recommended)"},
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAABiasCurrentColorMask",
@@ -290,10 +387,11 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .can_reset = true,
         .label = "Synthetic History-Rejection Mask",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Favors current-frame color at depth discontinuities and where reprojected frame-to-frame color changes indicate particles, animated textures, disocclusions, or incorrect motion vectors.",
         .labels = {"Off", "On (Recommended)"},
         .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAABiasCurrentColorStrength",
@@ -301,7 +399,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 100.f,
         .can_reset = true,
         .label = "History-Rejection Strength",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Scales the synthetic current-color bias. Lower values preserve more DLAA history; higher values reject more history in unstable regions.",
         .min = 0.f,
         .max = 200.f,
@@ -310,6 +408,7 @@ renodx::utils::settings::Settings settings = {
           return lorwin::dlaa::enabled != 0.f && lorwin::dlaa::bias_current_color_mask != 0.f;
         },
         .parse = [](float value) { return value * 0.01f; },
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAAJitterPattern",
@@ -318,9 +417,10 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .can_reset = true,
         .label = "Camera Jitter Override",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Automatic uses Halton 8 while DLAA is enabled. Forced Off keeps DLAA active but disables both viewport jitter and the jitter supplied to NGX.",
         .labels = {"Automatic", "Halton 8 (Forced)", "Four Quadrants (Debug)", "Off (Forced)"},
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAAMotionVectorAxes",
@@ -329,10 +429,11 @@ renodx::utils::settings::Settings settings = {
         .default_value = 3.f,
         .can_reset = true,
         .label = "Motion Vector Direction",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Changes the UV motion-vector sign at the NGX boundary. The generated texture is current-minus-previous, so inverting both axes is the expected DLSS convention.",
         .labels = {"Original (+X, +Y)", "Invert X", "Invert Y", "Invert X & Y (Recommended)"},
         .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAAMotionVectorScale",
@@ -340,13 +441,14 @@ renodx::utils::settings::Settings settings = {
         .default_value = 100.f,
         .can_reset = true,
         .label = "Motion Vector Scale",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Scales the full-resolution UV motion vectors after conversion to render-pixel space.",
         .min = 1.f,
         .max = 200.f,
         .format = "%.0f%%",
         .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
         .parse = [](float value) { return value * 0.01f; },
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAAJitterAxes",
@@ -355,10 +457,11 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .can_reset = true,
         .label = "NGX Jitter Direction",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Changes only the pixel-space jitter passed to NGX; it does not change the camera jitter applied by the viewport.",
         .labels = {"Original (+X, +Y) (Recommended)", "Invert X", "Invert Y", "Invert X & Y"},
         .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAAJitterScale",
@@ -366,13 +469,14 @@ renodx::utils::settings::Settings settings = {
         .default_value = 100.f,
         .can_reset = true,
         .label = "NGX Jitter Scale",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Scales the pixel-space jitter handed to NGX. Zero is useful for isolating a jitter-convention problem.",
         .min = 0.f,
         .max = 200.f,
         .format = "%.0f%%",
         .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
         .parse = [](float value) { return value * 0.01f; },
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAADepthInverted",
@@ -381,10 +485,11 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .can_reset = true,
         .label = "Depth Convention",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Recreates the DLAA feature with NVIDIA's DepthInverted flag.",
         .labels = {"Standard (Recommended)", "Inverted"},
         .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAAMotionVectorsJittered",
@@ -393,10 +498,11 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .can_reset = true,
         .label = "Motion Vectors Include Jitter",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Recreates the feature with MVJittered. Keep this off because the generated motion vectors use the game's unjittered reprojection transform.",
         .labels = {"No (Recommended)", "Yes"},
         .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAAHDRInput",
@@ -405,10 +511,11 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .can_reset = true,
         .label = "NGX Color Input",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Recreates the feature with IsHDR. The current RGBA8 pre-postprocess source is expected to use the non-HDR flag.",
         .labels = {"LDR (Recommended)", "HDR"},
         .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAAAutoExposure",
@@ -417,15 +524,16 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .can_reset = true,
         .label = "NGX Auto Exposure",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Recreates the feature with AutoExposure. No separate exposure texture is available, so this should normally remain enabled.",
         .labels = {"Off", "On (Recommended)"},
         .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Restore Recommended DLAA Inputs",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .group = "dlaa-debug-buttons",
         .on_change = []() {
           renodx::utils::settings::UpdateSettings({
@@ -444,13 +552,15 @@ renodx::utils::settings::Settings settings = {
           });
           lorwin::dlaa::reset_history = true;
         },
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Reset DLAA History",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .group = "dlaa-debug-buttons",
         .on_change = []() { lorwin::dlaa::reset_history = true; },
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAAResourceLogging",
@@ -459,8 +569,9 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .can_reset = true,
         .label = "Resource Logging",
-        .section = "DLAA Investigation",
+        .section = "DLAA Debugging",
         .tooltip = "Logs a short, passive burst of postprocess resources and state. Toggle off and on to capture another burst.",
+        .is_visible = IsDlaaDebugEnabled,
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
@@ -474,6 +585,7 @@ renodx::utils::settings::Settings settings = {
             renodx::utils::settings::UpdateSetting(setting->key, setting->default_value);
           }
         },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
@@ -545,6 +657,7 @@ void OnPresetOff() {
       {"FxFilmGrainStrength", 50.f},
       {"DLAAEnabled", 0.f},
       {"DLAARenderPreset", 0.f},
+      {"DLAADebug", 0.f},
       {"DLAADebugView", 0.f},
       {"DLAAJitterPattern", 0.f},
       {"DLAAMotionVectorAxes", 3.f},
@@ -566,8 +679,13 @@ bool fired_on_init_swapchain = false;
 
 void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
   (void)resize;
-  if (fired_on_init_swapchain) return;
   if (!renodx::utils::swapchain::IsDXGI(swapchain)) return;
+
+  const auto display_info = renodx::utils::swapchain::GetDisplayInfo(swapchain);
+  if (display_info.display_config.has_value()) {
+    SetHDROutputState(display_info.hdr_enabled, "swapchain initialization");
+  }
+  if (!IsHDROutputActive() || fired_on_init_swapchain) return;
 
   auto peak = renodx::utils::swapchain::GetPeakNits(swapchain);
   if (!peak.has_value()) return;
@@ -609,8 +727,12 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         renodx::mods::swapchain::swap_chain_proxy_vertex_shader = __swap_chain_proxy_vertex_shader;
         renodx::mods::swapchain::swap_chain_proxy_pixel_shader = __swap_chain_proxy_pixel_shader;
         renodx::mods::swapchain::swapchain_proxy_revert_state = true;
+        renodx::mods::swapchain::prevent_full_screen = false;
+        renodx::mods::swapchain::force_borderless = false;
+        renodx::mods::swapchain::force_screen_tearing = false;
         renodx::mods::swapchain::SetUseHDR10(true);
 
+        reshade::register_event<reshade::addon_event::create_swapchain>(OnCreateSwapchain);
         reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
         lorwin::resource_logger::InstallCallbacks(custom_shaders);
         lorwin::dlaa::InstallCallbacks(custom_shaders, &shader_injection);
@@ -630,6 +752,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
 
       break;
     case DLL_PROCESS_DETACH:
+      reshade::unregister_event<reshade::addon_event::create_swapchain>(OnCreateSwapchain);
       reshade::unregister_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
       reshade::unregister_addon(h_module);
       break;
