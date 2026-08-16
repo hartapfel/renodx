@@ -19,6 +19,9 @@
 #include "../../utils/random.hpp"
 #include "../../utils/settings.hpp"
 #include "../../utils/swapchain.hpp"
+#include "dlaa.hpp"
+#include "jitter.hpp"
+#include "resource_logger.hpp"
 #include "shared.h"
 
 namespace {
@@ -235,6 +238,188 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "DLAAEnabled",
+        .binding = &lorwin::dlaa::enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 0.f,
+        .can_reset = true,
+        .label = "DLAA",
+        .section = "DLAA",
+        .tooltip = "Runs NVIDIA DLAA on the full-resolution scene immediately before the game's final postprocess pass.",
+        .labels = {"Off", "On"},
+        .is_enabled = []() { return lorwin::dlaa::is_nvidia_device; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAARenderPreset",
+        .binding = &lorwin::dlaa::render_preset,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .can_reset = true,
+        .label = "DLAA Render Preset",
+        .section = "DLAA",
+        .tooltip = "Selects the NVIDIA DLSS model preset. K is the recommended Transformer 1 preset; L and M use Transformer 2.",
+        .labels = {"K (Recommended)", "J (Transformer 1)", "F (Legacy CNN)", "L (Transformer 2)", "M (Transformer 2)"},
+        .is_enabled = []() { return lorwin::dlaa::is_nvidia_device && lorwin::dlaa::enabled != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAADebugView",
+        .binding = &shader_injection.dlaa_debug_view,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .can_reset = true,
+        .label = "Motion Vector Debug View",
+        .section = "DLAA Investigation",
+        .tooltip = "Visualizes the pre-postprocess motion-vector texture.",
+        .labels = {"Off", "Direction", "Magnitude"},
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAAJitterPattern",
+        .binding = &lorwin::jitter::pattern,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .can_reset = true,
+        .label = "Camera Jitter Override",
+        .section = "DLAA Investigation",
+        .tooltip = "Automatic uses Halton 8 while DLAA is enabled and disables jitter otherwise. The other choices force a pattern for investigation.",
+        .labels = {"Automatic", "Halton 8 (Forced)", "Four Quadrants (Debug)"},
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAAMotionVectorAxes",
+        .binding = &lorwin::dlaa::motion_vector_axes,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 3.f,
+        .can_reset = true,
+        .label = "Motion Vector Direction",
+        .section = "DLAA Investigation",
+        .tooltip = "Changes the UV motion-vector sign at the NGX boundary. The generated texture is current-minus-previous, so inverting both axes is the expected DLSS convention.",
+        .labels = {"Original (+X, +Y)", "Invert X", "Invert Y", "Invert X & Y (Recommended)"},
+        .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAAMotionVectorScale",
+        .binding = &lorwin::dlaa::motion_vector_scale,
+        .default_value = 100.f,
+        .can_reset = true,
+        .label = "Motion Vector Scale",
+        .section = "DLAA Investigation",
+        .tooltip = "Scales the full-resolution UV motion vectors after conversion to render-pixel space.",
+        .min = 1.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAAJitterAxes",
+        .binding = &lorwin::dlaa::jitter_axes,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .can_reset = true,
+        .label = "NGX Jitter Direction",
+        .section = "DLAA Investigation",
+        .tooltip = "Changes only the pixel-space jitter passed to NGX; it does not change the camera jitter applied by the viewport.",
+        .labels = {"Original (+X, +Y) (Recommended)", "Invert X", "Invert Y", "Invert X & Y"},
+        .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAAJitterScale",
+        .binding = &lorwin::dlaa::jitter_scale,
+        .default_value = 100.f,
+        .can_reset = true,
+        .label = "NGX Jitter Scale",
+        .section = "DLAA Investigation",
+        .tooltip = "Scales the pixel-space jitter handed to NGX. Zero is useful for isolating a jitter-convention problem.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAADepthInverted",
+        .binding = &lorwin::dlaa::depth_inverted,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 0.f,
+        .can_reset = true,
+        .label = "Depth Convention",
+        .section = "DLAA Investigation",
+        .tooltip = "Recreates the DLAA feature with NVIDIA's DepthInverted flag.",
+        .labels = {"Standard (Recommended)", "Inverted"},
+        .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAAMotionVectorsJittered",
+        .binding = &lorwin::dlaa::motion_vectors_jittered,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 0.f,
+        .can_reset = true,
+        .label = "Motion Vectors Include Jitter",
+        .section = "DLAA Investigation",
+        .tooltip = "Recreates the feature with MVJittered. Keep this off because the generated motion vectors use the game's unjittered reprojection transform.",
+        .labels = {"No (Recommended)", "Yes"},
+        .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAAHDRInput",
+        .binding = &lorwin::dlaa::hdr_input,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 0.f,
+        .can_reset = true,
+        .label = "NGX Color Input",
+        .section = "DLAA Investigation",
+        .tooltip = "Recreates the feature with IsHDR. The current RGBA8 pre-postprocess source is expected to use the non-HDR flag.",
+        .labels = {"LDR (Recommended)", "HDR"},
+        .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAAAutoExposure",
+        .binding = &lorwin::dlaa::auto_exposure,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .can_reset = true,
+        .label = "NGX Auto Exposure",
+        .section = "DLAA Investigation",
+        .tooltip = "Recreates the feature with AutoExposure. No separate exposure texture is available, so this should normally remain enabled.",
+        .labels = {"Off", "On (Recommended)"},
+        .is_enabled = []() { return lorwin::dlaa::enabled != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
+        .label = "Restore Recommended DLAA Inputs",
+        .section = "DLAA Investigation",
+        .group = "dlaa-debug-buttons",
+        .on_change = []() {
+          renodx::utils::settings::UpdateSettings({
+              {"DLAAMotionVectorAxes", 3.f},
+              {"DLAAMotionVectorScale", 100.f},
+              {"DLAAJitterAxes", 0.f},
+              {"DLAAJitterScale", 100.f},
+              {"DLAADepthInverted", 0.f},
+              {"DLAAMotionVectorsJittered", 0.f},
+              {"DLAAHDRInput", 0.f},
+              {"DLAAAutoExposure", 1.f},
+          });
+          lorwin::dlaa::reset_history = true;
+        },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
+        .label = "Reset DLAA History",
+        .section = "DLAA Investigation",
+        .group = "dlaa-debug-buttons",
+        .on_change = []() { lorwin::dlaa::reset_history = true; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLAAResourceLogging",
+        .binding = &lorwin::resource_logger::enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 0.f,
+        .can_reset = true,
+        .label = "Resource Logging",
+        .section = "DLAA Investigation",
+        .tooltip = "Logs a short, passive burst of postprocess resources and state. Toggle off and on to capture another burst.",
+    },
+    new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Reset All",
         .section = "Options",
@@ -315,6 +500,19 @@ void OnPresetOff() {
       {"ColorGradeScene", 100.f},
       {"FxFilmGrain", 0.f},
       {"FxFilmGrainStrength", 50.f},
+      {"DLAAEnabled", 0.f},
+      {"DLAARenderPreset", 0.f},
+      {"DLAADebugView", 0.f},
+      {"DLAAJitterPattern", 0.f},
+      {"DLAAMotionVectorAxes", 3.f},
+      {"DLAAMotionVectorScale", 100.f},
+      {"DLAAJitterAxes", 0.f},
+      {"DLAAJitterScale", 100.f},
+      {"DLAADepthInverted", 0.f},
+      {"DLAAMotionVectorsJittered", 0.f},
+      {"DLAAHDRInput", 0.f},
+      {"DLAAAutoExposure", 1.f},
+      {"DLAAResourceLogging", 0.f},
   });
 }
 
@@ -365,12 +563,11 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         renodx::mods::swapchain::swap_chain_proxy_vertex_shader = __swap_chain_proxy_vertex_shader;
         renodx::mods::swapchain::swap_chain_proxy_pixel_shader = __swap_chain_proxy_pixel_shader;
         renodx::mods::swapchain::swapchain_proxy_revert_state = true;
-        renodx::mods::swapchain::force_borderless = true;
-        renodx::mods::swapchain::force_screen_tearing = true;
-        renodx::mods::swapchain::prevent_full_screen = true;
         renodx::mods::swapchain::SetUseHDR10(true);
 
         reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
+        lorwin::resource_logger::InstallCallbacks(custom_shaders);
+        lorwin::dlaa::InstallCallbacks(custom_shaders, &shader_injection);
 
 /*         renodx::mods::swapchain::resource_upgrade_infos.push_back({
             .old_format = reshade::api::format::r8g8b8a8_typeless,
@@ -395,6 +592,9 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
   renodx::utils::random::Use(fdw_reason, {&shader_injection.custom_random});
   renodx::mods::swapchain::Use(fdw_reason, &shader_injection);
+  lorwin::resource_logger::Use(fdw_reason);
+  lorwin::jitter::Use(fdw_reason);
+  lorwin::dlaa::Use(fdw_reason);
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
 
   return TRUE;

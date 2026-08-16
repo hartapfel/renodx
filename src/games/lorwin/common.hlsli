@@ -3,6 +3,19 @@
 
 #include "./shared.h"
 
+#if ((__SHADER_TARGET_MAJOR == 5 && __SHADER_TARGET_MINOR >= 1) || __SHADER_TARGET_MAJOR >= 6)
+Texture2D<float2> g_RenoDXMotionVectors : register(t0, space50);
+Texture2D<float4> g_RenoDXDlaaOutput : register(t1, space50);
+
+#define LORWIN_DEFINE_SCENE_SAMPLER()                                               \
+  float3 SampleLORWINScene(float2 uv) {                                             \
+    if (CUSTOM_DLAA_ENABLED != 0.f) {                                               \
+      return g_RenoDXDlaaOutput.Sample(g_SamplerLinearClamp, uv).rgb;               \
+    }                                                                                \
+    return g_SceneTexture.Sample(g_SamplerLinearClamp, uv).rgb;                     \
+  }
+#endif
+
 namespace lorwin {
 
 static const float TONE_MAP_TYPE_VANILLA = 0.f;
@@ -72,6 +85,20 @@ float3 ApplyPerceptualFilmGrain(float3 color, float2 position) {
       position,
       CUSTOM_RANDOM,
       CUSTOM_FILM_GRAIN_STRENGTH * 0.03f);
+}
+
+float3 ApplyDLAADebugView(float3 color, float4 position) {
+#if ((__SHADER_TARGET_MAJOR == 5 && __SHADER_TARGET_MINOR >= 1) || __SHADER_TARGET_MAJOR >= 6)
+  if (CUSTOM_DLAA_DEBUG_VIEW == 0.f) return color;
+
+  const float2 motion_vector = g_RenoDXMotionVectors.Load(int3(uint2(position.xy), 0));
+  if (CUSTOM_DLAA_DEBUG_VIEW == 1.f) {
+    return float3(saturate(motion_vector * 32.f + 0.5f), 0.5f);
+  }
+  return saturate(length(motion_vector) * 64.f).xxx;
+#else
+  return color;
+#endif
 }
 
 float3 ApplyNeutwo(float3 untonemapped) {

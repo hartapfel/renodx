@@ -41,6 +41,8 @@ SamplerState g_SamplerLinearClamp : register(s4);
 SamplerState g_SamplerLinearWrap : register(s5);
 SamplerState g_SamplerAniso : register(s6);
 
+LORWIN_DEFINE_SCENE_SAMPLER()
+
 bool IsEqualToZero(float x) {
   return abs(x) < 0.0001f;
 }
@@ -49,7 +51,7 @@ float4 main(
     float4 position : SV_Position,
     float2 vScreenPosition : TEXCOORD0) : SV_Target {
   float depth = g_DepthTexture.Sample(g_SamplerLinearClamp, vScreenPosition * g_DOFBlurVals.w).r;
-  float3 scene = g_SceneTexture.Sample(g_SamplerLinearClamp, vScreenPosition * g_DOFBlurVals.w).rgb;
+  float3 scene = SampleLORWINScene(vScreenPosition * g_DOFBlurVals.w);
   float3 blurry = g_OutOfFocusTexture.Sample(g_SamplerLinearClamp, vScreenPosition).rgb;
   float lum = g_LuminanceTexture.Sample(g_SamplerPointClamp, float2(0.5f, 0.5f)).r;
   float3 bloom = g_BloomTexture.Sample(g_SamplerAniso, vScreenPosition).rgb;
@@ -125,6 +127,7 @@ float4 main(
 #endif
 
   output = lorwin::ApplyPerceptualFilmGrain(output, vScreenPosition);
+  output = lorwin::ApplyDLAADebugView(output, position);
 
   return float4(output, 1.f);
 }

@@ -39,6 +39,8 @@ struct ShaderInjectData {
   float custom_film_grain_type;
   float custom_film_grain_strength;
   float custom_random;
+  float dlaa_debug_view;
+  float dlaa_enabled;
 };
 
 #ifndef __cplusplus
@@ -73,6 +75,8 @@ cbuffer shader_injection : register(b13) {
 #define CUSTOM_FILM_GRAIN_TYPE               shader_injection.custom_film_grain_type
 #define CUSTOM_FILM_GRAIN_STRENGTH           shader_injection.custom_film_grain_strength
 #define CUSTOM_RANDOM                        shader_injection.custom_random
+#define CUSTOM_DLAA_DEBUG_VIEW                shader_injection.dlaa_debug_view
+#define CUSTOM_DLAA_ENABLED                   shader_injection.dlaa_enabled
 #define RENODX_SWAP_CHAIN_DECODING           (RENODX_GAMMA_CORRECTION + 1.f)
 #define RENODX_SWAP_CHAIN_GAMMA_CORRECTION   2.2f
 #define RENODX_SWAP_CHAIN_CUSTOM_COLOR_SPACE renodx::color::convert::COLOR_SPACE_BT709
