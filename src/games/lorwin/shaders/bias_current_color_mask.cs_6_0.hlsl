@@ -92,6 +92,13 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
       (relative_depth_range - g_BiasMaskParams.w)
       / max(g_BiasMaskParams.w * 3.f, 1e-5f));
 
-  const float rejection = max(color_response, max(depth_response, motion_response));
+  // A spatial depth edge is not, by itself, evidence that temporal history is
+  // invalid. Rejecting every edge prevents DLAA from accumulating the jittered
+  // samples that stabilize thin geometry, foliage, and alpha-tested details.
+  // Preserve most history at stable silhouettes, while motion disagreement can
+  // still fully reject genuine disocclusions and temporal color changes remain
+  // effective on particles and animated textures away from geometry edges.
+  const float edge_protected_color_response = color_response * lerp(1.f, 0.2f, depth_response);
+  const float rejection = max(edge_protected_color_response, motion_response);
   BiasCurrentColorMask[dispatch_id.xy] = saturate(rejection * g_BiasMaskParams.y);
 }

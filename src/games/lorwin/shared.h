@@ -42,6 +42,7 @@ struct ShaderInjectData {
   float dlaa_debug_view;
   float dlaa_enabled;
   float hdr_output_active;
+  float improved_ambient_occlusion;
 };
 
 #ifndef __cplusplus
@@ -79,6 +80,7 @@ cbuffer shader_injection : register(b13) {
 #define CUSTOM_RANDOM                        shader_injection.custom_random
 #define CUSTOM_DLAA_DEBUG_VIEW                shader_injection.dlaa_debug_view
 #define CUSTOM_DLAA_ENABLED                   shader_injection.dlaa_enabled
+#define CUSTOM_IMPROVED_AMBIENT_OCCLUSION     shader_injection.improved_ambient_occlusion
 #define RENODX_SWAP_CHAIN_DECODING           (RENODX_GAMMA_CORRECTION + 1.f)
 #define RENODX_SWAP_CHAIN_GAMMA_CORRECTION   2.2f
 #define RENODX_SWAP_CHAIN_CUSTOM_COLOR_SPACE renodx::color::convert::COLOR_SPACE_BT709
