@@ -31,6 +31,7 @@ namespace lorwin::jitter {
 // {2 * x / width, -2 * y / height} in NDC. This gives the camera a real
 // sub-pixel jitter without reading or modifying the game's constant buffers.
 inline float pattern = 0.f;
+inline float camera_jitter_scale = 1.f;
 inline const float* dlaa_enabled_binding = nullptr;
 
 struct __declspec(uuid("7f40fd89-fac0-44b8-b1e8-3609d82d1da5")) CommandListData {
@@ -51,6 +52,11 @@ struct Diagnostics {
   std::atomic<uint64_t> depth_size_mismatch = 0u;
   std::atomic<uint64_t> main_depth_unknown = 0u;
   std::atomic<uint64_t> main_depth_mismatch = 0u;
+  std::atomic<uint64_t> scene_color_unknown = 0u;
+  std::atomic<uint64_t> scene_color_mismatch = 0u;
+  std::atomic<uint64_t> scene_color_missing_depth = 0u;
+  std::atomic<uint64_t> depth_eligible_draws = 0u;
+  std::atomic<uint64_t> scene_color_eligible_draws = 0u;
   std::atomic<uint64_t> eligible_draws = 0u;
   std::atomic<uint64_t> viewport_jitter_binds = 0u;
   std::atomic<uint64_t> viewport_restores = 0u;
@@ -59,14 +65,17 @@ struct Diagnostics {
 inline Diagnostics diagnostics;
 inline std::mutex probe_mutex;
 inline std::set<uint32_t> logged_vertex_shaders;
+inline std::set<uint32_t> logged_scene_color_vertex_shaders;
 inline reshade::api::swapchain* tracked_swapchain = nullptr;
 inline uint32_t render_width = 0u;
 inline uint32_t render_height = 0u;
 inline std::atomic<uint64_t> postprocess_depth_resource = 0u;
 inline std::atomic<uint64_t> main_scene_depth_resource = 0u;
+inline std::atomic<uint64_t> postprocess_scene_color_resource = 0u;
+inline std::atomic<uint64_t> main_scene_color_resource = 0u;
 inline std::atomic<uint64_t> last_scene_jitter_frame = std::numeric_limits<uint64_t>::max();
-inline std::mutex depth_lineage_mutex;
-inline std::unordered_map<uint64_t, uint64_t> depth_copy_sources;
+inline std::mutex resource_lineage_mutex;
+inline std::unordered_map<uint64_t, uint64_t> resource_copy_sources;
 inline std::atomic<uint64_t> probe_start_frame = std::numeric_limits<uint64_t>::max();
 inline std::atomic<int> last_logged_pattern = -1;
 inline std::atomic<bool> diagnostics_logged = false;
@@ -113,28 +122,62 @@ inline void SetDlaaEnabledBinding(const float* binding) {
 
 inline std::array<float, 2> GetPixelJitter() {
   const uint64_t frame_index = resource_logger::frame_index.load();
+  std::array<float, 2> pixel_jitter = {};
   switch (GetSelectedPattern()) {
     case 1:
-      return Halton8(frame_index);
+      pixel_jitter = Halton8(frame_index);
+      break;
     case 2:
-      return FourQuadrant(frame_index);
+      pixel_jitter = FourQuadrant(frame_index);
+      break;
     default:
       return {0.f, 0.f};
   }
+  const float scale = std::clamp(camera_jitter_scale, 0.f, 200.f);
+  return {pixel_jitter[0] * scale, pixel_jitter[1] * scale};
 }
 
 inline bool WasMainSceneJitteredThisFrame() {
   return last_scene_jitter_frame.load() == resource_logger::frame_index.load();
 }
 
+inline reshade::api::viewport GetActiveViewport(
+    reshade::api::command_list* cmd_list,
+    uint32_t index,
+    const reshade::api::viewport& fallback) {
+  const auto* data = cmd_list != nullptr
+                         ? renodx::utils::data::Get<CommandListData>(cmd_list)
+                         : nullptr;
+  if (data == nullptr || index >= data->base_viewports.size()) return fallback;
+
+  auto viewport = data->base_viewports[index];
+  if (data->jitter_applied) {
+    viewport.x += data->applied_pixel_jitter[0];
+    viewport.y += data->applied_pixel_jitter[1];
+  }
+  return viewport;
+}
+
 inline std::array<float, 2> GetEvaluationPixelJitter() {
   return WasMainSceneJitteredThisFrame() ? GetPixelJitter() : std::array<float, 2>{0.f, 0.f};
 }
 
-inline uint64_t ResolveDepthCopySourceLocked(uint64_t resource) {
+inline bool IsTrackedSceneDepth(reshade::api::command_list* cmd_list) {
+  auto* device = cmd_list != nullptr ? cmd_list->get_device() : nullptr;
+  const auto* state = cmd_list != nullptr ? renodx::utils::state::GetCurrentState(cmd_list) : nullptr;
+  if (device == nullptr || state == nullptr || state->depth_stencil.handle == 0u) return false;
+
+  const auto depth = renodx::utils::resource::GetResourceFromView(device, state->depth_stencil);
+  if (depth.handle == 0u) return false;
+  const uint64_t postprocess_depth = postprocess_depth_resource.load();
+  const uint64_t main_depth = main_scene_depth_resource.load();
+  return depth.handle == postprocess_depth || (main_depth != 0u && depth.handle == main_depth);
+}
+
+inline uint64_t ResolveCopySourceLocked(uint64_t resource) {
   for (uint32_t i = 0u; i < 16u; ++i) {
-    const auto pair = depth_copy_sources.find(resource);
-    if (pair == depth_copy_sources.end() || pair->second == 0u || pair->second == resource) break;
+    const auto pair = resource_copy_sources.find(resource);
+    if (pair == resource_copy_sources.end() || pair->second == 0u || pair->second == resource) break;
     resource = pair->second;
   }
   return resource;
@@ -147,8 +190,8 @@ inline void SetPostprocessDepthResource(reshade::api::resource resource) {
 
   uint64_t source = resource.handle;
   {
-    std::scoped_lock lock(depth_lineage_mutex);
-    source = ResolveDepthCopySourceLocked(resource.handle);
+    std::scoped_lock lock(resource_lineage_mutex);
+    source = ResolveCopySourceLocked(resource.handle);
   }
   main_scene_depth_resource = source == resource.handle ? 0u : source;
   last_scene_jitter_frame = std::numeric_limits<uint64_t>::max();
@@ -159,43 +202,97 @@ inline void SetPostprocessDepthResource(reshade::api::resource resource) {
   reshade::log::message(reshade::log::level::info, s.str().c_str());
 }
 
-inline void RecordDepthCopy(
+inline void SetPostprocessSceneColorResource(reshade::api::resource resource) {
+  if (resource.handle == 0u) return;
+  const uint64_t previous = postprocess_scene_color_resource.exchange(resource.handle);
+  if (previous == resource.handle) return;
+
+  uint64_t source = resource.handle;
+  {
+    std::scoped_lock lock(resource_lineage_mutex);
+    source = ResolveCopySourceLocked(resource.handle);
+  }
+  main_scene_color_resource = source == resource.handle ? 0u : source;
+  last_scene_jitter_frame = std::numeric_limits<uint64_t>::max();
+  std::stringstream s;
+  s << "LORWIN DLAA jitter: tracking postprocess scene color resource=0x" << std::hex << resource.handle;
+  if (source != resource.handle) s << " exact source RTV=0x" << source;
+  else s << " direct source RTV";
+  reshade::log::message(reshade::log::level::info, s.str().c_str());
+}
+
+inline void RecordResourceCopy(
     reshade::api::resource source,
     reshade::api::resource dest,
     const char* operation) {
   if (source.handle == 0u || dest.handle == 0u) return;
 
   uint64_t resolved_source = 0u;
+  uint64_t resolved_color_source = 0u;
   {
-    std::scoped_lock lock(depth_lineage_mutex);
-    depth_copy_sources[dest.handle] = source.handle;
+    std::scoped_lock lock(resource_lineage_mutex);
+    resource_copy_sources[dest.handle] = source.handle;
     const uint64_t postprocess_depth = postprocess_depth_resource.load();
-    if (postprocess_depth != 0u) resolved_source = ResolveDepthCopySourceLocked(postprocess_depth);
+    if (postprocess_depth != 0u) resolved_source = ResolveCopySourceLocked(postprocess_depth);
+    const uint64_t postprocess_color = postprocess_scene_color_resource.load();
+    if (postprocess_color != 0u) resolved_color_source = ResolveCopySourceLocked(postprocess_color);
   }
 
+  bool changed = false;
   const uint64_t postprocess_depth = postprocess_depth_resource.load();
-  if (postprocess_depth == 0u || resolved_source == 0u || resolved_source == postprocess_depth) return;
-  const uint64_t previous = main_scene_depth_resource.exchange(resolved_source);
-  if (previous == resolved_source) return;
+  if (postprocess_depth != 0u && resolved_source != 0u && resolved_source != postprocess_depth) {
+    const uint64_t previous = main_scene_depth_resource.exchange(resolved_source);
+    if (previous != resolved_source) {
+      changed = true;
+      std::stringstream s;
+      s << "LORWIN DLAA jitter: resolved exact main-scene depth source=0x" << std::hex << resolved_source
+        << " -> postprocess depth=0x" << postprocess_depth << " via " << operation;
+      reshade::log::message(reshade::log::level::info, s.str().c_str());
+    }
+  }
 
-  last_scene_jitter_frame = std::numeric_limits<uint64_t>::max();
-  std::stringstream s;
-  s << "LORWIN DLAA jitter: resolved exact main-scene depth source=0x" << std::hex << resolved_source
-    << " -> postprocess depth=0x" << postprocess_depth << " via " << operation;
-  reshade::log::message(reshade::log::level::info, s.str().c_str());
+  const uint64_t postprocess_color = postprocess_scene_color_resource.load();
+  if (postprocess_color != 0u
+      && resolved_color_source != 0u
+      && resolved_color_source != postprocess_color) {
+    const uint64_t previous_color = main_scene_color_resource.exchange(resolved_color_source);
+    if (previous_color != resolved_color_source) {
+      changed = true;
+      std::stringstream color_log;
+      color_log << "LORWIN DLAA jitter: resolved exact main-scene color source=0x" << std::hex
+                << resolved_color_source << " -> postprocess scene color=0x" << postprocess_color
+                << " via " << operation;
+      reshade::log::message(reshade::log::level::info, color_log.str().c_str());
+    }
+  }
+  if (changed) last_scene_jitter_frame = std::numeric_limits<uint64_t>::max();
 }
 
-inline void ForgetDepthResource(reshade::api::resource resource) {
+inline void ForgetResource(reshade::api::resource resource) {
+  bool forgot_tracked_resource = false;
   uint64_t expected = resource.handle;
-  postprocess_depth_resource.compare_exchange_strong(expected, 0u);
+  if (postprocess_depth_resource.compare_exchange_strong(expected, 0u)) {
+    main_scene_depth_resource = 0u;
+    forgot_tracked_resource = true;
+  }
   expected = resource.handle;
   if (expected != 0u && main_scene_depth_resource.compare_exchange_strong(expected, 0u)) {
-    last_scene_jitter_frame = std::numeric_limits<uint64_t>::max();
+    forgot_tracked_resource = true;
   }
-  std::scoped_lock lock(depth_lineage_mutex);
-  depth_copy_sources.erase(resource.handle);
-  for (auto it = depth_copy_sources.begin(); it != depth_copy_sources.end();) {
-    if (it->second == resource.handle) it = depth_copy_sources.erase(it);
+  expected = resource.handle;
+  if (postprocess_scene_color_resource.compare_exchange_strong(expected, 0u)) {
+    main_scene_color_resource = 0u;
+    forgot_tracked_resource = true;
+  }
+  expected = resource.handle;
+  if (expected != 0u && main_scene_color_resource.compare_exchange_strong(expected, 0u)) {
+    forgot_tracked_resource = true;
+  }
+  if (forgot_tracked_resource) last_scene_jitter_frame = std::numeric_limits<uint64_t>::max();
+  std::scoped_lock lock(resource_lineage_mutex);
+  resource_copy_sources.erase(resource.handle);
+  for (auto it = resource_copy_sources.begin(); it != resource_copy_sources.end();) {
+    if (it->second == resource.handle) it = resource_copy_sources.erase(it);
     else ++it;
   }
 }
@@ -219,66 +316,96 @@ inline void ResetDiagnostics() {
   diagnostics.depth_size_mismatch = 0u;
   diagnostics.main_depth_unknown = 0u;
   diagnostics.main_depth_mismatch = 0u;
+  diagnostics.scene_color_unknown = 0u;
+  diagnostics.scene_color_mismatch = 0u;
+  diagnostics.scene_color_missing_depth = 0u;
+  diagnostics.depth_eligible_draws = 0u;
+  diagnostics.scene_color_eligible_draws = 0u;
   diagnostics.eligible_draws = 0u;
   diagnostics.viewport_jitter_binds = 0u;
   diagnostics.viewport_restores = 0u;
   diagnostics_logged = false;
   std::scoped_lock lock(probe_mutex);
   logged_vertex_shaders.clear();
+  logged_scene_color_vertex_shaders.clear();
 }
 
-inline bool IsFullResolutionSceneDraw(reshade::api::command_list* cmd_list) {
+enum class SceneDrawEligibility {
+  kIneligible,
+  kExactDepth,
+  kExactSceneColor,
+};
+
+inline SceneDrawEligibility GetFullResolutionSceneDrawEligibility(reshade::api::command_list* cmd_list) {
   ++diagnostics.draws;
   if (cmd_list == nullptr || render_width == 0u || render_height == 0u) {
     ++diagnostics.missing_render_size;
-    return false;
+    return SceneDrawEligibility::kIneligible;
   }
 
   auto* device = cmd_list->get_device();
   const auto* state = renodx::utils::state::GetCurrentState(cmd_list);
   if (device == nullptr || state == nullptr) {
     ++diagnostics.missing_state;
-    return false;
+    return SceneDrawEligibility::kIneligible;
   }
   if (state->viewports.empty()) {
     ++diagnostics.missing_viewport;
-    return false;
+    return SceneDrawEligibility::kIneligible;
   }
 
   const auto& viewport = state->viewports[0];
   if (std::abs(viewport.width - static_cast<float>(render_width)) >= 0.5f
       || std::abs(viewport.height - static_cast<float>(render_height)) >= 0.5f) {
     ++diagnostics.viewport_size_mismatch;
-    return false;
-  }
-  if (state->depth_stencil.handle == 0u) {
-    ++diagnostics.missing_depth;
-    return false;
+    return SceneDrawEligibility::kIneligible;
   }
 
+  reshade::api::resource render_target = {};
+  if (!state->render_targets.empty() && state->render_targets[0].handle != 0u) {
+    render_target = renodx::utils::resource::GetResourceFromView(device, state->render_targets[0]);
+  }
+  const uint64_t postprocess_color = postprocess_scene_color_resource.load();
+  const uint64_t expected_color = main_scene_color_resource.load();
+  const bool exact_scene_color = render_target.handle != 0u
+                                 && (render_target.handle == postprocess_color
+                                     || (expected_color != 0u && render_target.handle == expected_color));
+  if (postprocess_color == 0u) ++diagnostics.scene_color_unknown;
+  else if (!exact_scene_color) ++diagnostics.scene_color_mismatch;
+
+  if (state->depth_stencil.handle == 0u) {
+    ++diagnostics.missing_depth;
+    if (exact_scene_color) ++diagnostics.scene_color_missing_depth;
+    return SceneDrawEligibility::kIneligible;
+  }
   const auto depth = renodx::utils::resource::GetResourceFromView(device, state->depth_stencil);
   if (depth.handle == 0u) {
     ++diagnostics.missing_depth;
-    return false;
+    if (exact_scene_color) ++diagnostics.scene_color_missing_depth;
+    return SceneDrawEligibility::kIneligible;
   }
   const auto depth_desc = renodx::utils::resource::GetResourceDesc(device, depth);
   if (depth_desc.texture.width != render_width || depth_desc.texture.height != render_height) {
     ++diagnostics.depth_size_mismatch;
-    return false;
+    return SceneDrawEligibility::kIneligible;
   }
   const uint64_t postprocess_depth = postprocess_depth_resource.load();
   const uint64_t expected_depth = main_scene_depth_resource.load();
   if (postprocess_depth == 0u) {
     ++diagnostics.main_depth_unknown;
-    return false;
-  }
-  if (depth.handle != postprocess_depth && depth.handle != expected_depth) {
-    ++diagnostics.main_depth_mismatch;
-    return false;
+  } else if (depth.handle == postprocess_depth
+             || (expected_depth != 0u && depth.handle == expected_depth)) {
+    ++diagnostics.depth_eligible_draws;
+    ++diagnostics.eligible_draws;
+    return SceneDrawEligibility::kExactDepth;
   }
 
+  ++diagnostics.main_depth_mismatch;
+  if (!exact_scene_color) return SceneDrawEligibility::kIneligible;
+
+  ++diagnostics.scene_color_eligible_draws;
   ++diagnostics.eligible_draws;
-  return true;
+  return SceneDrawEligibility::kExactSceneColor;
 }
 
 inline void LogDiagnostics(uint64_t frame_index) {
@@ -291,9 +418,11 @@ inline void LogDiagnostics(uint64_t frame_index) {
   }
 
   size_t unique_vertex_shaders = 0u;
+  size_t unique_scene_color_vertex_shaders = 0u;
   {
     std::scoped_lock lock(probe_mutex);
     unique_vertex_shaders = logged_vertex_shaders.size();
+    unique_scene_color_vertex_shaders = logged_scene_color_vertex_shaders.size();
   }
   std::stringstream s;
   s << "LORWIN DLAA jitter probe: 60-frame diagnostics"
@@ -306,10 +435,16 @@ inline void LogDiagnostics(uint64_t frame_index) {
     << " depth_mismatch=" << diagnostics.depth_size_mismatch.exchange(0u)
     << " main_depth_unknown=" << diagnostics.main_depth_unknown.exchange(0u)
     << " main_depth_mismatch=" << diagnostics.main_depth_mismatch.exchange(0u)
+    << " scene_color_unknown=" << diagnostics.scene_color_unknown.exchange(0u)
+    << " scene_color_mismatch=" << diagnostics.scene_color_mismatch.exchange(0u)
+    << " scene_color_no_depth=" << diagnostics.scene_color_missing_depth.exchange(0u)
+    << " depth_eligible=" << diagnostics.depth_eligible_draws.exchange(0u)
+    << " scene_color_eligible=" << diagnostics.scene_color_eligible_draws.exchange(0u)
     << " eligible=" << diagnostics.eligible_draws.exchange(0u)
     << " jitter_binds=" << diagnostics.viewport_jitter_binds.exchange(0u)
     << " viewport_restores=" << diagnostics.viewport_restores.exchange(0u)
-    << " unique_vertex_shaders=" << unique_vertex_shaders;
+    << " unique_vertex_shaders=" << unique_vertex_shaders
+    << " unique_scene_color_vertex_shaders=" << unique_scene_color_vertex_shaders;
   reshade::log::message(reshade::log::level::info, s.str().c_str());
 }
 
@@ -376,13 +511,15 @@ inline void ApplyCameraJitter(reshade::api::command_list* cmd_list) {
     s << "LORWIN DLAA jitter: ACTIVE viewport pattern="
       << (selected_pattern == 1 ? "Halton8" : "FourQuadrant")
       << " render_size=" << render_width << "x" << render_height
+      << " scale=" << camera_jitter_scale
       << " pixel=(" << pixel_jitter[0] << ", " << pixel_jitter[1] << ")"
       << " projection=(" << projection_jitter[0] << ", " << projection_jitter[1] << ")"
       << "; game constant-buffer memory is not read or modified.";
     reshade::log::message(reshade::log::level::info, s.str().c_str());
   }
 
-  if (!IsFullResolutionSceneDraw(cmd_list)) {
+  const auto eligibility = GetFullResolutionSceneDrawEligibility(cmd_list);
+  if (eligibility == SceneDrawEligibility::kIneligible) {
     BindBaseViewports(cmd_list, command_list_data);
     LogDiagnostics(frame_index);
     return;
@@ -398,14 +535,19 @@ inline void ApplyCameraJitter(reshade::api::command_list* cmd_list) {
   bool should_log = false;
   {
     std::scoped_lock lock(probe_mutex);
-    if (logged_vertex_shaders.size() < 64u) {
-      should_log = logged_vertex_shaders.insert(vertex_shader_hash).second;
+    auto& logged_shaders = eligibility == SceneDrawEligibility::kExactSceneColor
+                               ? logged_scene_color_vertex_shaders
+                               : logged_vertex_shaders;
+    if (logged_shaders.size() < 64u) {
+      should_log = logged_shaders.insert(vertex_shader_hash).second;
     }
   }
   if (should_log) {
     const auto* state = renodx::utils::state::GetCurrentState(cmd_list);
     std::stringstream s;
-    s << "LORWIN DLAA jitter probe: eligible vertex_shader=0x" << std::hex << vertex_shader_hash
+    s << "LORWIN DLAA jitter probe: eligible="
+      << (eligibility == SceneDrawEligibility::kExactSceneColor ? "scene_color_fallback" : "exact_depth")
+      << " vertex_shader=0x" << std::hex << vertex_shader_hash
       << " graphics_layout=0x" << (state != nullptr ? state->graphics_pipeline_layout.handle : 0u)
       << std::dec << " render_size=" << render_width << "x" << render_height;
     reshade::log::message(reshade::log::level::info, s.str().c_str());
@@ -427,7 +569,7 @@ inline bool OnCopyResource(
     reshade::api::command_list*,
     reshade::api::resource source,
     reshade::api::resource dest) {
-  RecordDepthCopy(source, dest, "copy_resource");
+  RecordResourceCopy(source, dest, "copy_resource");
   return false;
 }
 
@@ -440,7 +582,7 @@ inline bool OnCopyTextureRegion(
     uint32_t,
     const reshade::api::subresource_box*,
     reshade::api::filter_mode) {
-  RecordDepthCopy(source, dest, "copy_texture_region");
+  RecordResourceCopy(source, dest, "copy_texture_region");
   return false;
 }
 
@@ -455,7 +597,7 @@ inline bool OnResolveTextureRegion(
     uint32_t,
     uint32_t,
     reshade::api::format) {
-  RecordDepthCopy(source, dest, "resolve_texture_region");
+  RecordResourceCopy(source, dest, "resolve_texture_region");
   return false;
 }
 
@@ -518,10 +660,12 @@ inline void OnInitSwapchain(reshade::api::swapchain* swapchain, bool) {
   if (size_changed) {
     postprocess_depth_resource = 0u;
     main_scene_depth_resource = 0u;
+    postprocess_scene_color_resource = 0u;
+    main_scene_color_resource = 0u;
     last_scene_jitter_frame = std::numeric_limits<uint64_t>::max();
     {
-      std::scoped_lock lock(depth_lineage_mutex);
-      depth_copy_sources.clear();
+      std::scoped_lock lock(resource_lineage_mutex);
+      resource_copy_sources.clear();
     }
     std::stringstream s;
     s << "LORWIN DLAA jitter probe: tracking primary swapchain render_size="
@@ -534,10 +678,12 @@ inline void OnDestroySwapchain(reshade::api::swapchain* swapchain, bool resize) 
   if (swapchain != tracked_swapchain) return;
   postprocess_depth_resource = 0u;
   main_scene_depth_resource = 0u;
+  postprocess_scene_color_resource = 0u;
+  main_scene_color_resource = 0u;
   last_scene_jitter_frame = std::numeric_limits<uint64_t>::max();
   {
-    std::scoped_lock lock(depth_lineage_mutex);
-    depth_copy_sources.clear();
+    std::scoped_lock lock(resource_lineage_mutex);
+    resource_copy_sources.clear();
   }
   if (resize) return;
   tracked_swapchain = nullptr;

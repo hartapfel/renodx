@@ -129,10 +129,7 @@ inline float bias_current_color_mask = 1.f;
 inline float bias_current_color_strength = 1.f;
 inline float jitter_axes = 0.f;
 inline float jitter_scale = 1.f;
-inline float depth_inverted = 0.f;
-inline float motion_vectors_jittered = 0.f;
-inline float hdr_input = 0.f;
-inline float auto_exposure = 1.f;
+inline float force_history_reset = 0.f;
 inline bool is_nvidia_device = false;
 inline reshade::api::device* detected_d3d12_device = nullptr;
 inline int last_motion_vector_axes = -1;
@@ -142,6 +139,7 @@ inline int last_jitter_axes = -1;
 inline int last_camera_jitter_pattern = -1;
 inline float last_motion_vector_scale = std::numeric_limits<float>::quiet_NaN();
 inline float last_bias_current_color_strength = std::numeric_limits<float>::quiet_NaN();
+inline float last_camera_jitter_scale = std::numeric_limits<float>::quiet_NaN();
 inline float last_jitter_scale = std::numeric_limits<float>::quiet_NaN();
 inline bool installed_callbacks = false;
 inline bool installed_events = false;
@@ -201,12 +199,9 @@ inline const char* GetRenderPresetName(int preset) {
 }
 
 inline int GetFeatureFlags() {
-  int flags = 0;
-  if (depth_inverted != 0.f) flags |= NVSDK_NGX_DLSS_Feature_Flags_DepthInverted;
-  if (motion_vectors_jittered != 0.f) flags |= NVSDK_NGX_DLSS_Feature_Flags_MVJittered;
-  if (hdr_input != 0.f) flags |= NVSDK_NGX_DLSS_Feature_Flags_IsHDR;
-  if (auto_exposure != 0.f) flags |= NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
-  return flags;
+  // Validated fixed configuration: standard depth, LDR color, camera vectors
+  // without viewport jitter, and NGX auto exposure (no exposure texture).
+  return NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
 }
 
 inline std::array<float, 2> GetAxisSigns(float axes) {
@@ -1052,7 +1047,7 @@ inline bool RunMotionVectorPrepass(reshade::api::command_list* cmd_list) {
   const std::array<float, 4> dilation_constants = {
       pixel_jitter[0],
       pixel_jitter[1],
-      depth_inverted,
+      0.f,
       motion_vector_dilation,
   };
   cmd_list->push_constants(
@@ -1159,8 +1154,8 @@ inline bool RunBiasCurrentColorMaskPrepass(
   const std::array<float, 8> constants = {
       history_available ? 1.f : 0.f,
       bias_current_color_strength,
-      0.08f,
-      0.002f,
+      0.04f,
+      0.001f,
       (resources.previous_color_jitter[0] - pixel_jitter[0]) / static_cast<float>(resources.dlaa_width),
       (resources.previous_color_jitter[1] - pixel_jitter[1]) / static_cast<float>(resources.dlaa_height),
       0.f,
@@ -1225,7 +1220,9 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
                      : binding_srvs;
   const auto& scene_srv = srvs[0];
   const auto& depth_srv = srvs[3];
+  const auto source = renodx::utils::resource::GetResourceFromView(device, scene_srv.view);
   const auto depth = renodx::utils::resource::GetResourceFromView(device, depth_srv.view);
+  if (source.handle != 0u) jitter::SetPostprocessSceneColorResource(source);
   if (depth.handle != 0u) jitter::SetPostprocessDepthResource(depth);
   if (enabled == 0.f || !is_nvidia_device) return true;
   if (scene_srv.view.handle == 0u
@@ -1242,7 +1239,6 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
     return true;
   }
 
-  const auto source = renodx::utils::resource::GetResourceFromView(device, scene_srv.view);
   if (source.handle == 0u || depth.handle == 0u) return true;
   const auto source_desc = renodx::utils::resource::GetResourceDesc(device, source);
   const auto source_view_desc = renodx::utils::resource::GetResourceViewDesc(device, scene_srv.view);
@@ -1269,7 +1265,6 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
       || !EnsureDlaaTextures(device, source_desc.texture.width, source_desc.texture.height, typed_format)) {
     return true;
   }
-
   const uint64_t current_frame = resource_logger::frame_index.load();
   if (last_evaluation_frame == current_frame && last_source_resource == source) {
     if (shader_injection != nullptr) shader_injection->dlaa_enabled = 1.f;
@@ -1324,6 +1319,7 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
                               || selected_camera_jitter_pattern != last_camera_jitter_pattern
                               || motion_vector_scale != last_motion_vector_scale
                               || bias_current_color_strength != last_bias_current_color_strength
+                              || jitter::camera_jitter_scale != last_camera_jitter_scale
                               || jitter_scale != last_jitter_scale;
   if (tuning_changed) {
     last_motion_vector_axes = selected_motion_vector_axes;
@@ -1333,6 +1329,7 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
     last_camera_jitter_pattern = selected_camera_jitter_pattern;
     last_motion_vector_scale = motion_vector_scale;
     last_bias_current_color_strength = bias_current_color_strength;
+    last_camera_jitter_scale = jitter::camera_jitter_scale;
     last_jitter_scale = jitter_scale;
     reset_history = true;
 
@@ -1343,12 +1340,29 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
       << " bias_mask=" << (selected_bias_current_color_mask != 0 ? "on" : "off")
       << " bias_mask_strength=" << bias_current_color_strength
       << " camera_jitter_pattern=" << selected_camera_jitter_pattern
+      << " camera_jitter_scale=" << jitter::camera_jitter_scale
       << " jitter_raw=(" << pixel_jitter[0] << ", " << pixel_jitter[1] << ")"
       << " jitter_axes=" << selected_jitter_axes
-      << " jitter_scale=" << jitter_scale;
+      << " ngx_jitter_scale=" << jitter_scale;
     reshade::log::message(reshade::log::level::info, s.str().c_str());
   }
-  const bool evaluation_reset = reset_history.exchange(false) || source_changed || discontinuous;
+  const float requested_ngx_jitter_x = pixel_jitter[0] * jitter_signs[0] * jitter_scale;
+  const float requested_ngx_jitter_y = pixel_jitter[1] * jitter_signs[1] * jitter_scale;
+  const bool camera_jitter_overdriven = jitter::camera_jitter_scale > 1.f;
+  const bool ngx_jitter_out_of_range = std::abs(requested_ngx_jitter_x) > 0.5f
+                                       || std::abs(requested_ngx_jitter_y) > 0.5f;
+  // Camera overdrive is a coverage-only test, so keep NGX isolated from it.
+  // Do not silently replace an independently scaled NGX sample with zero: that
+  // made the largest Halton sample reset history once every eight frames above
+  // roughly 114%, invalidating the scale diagnostic and introducing a periodic
+  // shake of its own. Out-of-range NGX values remain visible in the log and are
+  // intentionally passed through for debugging.
+  const bool suppress_ngx_jitter = camera_jitter_overdriven;
+  const bool evaluation_reset = reset_history.exchange(false)
+                                || source_changed
+                                || discontinuous
+                                || suppress_ngx_jitter
+                                || force_history_reset != 0.f;
   const bool bias_mask_ready = RunBiasCurrentColorMaskPrepass(
       cmd_list,
       depth_srv.view,
@@ -1362,8 +1376,8 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
   eval.pInBiasCurrentColorMask = bias_mask_ready
                                      ? reinterpret_cast<ID3D12Resource*>(resources.bias_current_color_mask.handle)
                                      : nullptr;
-  eval.InJitterOffsetX = pixel_jitter[0] * jitter_signs[0] * jitter_scale;
-  eval.InJitterOffsetY = pixel_jitter[1] * jitter_signs[1] * jitter_scale;
+  eval.InJitterOffsetX = suppress_ngx_jitter ? 0.f : requested_ngx_jitter_x;
+  eval.InJitterOffsetY = suppress_ngx_jitter ? 0.f : requested_ngx_jitter_y;
   eval.InRenderSubrectDimensions.Width = source_desc.texture.width;
   eval.InRenderSubrectDimensions.Height = source_desc.texture.height;
   eval.InReset = evaluation_reset ? 1 : 0;
@@ -1400,6 +1414,8 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
     s << "LORWIN DLAA: evaluation active at " << source_desc.texture.width << "x" << source_desc.texture.height
       << " jitter_raw=(" << pixel_jitter[0] << ", " << pixel_jitter[1] << ")"
       << " jitter_ngx=(" << eval.InJitterOffsetX << ", " << eval.InJitterOffsetY << ")"
+      << " jitter_suppressed=" << (suppress_ngx_jitter ? "yes" : "no")
+      << " jitter_out_of_range=" << (ngx_jitter_out_of_range ? "yes" : "no")
       << " mv_scale=(" << eval.InMVScaleX << ", " << eval.InMVScaleY << ")"
       << " bias_mask=" << (bias_mask_ready ? "on" : "off")
       << " flags=" << GetFeatureFlagsName(ngx.feature_flags)
@@ -1526,7 +1542,7 @@ inline void OnBarrier(
 }
 
 inline void OnDestroyResource(reshade::api::device*, reshade::api::resource resource) {
-  jitter::ForgetDepthResource(resource);
+  jitter::ForgetResource(resource);
   const std::unique_lock lock(resource_state_mutex);
   resource_states.erase(resource.handle);
 }

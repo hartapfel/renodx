@@ -6,221 +6,184 @@ Game: The Lord of the Rings: War in the North - Legacy Edition
 RenoDX shortname: `lorwin`  
 Renderer: D3D12
 
-The normal HDR path remains intact, and DLAA can now run independently on native SDR output when Windows HDR is disabled. The implementation includes the prerequisite motion-vector prepass, real camera jitter through the raster viewport transform, a synthetic current-color bias mask, and an NVIDIA NGX DLAA evaluation immediately before the game's final postprocess draw. DLAA is off by default pending runtime validation.
+The addon can run NVIDIA DLAA immediately before the game's final postprocess draw in both HDR and SDR. It supplies real camera jitter, camera-derived motion vectors, native depth, and an optional synthetic history-confidence mask. DLAA remains off by default.
 
-## Windows HDR / SDR Routing
+Per-object motion-vector capture and replay were removed on 2026-08-17. The replay path never became reliable enough for production and could destabilize the whole frame. The supported path is intentionally camera-only, with depth-neighborhood conditioning at silhouettes and disocclusions.
 
-The addon queries the Windows HDR state for the main D3D12 swapchain's monitor before the RenoDX swapchain callback runs, then confirms it again when the swapchain initializes:
+## HDR / SDR Routing
 
-- With Windows HDR enabled, the existing HDR10 swapchain proxy and RenoDX tone-mapping path remain enabled. Tone Mapping, Color Grading, Effects, and reset controls remain visible.
-- With Windows HDR disabled, the game keeps its requested SDR backbuffer format and color space. Resource cloning and HDR10 swapchain conversion are disabled, and replacement postprocess shaders force `RENODX_TONE_MAP_TYPE` to vanilla regardless of saved HDR settings. This selects the game's native tone map, scene grade, gamma texture, and noise branches.
-- In SDR, the HDR-specific settings and reset button are hidden. The DLAA and collapsed DLAA Debugging controls remain available, and their saved values are unaffected by HDR state changes.
+- With Windows HDR enabled, the established HDR10 swapchain proxy and RenoDX tone-mapping path remain active.
+- With Windows HDR disabled, the game keeps its native SDR backbuffer and color space. HDR resource cloning is disabled and the replacement postprocess shaders force the vanilla tone-map, grade, gamma, and noise branches.
+- DLAA and DLAA debugging remain available in both modes. HDR-only controls are hidden in SDR.
+- A Windows HDR change takes effect after the swapchain is recreated or the game is restarted.
 
-The selected route is logged as `LORWIN output: Windows HDR is enabled ...` or `LORWIN output: Windows HDR is disabled ...`. Changing Windows HDR requires the game/swapchain to be restarted or recreated before the route and settings visibility update.
+The selected route is logged as `LORWIN output: Windows HDR is enabled ...` or `LORWIN output: Windows HDR is disabled ...`.
 
-## Runtime Evidence
+## Verified Postprocess Inputs
 
-The latest `logs/ReShade.log` capture identifies `0xCFC0C7CF` as the active postprocess variant. An earlier capture used `0x17BBC7EE`; both are among the four handled variants. It also confirms stable Halton 8 and Four Quadrant viewport jitter, 181 jitter binds over the 60-frame diagnostic window, 60 viewport restores, and clean addon/device shutdown. The stable full-resolution resources at 3840x2160 are:
+All four wrapped postprocess variants use the same relevant `$Globals` b0 layout:
 
-- `t0`: scene color, `r8g8b8a8_typeless` resource with `r8g8b8a8_unorm` SRV.
-- `t3`: depth, `r24_g8_typeless` resource with `r24_unorm_x8_uint` SRV.
-- `rtv0`: postprocess output, `r10g10b10a2_unorm`.
-- Pixel SRVs are in graphics layout parameter 2; the range begins at binding 0.
-- The viewport and scissor are full resolution.
-
-All four postprocess variants share the same `$Globals` b0 layout. The game already reconstructs camera velocity in the motion-blur variants from:
-
+- `t0`: full-resolution RGBA8 scene color.
+- `t3`: full-resolution `r24_unorm_x8_uint` depth view.
 - `g_DOFBlurVals.w` at c2.w.
 - `g_MotionBlurXform` at c6-c9.
-- The depth texture at t3.
 
-## Implemented Motion-Vector Prepass
+The known postprocess shaders are:
 
-`dlaa.hpp` intercepts each known postprocess draw before it executes. Once per presented frame it:
+- `0xCFC0C7CF`
+- `0x17BBC7EE`
+- `0x9805B9F6`
+- `0x0C0E1BA4`
 
-1. Resolves the native pixel b0 constant buffer and depth t3 SRV from the active draw.
-2. Creates a full-resolution `R16G16_FLOAT` SRV/UAV motion-vector texture.
-3. Dispatches `shaders/motion_vectors.cs_6_0.hlsl` before the postprocess draw.
-4. Reuses the game's motion-blur reprojection math and writes current-minus-previous UV displacement.
-5. By default, conditions those vectors with the AC3 Remastered depth-neighborhood rule: find the near/far surfaces in a 3x3 neighborhood, compare their vectors in pixel space, dilate the far-surface vector for ordinary silhouettes, and select the far vector from the current jitter quadrant where near/far disagreement exceeds two pixels.
-6. Transitions the texture from SRV to UAV and back to SRV.
-7. Restores the compute pipeline and descriptor-table state that was active before the prepass.
+## Camera Motion-Vector Prepass
 
-The generated texture is injected into replacement postprocess shaders as `t0, space50`. Generation is independent of the debug mode so the texture remains ready for the later DLAA evaluation pass. `Depth-Neighborhood MV Dilation` defaults on and can be disabled live to compare the original per-pixel camera vectors. The far-depth comparison follows the selected standard/inverted depth convention, and changing the dilation mode resets DLAA history.
+`dlaa.hpp` runs `shaders/motion_vectors.cs_6_0.hlsl` once per presented frame before the active postprocess draw:
 
-The prepass itself does not alter native scene t0 or the final output. Its texture is consumed by the DLAA evaluation described below.
+1. Read the native depth SRV and pixel b0 constant buffer.
+2. Reconstruct current-minus-previous UV motion from the game's motion-blur transform.
+3. Remove the current viewport jitter from the raster coordinate before applying the game's unjittered reprojection transform. The resulting vectors therefore exclude jitter.
+4. Optionally apply the AC3 Remastered-style 3x3 depth-neighborhood rule: use the far-surface vector at ordinary silhouettes and the current jitter-quadrant far sample at disocclusion edges.
+5. Store the result in a private full-resolution `R16G16_FLOAT` texture and restore the previous compute state.
 
-## Implemented DLAA Evaluation
+NGX receives that UV texture with the recommended default `MVScale=(-renderWidth, -renderHeight)`. The negative scale converts the stored current-minus-previous displacement to the convention expected by DLSS. `MVJittered` is fixed off.
 
-Each wrapped postprocess variant now performs these steps immediately before its native draw when `DLAA` is enabled:
-
-1. Resolves the verified scene t0 and depth t3 descriptors from the active graphics layout.
-2. Copies the typeless RGBA8 scene resource into a dedicated typed `R8G8B8A8_UNORM` full-resolution NGX input texture.
-3. Evaluates an NVIDIA NGX SuperSampling feature at a 1:1 input/output ratio using `NVSDK_NGX_PerfQuality_Value_DLAA`.
-4. Supplies the typed color input, native depth, generated `R16G16_FLOAT` UV motion vectors, current pixel-space jitter, and optional synthetic `R8_UNORM` `BiasCurrentColorMask`.
-5. Uses configurable NGX input conventions. The recommended default is `MVScale=(-renderWidth, -renderHeight)` because the generated texture stores current-minus-previous UV displacement while DLSS expects the opposite direction. `MVJittered` remains unset, auto exposure remains enabled, and history resets after gaps, source changes, feature recreation, live input-tuning changes, or first use.
-6. Binds the separate typed NGX output SRV only over the native scene t0 slot for that postprocess draw.
-7. Restores the original scene descriptor immediately after the draw, allowing bloom, noise, distortion, gamma, RenoDX tone mapping, and later passes to remain native.
-
-The runtime tracks resource states from D3D12 resource initialization and barrier events. It restores the captured graphics/compute pipeline and descriptor-table state after NGX calls. NGX initialization, feature creation, and evaluation failures are fail-closed: the `DLAA` toggle is switched off so automatic jitter stops on following frames.
-
-Adapter detection is scoped to the main D3D12 device. Auxiliary D3D11 devices created by EOS/the game are deliberately ignored so they cannot clear NVIDIA availability after the RTX adapter is detected. Detection uses ReShade's vendor property first and the native D3D12 adapter LUID through DXGI as a fallback. The runtime logs `LORWIN DLAA: D3D12 adapter vendor=0x10de NVIDIA=yes` when successful.
-
-The DLAA UI contains:
-
-- `DLAA`: enables the NGX path on NVIDIA D3D12 adapters.
-- `DLAA Render Preset`: defaults to Transformer 1 preset K, with Transformer 1 preset J, legacy CNN preset F, and Transformer 2 presets L and M available for comparison. L and M were appended to preserve the saved numeric values of the existing K/J/F choices.
-
-The `DLAA Debugging` panel always shows an off-by-default `Debug` toggle. Enabling it reveals the relevant NGX inputs and diagnostic controls live; disabling it hides them without changing their saved values:
-
-- `Motion Vector Direction`: original, invert X, invert Y, or invert both. Invert both is the recommended default.
-- `Motion Vector Scale`: 1-200%, default 100%.
-- `Depth-Neighborhood MV Dilation`: AC3R-style 3x3 silhouette/disocclusion conditioning; on is the recommended default.
-- `Synthetic History-Rejection Mask`: enables the generated NGX current-color bias input; on is the recommended default.
-- `History-Rejection Strength`: scales that mask from 0-200%, default 100%.
-- `NGX Jitter Direction`: original or per-axis inversion; original is the recommended default.
-- `NGX Jitter Scale`: 0-200%, default 100%.
-- `Depth Convention`: standard or `DepthInverted`; standard is expected for this depth buffer.
-- `Motion Vectors Include Jitter`: controls `MVJittered`; off is expected because the prepass uses the game's unjittered transform.
-- `NGX Color Input`: controls `IsHDR`; LDR is expected for the typed RGBA8 input.
-- `NGX Auto Exposure`: on is expected because no separate exposure texture is available.
-- `Restore Recommended DLAA Inputs` and `Reset DLAA History` buttons.
-
-Changing a feature flag recreates the NGX feature. Changing MV, jitter, or history-rejection tuning applies on the next evaluation and resets temporal history. The log records the feature flags, effective signed MV/jitter scales, and bias-mask state.
-
-## Synthetic BiasCurrentColorMask
-
-`shaders/bias_current_color_mask.cs_6_0.hlsl` generates a full-resolution normalized mask immediately before each NGX evaluation. NVIDIA defines this input as a per-pixel bias between temporal history and current color: zero leaves normal history weighting in place and one completely rejects history.
-
-The prepass keeps a dedicated copy of the previous pre-DLAA scene color. Each current pixel is reprojected into that history with the generated current-minus-previous motion vector, then corrected by `(previousJitter - currentJitter) / renderSize` because the motion vectors intentionally exclude viewport jitter. The mask takes the maximum of:
-
-- A relative RGB change response between current color and bilinearly sampled reprojected history.
-- A 3x3 relative depth-range response around silhouettes and disocclusions.
-- Full rejection when the reprojected history coordinate lies outside the frame.
-
-The fixed starting thresholds are 8% relative color change and 0.2% relative depth range. `History-Rejection Strength` scales the combined response. On first use, a discontinuous frame, a source change, or a DLAA history reset, the prepass initializes color history and writes full rejection for that evaluation. It then copies the current typed scene input into the persistent history texture after the mask dispatch. Disabling the mask passes `nullptr` to NGX and invalidates this separate color history, while DLAA itself remains enabled.
-
-This is a confidence hint, not a substitute for true object motion vectors. It should reduce trails from particles, animated textures, and objects whose camera-only vector is wrong by making DLAA trust their current color more, at the cost of less temporal accumulation in bright mask regions.
-
-## DLAA Input Debug View
-
-With `Debug` enabled, the `DLAA Debugging` section contains `DLAA Input Debug View`:
-
-- `Off`: normal image; the motion-vector prepass still runs.
-- `Direction`: signed XY motion in red/green. Zero motion is middle gray.
-- `Magnitude`: motion length in grayscale. Zero motion is black.
-- `History Rejection Mask`: the synthetic NGX bias mask in grayscale. Black keeps normal DLAA history weighting; white completely favors current color.
-
-The visualization is applied at the end of the active postprocess replacement solely for validation. It reads the prepass texture at the current output pixel.
-
-Expected behavior:
-
-- A stationary scene and camera should be mostly middle gray in Direction or black in Magnitude.
-- Camera rotation/translation should produce coherent signed direction across geometry.
-- Magnitude should brighten as camera movement increases.
-- With dilation enabled, silhouettes should visibly inherit the far-surface neighborhood vector and disocclusion edges should follow the current jitter quadrant.
-- Compare dilation off/on while panning across the problematic textures. Improvement confined to edges validates the conditioning pass; motion across the body of an independently animated object still requires true per-object vectors.
+This path cannot describe independent object, skeletal, particle, or animated-texture motion. Those pixels receive camera motion. The synthetic mask below is the remaining low-confidence hint for such regions.
 
 ## Camera Jitter
 
-Two exploratory generic constant-buffer scanners caused crashes immediately after activation. The first mapped/unmapped buffers during draws; the second retained pointers from the game's map calls. Neither path identified or patched a projection candidate before the crashes. Both have been removed and must not be restored. The heap-corruption event at shutdown may be the user's Alt-F4 exit and is not being treated as evidence about the new path.
-
-`jitter.hpp` applies jitter by offsetting the viewport for full-resolution draws whose depth-stencil resource belongs to the exact depth lineage consumed by the final postprocess. The sampled t3 texture is not the DSV bound while rendering this game's scene, so direct handle equality produced `eligible=0` and disabled effective jitter. Copy/texture-copy/resolve events now trace that authoritative postprocess texture back to its source DSV; only the resolved source DSV (or a direct t3 binding) is eligible. Resolution alone is not sufficient, so full-resolution auxiliary render targets remain unjittered. Under the D3D viewport transform, adding pixel jitter `(J.x, J.y)` to the viewport origin is exactly equivalent to adding `(2 * J.x / width, -2 * J.y / height)` in NDC. This avoids shader-specific projection layouts and never inspects, maps, dereferences, or modifies the game's constant-buffer memory.
-
-The original viewport list is captured from application viewport binds. Before an eligible scene draw, a jittered copy is bound. Before any subsequent ineligible draw, the original viewports are restored. Application viewport changes and command-list resets invalidate the cached applied state, preventing jitter from leaking into post-processing passes.
-
-The game also creates auxiliary EOS/D3D11 dummy swapchains. Jitter tracks the largest/primary swapchain explicitly so initialization or destruction of those smaller swapchains cannot overwrite the 3840x2160 render dimensions.
-
-With `Debug` enabled, the `DLAA Debugging` section contains `Camera Jitter Override`:
-
-- `Automatic`: applies Halton 8 while DLAA is enabled and restores the unjittered viewport otherwise.
-- `Halton 8 (Forced)`: applies the intended eight-phase sequence independently of DLAA.
-- `Four Quadrants (Debug)`: applies a deliberately obvious four-frame sequence for visual validation.
-- `Off (Forced)`: keeps DLAA evaluation enabled while forcing both viewport jitter and the NGX jitter input to zero.
-
-For a pixel-space jitter `J`, the injected projection offset is:
+`jitter.hpp` applies pixel jitter through the viewport origin on full-resolution scene draws. Under the D3D viewport transform, a pixel offset `J` is equivalent to:
 
 ```text
 projection.x =  2 * J.x / renderWidth
 projection.y = -2 * J.y / renderHeight
 ```
 
-The original pixel-space value is retained for the later NGX evaluation call only when at least one exact-depth-matched scene draw was jittered during that presented frame. Otherwise NGX receives `(0, 0)`, including the first depth-discovery frame, resource recreation, and `Off (Forced)`. The transition between zero and active camera jitter resets DLAA history. At DLAA's 1:1 render/output ratio, NVIDIA's recommended base phase count is eight. The generated motion vectors currently exclude our injected jitter because they are reconstructed from the game's original camera reprojection transform. Therefore the later DLAA feature must leave `NVSDK_NGX_DLSS_Feature_Flags_MVJittered` unset and pass the current pixel jitter separately.
+The postprocess depth resource is traced back through copy/resolve lineage to the source DSV. Exact-depth matching is the primary eligibility rule. A conservative scene-color fallback also admits full-resolution draws that write the traced scene-color RTV and have a full-resolution depth attachment. Depthless HUD, postprocessing, ReShade overlays, and unrelated render targets remain unjittered.
 
-### Jitter Validation
+Automatic DLAA jitter uses an eight-phase Halton sequence in the safe `[-0.5, +0.5]` pixel range. NGX receives the current pixel-space sample separately. If no eligible scene draw was jittered during a frame, NGX receives zero and history resets at the active/inactive transition.
 
-1. Set `Camera Jitter` to `Four Quadrants (Debug)` in a stationary scene. Fine geometry should alternate among four stable sub-pixel positions without whole-pixel jumps.
-2. Switch to `Halton 8`. The offsets should follow a less repetitive eight-frame sequence and remain bounded within one pixel.
-3. Switch to `Automatic` with DLAA off. The image must immediately return to the game's unjittered viewport.
-4. Enable DLAA and select `Off (Forced)`. DLAA must remain active while scene jitter stops; the live-input-tuning log should report `camera_jitter_pattern=0 jitter_raw=(0, 0)` as history resets.
-5. Check HUD, post-processing, reflections, and render-to-texture materials for movement; exact main-depth matching and viewport restoration keep auxiliary passes unjittered.
+The camera-vector shader explicitly subtracts this raster jitter, so the fixed NGX feature configuration is:
 
-Expected log entries are:
+- Standard depth.
+- LDR color input.
+- Motion vectors do not include jitter.
+- Auto exposure enabled because there is no exposure texture.
 
-- `LORWIN DLAA jitter: ACTIVE viewport pattern=...; game constant-buffer memory is not read or modified.`
-- `LORWIN DLAA jitter: tracking postprocess depth resource=0x...`
-- `LORWIN DLAA jitter: resolved exact main-scene depth source=0x... -> postprocess depth=0x... via ...` when the sampled depth is copied/resolved from a separate DSV.
-- `LORWIN DLAA jitter: FORCED OFF; viewport and NGX jitter are both zero.` when selected.
-- One or more `eligible vertex_shader=0x... graphics_layout=0x...` entries.
-- A `60-frame diagnostics` entry including `main_depth_unknown`, `main_depth_mismatch`, `jitter_binds`, and `viewport_restores`.
+## DLAA Evaluation and Output Binding
 
-## DLAA Output Binding / UI Corruption Fix
+For each wrapped postprocess draw with DLAA enabled, the runtime:
 
-The first working NGX path temporarily replaced the game's native scene-color `t0` descriptor before each postprocess draw and attempted to restore it afterward. In D3D12, that binding shares a descriptor table with the postprocess `t1`-`t7` resources. Replacing one entry through an emulated push-descriptor table did not preserve the rest of the native table reliably and could also leak the temporary table into later draws. The observed result was flickering/random colors and large rectangular UI geometry sampling scene-color fragments.
+1. Copies native scene color to a typed full-resolution `R8G8B8A8_UNORM` input.
+2. Evaluates NGX SuperSampling at a 1:1 ratio with `NVSDK_NGX_PerfQuality_Value_DLAA`.
+3. Supplies typed color, native depth, camera motion vectors, current jitter, and the optional bias mask.
+4. Makes the private NGX output available to the replacement postprocess shader at private `t1, space50`.
+5. Leaves the game's native descriptor tables unchanged.
 
-Native game descriptor tables are no longer modified. The NGX output SRV is now exposed only to the replacement postprocess shaders at private `t1, space50`; `ShaderInjectData::dlaa_enabled` selects that resource only after a successful evaluation. Motion vectors remain at private `t0, space50`, and the bias-mask debug SRV uses private `t2, space50`. Native scene, bloom, luminance, depth, blur, noise, distortion, gamma, and subsequent UI/HUD bindings remain intact.
+Motion vectors use private `t0, space50`; the mask debug view uses private `t2, space50`. Do not add separate injected t3/t4 space-50 SRVs: the ReShade D3D12 pipeline-layout utility creates overlapping SRV ranges and root-signature creation fails at startup.
+
+NGX initialization, creation, or evaluation failures fail closed by disabling DLAA. Adapter detection is restricted to the main D3D12 device so auxiliary EOS/D3D11 devices cannot clear NVIDIA availability.
+
+Available presets are K, J, F, L, and M. M is the current default; L and M use Transformer 2.
+
+## Synthetic History-Rejection Mask
+
+`shaders/bias_current_color_mask.cs_6_0.hlsl` generates a full-resolution `R8_UNORM` `BiasCurrentColorMask` before NGX evaluation. It compares current pre-DLAA color against reprojected previous pre-DLAA color and takes the maximum of:
+
+- Relative RGB change over a five-pixel cross.
+- A 3x3 relative depth-range response.
+- Local motion-vector disagreement.
+- Full rejection for history coordinates outside the frame.
+
+The fixed thresholds are 4% relative color change and 0.1% relative depth range. `History-Rejection Strength` scales only this adaptive response. The abandoned global minimum-bias diagnostic was removed: runtime testing showed that even an all-white mask did not make preset K behave like `InReset=1`.
+
+The mask is still useful as a confidence hint, but it must not be described as guaranteed local history invalidation. A reset, source change, discontinuity, or first use initializes the separate color history and writes full rejection for that evaluation.
+
+## DLAA Debugging UI
+
+The `DLAA Debugging` section always shows only the off-by-default `Debug` toggle until enabled. The expanded controls are grouped in this order:
+
+### Visualization
+
+- `Resource View`: NGX input/output, split and difference views, camera-vector direction/magnitude, native depth, depth discontinuities, history mask, invalid-value checks, and a four-view overview.
+
+### History & Reconstruction
+
+- `Depth-Neighborhood MV Dilation`: raw camera vectors versus the recommended conditioned camera vectors.
+- `Synthetic History-Rejection Mask` and `History-Rejection Strength`.
+- `Reset NGX History Every Frame`: diagnostic only. If this removes K/J ghosting, current-frame reconstruction is sound and temporal history/reprojection is responsible.
+
+### Motion-Vector Input
+
+- `Motion Vector Direction`: invert both axes is the validated default.
+- `Motion Vector Scale`: 100% is the validated default.
+
+### Jitter Input
+
+- `Camera Jitter Override`: Automatic, forced Halton 8, Four Quadrants, or forced off.
+- `Camera Projection Jitter Scale`: 100% is valid; larger values are a deliberate visibility test. Camera overdrive suppresses NGX jitter and resets history.
+- `NGX Jitter Direction`: original axes are the validated default.
+- `NGX Jitter Scale`: 100% is valid. Values above roughly 114% exceed the supported range for the largest Halton sample and are diagnostic only.
+
+### Tools
+
+- `Restore Recommended DLAA Inputs`.
+- `Reset DLAA History`.
+
+Known fixed creation flags are no longer exposed as UI toggles. Passive resource logging also no longer appears in the user-facing debug panel.
+
+## Interpreting Resource Views
+
+- Clean input but corrupt output localizes a fault to NGX inputs, conventions, or history.
+- Stationary camera motion should be close to middle gray in Direction and black in Magnitude.
+- Camera movement should produce coherent signed motion across scene geometry.
+- The history mask should be dark on stable surfaces and brighten around temporal color changes, depth edges, and motion disagreement.
+- White on a reset/first frame is expected.
+- The `Invalid` views are mainly binding/format sanity checks because UNORM storage normally clamps invalid values.
 
 ## Relevant Files
 
-- `addon.cpp`: DLAA, debug, and passive resource-logging settings; callback/runtime registration.
-- `dlaa.hpp`: D3D12 pre-postprocess runtime, input discovery, resource-state tracking, NGX lifecycle/evaluation, motion-vector and synthetic-bias-mask dispatches, color history, and private debug/output SRV binding.
-- `jitter.hpp`: Halton/debug sequences, full-resolution scene filtering, viewport jitter/restoration, and diagnostics.
-- `resource_logger.hpp`: passive runtime evidence collector and descriptor tracking helpers.
-- `shaders/motion_vectors.cs_6_0.hlsl`: motion-vector compute shader.
-- `shaders/bias_current_color_mask.cs_6_0.hlsl`: reprojected color-change and depth-discontinuity history-rejection mask.
-- `common.hlsli`: private motion-vector/DLAA/bias-mask texture declarations, scene-input selection, and debug visualization helper.
-- `shared.h`: DLAA shader-injection values and the Windows-HDR gate that forces the actual vanilla tone-map path on SDR output.
-- `shaders/0xCFC0C7CF.ps_6_0.hlsl`
-- `shaders/0x17BBC7EE.ps_6_0.hlsl`
-- `shaders/0x9805B9F6.ps_6_0.hlsl`
-- `shaders/0x0C0E1BA4.ps_6_0.hlsl`
+- `addon.cpp`: settings, HDR/SDR routing, and runtime registration.
+- `dlaa.hpp`: camera-vector prepass, NGX lifecycle/evaluation, color history, mask dispatch, and debug/output bindings.
+- `jitter.hpp`: sequence generation, draw filtering, copy lineage, viewport jitter/restoration, and diagnostics.
+- `resource_logger.hpp`: descriptor tracking, frame index, and optional runtime evidence collection.
+- `shaders/motion_vectors.cs_6_0.hlsl`: camera-vector reconstruction and depth-neighborhood conditioning.
+- `shaders/bias_current_color_mask.cs_6_0.hlsl`: adaptive history-confidence mask.
+- `common.hlsli`: private DLAA textures and debug visualization.
+- `shared.h`: shader injection values and SDR vanilla-tone-map gate.
 
-## Build and Verification
+There is intentionally no per-object motion runtime or object-motion shader family.
 
-Build with the user-specified target:
+## Build and Runtime Verification
+
+Build with:
 
 ```powershell
 cmake --build --preset vs-x64-release --target LORWIN
 ```
 
-The expected runtime log entries when the first matching postprocess draw runs with DLAA enabled are:
+Do not build while `witn.exe` is running. The game addon is normally a symbolic link to `build.vs/Release/renodx-lorwin.addon64`.
+
+The cleanup build completed successfully on 2026-08-17. The repository artifact and deployed symbolic link both have SHA-256 `10FFF208FF01048FB5E64B40F6C1AAE6A3F98D81724E48FC884CF55CD4018A84`.
+
+Expected DLAA log entries include:
 
 - `LORWIN DLAA: created the AC3R-style depth-neighborhood motion-vector compute pipeline.`
 - `LORWIN DLAA: created motion-vector texture <width>x<height> format=R16G16_FLOAT ...`
 - `LORWIN DLAA: NGX initialized, SuperSampling_Available=1`
-- `LORWIN DLAA: created typed staging/output, color-history, and R8 bias-mask textures <width>x<height> ...`
+- `LORWIN DLAA: created typed staging/output, color-history, and R8 bias-mask textures ...`
 - `LORWIN DLAA: created synthetic BiasCurrentColorMask compute pipeline.`
-- `LORWIN DLAA: feature created at <width>x<height> flags=AutoExposure preset=K`
-- `LORWIN DLAA: evaluation active at <width>x<height> jitter_raw=(...) jitter_ngx=(...) mv_scale=(...) bias_mask=on preset=K`
+- `LORWIN DLAA: feature created at <width>x<height> flags=AutoExposure preset=...`
+- `LORWIN DLAA: evaluation active at <width>x<height> jitter_raw=(...) jitter_ngx=(...) mv_scale=(...) ...`
 
-The addon no longer forces borderless mode, screen tearing, or fullscreen prevention. Display-mode selection is left to the game/OS so those swapchain overrides cannot interfere with DLAA validation. The HDR10 swapchain path is enabled only while Windows HDR is enabled for the game's monitor.
+No `LORWIN DLAA object motion` messages should exist.
 
-The Release build completed successfully on 2026-08-16. The game-folder addon is a symbolic link to `build.vs/Release/renodx-lorwin.addon64`. The current build includes exact source-DSV lineage, forced-off jitter validation, AC3R-style depth-neighborhood motion-vector dilation, the synthetic reprojected color/depth history-rejection mask, the collapsed `DLAA Debugging` UI, and automatic native-SDR/modified-HDR routing based on Windows HDR state. The build and deployed addon have SHA-256 `2EF65AF02F7408FB657E5C4CC23EB1C19BA0E77DC0FEFEE064E0EA750B67A957`.
+Manual checks:
 
-## Next Task: Runtime-Validate DLAA
+1. Verify SDR uses vanilla tone mapping while DLAA remains usable.
+2. Verify HDR restores RenoDX tone-mapping controls and DLAA still works.
+3. Compare camera-vector Direction/Magnitude with dilation off/on.
+4. Confirm HUD, menus, postprocessing, and ReShade overlays do not jitter.
+5. Compare NGX input/output and history-reset behavior across presets.
+6. Leave camera and NGX jitter scales at 100% for normal use.
 
-Start the game, enable `DLAA`, and validate the new NGX path:
-
-1. Start once with Windows HDR disabled. Confirm the log selects vanilla SDR, the HDR settings are hidden, and DLAA plus its Debugging controls remain usable.
-2. With DLAA disabled, confirm the output matches the game's vanilla SDR tone mapping, grading, gamma, noise, and UI.
-3. Enable DLAA and confirm all seven expected DLAA log messages above appear and no NGX error is logged.
-4. Compare stationary fine geometry with DLAA off/on. With DLAA on, the image should stabilize rather than visibly alternate through the jitter sequence.
-5. Pan and rotate the camera; check for coherent temporal reconstruction, ghosting, inversion, or runaway smearing.
-6. Enable Windows HDR and restart the game. Confirm the log selects HDR, the HDR controls return, and the established HDR10 path still works.
-7. Verify bloom, film grain, UI/HUD, gamma, tone mapping, and menus remain visually unchanged apart from scene anti-aliasing in both output modes.
-8. Toggle DLAA off; automatic jitter and private DLAA-output sampling must stop immediately.
-9. Select `History Rejection Mask`: stable surfaces should remain dark, while disocclusion edges, particles, animated textures, and incorrectly tracked motion should brighten. The first/reset frame is intentionally white.
-10. Compare `Synthetic History-Rejection Mask` off/on at 100% strength around the problem textures. If the mask helps but adds shimmer, lower the strength; if ghosting remains in correctly detected regions, raise it moderately.
-11. If behavior differs between models, compare presets K, J, F, L, and M and retain the log for follow-up.
-
-Do not move DLAA after postprocessing, feed it UI/final-backbuffer content, or write its result back into a resource that the same evaluation still consumes.
+Do not move DLAA after postprocessing, feed it final UI/backbuffer content, or write its result into a resource still consumed by the same evaluation.

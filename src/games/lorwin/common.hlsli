@@ -91,17 +91,72 @@ float3 ApplyPerceptualFilmGrain(float3 color, float2 position) {
 float3 ApplyDLAADebugView(float3 color, float4 position) {
 #if ((__SHADER_TARGET_MAJOR == 5 && __SHADER_TARGET_MINOR >= 1) || __SHADER_TARGET_MAJOR >= 6)
   if (CUSTOM_DLAA_DEBUG_VIEW == 0.f) return color;
+  if (CUSTOM_DLAA_ENABLED == 0.f) return float3(0.25f, 0.f, 0.25f);
 
+  uint width;
+  uint height;
+  g_SceneTexture.GetDimensions(width, height);
+  const uint2 pixel = min(uint2(position.xy), uint2(width - 1u, height - 1u));
+  const float3 input_color = g_SceneTexture.Load(int3(pixel, 0)).rgb;
+  const float3 output_color = g_RenoDXDlaaOutput.Load(int3(pixel, 0)).rgb;
+
+  if (CUSTOM_DLAA_DEBUG_VIEW == 1.f) return input_color;
+  if (CUSTOM_DLAA_DEBUG_VIEW == 2.f) return output_color;
   if (CUSTOM_DLAA_DEBUG_VIEW == 3.f) {
-    if (CUSTOM_DLAA_ENABLED == 0.f) return 0.f.xxx;
-    return g_RenoDXBiasCurrentColorMask.Load(int3(uint2(position.xy), 0)).xxx;
+    if (abs(position.x - width * 0.5f) < 2.f) return 1.f.xxx;
+    return position.x < width * 0.5f ? input_color : output_color;
+  }
+  if (CUSTOM_DLAA_DEBUG_VIEW == 4.f) {
+    return saturate(abs(output_color - input_color) * 8.f);
+  }
+  if (CUSTOM_DLAA_DEBUG_VIEW == 5.f) {
+    return saturate(0.5f.xxx + (output_color - input_color) * 8.f);
   }
 
-  const float2 motion_vector = g_RenoDXMotionVectors.Load(int3(uint2(position.xy), 0));
-  if (CUSTOM_DLAA_DEBUG_VIEW == 1.f) {
+  const float2 motion_vector = g_RenoDXMotionVectors.Load(int3(pixel, 0));
+  if (CUSTOM_DLAA_DEBUG_VIEW == 6.f) {
     return float3(saturate(motion_vector * 32.f + 0.5f), 0.5f);
   }
-  return saturate(length(motion_vector) * 64.f).xxx;
+  if (CUSTOM_DLAA_DEBUG_VIEW == 7.f) {
+    return saturate(length(motion_vector) * 64.f).xxx;
+  }
+
+  const float depth = g_DepthTexture.Load(int3(pixel, 0)).r;
+  if (CUSTOM_DLAA_DEBUG_VIEW == 8.f) return depth.xxx;
+  if (CUSTOM_DLAA_DEBUG_VIEW == 9.f) {
+    return saturate(max(abs(ddx(depth)), abs(ddy(depth))) * 1024.f).xxx;
+  }
+  if (CUSTOM_DLAA_DEBUG_VIEW == 10.f) {
+    return g_RenoDXBiasCurrentColorMask.Load(int3(pixel, 0)).xxx;
+  }
+
+  const bool input_finite = all(isfinite(input_color));
+  const bool output_finite = all(isfinite(output_color));
+  const bool input_in_range = all(input_color >= 0.f.xxx) && all(input_color <= 1.f.xxx);
+  const bool output_in_range = all(output_color >= 0.f.xxx) && all(output_color <= 1.f.xxx);
+  if (CUSTOM_DLAA_DEBUG_VIEW == 11.f) {
+    return !input_finite ? float3(1.f, 0.f, 1.f)
+                         : (!input_in_range ? float3(1.f, 1.f, 0.f) : float3(0.f, 0.25f, 0.f));
+  }
+  if (CUSTOM_DLAA_DEBUG_VIEW == 12.f) {
+    return !output_finite ? float3(1.f, 0.f, 1.f)
+                          : (!output_in_range ? float3(1.f, 1.f, 0.f) : float3(0.f, 0.25f, 0.f));
+  }
+
+  const bool right = position.x >= width * 0.5f;
+  const bool bottom = position.y >= height * 0.5f;
+  const uint2 overview_pixel = uint2(
+      min(uint(frac(position.x / (width * 0.5f)) * width), width - 1u),
+      min(uint(frac(position.y / (height * 0.5f)) * height), height - 1u));
+  if (!bottom) {
+    return right ? g_RenoDXDlaaOutput.Load(int3(overview_pixel, 0)).rgb
+                 : g_SceneTexture.Load(int3(overview_pixel, 0)).rgb;
+  }
+  if (!right) {
+    const float2 overview_motion = g_RenoDXMotionVectors.Load(int3(overview_pixel, 0));
+    return float3(saturate(overview_motion * 32.f + 0.5f), 0.5f);
+  }
+  return g_RenoDXBiasCurrentColorMask.Load(int3(overview_pixel, 0)).xxx;
 #else
   return color;
 #endif

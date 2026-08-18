@@ -11,12 +11,13 @@
 #define NOISE_EFFECT
 #define GAMMA_CORRECTION
 
+Texture2D<float4> g_SceneTexture : register(t0);
+Texture2D<float4> g_DepthTexture : register(t3);
+
 #include "../common.hlsli"
 
-Texture2D<float4> g_SceneTexture : register(t0);
 Texture2D<float4> g_BloomTexture : register(t1);
 Texture2D<float4> g_LuminanceTexture : register(t2);
-Texture2D<float4> g_DepthTexture : register(t3);
 Texture2D<float4> g_OutOfFocusTexture : register(t4);
 Texture2D<float4> g_NoiseTexture : register(t5);
 Texture1D<float4> g_GammaTexture : register(t7);

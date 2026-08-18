@@ -32,7 +32,12 @@ float LoadDepth(int2 coord, uint2 size, uint2 depth_size) {
 }
 
 float2 ReconstructMotionVector(int2 coord, float depth, uint2 size) {
-  const float2 current_position = GetCurrentPosition(coord, size);
+  // The raster viewport moves by the current pixel jitter, while the game's
+  // reprojection transform is unjittered. Recover the unjittered current
+  // position before applying that transform so the generated vectors can keep
+  // MVJittered disabled at the NGX boundary.
+  const float2 current_position = GetCurrentPosition(coord, size)
+                                  - (g_MotionVectorDilation.xy / float2(size)) * g_DOFBlurVals.w;
   float4 previous_position = mul(g_MotionBlurXform, float4(current_position, depth, 1.f));
   if (abs(previous_position.w) < 1e-6f) return 0.f.xx;
 
