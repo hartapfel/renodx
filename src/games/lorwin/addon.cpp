@@ -787,7 +787,8 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
 
         reshade::register_event<reshade::addon_event::create_swapchain>(OnCreateSwapchain);
         reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
-        lorwin::resource_logger::InstallCallbacks(custom_shaders);
+        // Keep the passive post-process logging wrappers disabled for release.
+        // DLAA resource discovery reads the same descriptor state directly in its own callbacks.
         lorwin::dlaa::InstallCallbacks(custom_shaders, &shader_injection);
 
 /*         renodx::mods::swapchain::resource_upgrade_infos.push_back({
