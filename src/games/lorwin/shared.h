@@ -43,6 +43,8 @@ struct ShaderInjectData {
   float dlaa_enabled;
   float hdr_output_active;
   float improved_ambient_occlusion;
+  float improved_bloom;
+  float improved_bloom_strength;
 };
 
 #ifndef __cplusplus
@@ -81,6 +83,8 @@ cbuffer shader_injection : register(b13) {
 #define CUSTOM_DLAA_DEBUG_VIEW                shader_injection.dlaa_debug_view
 #define CUSTOM_DLAA_ENABLED                   shader_injection.dlaa_enabled
 #define CUSTOM_IMPROVED_AMBIENT_OCCLUSION     shader_injection.improved_ambient_occlusion
+#define CUSTOM_IMPROVED_BLOOM                 shader_injection.improved_bloom
+#define CUSTOM_IMPROVED_BLOOM_STRENGTH        shader_injection.improved_bloom_strength
 #define RENODX_SWAP_CHAIN_DECODING           (RENODX_GAMMA_CORRECTION + 1.f)
 #define RENODX_SWAP_CHAIN_GAMMA_CORRECTION   2.2f
 #define RENODX_SWAP_CHAIN_CUSTOM_COLOR_SPACE renodx::color::convert::COLOR_SPACE_BT709
