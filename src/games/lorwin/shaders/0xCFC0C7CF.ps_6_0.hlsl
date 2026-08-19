@@ -106,6 +106,8 @@ float4 main(
   output = lerp(scene, blurry, saturate(dof_interpolant + g_DOFBlurVals.y));
 #endif
 
+  output = ApplyLORWINChromaticAberration(output, vScreenPosition);
+
 #if defined(TONE_MAPPING_BLOOM)
   float hdrMin = saturate(lum - g_MiddleGray.x);
   float hdrMax = saturate(lum + g_MiddleGray.x);

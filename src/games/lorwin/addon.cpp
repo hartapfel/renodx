@@ -408,6 +408,89 @@ renodx::utils::settings::Settings settings = {
         .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
+        .key = "FxRCASSharpening",
+        .binding = &shader_injection.rcas_sharpening,
+        .default_value = 0.f,
+        .can_reset = true,
+        .label = "RCAS Sharpening",
+        .section = "Effects",
+        .tooltip = "Applies luminance-based RCAS to the scene after DLAA and before the game's depth of field and final postprocessing.",
+        .max = 100.f,
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxChromaticAberration",
+        .binding = &shader_injection.chromatic_aberration,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 0.f,
+        .can_reset = true,
+        .label = "Chromatic Aberration",
+        .section = "Effects",
+        .tooltip = "Applies radial lens fringing after DLAA, distortion, motion blur, and depth of field, before bloom, grading, tonemapping, and film grain.",
+        .labels = {"Off", "On"},
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxChromaticAberrationStrength",
+        .binding = &shader_injection.chromatic_aberration_strength,
+        .default_value = 50.f,
+        .can_reset = true,
+        .label = "Chromatic Aberration Strength",
+        .section = "Effects",
+        .tooltip = "Controls the maximum red/blue radial separation near the edges of the image.",
+        .max = 100.f,
+        .is_enabled = []() { return shader_injection.chromatic_aberration != 0.f; },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxChromaticAberrationStart",
+        .binding = &shader_injection.chromatic_aberration_start,
+        .default_value = 20.f,
+        .can_reset = true,
+        .label = "Chromatic Aberration Start Offset",
+        .section = "Effects",
+        .tooltip = "Sets the normalized distance from the optical center where color separation begins. Higher values keep more of the center clean.",
+        .max = 95.f,
+        .is_enabled = []() { return shader_injection.chromatic_aberration != 0.f; },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxChromaticAberrationFalloff",
+        .binding = &shader_injection.chromatic_aberration_falloff,
+        .default_value = 60.f,
+        .can_reset = true,
+        .label = "Chromatic Aberration Edge Falloff",
+        .section = "Effects",
+        .tooltip = "Shapes the transition toward the edges. Lower values spread the effect inward; higher values concentrate it near the edge.",
+        .min = 25.f,
+        .max = 400.f,
+        .is_enabled = []() { return shader_injection.chromatic_aberration != 0.f; },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxChromaticAberrationShape",
+        .binding = &shader_injection.chromatic_aberration_shape,
+        .default_value = 100.f,
+        .can_reset = true,
+        .label = "Chromatic Aberration Radial Shape",
+        .section = "Effects",
+        .tooltip = "Controls the lens mask shape. 100% is a physically radial lens profile; 0% follows the rectangular screen edges uniformly.",
+        .max = 75.f,
+        .is_enabled = []() { return shader_injection.chromatic_aberration != 0.f; },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxChromaticAberrationSaturation",
+        .binding = &shader_injection.chromatic_aberration_saturation,
+        .default_value = 120.f,
+        .can_reset = true,
+        .label = "Chromatic Aberration Fringe Saturation",
+        .section = "Effects",
+        .tooltip = "Controls how colorful the separated fringe is. Lower values produce a softer lens blur; higher values emphasize the red/blue split.",
+        .max = 200.f,
+        .is_enabled = []() { return shader_injection.chromatic_aberration != 0.f; },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "ImprovedAmbientOcclusion",
         .binding = &shader_injection.improved_ambient_occlusion,
         .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
@@ -796,6 +879,13 @@ void OnPresetOff() {
       {"ColorGradeScene", 100.f},
       {"FxFilmGrain", 0.f},
       {"FxFilmGrainStrength", 50.f},
+      {"FxRCASSharpening", 0.f},
+      {"FxChromaticAberration", 0.f},
+      {"FxChromaticAberrationStrength", 50.f},
+      {"FxChromaticAberrationStart", 20.f},
+      {"FxChromaticAberrationFalloff", 200.f},
+      {"FxChromaticAberrationShape", 100.f},
+      {"FxChromaticAberrationSaturation", 100.f},
       {"ImprovedAmbientOcclusion", 0.f},
       {"ImprovedBloom", 0.f},
       {"ImprovedBloomStrength", 100.f},
@@ -884,9 +974,9 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         renodx::mods::swapchain::swap_chain_proxy_vertex_shader = __swap_chain_proxy_vertex_shader;
         renodx::mods::swapchain::swap_chain_proxy_pixel_shader = __swap_chain_proxy_pixel_shader;
         renodx::mods::swapchain::swapchain_proxy_revert_state = true;
-        renodx::mods::swapchain::prevent_full_screen = false;
-        renodx::mods::swapchain::force_borderless = false;
-        renodx::mods::swapchain::force_screen_tearing = false;
+        renodx::mods::swapchain::prevent_full_screen = true;
+        renodx::mods::swapchain::force_borderless = true;
+        renodx::mods::swapchain::force_screen_tearing = true;
 
         reshade::register_event<reshade::addon_event::create_swapchain>(OnCreateSwapchain);
         reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);

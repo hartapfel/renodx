@@ -45,6 +45,13 @@ struct ShaderInjectData {
   float improved_ambient_occlusion;
   float improved_bloom;
   float improved_bloom_strength;
+  float rcas_sharpening;
+  float chromatic_aberration;
+  float chromatic_aberration_strength;
+  float chromatic_aberration_start;
+  float chromatic_aberration_falloff;
+  float chromatic_aberration_shape;
+  float chromatic_aberration_saturation;
 };
 
 #ifndef __cplusplus
@@ -85,6 +92,13 @@ cbuffer shader_injection : register(b13) {
 #define CUSTOM_IMPROVED_AMBIENT_OCCLUSION     shader_injection.improved_ambient_occlusion
 #define CUSTOM_IMPROVED_BLOOM                 shader_injection.improved_bloom
 #define CUSTOM_IMPROVED_BLOOM_STRENGTH        shader_injection.improved_bloom_strength
+#define CUSTOM_RCAS_SHARPENING                shader_injection.rcas_sharpening
+#define CUSTOM_CHROMATIC_ABERRATION            shader_injection.chromatic_aberration
+#define CUSTOM_CHROMATIC_ABERRATION_STRENGTH   shader_injection.chromatic_aberration_strength
+#define CUSTOM_CHROMATIC_ABERRATION_START      shader_injection.chromatic_aberration_start
+#define CUSTOM_CHROMATIC_ABERRATION_FALLOFF    shader_injection.chromatic_aberration_falloff
+#define CUSTOM_CHROMATIC_ABERRATION_SHAPE      shader_injection.chromatic_aberration_shape
+#define CUSTOM_CHROMATIC_ABERRATION_SATURATION shader_injection.chromatic_aberration_saturation
 #define RENODX_SWAP_CHAIN_DECODING           (RENODX_GAMMA_CORRECTION + 1.f)
 #define RENODX_SWAP_CHAIN_GAMMA_CORRECTION   2.2f
 #define RENODX_SWAP_CHAIN_CUSTOM_COLOR_SPACE renodx::color::convert::COLOR_SPACE_BT709

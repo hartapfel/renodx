@@ -30,6 +30,7 @@
 #include "../../mods/shader.hpp"
 #include "../../utils/bitwise.hpp"
 #include "../../utils/descriptor.hpp"
+#include "../../utils/directx.hpp"
 #include "../../utils/pipeline_layout.hpp"
 #include "../../utils/resource.hpp"
 #include "../../utils/state.hpp"
@@ -516,6 +517,16 @@ inline bool EnsureNgxInitialized(reshade::api::device* device) {
 
   auto* native_device = reinterpret_cast<ID3D12Device*>(device->get_native());
   if (native_device == nullptr) return false;
+  auto* exposed_device = native_device;
+  const bool unwrapped_device = renodx::utils::directx::NativeFromReShadeProxy(&native_device);
+
+  {
+    std::stringstream s;
+    s << "LORWIN DLAA: NGX D3D12 device exposed=" << exposed_device
+      << " native=" << native_device
+      << " reshade_proxy_unwrapped=" << (unwrapped_device ? "yes" : "no");
+    reshade::log::message(reshade::log::level::info, s.str().c_str());
+  }
 
   const std::wstring process_directory = GetProcessDirectory();
   wchar_t* feature_paths[] = {const_cast<wchar_t*>(process_directory.c_str())};
@@ -692,6 +703,14 @@ inline bool EnsureFeature(ID3D12GraphicsCommandList* command_list, uint32_t widt
   params.InEnableOutputSubrects = false;
   NVSDK_NGX_Parameter_SetI(ngx.parameters, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA, preset);
 
+  {
+    std::stringstream s;
+    s << "LORWIN DLAA: beginning NGX feature creation at " << width << "x" << height
+      << " command_list=" << command_list
+      << " flags=" << GetFeatureFlagsName(flags)
+      << " preset=" << GetRenderPresetName(preset);
+    reshade::log::message(reshade::log::level::info, s.str().c_str());
+  }
   const NVSDK_NGX_Result result = NGX_D3D12_CREATE_DLSS_EXT(
       command_list, 1u, 1u, &ngx.feature, ngx.parameters, &params);
   if (NVSDK_NGX_FAILED(result) || ngx.feature == nullptr) {
@@ -1275,6 +1294,7 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
     enabled = 0.f;
     return true;
   }
+  renodx::utils::directx::NativeFromReShadeProxy(&command_list);
 
   const auto previous_state = *state;
   const auto source_state = TransitionResource(
