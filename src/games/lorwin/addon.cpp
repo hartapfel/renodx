@@ -7,9 +7,12 @@
 
 #define RENODX_MODS_SWAPCHAIN_VERSION 2
 
+#include <iterator>
 #include <optional>
 #include <sstream>
+#include <string_view>
 
+#include <dxgi1_6.h>
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>
 
@@ -38,12 +41,80 @@ float dlaa_debug = 0.f;
 bool hdr_output_active = false;
 bool hdr_output_state_known = false;
 
+bool IsWineCompatibilityLayer() {
+  static const bool is_wine = []() {
+    const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    return ntdll != nullptr && GetProcAddress(ntdll, "wine_get_version") != nullptr;
+  }();
+  return is_wine;
+}
+
+std::optional<bool> GetEnvironmentFlag(const char* name) {
+  char value[16] = {};
+  const DWORD length = GetEnvironmentVariableA(name, value, static_cast<DWORD>(std::size(value)));
+  if (length == 0 || length >= std::size(value)) return std::nullopt;
+
+  const std::string_view text(value, length);
+  if (text == "1" || text == "true" || text == "True" || text == "TRUE"
+      || text == "yes" || text == "Yes" || text == "YES"
+      || text == "on" || text == "On" || text == "ON") {
+    return true;
+  }
+  if (text == "0" || text == "false" || text == "False" || text == "FALSE"
+      || text == "no" || text == "No" || text == "NO"
+      || text == "off" || text == "Off" || text == "OFF") {
+    return false;
+  }
+  return std::nullopt;
+}
+
+bool IsHDROutputColorSpace(DXGI_COLOR_SPACE_TYPE color_space) {
+  return color_space == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
+      || color_space == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+}
+
+std::optional<bool> GetDXGIWindowHDRState(HWND window) {
+  if (window == nullptr || IsWindow(window) == FALSE) return std::nullopt;
+  const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+  if (monitor == nullptr) return std::nullopt;
+
+  IDXGIFactory1* factory = nullptr;
+  if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return std::nullopt;
+
+  std::optional<bool> result = std::nullopt;
+  for (UINT adapter_index = 0; !result.has_value(); ++adapter_index) {
+    IDXGIAdapter1* adapter = nullptr;
+    if (FAILED(factory->EnumAdapters1(adapter_index, &adapter)) || adapter == nullptr) break;
+
+    for (UINT output_index = 0; !result.has_value(); ++output_index) {
+      IDXGIOutput* output = nullptr;
+      if (FAILED(adapter->EnumOutputs(output_index, &output)) || output == nullptr) break;
+
+      DXGI_OUTPUT_DESC output_desc = {};
+      if (SUCCEEDED(output->GetDesc(&output_desc)) && output_desc.Monitor == monitor) {
+        IDXGIOutput6* output6 = nullptr;
+        if (SUCCEEDED(output->QueryInterface(IID_PPV_ARGS(&output6)))) {
+          DXGI_OUTPUT_DESC1 output_desc1 = {};
+          if (SUCCEEDED(output6->GetDesc1(&output_desc1))) {
+            result = IsHDROutputColorSpace(output_desc1.ColorSpace);
+          }
+          output6->Release();
+        }
+      }
+      output->Release();
+    }
+    adapter->Release();
+  }
+  factory->Release();
+  return result;
+}
+
 bool IsDlaaDebugEnabled() {
   return dlaa_debug != 0.f;
 }
 
 bool IsHDROutputActive() {
-  return !hdr_output_state_known || hdr_output_active;
+  return hdr_output_state_known && hdr_output_active;
 }
 
 void SetHDROutputState(bool active, const char* source) {
@@ -54,13 +125,13 @@ void SetHDROutputState(bool active, const char* source) {
   if (!changed) return;
 
   std::stringstream s;
-  s << "LORWIN output: Windows HDR is " << (active ? "enabled" : "disabled")
+  s << "LORWIN output: HDR is " << (active ? "enabled" : "disabled")
     << " via " << source << "; HDR tonemapping and swapchain proxy "
     << (active ? "enabled." : "disabled, vanilla SDR tonemapping forced.");
   reshade::log::message(reshade::log::level::info, s.str().c_str());
 }
 
-std::optional<bool> GetWindowHDRState(HWND window) {
+std::optional<bool> GetNativeWindowHDRState(HWND window) {
   if (window == nullptr || IsWindow(window) == FALSE) return std::nullopt;
   const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
   if (monitor == nullptr) return std::nullopt;
@@ -79,11 +150,26 @@ bool OnCreateSwapchain(reshade::api::swapchain_desc& desc, void* hwnd) {
   const auto window = static_cast<HWND>(hwnd);
   if (!renodx::mods::swapchain::ShouldModifySwapchain(window, device_api)) return false;
 
-  const auto hdr_enabled = GetWindowHDRState(window);
-  if (!hdr_enabled.has_value()) return false;
-  SetHDROutputState(hdr_enabled.value(), "swapchain creation");
+  const bool compatibility_layer = IsWineCompatibilityLayer();
+  auto hdr_enabled = compatibility_layer
+      ? GetDXGIWindowHDRState(window)
+      : GetNativeWindowHDRState(window);
+  const char* detection_source = compatibility_layer
+      ? "DXGI output color space under Wine/Proton"
+      : "native Windows display configuration";
+  if (!hdr_enabled.has_value() && compatibility_layer) {
+    hdr_enabled = GetEnvironmentFlag("DXVK_HDR");
+    detection_source = "DXVK_HDR compatibility-layer signal";
+  } else if (!hdr_enabled.has_value()) {
+    hdr_enabled = GetDXGIWindowHDRState(window);
+    detection_source = "DXGI output color space fallback";
+  }
+  const bool use_hdr = hdr_enabled.value_or(false);
+  SetHDROutputState(
+      use_hdr,
+      hdr_enabled.has_value() ? detection_source : "safe fallback (display state unavailable)");
 
-  if (hdr_enabled.value()) {
+  if (use_hdr) {
     renodx::mods::swapchain::SetUseHDR10(true);
     renodx::mods::swapchain::use_resource_cloning = true;
     renodx::mods::swapchain::use_resize_buffer = false;
@@ -342,6 +428,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Rendering Fixes",
         .tooltip = "Uses an HDR-aware luminance soft knee to preserve highlight energy. SDR always uses the vanilla bloom path.",
         .labels = {"Vanilla", "Improved"},
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "ImprovedBloomStrength",
@@ -354,6 +441,7 @@ renodx::utils::settings::Settings settings = {
         .max = 400.f,
         .is_enabled = []() { return IsHDROutputActive() && shader_injection.improved_bloom != 0.f; },
         .parse = [](float value) { return value * 0.01f; },
+        .is_visible = IsHDROutputActive,
     },
     new renodx::utils::settings::Setting{
         .key = "DLAAEnabled",
@@ -733,10 +821,26 @@ bool fired_on_init_swapchain = false;
 void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
   (void)resize;
   if (!renodx::utils::swapchain::IsDXGI(swapchain)) return;
+  auto* device = swapchain->get_device();
+  if (device == nullptr
+      || !renodx::mods::swapchain::ShouldModifySwapchain(
+          static_cast<HWND>(swapchain->get_hwnd()),
+          device->get_api())) {
+    return;
+  }
 
-  const auto display_info = renodx::utils::swapchain::GetDisplayInfo(swapchain);
-  if (display_info.display_config.has_value()) {
-    SetHDROutputState(display_info.hdr_enabled, "swapchain initialization");
+  if (IsWineCompatibilityLayer()) {
+    const auto output_desc = renodx::utils::swapchain::GetDirectXOutputDesc1(swapchain);
+    if (output_desc.has_value()) {
+      SetHDROutputState(
+          IsHDROutputColorSpace(output_desc->ColorSpace),
+          "DXGI output color space under Wine/Proton");
+    }
+  } else {
+    const auto display_info = renodx::utils::swapchain::GetDisplayInfo(swapchain);
+    if (display_info.display_config.has_value()) {
+      SetHDROutputState(display_info.hdr_enabled, "native Windows swapchain initialization");
+    }
   }
   if (!IsHDROutputActive() || fired_on_init_swapchain) return;
 
@@ -783,7 +887,6 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         renodx::mods::swapchain::prevent_full_screen = false;
         renodx::mods::swapchain::force_borderless = false;
         renodx::mods::swapchain::force_screen_tearing = false;
-        renodx::mods::swapchain::SetUseHDR10(true);
 
         reshade::register_event<reshade::addon_event::create_swapchain>(OnCreateSwapchain);
         reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
