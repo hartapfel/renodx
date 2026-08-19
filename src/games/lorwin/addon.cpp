@@ -534,9 +534,12 @@ renodx::utils::settings::Settings settings = {
         .can_reset = true,
         .label = "DLAA",
         .section = "DLAA",
-        .tooltip = "Runs NVIDIA DLAA on the full-resolution scene immediately before the game's final postprocess pass.",
+        .tooltip = "Runs full-resolution temporal antialiasing through an available NGX Super Sampling backend immediately before the game's final postprocess pass. Native NVIDIA DLAA and compatible translation layers such as OptiScaler are supported.",
         .labels = {"Off", "On"},
-        .is_enabled = []() { return lorwin::dlaa::is_nvidia_device; },
+        .is_enabled = lorwin::dlaa::IsNgxBackendSelectable,
+        .on_change_value = [](float, float current) {
+          if (current != 0.f) lorwin::dlaa::RequestNgxBackendRetry();
+        },
     },
     new renodx::utils::settings::Setting{
         .key = "DLAARenderPreset",
@@ -546,9 +549,9 @@ renodx::utils::settings::Settings settings = {
         .can_reset = true,
         .label = "DLAA Render Preset",
         .section = "DLAA",
-        .tooltip = "Selects the NVIDIA DLSS model preset. M is the default Transformer 2 preset; K and J use Transformer 1, F uses the legacy CNN, and L also uses Transformer 2.",
+        .tooltip = "Selects the NVIDIA DLSS model preset. Translation layers may remap or ignore this hint. M is the default Transformer 2 preset; K and J use Transformer 1, F uses the legacy CNN, and L also uses Transformer 2.",
         .labels = {"K (Transformer 1)", "J (Transformer 1)", "F (Legacy CNN)", "L (Transformer 2)", "M (Recommended)"},
-        .is_enabled = []() { return lorwin::dlaa::is_nvidia_device && lorwin::dlaa::enabled != 0.f; },
+        .is_enabled = []() { return lorwin::dlaa::IsNgxBackendSelectable() && lorwin::dlaa::enabled != 0.f; },
     },
     new renodx::utils::settings::Setting{
         .key = "DLAADebug",

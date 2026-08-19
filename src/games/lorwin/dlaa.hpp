@@ -109,6 +109,12 @@ struct NgxRuntime {
   bool logged_success = false;
 };
 
+enum class NgxBackendCapability : uint8_t {
+  unknown,
+  available,
+  unavailable,
+};
+
 inline Resources resources;
 inline NgxRuntime ngx;
 inline ShaderInjectData* shader_injection = nullptr;
@@ -131,7 +137,8 @@ inline float bias_current_color_strength = 1.f;
 inline float jitter_axes = 0.f;
 inline float jitter_scale = 1.f;
 inline float force_history_reset = 0.f;
-inline bool is_nvidia_device = false;
+inline bool is_native_nvidia_device = false;
+inline std::atomic<NgxBackendCapability> ngx_backend_capability = NgxBackendCapability::unknown;
 inline reshade::api::device* detected_d3d12_device = nullptr;
 inline int last_motion_vector_axes = -1;
 inline int last_motion_vector_dilation = -1;
@@ -227,6 +234,17 @@ inline std::string GetFeatureFlagsName(int flags) {
   return result.empty() ? "None" : result;
 }
 
+inline bool IsNgxBackendSelectable() {
+  return detected_d3d12_device != nullptr;
+}
+
+inline void RequestNgxBackendRetry() {
+  std::scoped_lock lock(runtime_mutex);
+  if (ngx.initialized) return;
+  ngx.init_failed = false;
+  ngx_backend_capability = NgxBackendCapability::unknown;
+}
+
 inline void DetectD3D12Adapter(reshade::api::device* device) {
   if (device == nullptr || device->get_api() != reshade::api::device_api::d3d12) return;
   if (detected_d3d12_device == device) return;
@@ -251,10 +269,12 @@ inline void DetectD3D12Adapter(reshade::api::device* device) {
   }
 
   detected_d3d12_device = device;
-  is_nvidia_device = retrieved && vendor_id == 0x10de;
+  is_native_nvidia_device = retrieved && vendor_id == 0x10de;
+  ngx_backend_capability = NgxBackendCapability::unknown;
   std::stringstream s;
   s << "LORWIN DLAA: D3D12 adapter vendor=0x" << std::hex << static_cast<uint32_t>(vendor_id)
-    << " NVIDIA=" << (is_nvidia_device ? "yes" : "no");
+    << " native_NVIDIA=" << (is_native_nvidia_device ? "yes" : "no")
+    << "; NGX availability will be determined from capability parameters";
   reshade::log::message(reshade::log::level::info, s.str().c_str());
 }
 
@@ -509,11 +529,12 @@ inline void ReleaseNgx() {
   ngx.device.Reset();
   ngx.initialized = false;
   ngx.init_failed = false;
+  ngx_backend_capability = NgxBackendCapability::unknown;
 }
 
 inline bool EnsureNgxInitialized(reshade::api::device* device) {
-  if (ngx.initialized) return true;
-  if (ngx.init_failed || device == nullptr || !is_nvidia_device) return false;
+  if (ngx.initialized) return ngx_backend_capability == NgxBackendCapability::available;
+  if (ngx.init_failed || device == nullptr) return false;
 
   auto* native_device = reinterpret_cast<ID3D12Device*>(device->get_native());
   if (native_device == nullptr) return false;
@@ -544,6 +565,7 @@ inline bool EnsureNgxInitialized(reshade::api::device* device) {
       NVSDK_NGX_Version_API);
   if (NVSDK_NGX_FAILED(init_result)) {
     ngx.init_failed = true;
+    ngx_backend_capability = NgxBackendCapability::unavailable;
     enabled = 0.f;
     std::stringstream s;
     s << "LORWIN DLAA: NGX init failed: " << ResultToString(init_result)
@@ -555,6 +577,7 @@ inline bool EnsureNgxInitialized(reshade::api::device* device) {
   const NVSDK_NGX_Result params_result = NVSDK_NGX_D3D12_GetCapabilityParameters(&ngx.parameters);
   if (NVSDK_NGX_FAILED(params_result) || ngx.parameters == nullptr) {
     ngx.init_failed = true;
+    ngx_backend_capability = NgxBackendCapability::unavailable;
     enabled = 0.f;
     std::stringstream s;
     s << "LORWIN DLAA: capability parameters failed: " << ResultToString(params_result)
@@ -564,12 +587,30 @@ inline bool EnsureNgxInitialized(reshade::api::device* device) {
     return false;
   }
 
+  int available = 0;
+  const NVSDK_NGX_Result availability_result =
+      ngx.parameters->Get(NVSDK_NGX_Parameter_SuperSampling_Available, &available);
+  if (NVSDK_NGX_FAILED(availability_result) || available != 1) {
+    ngx.init_failed = true;
+    ngx_backend_capability = NgxBackendCapability::unavailable;
+    enabled = 0.f;
+    std::stringstream s;
+    s << "LORWIN DLAA: NGX Super Sampling unavailable: " << ResultToString(availability_result)
+      << " (0x" << std::hex << static_cast<uint32_t>(availability_result)
+      << "), available=" << std::dec << available;
+    reshade::log::message(reshade::log::level::warning, s.str().c_str());
+    NVSDK_NGX_D3D12_DestroyParameters(ngx.parameters);
+    ngx.parameters = nullptr;
+    NVSDK_NGX_D3D12_Shutdown1(native_device);
+    return false;
+  }
+
   ngx.device = native_device;
   ngx.initialized = true;
-  int available = 0;
-  ngx.parameters->Get(NVSDK_NGX_Parameter_SuperSampling_Available, &available);
+  ngx_backend_capability = NgxBackendCapability::available;
   std::stringstream s;
-  s << "LORWIN DLAA: NGX initialized, SuperSampling_Available=" << available;
+  s << "LORWIN DLAA: NGX Super Sampling backend available, native_NVIDIA="
+    << (is_native_nvidia_device ? "yes" : "no");
   reshade::log::message(reshade::log::level::info, s.str().c_str());
   return true;
 }
@@ -1243,7 +1284,7 @@ inline bool RunDlaa(reshade::api::command_list* cmd_list) {
   const auto depth = renodx::utils::resource::GetResourceFromView(device, depth_srv.view);
   if (source.handle != 0u) jitter::SetPostprocessSceneColorResource(source);
   if (depth.handle != 0u) jitter::SetPostprocessDepthResource(depth);
-  if (enabled == 0.f || !is_nvidia_device) return true;
+  if (enabled == 0.f) return true;
   if (scene_srv.view.handle == 0u
       || depth_srv.view.handle == 0u
       || resources.motion_vectors.handle == 0u
@@ -1576,7 +1617,8 @@ inline void OnDestroyDevice(reshade::api::device* device) {
   Destroy(device);
   if (device == detected_d3d12_device) {
     detected_d3d12_device = nullptr;
-    is_nvidia_device = false;
+    is_native_nvidia_device = false;
+    ngx_backend_capability = NgxBackendCapability::unknown;
     const std::unique_lock state_lock(resource_state_mutex);
     resource_states.clear();
   }
