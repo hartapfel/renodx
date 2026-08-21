@@ -72,6 +72,19 @@ float3 APTGamutCompressBT2020(float3 color_bt2020) {
   return renodx::color::gamma::DecodeSafe(compressed, mid_gray_gamma);
 }
 
+float3 APTPreparePostProcessOutput(float3 color_bt709, float3 fallback_bt709) {
+  fallback_bt709 = renodx::math::ZeroNaN(fallback_bt709);
+  fallback_bt709 = renodx::math::Select(isinf(fallback_bt709), 0.f.xxx, fallback_bt709);
+  color_bt709 = renodx::math::Select(isnan(color_bt709), fallback_bt709, color_bt709);
+  color_bt709 = renodx::math::Select(isinf(color_bt709), fallback_bt709, color_bt709);
+
+  // The game gamma-encodes this BT.709 signal with per-channel log2 calls.
+  // Compress signed wide-gamut components before that nonlinear boundary;
+  // saturation is expanded into BT.2020 later in the HDR transformer.
+  const float grayscale = max(renodx::color::y::from::BT709(color_bt709), 0.f);
+  return max(renodx::color::correct::GamutCompress(color_bt709, grayscale), 0.f.xxx);
+}
+
 float3 APTApplyPostProcessLUTScaling(
     float3 lut_input_linear,
     float3 lut_output_linear,
@@ -283,7 +296,12 @@ float3 APTApplyLiliumHDRRCAS(
   lobe *= -0.5f * noise + 1.f;
 
   const float reciprocal_lobe = rcp(4.f * lobe + 1.f);
-  const float sharpened_luma = ((b_luma + d_luma + h_luma + f_luma) * lobe + e_luma) * reciprocal_lobe;
+  // Do not let sharpening create a new local minimum. This preserves genuine
+  // black samples while preventing isolated zero-valued edge artifacts.
+  const float sharpened_luma = clamp(
+      ((b_luma + d_luma + h_luma + f_luma) * lobe + e_luma) * reciprocal_lobe,
+      min_luma,
+      max_luma);
   const float luma_ratio = clamp(renodx::math::DivideSafe(sharpened_luma, e_luma, 1.f), 0.f, 4.f);
   return center_bt709_nits * luma_ratio;
 }
@@ -303,9 +321,10 @@ float3 APTApplyPostProcessToneMap(
 
   if (RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25) {
     float peak_ratio = max(1.f, RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f));
-    return renodx::tonemap::psychov::psychotm_test25(
+    float3 psychov_tonemapped_bt709 = renodx::tonemap::psychov::psychotm_test25(
         color_bt709,
         peak_ratio);
+    return APTPreparePostProcessOutput(psychov_tonemapped_bt709, vanilla_tonemapped_bt709);
   }
 
   renodx::draw::Config config = renodx::draw::BuildConfig();
@@ -329,7 +348,9 @@ float3 APTApplyPostProcessToneMap(
           ? renodx::tonemap::renodrt::config::scaling_method::LUMINANCE
           : renodx::tonemap::renodrt::config::scaling_method::PER_CHANNEL;
 
-  return renodx::draw::ToneMapPass(color_bt709, config);
+  return APTPreparePostProcessOutput(
+      renodx::draw::ToneMapPass(color_bt709, config),
+      vanilla_tonemapped_bt709);
 }
 
 #endif  // SRC_GAMES_APTLEGACY_COMMON_HLSLI_
