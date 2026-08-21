@@ -21,13 +21,45 @@
 namespace {
 
 renodx::mods::shader::CustomShaders custom_shaders = {
-        CustomShaderEntry(0x075A3656),  // HDR display transform
-        CustomShaderEntry(0x3B2D1EB3),  // 3D LUT builder
+    CustomShaderEntry(0x075A3656),  // HDR display transform
+    CustomShaderEntry(0x0B400229),  // Post-process tonemap variant
+    CustomShaderEntry(0x1334A440),  // Post-process tonemap variant
+    CustomShaderEntry(0x1CFA12FF),  // Post-process tonemap variant
+    CustomShaderEntry(0x2938303C),  // Post-process tonemap variant
+    CustomShaderEntry(0x29BA98C2),  // Post-process tonemap variant
+    CustomShaderEntry(0x2DF70FE7),  // Post-process tonemap variant
+    CustomShaderEntry(0x3A960CAD),  // Post-process tonemap variant
+    CustomShaderEntry(0x3B781817),  // Post-process tonemap variant
+    CustomShaderEntry(0x5695F1ED),  // Post-process tonemap variant
+    CustomShaderEntry(0x5A093FB0),  // Post-process tonemap variant
+    CustomShaderEntry(0x5F538380),  // Post-process tonemap variant
+    CustomShaderEntry(0x642DC775),  // Post-process tonemap variant
+    CustomShaderEntry(0x75DC93EF),  // Post-process tonemap variant
+    CustomShaderEntry(0x77C33C04),  // Post-process tonemap variant
+    CustomShaderEntry(0x7A47A81E),  // Post-process tonemap variant
+    CustomShaderEntry(0xA1C545E8),  // Post-process tonemap variant
+    CustomShaderEntry(0xC29908CB),  // Post-process tonemap variant
+    CustomShaderEntry(0xC4D3A175),  // Post-process tonemap variant
+    CustomShaderEntry(0xCEFC5D57),  // Post-process tonemap variant
+    CustomShaderEntry(0xD3A55CCB),  // Post-process tonemap variant
+    CustomShaderEntry(0xD5CC0912),  // Post-process tonemap variant
+    CustomShaderEntry(0xD7D00858),  // Post-process tonemap variant
+    CustomShaderEntry(0xDDA7495C),  // Post-process tonemap variant
+    CustomShaderEntry(0xE414472A),  // Post-process tonemap variant
+    CustomShaderEntry(0xF0EEA483),  // Post-process tonemap variant
+    CustomShaderEntry(0xF3770F49),  // Post-process tonemap variant
+    CustomShaderEntry(0xFE4B3711),  // Post-process tonemap variant
 };
 
 ShaderInjectData shader_injection;
 
-bool IsVanillaPlus() { return shader_injection.tone_map_type == 1.f; }
+bool IsVanillaPlus() {
+  return shader_injection.tone_map_type == 1.f;
+}
+
+bool IsCustomToneMap() {
+  return shader_injection.tone_map_type == 1.f || shader_injection.tone_map_type == 2.f;
+}
 
 renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
@@ -37,8 +69,8 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Tone Mapper",
         .section = "Tone Mapping",
-        .tooltip = "Vanilla keeps the game's HDR tone mapping. Vanilla+ applies RenoDX grading in the game's LUT chain.",
-        .labels = {"Vanilla", "Vanilla+"},
+        .tooltip = "Vanilla preserves the game's original HDR output. Vanilla+ uses RenoDRT Reinhard. PsychoV-25 uses the observer-based Test25 tonemapper.",
+        .labels = {"Vanilla", "Vanilla+", "PsychoV-25"},
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapPeakNits",
@@ -49,16 +81,30 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Maximum HDR output brightness in nits.",
         .min = 400.f,
         .max = 4000.f,
+        .is_enabled = []() { return IsCustomToneMap(); },
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapGameNits",
         .binding = &shader_injection.diffuse_white_nits,
         .default_value = 203.f,
-        .label = "Game Brightness",
+        .label = "Paper White",
         .section = "Tone Mapping",
         .tooltip = "Overrides the game's HDR brightness/paper white in nits.",
         .min = 80.f,
         .max = 500.f,
+        .is_enabled = []() { return IsCustomToneMap(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "ToneMapColorScale",
+        .binding = &shader_injection.tone_map_color_scale,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .label = "Color Scaling",
+        .section = "Tone Mapping",
+        .tooltip = "Luminance preserves color relationships through the HDR rolloff. Per Channel saturates and blows out highlights sooner.",
+        .labels = {"Luminance", "Per Channel"},
+        .is_enabled = []() { return IsVanillaPlus(); },
+        .is_visible = []() { return IsVanillaPlus(); },
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeExposure",
@@ -68,7 +114,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Color Grading",
         .max = 2.f,
         .format = "%.2f",
-        .is_enabled = []() { return IsVanillaPlus(); },
+        .is_enabled = []() { return IsCustomToneMap(); },
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeGamma",
@@ -79,7 +125,7 @@ renodx::utils::settings::Settings settings = {
         .min = 0.75f,
         .max = 1.25f,
         .format = "%.2f",
-        .is_enabled = []() { return IsVanillaPlus(); },
+        .is_enabled = []() { return IsCustomToneMap(); },
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeHighlights",
@@ -88,7 +134,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Highlights",
         .section = "Color Grading",
         .max = 100.f,
-        .is_enabled = []() { return IsVanillaPlus(); },
+        .is_enabled = []() { return IsCustomToneMap(); },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
@@ -98,7 +144,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Shadows",
         .section = "Color Grading",
         .max = 100.f,
-        .is_enabled = []() { return IsVanillaPlus(); },
+        .is_enabled = []() { return IsCustomToneMap(); },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
@@ -108,7 +154,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Contrast",
         .section = "Color Grading",
         .max = 100.f,
-        .is_enabled = []() { return IsVanillaPlus(); },
+        .is_enabled = []() { return IsCustomToneMap(); },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
@@ -118,7 +164,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Saturation",
         .section = "Color Grading",
         .max = 100.f,
-        .is_enabled = []() { return IsVanillaPlus(); },
+        .is_enabled = []() { return IsCustomToneMap(); },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
@@ -129,7 +175,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Color Grading",
         .tooltip = "Adds or removes highlight color.",
         .max = 100.f,
-        .is_enabled = []() { return IsVanillaPlus(); },
+        .is_enabled = []() { return IsCustomToneMap(); },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
@@ -140,7 +186,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Color Grading",
         .tooltip = "Controls color loss from overexposure.",
         .max = 100.f,
-        .is_enabled = []() { return IsVanillaPlus(); },
+        .is_enabled = []() { return IsCustomToneMap(); },
         .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
@@ -151,40 +197,30 @@ renodx::utils::settings::Settings settings = {
         .section = "Color Grading",
         .tooltip = "Flare/glare compensation.",
         .max = 100.f,
-        .is_enabled = []() { return IsVanillaPlus(); },
+        .is_enabled = []() { return IsCustomToneMap(); },
         .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
-        .key = "AutoExposure",
-        .binding = &shader_injection.auto_exposure_enabled,
-        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
-        .default_value = 1.f,
-        .label = "Auto Exposure",
-        .section = "Auto Exposure",
-        .tooltip = "Uses the game's exposure signal to darken over-bright scenes and slightly lift under-exposed scenes before LUT grading.",
-        .is_enabled = []() { return IsVanillaPlus(); },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "AutoExposureBrightReduction",
-        .binding = &shader_injection.auto_exposure_bright_reduction,
-        .default_value = 40.f,
-        .label = "Bright Scene Reduction",
-        .section = "Auto Exposure",
-        .tooltip = "Reduces exposure in scenes the game meters as very bright.",
+        .key = "ColorGradeLUTScaling",
+        .binding = &shader_injection.color_grade_lut_scaling,
+        .default_value = 100.f,
+        .label = "LUT Scaling",
+        .section = "Color Grading",
+        .tooltip = "Scales the game's color grade LUT to its full range, allowing the black floor to reach zero.",
         .max = 100.f,
-        .is_enabled = []() { return shader_injection.auto_exposure_enabled != 0.f && IsVanillaPlus(); },
+        .is_enabled = []() { return IsCustomToneMap(); },
         .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
-        .key = "AutoExposureDarkBoost",
-        .binding = &shader_injection.auto_exposure_dark_boost,
-        .default_value = 10.f,
-        .label = "Dark Scene Boost",
-        .section = "Auto Exposure",
-        .tooltip = "Raises exposure in scenes the game meters as very dark.",
+        .key = "FxSharpening",
+        .binding = &shader_injection.custom_sharpness,
+        .default_value = 0.f,
+        .label = "Lilium HDR RCAS Sharpening",
+        .section = "Effects",
+        .tooltip = "Adds Lilium's HDR-aware RCAS sharpening. Disable other sharpening to avoid double-sharpening.",
         .max = 100.f,
-        .is_enabled = []() { return shader_injection.auto_exposure_enabled != 0.f && IsVanillaPlus(); },
-        .parse = [](float value) { return value * 0.01f; },
+        .is_enabled = []() { return IsCustomToneMap(); },
+        .parse = [](float value) { return value == 0.f ? 0.f : exp2(-(1.f - value * 0.01f)); },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
@@ -245,6 +281,7 @@ void OnPresetOff() {
       {"ToneMapType", 0.f},
       {"ToneMapPeakNits", 1000.f},
       {"ToneMapGameNits", 203.f},
+      {"ToneMapColorScale", 0.f},
       {"ColorGradeExposure", 1.f},
       {"ColorGradeGamma", 1.f},
       {"ColorGradeHighlights", 50.f},
@@ -254,9 +291,8 @@ void OnPresetOff() {
       {"ColorGradeHighlightSaturation", 50.f},
       {"ColorGradeBlowout", 0.f},
       {"ColorGradeFlare", 0.f},
-      {"AutoExposure", 0.f},
-      {"AutoExposureBrightReduction", 40.f},
-      {"AutoExposureDarkBoost", 10.f},
+      {"ColorGradeLUTScaling", 100.f},
+      {"FxSharpening", 0.f},
   });
 }
 
@@ -293,13 +329,14 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
       if (!reshade::register_addon(h_module)) return FALSE;
 
       if (!initialized) {
-        renodx::mods::shader::expected_constant_buffer_index = 13;
+        renodx::mods::shader::force_pipeline_cloning = true;
         renodx::mods::shader::expected_constant_buffer_space = 50;
+        renodx::mods::shader::expected_constant_buffer_index = 13;
+        renodx::mods::shader::allow_multiple_push_constants = true;
         initialized = true;
       }
 
       reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
-
       break;
   }
 
