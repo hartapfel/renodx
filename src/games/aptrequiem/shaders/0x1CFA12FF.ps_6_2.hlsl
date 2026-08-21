@@ -30,6 +30,8 @@ Texture2D<float4> sPlagueFX_MaskLayer : register(t16);
 
 Texture3D<float4> s3_3D : register(t3);
 
+#include "../common.hlsli"
+
 cbuffer CBufferGlobalConstant_Z : register(b1) {
   struct StructGlobalConstant_Z {
     float4 c[174];
@@ -79,7 +81,7 @@ float4 main(
   linear float4 TEXCOORD : TEXCOORD,
   noperspective float4 SV_Position : SV_Position
 ) : SV_Target {
-  float4 SV_Target_out;
+  float4 SV_Target;
   int _41 = asint((Global.c[43].w));
   float4 _42 = s14.Sample(s14Sampler, float2(TEXCOORD.x, TEXCOORD.y));
   float4 _46 = sPlagueFX_MaskLayer.Sample(s13Sampler, float2(TEXCOORD.z, TEXCOORD.w));
@@ -119,7 +121,7 @@ float4 main(
   float _91 = abs(_89);
   float _92 = dot(float2(_90, _91), float2(_90, _91));
   float _93 = sqrt(_92);
-  float _94 = ((_82) ? (1.0f) : (0.0f));
+  float _94 = select(_82, 1.0f, 0.0f);
   float _95 = _94 * _85;
   float4 _96 = s0.SampleLevel(s0Sampler, float2(_59, _60), 1.0f);
   float4 _100 = s0.SampleLevel(s0Sampler, float2(_59, _60), 2.0f);
@@ -396,6 +398,20 @@ float4 main(
   float _432 = _428 * _431;
   float _433 = _429 * _431;
   float _434 = _430 * _431;
+  const float apt_lut_input_encode_scale =
+      11190.6005859375f * (PostProcess.Settings[10].w * 9.999999747378752e-05f);
+  float3 apt_lut_output = APTApplyPostProcessLUTScaling(
+      float3(_390, _392, _394) / apt_lut_input_encode_scale,
+      float3(_432, _433, _434),
+      s3_3D,
+      s3_3DSampler,
+      apt_lut_input_encode_scale,
+      PostProcess.OffsetWeight[0].x,
+      PostProcess.OffsetWeight[0].y,
+      8.936070662457496e-05f * (10000.0f / PostProcess.Settings[10].w));
+  _432 = apt_lut_output.x;
+  _433 = apt_lut_output.y;
+  _434 = apt_lut_output.z;
   float _435 = dot(float3(_432, _433, _434), float3(0.2125999927520752f, 0.7152000069618225f, 0.0722000002861023f));
   float _439 = (PostProcess.Settings[9].x) * TEXCOORD.x;
   float _440 = (PostProcess.Settings[9].y) * TEXCOORD.y;
@@ -410,7 +426,7 @@ float4 main(
   if (_451) {
     bool _458 = ((PostProcess.Settings[10].x) > 0.0f);
     int _461 = asint((Global.c[1].w));
-    int _462 = ((_458) ? (_461) : (0));
+    int _462 = select(_458, _461, 0);
     float4 _463 = sBlueNoiseR8G8.Load(int4(_454, _455, _462, 0));
     float _466 = _463.x * -2.0f;
     float _467 = _463.x * 2.0f;
@@ -558,7 +574,7 @@ float4 main(
     float _628 = _627 + -1.0f;
     bool _629 = !(_615 == 1.0f);
     float _630 = _628 / _627;
-    float _631 = ((_629) ? (_630) : (0.6666666865348816f));
+    float _631 = select(_629, _630, 0.6666666865348816f);
     float _632 = log2(_616);
     float _633 = _632 * 3.0f;
     float _634 = exp2(_633);
@@ -568,7 +584,7 @@ float4 main(
     float _638 = _637 + -1.0f;
     bool _639 = !(_616 == 1.0f);
     float _640 = _638 / _637;
-    float _641 = ((_639) ? (_640) : (0.6666666865348816f));
+    float _641 = select(_639, _640, 0.6666666865348816f);
     float _642 = log2(_617);
     float _643 = _642 * 3.0f;
     float _644 = exp2(_643);
@@ -578,7 +594,7 @@ float4 main(
     float _648 = _647 + -1.0f;
     bool _649 = !(_617 == 1.0f);
     float _650 = _648 / _647;
-    float _651 = ((_649) ? (_650) : (0.6666666865348816f));
+    float _651 = select(_649, _650, 0.6666666865348816f);
     bool _652 = (_631 <= 0.0031308000907301903f);
     bool _653 = (_641 <= 0.0031308000907301903f);
     bool _654 = (_651 <= 0.0031308000907301903f);
@@ -600,9 +616,9 @@ float4 main(
     float _670 = _667 + -0.054999999701976776f;
     float _671 = _668 + -0.054999999701976776f;
     float _672 = _669 + -0.054999999701976776f;
-    float _673 = ((_652) ? (_655) : (_670));
-    float _674 = ((_653) ? (_656) : (_671));
-    float _675 = ((_654) ? (_657) : (_672));
+    float _673 = select(_652, _655, _670);
+    float _674 = select(_653, _656, _671);
+    float _675 = select(_654, _657, _672);
     int _677 = asint((User.c[3].y));
     int _678 = _677 & 1;
     bool _679 = (_678 == 0);
@@ -815,7 +831,7 @@ float4 main(
       float _878 = exp2(_877);
       float _879 = _878 * 1.0549999475479126f;
       float _880 = _879 + -0.054999999701976776f;
-      float _881 = ((_874) ? (_875) : (_880));
+      float _881 = select(_874, _875, _880);
       _1118 = _881;
       _1119 = _881;
       _1120 = _881;
@@ -830,13 +846,13 @@ float4 main(
           float _892 = _891 + 0.5f;
           bool _893 = (_892 < 0.5f);
           float _894 = (User.c[5].x) * 5.0f;
-          float _895 = ((_893) ? ((User.c[5].x)) : (_894));
+          float _895 = select(_893, (User.c[5].x), _894);
           bool _896 = (_858 < _859);
-          float _897 = ((_896) ? (_859) : (_858));
-          float _898 = ((_896) ? (_858) : (_859));
+          float _897 = select(_896, _859, _858);
+          float _898 = select(_896, _858, _859);
           bool _899 = (_857 < _897);
-          float _900 = ((_899) ? (_897) : (_857));
-          float _901 = ((_899) ? (_857) : (_897));
+          float _900 = select(_899, _897, _857);
+          float _901 = select(_899, _857, _897);
           float _902 = min(_901, _898);
           float _903 = _900 - _902;
           float _904 = _900 + 1.000000013351432e-10f;
@@ -1012,9 +1028,9 @@ float4 main(
       float _1071 = exp2(_1068);
       float _1072 = exp2(_1069);
       float _1073 = exp2(_1070);
-      float _1074 = ((_1053) ? (_1056) : (_1071));
-      float _1075 = ((_1054) ? (_1057) : (_1072));
-      float _1076 = ((_1055) ? (_1058) : (_1073));
+      float _1074 = select(_1053, _1056, _1071);
+      float _1075 = select(_1054, _1057, _1072);
+      float _1076 = select(_1055, _1058, _1073);
       bool _1077 = (_1074 == 1.0f);
       if (!_1077) {
         float _1079 = _1074 * _1074;
@@ -1073,66 +1089,84 @@ float4 main(
     _1119 = _616;
     _1120 = _617;
   }
-  bool _1121 = (_1118 <= 0.0031308000907301903f);
-  bool _1122 = (_1119 <= 0.0031308000907301903f);
-  bool _1123 = (_1120 <= 0.0031308000907301903f);
-  float _1124 = _1118 * 12.920000076293945f;
-  float _1125 = _1119 * 12.920000076293945f;
-  float _1126 = _1120 * 12.920000076293945f;
-  float _1127 = log2(_1118);
-  float _1128 = log2(_1119);
-  float _1129 = log2(_1120);
-  float _1130 = _1127 * 0.4166666567325592f;
-  float _1131 = _1128 * 0.4166666567325592f;
-  float _1132 = _1129 * 0.4166666567325592f;
-  float _1133 = exp2(_1130);
-  float _1134 = exp2(_1131);
-  float _1135 = exp2(_1132);
-  float _1136 = _1133 * 1.0549999475479126f;
-  float _1137 = _1134 * 1.0549999475479126f;
-  float _1138 = _1135 * 1.0549999475479126f;
-  float _1139 = _1136 + -0.054999999701976776f;
-  float _1140 = _1137 + -0.054999999701976776f;
-  float _1141 = _1138 + -0.054999999701976776f;
-  float _1142 = ((_1121) ? (_1124) : (_1139));
-  float _1143 = ((_1122) ? (_1125) : (_1140));
-  float _1144 = ((_1123) ? (_1126) : (_1141));
-  float _1145 = log2(_1142);
-  float _1146 = log2(_1143);
-  float _1147 = log2(_1144);
-  float _1148 = floor(_1145);
-  float _1149 = floor(_1146);
-  float _1150 = floor(_1147);
-  float _1151 = _1148 + -6.0f;
-  float _1152 = _1149 + -6.0f;
-  float _1153 = _1150 + -5.0f;
-  float _1154 = exp2(_1151);
-  float _1155 = exp2(_1152);
-  float _1156 = exp2(_1153);
-  uint _1157 = uint(SV_Position.x);
-  uint _1158 = uint(SV_Position.y);
-  int _1159 = _1157 & 63;
-  int _1160 = _1158 & 63;
-  float4 _1161 = sBlueNoiseR8.Load(int4(_1159, _1160, 0, 0));
-  float _1163 = _1161.x + -0.5f;
-  bool _1164 = (_1142 > 0.0f);
-  bool _1165 = (_1143 > 0.0f);
-  bool _1166 = (_1144 > 0.0f);
-  float _1167 = float((bool)_1164);
-  float _1168 = float((bool)_1165);
-  float _1169 = float((bool)_1166);
-  float _1170 = _1154 * _1167;
-  float _1171 = _1170 * _1163;
-  float _1172 = _1155 * _1168;
-  float _1173 = _1172 * _1163;
-  float _1174 = _1156 * _1169;
-  float _1175 = _1174 * _1163;
-  float _1176 = _1171 + _1142;
-  float _1177 = _1173 + _1143;
-  float _1178 = _1175 + _1144;
-  SV_Target_out.x = _1176;
-  SV_Target_out.y = _1177;
-  SV_Target_out.z = _1178;
-  SV_Target_out.w = _63.w;
-  return SV_Target_out;
+  float _1121 = log2(_1118);
+  float _1122 = _1121 * 3.0f;
+  float _1123 = exp2(_1122);
+  float _1124 = _1123 + -1.0f;
+  float _1125 = _1118 + -1.0f;
+  float _1126 = _1124 / _1125;
+  float _1127 = _1126 + -1.0f;
+  bool _1128 = !(_1118 == 1.0f);
+  float _1129 = _1127 / _1126;
+  float _1130 = select(_1128, _1129, 0.6666666865348816f);
+  float _1131 = log2(_1119);
+  float _1132 = _1131 * 3.0f;
+  float _1133 = exp2(_1132);
+  float _1134 = _1133 + -1.0f;
+  float _1135 = _1119 + -1.0f;
+  float _1136 = _1134 / _1135;
+  float _1137 = _1136 + -1.0f;
+  bool _1138 = !(_1119 == 1.0f);
+  float _1139 = _1137 / _1136;
+  float _1140 = select(_1138, _1139, 0.6666666865348816f);
+  float _1141 = log2(_1120);
+  float _1142 = _1141 * 3.0f;
+  float _1143 = exp2(_1142);
+  float _1144 = _1143 + -1.0f;
+  float _1145 = _1120 + -1.0f;
+  float _1146 = _1144 / _1145;
+  float _1147 = _1146 + -1.0f;
+  bool _1148 = !(_1120 == 1.0f);
+  float _1149 = _1147 / _1146;
+  float _1150 = select(_1148, _1149, 0.6666666865348816f);
+  float _1151 = saturate(_1130);
+  float _1152 = saturate(_1140);
+  float _1153 = saturate(_1150);
+  float3 apt_tonemapped = APTApplyPostProcessToneMap(
+      float3(_615, _616, _617),
+      float3(_1151, _1152, _1153),
+      false);
+  _1151 = apt_tonemapped.x;
+  _1152 = apt_tonemapped.y;
+  _1153 = apt_tonemapped.z;
+  bool _1154 = (_1151 <= 0.0031308000907301903f);
+  bool _1155 = (_1152 <= 0.0031308000907301903f);
+  bool _1156 = (_1153 <= 0.0031308000907301903f);
+  float _1157 = _1151 * 12.920000076293945f;
+  float _1158 = _1152 * 12.920000076293945f;
+  float _1159 = _1153 * 12.920000076293945f;
+  float _1160 = log2(_1151);
+  float _1161 = log2(_1152);
+  float _1162 = log2(_1153);
+  float _1163 = _1160 * 0.4166666567325592f;
+  float _1164 = _1161 * 0.4166666567325592f;
+  float _1165 = _1162 * 0.4166666567325592f;
+  float _1166 = exp2(_1163);
+  float _1167 = exp2(_1164);
+  float _1168 = exp2(_1165);
+  float _1169 = _1166 * 1.0549999475479126f;
+  float _1170 = _1167 * 1.0549999475479126f;
+  float _1171 = _1168 * 1.0549999475479126f;
+  float _1172 = _1169 + -0.054999999701976776f;
+  float _1173 = _1170 + -0.054999999701976776f;
+  float _1174 = _1171 + -0.054999999701976776f;
+  float _1175 = select(_1154, _1157, _1172);
+  float _1176 = select(_1155, _1158, _1173);
+  float _1177 = select(_1156, _1159, _1174);
+  int _1180 = asint((Global.c[1].w));
+  uint _1181 = uint(SV_Position.x);
+  uint _1182 = uint(SV_Position.y);
+  int _1183 = _1181 & 63;
+  int _1184 = _1182 & 63;
+  float4 _1185 = sBlueNoiseR8.Load(int4(_1183, _1184, _1180, 0));
+  float _1187 = _1185.x * 0.003921568859368563f;
+  float _1188 = _1175 + 0.003921568859368563f;
+  float _1189 = _1188 - _1187;
+  float _1190 = _1187 + _1176;
+  float _1191 = _1187 + _1177;
+  SV_Target.x = _1189;
+  SV_Target.y = _1190;
+  SV_Target.z = _1191;
+  SV_Target.w = _63.w;
+  return SV_Target;
 }

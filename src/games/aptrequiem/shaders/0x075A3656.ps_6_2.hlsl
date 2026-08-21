@@ -154,10 +154,26 @@ float4 main(
     _84 = _36;
     _85 = _37;
   }
-  float3 renodx_hdr_input = APTDecodeHDRTransformerInput(float3(_83, _84, _85));
-  float _88 = renodx_hdr_input.x;
-  float _91 = renodx_hdr_input.y;
-  float _94 = renodx_hdr_input.z;
+  float apt_game_nits = APTGetGameNits(User.c[0].x);
+  float3 apt_sharpened_input = APTApplyLiliumHDRRCAS(
+      float3(_83, _84, _85),
+      TEXCOORD.xy,
+      sDiffuse,
+      sMaterialSampler,
+      apt_game_nits,
+      !_41);
+  _83 = apt_sharpened_input.x;
+  _84 = apt_sharpened_input.y;
+  _85 = apt_sharpened_input.z;
+  float _86 = _83 * 0.627403974533081f;
+  float _87 = mad(0.3292819857597351f, _84, _86);
+  float _88 = mad(0.04331360012292862f, _85, _87);
+  float _89 = _83 * 0.06909699738025665f;
+  float _90 = mad(0.9195399880409241f, _84, _89);
+  float _91 = mad(0.011361200362443924f, _85, _90);
+  float _92 = _83 * 0.01639159955084324f;
+  float _93 = mad(0.08801320195198059f, _84, _92);
+  float _94 = mad(0.8955950140953064f, _85, _93);
   int _97 = int(User.c[3].y);
   bool _98 = (_97 == 0);
   if (!_98) {
@@ -170,25 +186,24 @@ float4 main(
     _103 = _91;
     _104 = _94;
   }
-  float3 apt_hdr_transformer_grade = APTApplyHDRTransformerColorGrade(float3(_102, _103, _104));
-  _102 = apt_hdr_transformer_grade.x;
-  _103 = apt_hdr_transformer_grade.y;
-  _104 = apt_hdr_transformer_grade.z;
-  float renodx_hdr_game_nits = max(1.0f, RENODX_DIFFUSE_WHITE_NITS);
-  float renodx_hdr_black_nits = 0.0f;
-  float renodx_hdr_peak_nits = max(renodx_hdr_game_nits, RENODX_PEAK_WHITE_NITS);
-  float _107 = renodx_hdr_game_nits * _102;
-  float _108 = renodx_hdr_game_nits * _103;
-  float _109 = renodx_hdr_game_nits * _104;
+  float _107 = apt_game_nits * _102;
+  float _108 = apt_game_nits * _103;
+  float _109 = apt_game_nits * _104;
+  float3 apt_hdr_transformer_grade = APTApplyHDRTransformerColorGrade(
+      float3(_107, _108, _109),
+      apt_game_nits);
+  _107 = apt_hdr_transformer_grade.x;
+  _108 = apt_hdr_transformer_grade.y;
+  _109 = apt_hdr_transformer_grade.z;
   int _111 = int(User.c[3].z);
   bool _112 = (_111 == 0);
   if (!_112) {
-    float _116 = max(_107, renodx_hdr_black_nits);
-    float _117 = max(_108, renodx_hdr_black_nits);
-    float _118 = max(_109, renodx_hdr_black_nits);
-    float _119 = min(_116, renodx_hdr_peak_nits);
-    float _120 = min(_117, renodx_hdr_peak_nits);
-    float _121 = min(_118, renodx_hdr_peak_nits);
+    float _116 = max(_107, (User.c[0].y));
+    float _117 = max(_108, (User.c[0].y));
+    float _118 = max(_109, (User.c[0].y));
+    float _119 = min(_116, (User.c[0].z));
+    float _120 = min(_117, (User.c[0].z));
+    float _121 = min(_118, (User.c[0].z));
     _183 = _119;
     _184 = _120;
     _185 = _121;
@@ -197,24 +212,24 @@ float4 main(
     float _126 = _107 / (User.c[1].x);
     float _127 = 1.0f - _126;
     float _128 = _127 * _127;
-    float _129 = _128 * renodx_hdr_black_nits;
+    float _129 = _128 * (User.c[0].y);
     float _130 = _129 + _107;
     float _131 = select(_125, _130, _107);
     bool _132 = (_108 < (User.c[1].x));
     float _133 = _108 / (User.c[1].x);
     float _134 = 1.0f - _133;
     float _135 = _134 * _134;
-    float _136 = _135 * renodx_hdr_black_nits;
+    float _136 = _135 * (User.c[0].y);
     float _137 = _136 + _108;
     float _138 = select(_132, _137, _108);
     bool _139 = (_109 < (User.c[1].x));
     float _140 = _109 / (User.c[1].x);
     float _141 = 1.0f - _140;
     float _142 = _141 * _141;
-    float _143 = _142 * renodx_hdr_black_nits;
+    float _143 = _142 * (User.c[0].y);
     float _144 = _143 + _109;
     float _145 = select(_139, _144, _109);
-    float _146 = _131 / renodx_hdr_peak_nits;
+    float _146 = _131 / (User.c[0].z);
     float _147 = log2(_146);
     float _148 = _147 * 3.0f;
     float _149 = exp2(_148);
@@ -225,8 +240,8 @@ float4 main(
     bool _154 = !(_146 == 1.0f);
     float _155 = _153 / _152;
     float _156 = select(_154, _155, 0.6666666865348816f);
-    float _157 = _156 * renodx_hdr_peak_nits;
-    float _158 = _138 / renodx_hdr_peak_nits;
+    float _157 = _156 * (User.c[0].z);
+    float _158 = _138 / (User.c[0].z);
     float _159 = log2(_158);
     float _160 = _159 * 3.0f;
     float _161 = exp2(_160);
@@ -237,8 +252,8 @@ float4 main(
     bool _166 = !(_158 == 1.0f);
     float _167 = _165 / _164;
     float _168 = select(_166, _167, 0.6666666865348816f);
-    float _169 = _168 * renodx_hdr_peak_nits;
-    float _170 = _145 / renodx_hdr_peak_nits;
+    float _169 = _168 * (User.c[0].z);
+    float _170 = _145 / (User.c[0].z);
     float _171 = log2(_170);
     float _172 = _171 * 3.0f;
     float _173 = exp2(_172);
@@ -249,11 +264,17 @@ float4 main(
     bool _178 = !(_170 == 1.0f);
     float _179 = _177 / _176;
     float _180 = select(_178, _179, 0.6666666865348816f);
-    float _181 = _180 * renodx_hdr_peak_nits;
+    float _181 = _180 * (User.c[0].z);
     _183 = _157;
     _184 = _169;
     _185 = _181;
   }
+  float3 apt_hdr_display_curve = APTApplyHDRDisplayCurve(
+      float3(_107, _108, _109),
+      float3(_183, _184, _185));
+  _183 = apt_hdr_display_curve.x;
+  _184 = apt_hdr_display_curve.y;
+  _185 = apt_hdr_display_curve.z;
   float _186 = _183 * 9.999999747378752e-05f;
   float _187 = _184 * 9.999999747378752e-05f;
   float _188 = _185 * 9.999999747378752e-05f;

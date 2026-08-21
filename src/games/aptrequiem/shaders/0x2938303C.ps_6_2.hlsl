@@ -30,6 +30,8 @@ Texture2D<float4> sPlagueFX_MaskLayer : register(t16);
 
 Texture3D<float4> s3_3D : register(t3);
 
+#include "../common.hlsli"
+
 cbuffer CBufferGlobalConstant_Z : register(b1) {
   struct StructGlobalConstant_Z {
     float4 c[174];
@@ -434,6 +436,20 @@ float4 main(
   float _477 = _473 * _476;
   float _478 = _474 * _476;
   float _479 = _475 * _476;
+  const float apt_lut_input_encode_scale =
+      11190.6005859375f * (PostProcess.Settings[10].w * 9.999999747378752e-05f);
+  float3 apt_lut_output = APTApplyPostProcessLUTScaling(
+      float3(_435, _437, _439) / apt_lut_input_encode_scale,
+      float3(_477, _478, _479),
+      s3_3D,
+      s3_3DSampler,
+      apt_lut_input_encode_scale,
+      PostProcess.OffsetWeight[0].x,
+      PostProcess.OffsetWeight[0].y,
+      8.936070662457496e-05f * (10000.0f / PostProcess.Settings[10].w));
+  _477 = apt_lut_output.x;
+  _478 = apt_lut_output.y;
+  _479 = apt_lut_output.z;
   float _480 = dot(float3(_477, _478, _479), float3(0.2125999927520752f, 0.7152000069618225f, 0.0722000002861023f));
   float _484 = (PostProcess.Settings[9].x) * TEXCOORD.x;
   float _485 = (PostProcess.Settings[9].y) * TEXCOORD.y;
@@ -1111,66 +1127,84 @@ float4 main(
     _1164 = _661;
     _1165 = _662;
   }
-  bool _1166 = (_1163 <= 0.0031308000907301903f);
-  bool _1167 = (_1164 <= 0.0031308000907301903f);
-  bool _1168 = (_1165 <= 0.0031308000907301903f);
-  float _1169 = _1163 * 12.920000076293945f;
-  float _1170 = _1164 * 12.920000076293945f;
-  float _1171 = _1165 * 12.920000076293945f;
-  float _1172 = log2(_1163);
-  float _1173 = log2(_1164);
-  float _1174 = log2(_1165);
-  float _1175 = _1172 * 0.4166666567325592f;
-  float _1176 = _1173 * 0.4166666567325592f;
-  float _1177 = _1174 * 0.4166666567325592f;
-  float _1178 = exp2(_1175);
-  float _1179 = exp2(_1176);
-  float _1180 = exp2(_1177);
-  float _1181 = _1178 * 1.0549999475479126f;
-  float _1182 = _1179 * 1.0549999475479126f;
-  float _1183 = _1180 * 1.0549999475479126f;
-  float _1184 = _1181 + -0.054999999701976776f;
-  float _1185 = _1182 + -0.054999999701976776f;
-  float _1186 = _1183 + -0.054999999701976776f;
-  float _1187 = select(_1166, _1169, _1184);
-  float _1188 = select(_1167, _1170, _1185);
-  float _1189 = select(_1168, _1171, _1186);
-  float _1190 = log2(_1187);
-  float _1191 = log2(_1188);
-  float _1192 = log2(_1189);
-  float _1193 = floor(_1190);
-  float _1194 = floor(_1191);
-  float _1195 = floor(_1192);
-  float _1196 = _1193 + -6.0f;
-  float _1197 = _1194 + -6.0f;
-  float _1198 = _1195 + -5.0f;
-  float _1199 = exp2(_1196);
-  float _1200 = exp2(_1197);
-  float _1201 = exp2(_1198);
-  uint _1202 = uint(SV_Position.x);
-  uint _1203 = uint(SV_Position.y);
-  int _1204 = _1202 & 63;
-  int _1205 = _1203 & 63;
-  float4 _1206 = sBlueNoiseR8.Load(int4(_1204, _1205, 0, 0));
-  float _1208 = _1206.x + -0.5f;
-  bool _1209 = (_1187 > 0.0f);
-  bool _1210 = (_1188 > 0.0f);
-  bool _1211 = (_1189 > 0.0f);
-  float _1212 = float((bool)_1209);
-  float _1213 = float((bool)_1210);
-  float _1214 = float((bool)_1211);
-  float _1215 = _1199 * _1212;
-  float _1216 = _1215 * _1208;
-  float _1217 = _1200 * _1213;
-  float _1218 = _1217 * _1208;
-  float _1219 = _1201 * _1214;
-  float _1220 = _1219 * _1208;
-  float _1221 = _1216 + _1187;
-  float _1222 = _1218 + _1188;
-  float _1223 = _1220 + _1189;
-  SV_Target.x = _1221;
-  SV_Target.y = _1222;
-  SV_Target.z = _1223;
+  float _1166 = log2(_1163);
+  float _1167 = _1166 * 3.0f;
+  float _1168 = exp2(_1167);
+  float _1169 = _1168 + -1.0f;
+  float _1170 = _1163 + -1.0f;
+  float _1171 = _1169 / _1170;
+  float _1172 = _1171 + -1.0f;
+  bool _1173 = !(_1163 == 1.0f);
+  float _1174 = _1172 / _1171;
+  float _1175 = select(_1173, _1174, 0.6666666865348816f);
+  float _1176 = log2(_1164);
+  float _1177 = _1176 * 3.0f;
+  float _1178 = exp2(_1177);
+  float _1179 = _1178 + -1.0f;
+  float _1180 = _1164 + -1.0f;
+  float _1181 = _1179 / _1180;
+  float _1182 = _1181 + -1.0f;
+  bool _1183 = !(_1164 == 1.0f);
+  float _1184 = _1182 / _1181;
+  float _1185 = select(_1183, _1184, 0.6666666865348816f);
+  float _1186 = log2(_1165);
+  float _1187 = _1186 * 3.0f;
+  float _1188 = exp2(_1187);
+  float _1189 = _1188 + -1.0f;
+  float _1190 = _1165 + -1.0f;
+  float _1191 = _1189 / _1190;
+  float _1192 = _1191 + -1.0f;
+  bool _1193 = !(_1165 == 1.0f);
+  float _1194 = _1192 / _1191;
+  float _1195 = select(_1193, _1194, 0.6666666865348816f);
+  float _1196 = saturate(_1175);
+  float _1197 = saturate(_1185);
+  float _1198 = saturate(_1195);
+  float3 apt_tonemapped = APTApplyPostProcessToneMap(
+      float3(_660, _661, _662),
+      float3(_1196, _1197, _1198),
+      false);
+  _1196 = apt_tonemapped.x;
+  _1197 = apt_tonemapped.y;
+  _1198 = apt_tonemapped.z;
+  bool _1199 = (_1196 <= 0.0031308000907301903f);
+  bool _1200 = (_1197 <= 0.0031308000907301903f);
+  bool _1201 = (_1198 <= 0.0031308000907301903f);
+  float _1202 = _1196 * 12.920000076293945f;
+  float _1203 = _1197 * 12.920000076293945f;
+  float _1204 = _1198 * 12.920000076293945f;
+  float _1205 = log2(_1196);
+  float _1206 = log2(_1197);
+  float _1207 = log2(_1198);
+  float _1208 = _1205 * 0.4166666567325592f;
+  float _1209 = _1206 * 0.4166666567325592f;
+  float _1210 = _1207 * 0.4166666567325592f;
+  float _1211 = exp2(_1208);
+  float _1212 = exp2(_1209);
+  float _1213 = exp2(_1210);
+  float _1214 = _1211 * 1.0549999475479126f;
+  float _1215 = _1212 * 1.0549999475479126f;
+  float _1216 = _1213 * 1.0549999475479126f;
+  float _1217 = _1214 + -0.054999999701976776f;
+  float _1218 = _1215 + -0.054999999701976776f;
+  float _1219 = _1216 + -0.054999999701976776f;
+  float _1220 = select(_1199, _1202, _1217);
+  float _1221 = select(_1200, _1203, _1218);
+  float _1222 = select(_1201, _1204, _1219);
+  int _1225 = asint((Global.c[1].w));
+  uint _1226 = uint(SV_Position.x);
+  uint _1227 = uint(SV_Position.y);
+  int _1228 = _1226 & 63;
+  int _1229 = _1227 & 63;
+  float4 _1230 = sBlueNoiseR8.Load(int4(_1228, _1229, _1225, 0));
+  float _1232 = _1230.x * 0.003921568859368563f;
+  float _1233 = _1220 + 0.003921568859368563f;
+  float _1234 = _1233 - _1232;
+  float _1235 = _1232 + _1221;
+  float _1236 = _1232 + _1222;
+  SV_Target.x = _1234;
+  SV_Target.y = _1235;
+  SV_Target.z = _1236;
   SV_Target.w = _114.w;
   return SV_Target;
 }

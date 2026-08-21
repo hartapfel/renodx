@@ -1,0 +1,984 @@
+Texture2DArray<float4> sBlueNoiseR8 : register(t1);
+
+Texture2DArray<float4> sBlueNoiseR8G8 : register(t2);
+
+Texture2D<float4> s0 : register(t0);
+
+Texture2D<float4> s6 : register(t6);
+
+Texture2D<float4> s8 : register(t8);
+
+Texture2D<float4> s12_bloom : register(t12);
+
+Texture2D<float4> s13 : register(t13);
+
+Texture2D<float4> s14 : register(t14);
+
+Texture2D<float4> s15 : register(t15);
+
+Texture2D<float4> sPlagueFX_MaskLayer : register(t16);
+
+Texture3D<float4> s3_3D : register(t3);
+
+#include "../common.hlsli"
+
+cbuffer CBufferGlobalConstant_Z : register(b1) {
+  struct StructGlobalConstant_Z {
+    float4 c[174];
+  } Global : packoffset(c000.x);
+};
+
+cbuffer CBufferUserConstant_Z : register(b0) {
+  struct StructUserConstant_Z {
+    float4 c[183];
+  } User : packoffset(c000.x);
+};
+
+cbuffer CBufferPostProcessConstant_Z : register(b2) {
+  struct StructPostProcessConstant_Z {
+    float4 Settings[16];
+    float4 OffsetWeight[32];
+  } PostProcess : packoffset(c000.x);
+};
+
+SamplerState sBlueNoiseR8G8Sampler : register(s1);
+
+SamplerState s0Sampler : register(s0);
+
+SamplerState s8Sampler : register(s8);
+
+SamplerState s12_bloomSampler : register(s12);
+
+SamplerState s13Sampler : register(s13);
+
+SamplerState s14Sampler : register(s14);
+
+SamplerState s15Sampler : register(s15);
+
+SamplerState s3_3DSampler : register(s3);
+
+float4 main(
+  linear float4 TEXCOORD : TEXCOORD,
+  noperspective float4 SV_Position : SV_Position
+) : SV_Target {
+  float4 SV_Target;
+  float4 _29 = s14.Sample(s14Sampler, float2(TEXCOORD.x, TEXCOORD.y));
+  float4 _33 = sPlagueFX_MaskLayer.Sample(s13Sampler, float2(TEXCOORD.z, TEXCOORD.w));
+  float _36 = _33.y * 0.10000000149011612f;
+  float _37 = _36 + _29.y;
+  float _38 = _33.y * 0.5f;
+  float _39 = _38 + _29.z;
+  float _40 = exp2(_39);
+  float _41 = _40 + -1.0f;
+  float _44 = (PostProcess.Settings[11].y) * _41;
+  float _45 = _44 + 1.0f;
+  float _46 = log2(_45);
+  float _47 = _29.x + TEXCOORD.z;
+  float _48 = _37 + TEXCOORD.w;
+  float _49 = _29.x + TEXCOORD.x;
+  float _50 = _37 + TEXCOORD.y;
+  float _51 = _47 * 2.0f;
+  float _52 = _48 * 2.0f;
+  float _53 = _51 + -1.0f;
+  float _54 = _52 + -1.0f;
+  float _58 = (Global.c[37].x) * _53;
+  float _59 = (Global.c[37].y) * _54;
+  float _60 = _58 * _58;
+  float _61 = _59 * _59;
+  float _62 = _60 + _61;
+  float _63 = sqrt(_62);
+  float _66 = _49 * 2.0f;
+  float _67 = _66 + -1.0f;
+  float _68 = _50 * 1.125f;
+  float _69 = _68 + -0.5625f;
+  float _70 = _67 * _67;
+  float _71 = _69 * _69;
+  float _72 = _71 + _70;
+  float _73 = sqrt(_72);
+  float _74 = _73 * 0.8715755343437195f;
+  float _75 = _74 * _74;
+  float _76 = _75 + -0.15000000596046448f;
+  float _77 = _76 * 1.8181819915771484f;
+  float _78 = saturate(_77);
+  float _79 = _78 * 2.0f;
+  float _80 = 3.0f - _79;
+  float _81 = (PostProcess.Settings[2].w) * _63;
+  float _82 = _78 * _78;
+  float _83 = _82 * _81;
+  float _84 = _83 * _75;
+  float _85 = _84 * _80;
+  float _87 = (PostProcess.Settings[2].z) * _58;
+  float _88 = (PostProcess.Settings[2].z) * _59;
+  float _89 = _88 + _48;
+  float _90 = _47 - _87;
+  float _91 = _33.x * 0.010840999893844128f;
+  float _92 = _47 + _91;
+  float _93 = _92 + _87;
+  float _94 = _48 + _91;
+  float _95 = _94 - _88;
+  float _96 = _85 + _46;
+  float4 _97 = s0.SampleLevel(s0Sampler, float2(_93, _89), _96);
+  float4 _99 = s0.SampleLevel(s0Sampler, float2(_90, _95), _96);
+  float4 _101 = s0.SampleLevel(s0Sampler, float2(_47, _48), _96);
+  float _104 = max(_97.x, 0.0f);
+  float _105 = max(_99.y, 0.0f);
+  float _106 = max(_101.z, 0.0f);
+  float _109 = (Global.c[32].w) * 11.0f;
+  float _110 = _109 + -1.2000000476837158f;
+  float _111 = saturate(_110);
+  float _112 = (Global.c[32].w) * 1.7000000476837158f;
+  float _113 = 1.340000033378601f - _112;
+  float _114 = saturate(_113);
+  float _115 = _114 * _114;
+  float _116 = _115 * _115;
+  float _117 = _116 * _111;
+  bool _118 = ((Global.c[32].w) < 9.999999747378752e-06f);
+  float _121 = max((Global.c[33].y), _117);
+  float _122 = _48 * 1.7999999523162842f;
+  float _123 = _122 + -1.100000023841858f;
+  float _124 = abs(_53);
+  float _125 = abs(_123);
+  float _126 = dot(float2(_124, _125), float2(_124, _125));
+  float _127 = sqrt(_126);
+  float _128 = select(_118, 1.0f, 0.0f);
+  float _129 = _128 * _121;
+  float4 _130 = s0.SampleLevel(s0Sampler, float2(_47, _48), 1.0f);
+  float4 _134 = s0.SampleLevel(s0Sampler, float2(_47, _48), 2.0f);
+  float4 _138 = s0.SampleLevel(s0Sampler, float2(_47, _48), 3.0f);
+  float _142 = _126 * 1.7000000476837158f;
+  float _143 = _142 + -0.6000000238418579f;
+  float _144 = saturate(_143);
+  float _145 = _126 * 1.475000023841858f;
+  float _146 = _145 + -0.375f;
+  float _147 = saturate(_146);
+  float _148 = _126 * 1.2999999523162842f;
+  float _149 = _148 + -0.15000000596046448f;
+  float _150 = saturate(_149);
+  float _151 = _138.x - _134.x;
+  float _152 = _138.y - _134.y;
+  float _153 = _138.z - _134.z;
+  float _154 = _151 * _144;
+  float _155 = _152 * _144;
+  float _156 = _153 * _144;
+  float _157 = _134.x - _130.x;
+  float _158 = _157 + _154;
+  float _159 = _134.y - _130.y;
+  float _160 = _159 + _155;
+  float _161 = _134.z - _130.z;
+  float _162 = _161 + _156;
+  float _163 = _158 * _147;
+  float _164 = _160 * _147;
+  float _165 = _162 * _147;
+  float _166 = _150 * _129;
+  float _167 = _130.x - _104;
+  float _168 = _167 + _163;
+  float _169 = _130.y - _105;
+  float _170 = _169 + _164;
+  float _171 = _130.z - _106;
+  float _172 = _171 + _165;
+  float _173 = _168 * _166;
+  float _174 = _170 * _166;
+  float _175 = _172 * _166;
+  float _176 = _173 + _104;
+  float _177 = _174 + _105;
+  float _178 = _175 + _106;
+  float4 _179 = s12_bloom.Sample(s12_bloomSampler, float2(_47, _48));
+  float4 _183 = s8.Sample(s8Sampler, float2(_49, _50));
+  float _190 = (PostProcess.Settings[4].w) * _183.x;
+  float _191 = (PostProcess.Settings[4].w) * _183.y;
+  float _192 = (PostProcess.Settings[4].w) * _183.z;
+  float _193 = _190 + (PostProcess.Settings[4].z);
+  float _194 = _191 + (PostProcess.Settings[4].z);
+  float _195 = _192 + (PostProcess.Settings[4].z);
+  float _196 = saturate(_193);
+  float _197 = saturate(_194);
+  float _198 = saturate(_195);
+  float _199 = _179.x - _176;
+  float _200 = _179.y - _177;
+  float _201 = _179.z - _178;
+  float _202 = _196 * _199;
+  float _203 = _197 * _200;
+  float _204 = _198 * _201;
+  float _205 = _202 + _176;
+  float _206 = _203 + _177;
+  float _207 = _204 + _178;
+  float4 _208 = s6.Load(int3(0, 0, 0));
+  float _210 = _208.x * _205;
+  float _211 = _208.x * _206;
+  float _212 = _208.x * _207;
+  float _219 = (PostProcess.Settings[13].w) * _54;
+  float _220 = _53 * _53;
+  float _221 = _219 * _219;
+  float _222 = _221 + _220;
+  float _223 = sqrt(_222);
+  float _225 = (PostProcess.Settings[13].x) * _223;
+  float _227 = _225 + (PostProcess.Settings[13].y);
+  float _228 = saturate(_227);
+  float _230 = log2(_228);
+  float _231 = _230 * (PostProcess.Settings[13].z);
+  float _232 = exp2(_231);
+  float _233 = _210 * (PostProcess.Settings[12].x);
+  float _234 = _211 * (PostProcess.Settings[12].y);
+  float _235 = _212 * (PostProcess.Settings[12].z);
+  float _236 = _233 - _210;
+  float _237 = _234 - _211;
+  float _238 = _235 - _212;
+  float _239 = _232 * _236;
+  float _240 = _232 * _237;
+  float _241 = _232 * _238;
+  float _242 = _239 + _210;
+  float _243 = _240 + _211;
+  float _244 = _241 + _212;
+  float _247 = (PostProcess.Settings[10].w) * 9.999999747378752e-05f;
+  float _248 = _242 * 11190.6005859375f;
+  float _249 = _248 * _247;
+  float _250 = _243 * 11190.6005859375f;
+  float _251 = _250 * _247;
+  float _252 = _244 * 11190.6005859375f;
+  float _253 = _252 * _247;
+  float _254 = _249 + 1.0f;
+  float _255 = _251 + 1.0f;
+  float _256 = _253 + 1.0f;
+  float _257 = log2(_254);
+  float _258 = log2(_255);
+  float _259 = log2(_256);
+  float _260 = _257 * 0.07434873282909393f;
+  float _261 = _258 * 0.07434873282909393f;
+  float _262 = _259 * 0.07434873282909393f;
+  float _265 = _260 * (PostProcess.OffsetWeight[0].x);
+  float _266 = _261 * (PostProcess.OffsetWeight[0].x);
+  float _267 = _262 * (PostProcess.OffsetWeight[0].x);
+  float _269 = _265 + (PostProcess.OffsetWeight[0].y);
+  float _270 = _266 + (PostProcess.OffsetWeight[0].y);
+  float _271 = _267 + (PostProcess.OffsetWeight[0].y);
+  float4 _272 = s3_3D.Sample(s3_3DSampler, float3(_269, _270, _271));
+  float _278 = _272.x * 13.450128555297852f;
+  float _279 = _272.y * 13.450128555297852f;
+  float _280 = _272.z * 13.450128555297852f;
+  float _281 = exp2(_278);
+  float _282 = exp2(_279);
+  float _283 = exp2(_280);
+  float _284 = _281 + -1.0f;
+  float _285 = _282 + -1.0f;
+  float _286 = _283 + -1.0f;
+  float _287 = _284 * 8.936070662457496e-05f;
+  float _288 = _285 * 8.936070662457496e-05f;
+  float _289 = _286 * 8.936070662457496e-05f;
+  float _290 = 10000.0f / (PostProcess.Settings[10].w);
+  float _291 = _287 * _290;
+  float _292 = _288 * _290;
+  float _293 = _289 * _290;
+  const float apt_lut_input_encode_scale =
+      11190.6005859375f * (PostProcess.Settings[10].w * 9.999999747378752e-05f);
+  float3 apt_lut_output = APTApplyPostProcessLUTScaling(
+      float3(_249, _251, _253) / apt_lut_input_encode_scale,
+      float3(_291, _292, _293),
+      s3_3D,
+      s3_3DSampler,
+      apt_lut_input_encode_scale,
+      PostProcess.OffsetWeight[0].x,
+      PostProcess.OffsetWeight[0].y,
+      8.936070662457496e-05f * (10000.0f / PostProcess.Settings[10].w));
+  _291 = apt_lut_output.x;
+  _292 = apt_lut_output.y;
+  _293 = apt_lut_output.z;
+  float _297 = (User.c[2].y) / (User.c[2].x);
+  int _300 = asint((Global.c[1].w));
+  uint _301 = _300 + 30u;
+  int _302 = _301 & 63;
+  float _303 = _47 * 8.0f;
+  float _304 = _303 * _297;
+  float _305 = _48 * 8.0f;
+  float _306 = float((int)(_300));
+  float4 _307 = sBlueNoiseR8G8.SampleLevel(sBlueNoiseR8G8Sampler, float3(_304, _305, _306), 0.0f);
+  float _309 = _47 + 0.5f;
+  float _310 = (User.c[2].x) * 0.5f;
+  float _311 = _309 + _310;
+  float _312 = _297 * 8.0f;
+  float _313 = _312 * _311;
+  float _314 = _48 + 0.5f;
+  float _315 = (User.c[2].y) * 0.5f;
+  float _316 = _314 + _315;
+  float _317 = _316 * 8.0f;
+  float _318 = float((int)(_302));
+  float4 _319 = sBlueNoiseR8G8.SampleLevel(sBlueNoiseR8G8Sampler, float3(_313, _317, _318), 0.0f);
+  float _321 = _319.x + _307.x;
+  float _322 = _321 * 0.714285671710968f;
+  float _323 = _322 + -0.2142857164144516f;
+  float _324 = saturate(_323);
+  float _325 = _324 * 2.0f;
+  float _326 = 3.0f - _325;
+  float _327 = _324 * _324;
+  float _328 = _327 * _326;
+  float _329 = _328 * 0.5f;
+  float _330 = _328 * 0.4000000059604645f;
+  float _331 = _328 * 0.05000000074505806f;
+  float _332 = _329 + -0.5f;
+  float _333 = _330 + -0.6000000238418579f;
+  float _334 = _331 + -0.949999988079071f;
+  float _335 = _332 * _129;
+  float _336 = _333 * _129;
+  float _337 = _334 * _129;
+  float _338 = _335 + 1.0f;
+  float _339 = _336 + 1.0f;
+  float _340 = _337 + 1.0f;
+  float _341 = _291 * _338;
+  float _342 = _292 * _339;
+  float _343 = _293 * _340;
+  float4 _344 = s13.Sample(s13Sampler, float2(_47, _48));
+  float _351 = _144 + 1.0f;
+  float _352 = saturate(_351);
+  float _353 = (User.c[2].x) * _352;
+  float _354 = (User.c[2].y) * _352;
+  float _355 = _353 + _47;
+  float _356 = _354 + _48;
+  float4 _357 = s13.Sample(s13Sampler, float2(_355, _356));
+  float _361 = _357.x + _344.x;
+  float _362 = _357.y + _344.y;
+  float _363 = _357.z + _344.z;
+  float _364 = _361 * 0.5f;
+  float _365 = _362 * 0.5f;
+  float _366 = _363 * 0.5f;
+  float _367 = _129 * 0.6000000238418579f;
+  float _368 = _367 * _127;
+  float _369 = _129 * 0.7300000190734863f;
+  float _370 = _369 * _127;
+  float _371 = _129 * 0.8799999952316284f;
+  float _372 = _371 * _127;
+  float _373 = 1.0f - _368;
+  float _374 = 1.0f - _370;
+  float _375 = 1.0f - _372;
+  float _376 = saturate(_373);
+  float _377 = saturate(_374);
+  float _378 = saturate(_375);
+  float _379 = _341 * _376;
+  float _380 = _342 * _377;
+  float _381 = _343 * _378;
+  float _382 = _364 + _379;
+  float _383 = _380 + _365;
+  float _384 = _381 + _366;
+  bool _387 = ((User.c[3].x) > 0.0f);
+  float _509;
+  float _565;
+  float _621;
+  float _624;
+  float _625;
+  float _626;
+  float _637;
+  float _769;
+  float _770;
+  float _771;
+  float _817;
+  float _818;
+  float _819;
+  float _857;
+  float _871;
+  float _885;
+  float _886;
+  float _887;
+  if (_387) {
+    float _389 = log2(_382);
+    float _390 = _389 * 3.0f;
+    float _391 = exp2(_390);
+    float _392 = _391 + -1.0f;
+    float _393 = _382 + -1.0f;
+    float _394 = _392 / _393;
+    float _395 = _394 + -1.0f;
+    bool _396 = !(_382 == 1.0f);
+    float _397 = _395 / _394;
+    float _398 = select(_396, _397, 0.6666666865348816f);
+    float _399 = log2(_383);
+    float _400 = _399 * 3.0f;
+    float _401 = exp2(_400);
+    float _402 = _401 + -1.0f;
+    float _403 = _383 + -1.0f;
+    float _404 = _402 / _403;
+    float _405 = _404 + -1.0f;
+    bool _406 = !(_383 == 1.0f);
+    float _407 = _405 / _404;
+    float _408 = select(_406, _407, 0.6666666865348816f);
+    float _409 = log2(_384);
+    float _410 = _409 * 3.0f;
+    float _411 = exp2(_410);
+    float _412 = _411 + -1.0f;
+    float _413 = _384 + -1.0f;
+    float _414 = _412 / _413;
+    float _415 = _414 + -1.0f;
+    bool _416 = !(_384 == 1.0f);
+    float _417 = _415 / _414;
+    float _418 = select(_416, _417, 0.6666666865348816f);
+    bool _419 = (_398 <= 0.0031308000907301903f);
+    bool _420 = (_408 <= 0.0031308000907301903f);
+    bool _421 = (_418 <= 0.0031308000907301903f);
+    float _422 = _398 * 12.920000076293945f;
+    float _423 = _408 * 12.920000076293945f;
+    float _424 = _418 * 12.920000076293945f;
+    float _425 = log2(_398);
+    float _426 = log2(_408);
+    float _427 = log2(_418);
+    float _428 = _425 * 0.4166666567325592f;
+    float _429 = _426 * 0.4166666567325592f;
+    float _430 = _427 * 0.4166666567325592f;
+    float _431 = exp2(_428);
+    float _432 = exp2(_429);
+    float _433 = exp2(_430);
+    float _434 = _431 * 1.0549999475479126f;
+    float _435 = _432 * 1.0549999475479126f;
+    float _436 = _433 * 1.0549999475479126f;
+    float _437 = _434 + -0.054999999701976776f;
+    float _438 = _435 + -0.054999999701976776f;
+    float _439 = _436 + -0.054999999701976776f;
+    float _440 = select(_419, _422, _437);
+    float _441 = select(_420, _423, _438);
+    float _442 = select(_421, _424, _439);
+    int _444 = asint((User.c[3].y));
+    int _445 = _444 & 1;
+    bool _446 = (_445 == 0);
+    if (!_446) {
+      bool _455 = !(_440 <= (User.c[4].x));
+      if (!_455) {
+        float _457 = max(9.999999974752427e-07f, (User.c[4].x));
+        float _458 = _440 / _457;
+        float _459 = _458 * (User.c[4].y);
+        float _460 = _458 * _458;
+        float _461 = _460 * _458;
+        float _462 = _461 - _458;
+        float _463 = (User.c[3].z) * 0.1666666716337204f;
+        float _464 = _457 * _457;
+        float _465 = _464 * _463;
+        float _466 = _465 * _462;
+        float _467 = _466 + _459;
+        _509 = _467;
+      } else {
+        bool _469 = !(_440 <= (User.c[4].z));
+        if (!_469) {
+          float _471 = (User.c[4].z) - (User.c[4].x);
+          float _472 = max(9.999999974752427e-07f, _471);
+          float _473 = _440 - (User.c[4].x);
+          float _474 = _473 / _472;
+          float _475 = 1.0f - _474;
+          float _476 = _475 * (User.c[4].y);
+          float _477 = _474 * (User.c[4].w);
+          float _478 = _476 + _477;
+          float _479 = _475 * _475;
+          float _480 = _479 * _475;
+          float _481 = _480 - _475;
+          float _482 = _481 * (User.c[3].z);
+          float _483 = _474 * _474;
+          float _484 = _483 * _474;
+          float _485 = _484 - _474;
+          float _486 = _485 * (User.c[3].w);
+          float _487 = _482 + _486;
+          float _488 = _472 * _472;
+          float _489 = _488 * 0.1666666716337204f;
+          float _490 = _489 * _487;
+          float _491 = _478 + _490;
+          _509 = _491;
+        } else {
+          float _493 = 1.0f - (User.c[4].z);
+          float _494 = _440 - (User.c[4].z);
+          float _495 = max(9.999999974752427e-07f, _493);
+          float _496 = _494 / _495;
+          float _497 = 1.0f - _496;
+          float _498 = _497 * (User.c[4].w);
+          float _499 = _498 + _496;
+          float _500 = _497 * _497;
+          float _501 = _500 * _497;
+          float _502 = _501 - _497;
+          float _503 = _493 * _493;
+          float _504 = _503 * 0.1666666716337204f;
+          float _505 = _504 * (User.c[3].w);
+          float _506 = _505 * _502;
+          float _507 = _499 + _506;
+          _509 = _507;
+        }
+      }
+      float _510 = saturate(_509);
+      bool _511 = !(_441 <= (User.c[4].x));
+      if (!_511) {
+        float _513 = max(9.999999974752427e-07f, (User.c[4].x));
+        float _514 = _441 / _513;
+        float _515 = _514 * (User.c[4].y);
+        float _516 = _514 * _514;
+        float _517 = _516 * _514;
+        float _518 = _517 - _514;
+        float _519 = (User.c[3].z) * 0.1666666716337204f;
+        float _520 = _513 * _513;
+        float _521 = _520 * _519;
+        float _522 = _521 * _518;
+        float _523 = _522 + _515;
+        _565 = _523;
+      } else {
+        bool _525 = !(_441 <= (User.c[4].z));
+        if (!_525) {
+          float _527 = (User.c[4].z) - (User.c[4].x);
+          float _528 = max(9.999999974752427e-07f, _527);
+          float _529 = _441 - (User.c[4].x);
+          float _530 = _529 / _528;
+          float _531 = 1.0f - _530;
+          float _532 = _531 * (User.c[4].y);
+          float _533 = _530 * (User.c[4].w);
+          float _534 = _532 + _533;
+          float _535 = _531 * _531;
+          float _536 = _535 * _531;
+          float _537 = _536 - _531;
+          float _538 = _537 * (User.c[3].z);
+          float _539 = _530 * _530;
+          float _540 = _539 * _530;
+          float _541 = _540 - _530;
+          float _542 = _541 * (User.c[3].w);
+          float _543 = _538 + _542;
+          float _544 = _528 * _528;
+          float _545 = _544 * 0.1666666716337204f;
+          float _546 = _545 * _543;
+          float _547 = _534 + _546;
+          _565 = _547;
+        } else {
+          float _549 = 1.0f - (User.c[4].z);
+          float _550 = _441 - (User.c[4].z);
+          float _551 = max(9.999999974752427e-07f, _549);
+          float _552 = _550 / _551;
+          float _553 = 1.0f - _552;
+          float _554 = _553 * (User.c[4].w);
+          float _555 = _554 + _552;
+          float _556 = _553 * _553;
+          float _557 = _556 * _553;
+          float _558 = _557 - _553;
+          float _559 = _549 * _549;
+          float _560 = _559 * 0.1666666716337204f;
+          float _561 = _560 * (User.c[3].w);
+          float _562 = _561 * _558;
+          float _563 = _555 + _562;
+          _565 = _563;
+        }
+      }
+      float _566 = saturate(_565);
+      bool _567 = !(_442 <= (User.c[4].x));
+      if (!_567) {
+        float _569 = max(9.999999974752427e-07f, (User.c[4].x));
+        float _570 = _442 / _569;
+        float _571 = _570 * (User.c[4].y);
+        float _572 = _570 * _570;
+        float _573 = _572 * _570;
+        float _574 = _573 - _570;
+        float _575 = (User.c[3].z) * 0.1666666716337204f;
+        float _576 = _569 * _569;
+        float _577 = _576 * _575;
+        float _578 = _577 * _574;
+        float _579 = _578 + _571;
+        _621 = _579;
+      } else {
+        bool _581 = !(_442 <= (User.c[4].z));
+        if (!_581) {
+          float _583 = (User.c[4].z) - (User.c[4].x);
+          float _584 = max(9.999999974752427e-07f, _583);
+          float _585 = _442 - (User.c[4].x);
+          float _586 = _585 / _584;
+          float _587 = 1.0f - _586;
+          float _588 = _587 * (User.c[4].y);
+          float _589 = _586 * (User.c[4].w);
+          float _590 = _588 + _589;
+          float _591 = _587 * _587;
+          float _592 = _591 * _587;
+          float _593 = _592 - _587;
+          float _594 = _593 * (User.c[3].z);
+          float _595 = _586 * _586;
+          float _596 = _595 * _586;
+          float _597 = _596 - _586;
+          float _598 = _597 * (User.c[3].w);
+          float _599 = _594 + _598;
+          float _600 = _584 * _584;
+          float _601 = _600 * 0.1666666716337204f;
+          float _602 = _601 * _599;
+          float _603 = _590 + _602;
+          _621 = _603;
+        } else {
+          float _605 = 1.0f - (User.c[4].z);
+          float _606 = _442 - (User.c[4].z);
+          float _607 = max(9.999999974752427e-07f, _605);
+          float _608 = _606 / _607;
+          float _609 = 1.0f - _608;
+          float _610 = _609 * (User.c[4].w);
+          float _611 = _610 + _608;
+          float _612 = _609 * _609;
+          float _613 = _612 * _609;
+          float _614 = _613 - _609;
+          float _615 = _605 * _605;
+          float _616 = _615 * 0.1666666716337204f;
+          float _617 = _616 * (User.c[3].w);
+          float _618 = _617 * _614;
+          float _619 = _611 + _618;
+          _621 = _619;
+        }
+      }
+      float _622 = saturate(_621);
+      _624 = _510;
+      _625 = _566;
+      _626 = _622;
+    } else {
+      _624 = _440;
+      _625 = _441;
+      _626 = _442;
+    }
+    int _627 = _444 & 2;
+    bool _628 = (_627 == 0);
+    if (!_628) {
+      float _630 = sqrt(_624);
+      float _631 = sqrt(_625);
+      float _632 = sqrt(_626);
+      float _633 = dot(float3(_630, _631, _632), float3(0.2125999927520752f, 0.7152000069618225f, 0.0722000002861023f));
+      float _634 = 1.0f - _633;
+      float _635 = saturate(_634);
+      _637 = _635;
+    } else {
+      _637 = 1.0f;
+    }
+    int _638 = _444 & 8;
+    bool _639 = (_638 == 0);
+    if (!_639) {
+      bool _641 = (_637 <= 0.0031308000907301903f);
+      float _642 = _637 * 12.920000076293945f;
+      float _643 = log2(_637);
+      float _644 = _643 * 0.4166666567325592f;
+      float _645 = exp2(_644);
+      float _646 = _645 * 1.0549999475479126f;
+      float _647 = _646 + -0.054999999701976776f;
+      float _648 = select(_641, _642, _647);
+      _885 = _648;
+      _886 = _648;
+      _887 = _648;
+    } else {
+      int _650 = _444 & 4;
+      bool _651 = (_650 == 0);
+      if (!_651) {
+        int _653 = _444 & 16;
+        bool _654 = (_653 == 0);
+        if (!_654) {
+          float _658 = (User.c[5].x) * 0.5f;
+          float _659 = _658 + 0.5f;
+          bool _660 = (_659 < 0.5f);
+          float _661 = (User.c[5].x) * 5.0f;
+          float _662 = select(_660, (User.c[5].x), _661);
+          bool _663 = (_625 < _626);
+          float _664 = select(_663, _626, _625);
+          float _665 = select(_663, _625, _626);
+          bool _666 = (_624 < _664);
+          float _667 = select(_666, _664, _624);
+          float _668 = select(_666, _624, _664);
+          float _669 = min(_668, _665);
+          float _670 = _667 - _669;
+          float _671 = _667 + 1.000000013351432e-10f;
+          float _672 = _670 / _671;
+          float _674 = _672 - (User.c[5].y);
+          float _675 = saturate(_674);
+          float _676 = max(_675, 9.999999974752427e-07f);
+          float _677 = log2(_676);
+          float _678 = _677 * _662;
+          float _679 = exp2(_678);
+          float _680 = 2.0f - _679;
+          float _682 = 1.0f - (User.c[5].z);
+          float _683 = saturate(_682);
+          float _684 = max(_683, _680);
+          float _685 = dot(float3(_624, _625, _626), float3(0.2125999927520752f, 0.7152000069618225f, 0.0722000002861023f));
+          float _686 = _624 - _685;
+          float _687 = _625 - _685;
+          float _688 = _626 - _685;
+          float _689 = _686 * _684;
+          float _690 = _687 * _684;
+          float _691 = _688 * _684;
+          float _692 = _685 - _624;
+          float _693 = _692 + _689;
+          float _694 = _685 - _625;
+          float _695 = _694 + _690;
+          float _696 = _685 - _626;
+          float _697 = _696 + _691;
+          float _698 = _693 * _637;
+          float _699 = _695 * _637;
+          float _700 = _697 * _637;
+          float _701 = _698 + _624;
+          float _702 = _699 + _625;
+          float _703 = _700 + _626;
+          _817 = _701;
+          _818 = _702;
+          _819 = _703;
+        } else {
+          bool _705 = (_637 == 0.0f);
+          if (!_705) {
+            float _709 = abs(User.c[5].x);
+            float _710 = saturate(_709);
+            uint2 _711; s15.GetDimensions(_711.x, _711.y);
+            float _714 = float((uint)_711.y);
+            int _715 = _444 & 32;
+            bool _716 = (_715 == 0);
+            float _717 = _714 + -1.0f;
+            if (!_716) {
+              float _719 = 1.0f / _717;
+              uint _720 = uint(SV_Position.x);
+              uint _721 = uint(SV_Position.y);
+              int _722 = _720 & 63;
+              int _723 = _721 & 63;
+              float4 _724 = sBlueNoiseR8G8.Load(int4(_722, _723, 0, 0));
+              float _727 = _724.x + -0.5f;
+              float _728 = _624 * 13.999999046325684f;
+              float _729 = _625 * 13.999999046325684f;
+              float _730 = _626 * 13.999999046325684f;
+              float _731 = saturate(_728);
+              float _732 = saturate(_729);
+              float _733 = saturate(_730);
+              float _734 = _624 + -0.9285714030265808f;
+              float _735 = _625 + -0.9285714030265808f;
+              float _736 = _626 + -0.9285714030265808f;
+              float _737 = _734 * 13.999999046325684f;
+              float _738 = _735 * 13.999999046325684f;
+              float _739 = _736 * 13.999999046325684f;
+              float _740 = saturate(_737);
+              float _741 = saturate(_738);
+              float _742 = saturate(_739);
+              float _743 = 1.0f - _740;
+              float _744 = 1.0f - _741;
+              float _745 = 1.0f - _742;
+              float _746 = min(_731, _743);
+              float _747 = min(_732, _744);
+              float _748 = min(_733, _745);
+              float _749 = _724.y + -0.5f;
+              float _750 = _746 * _749;
+              float _751 = _747 * _749;
+              float _752 = _748 * _749;
+              float _753 = _750 + _727;
+              float _754 = _751 + _727;
+              float _755 = _752 + _727;
+              float _756 = _753 * _719;
+              float _757 = _754 * _719;
+              float _758 = _755 * _719;
+              float _759 = _756 + _624;
+              float _760 = _757 + _625;
+              float _761 = _758 + _626;
+              float _762 = saturate(_759);
+              float _763 = saturate(_760);
+              float _764 = saturate(_761);
+              float _765 = saturate(_762);
+              float _766 = saturate(_763);
+              float _767 = saturate(_764);
+              _769 = _765;
+              _770 = _766;
+              _771 = _767;
+            } else {
+              _769 = _624;
+              _770 = _625;
+              _771 = _626;
+            }
+            float _772 = float((uint)_711.x);
+            float _773 = _717 / _772;
+            float _774 = _773 * _769;
+            float _775 = 0.5f / _772;
+            float _776 = _774 + _775;
+            float _777 = _717 / _714;
+            float _778 = _777 * _770;
+            float _779 = 0.5f / _714;
+            float _780 = _778 + _779;
+            float _781 = _771 * _717;
+            float _782 = floor(_781);
+            float _783 = frac(_781);
+            float _784 = _782 / _714;
+            float _785 = _784 + _776;
+            float _786 = _782 + 1.0f;
+            float _787 = _786 / _714;
+            float _788 = _787 + _776;
+            float4 _789 = s15.Sample(s15Sampler, float2(_785, _780));
+            float4 _793 = s15.Sample(s15Sampler, float2(_788, _780));
+            float _797 = _793.x - _789.x;
+            float _798 = _793.y - _789.y;
+            float _799 = _793.z - _789.z;
+            float _800 = _797 * _783;
+            float _801 = _798 * _783;
+            float _802 = _799 * _783;
+            float _803 = _710 * _637;
+            float _804 = _789.x - _624;
+            float _805 = _804 + _800;
+            float _806 = _789.y - _625;
+            float _807 = _806 + _801;
+            float _808 = _789.z - _626;
+            float _809 = _808 + _802;
+            float _810 = _805 * _803;
+            float _811 = _807 * _803;
+            float _812 = _809 * _803;
+            float _813 = _810 + _624;
+            float _814 = _811 + _625;
+            float _815 = _812 + _626;
+            _817 = _813;
+            _818 = _814;
+            _819 = _815;
+          } else {
+            _817 = _624;
+            _818 = _625;
+            _819 = _626;
+          }
+        }
+      } else {
+        _817 = _624;
+        _818 = _625;
+        _819 = _626;
+      }
+      bool _820 = (_817 <= 0.040449999272823334f);
+      bool _821 = (_818 <= 0.040449999272823334f);
+      bool _822 = (_819 <= 0.040449999272823334f);
+      float _823 = _817 * 0.07739938050508499f;
+      float _824 = _818 * 0.07739938050508499f;
+      float _825 = _819 * 0.07739938050508499f;
+      float _826 = _817 + 0.054999999701976776f;
+      float _827 = _818 + 0.054999999701976776f;
+      float _828 = _819 + 0.054999999701976776f;
+      float _829 = _826 * 0.9478673338890076f;
+      float _830 = _827 * 0.9478673338890076f;
+      float _831 = _828 * 0.9478673338890076f;
+      float _832 = log2(_829);
+      float _833 = log2(_830);
+      float _834 = log2(_831);
+      float _835 = _832 * 2.4000000953674316f;
+      float _836 = _833 * 2.4000000953674316f;
+      float _837 = _834 * 2.4000000953674316f;
+      float _838 = exp2(_835);
+      float _839 = exp2(_836);
+      float _840 = exp2(_837);
+      float _841 = select(_820, _823, _838);
+      float _842 = select(_821, _824, _839);
+      float _843 = select(_822, _825, _840);
+      bool _844 = (_841 == 1.0f);
+      if (!_844) {
+        float _846 = _841 * _841;
+        float _847 = _846 * 3.0f;
+        float _848 = _841 * 2.0f;
+        float _849 = _848 + 1.0f;
+        float _850 = _849 - _847;
+        float _851 = sqrt(_850);
+        float _852 = _841 + -1.0f;
+        float _853 = _852 * 2.0f;
+        float _854 = _851 / _853;
+        float _855 = -0.5f - _854;
+        _857 = _855;
+      } else {
+        _857 = 1e+06f;
+      }
+      bool _858 = (_842 == 1.0f);
+      if (!_858) {
+        float _860 = _842 * _842;
+        float _861 = _860 * 3.0f;
+        float _862 = _842 * 2.0f;
+        float _863 = _862 + 1.0f;
+        float _864 = _863 - _861;
+        float _865 = sqrt(_864);
+        float _866 = _842 + -1.0f;
+        float _867 = _866 * 2.0f;
+        float _868 = _865 / _867;
+        float _869 = -0.5f - _868;
+        _871 = _869;
+      } else {
+        _871 = 1e+06f;
+      }
+      bool _872 = (_843 == 1.0f);
+      if (!_872) {
+        float _874 = _843 * _843;
+        float _875 = _874 * 3.0f;
+        float _876 = _843 * 2.0f;
+        float _877 = _876 + 1.0f;
+        float _878 = _877 - _875;
+        float _879 = sqrt(_878);
+        float _880 = _843 + -1.0f;
+        float _881 = _880 * 2.0f;
+        float _882 = _879 / _881;
+        float _883 = -0.5f - _882;
+        _885 = _857;
+        _886 = _871;
+        _887 = _883;
+      } else {
+        _885 = _857;
+        _886 = _871;
+        _887 = 1e+06f;
+      }
+    }
+  } else {
+    _885 = _382;
+    _886 = _383;
+    _887 = _384;
+  }
+  float _888 = log2(_885);
+  float _889 = _888 * 3.0f;
+  float _890 = exp2(_889);
+  float _891 = _890 + -1.0f;
+  float _892 = _885 + -1.0f;
+  float _893 = _891 / _892;
+  float _894 = _893 + -1.0f;
+  bool _895 = !(_885 == 1.0f);
+  float _896 = _894 / _893;
+  float _897 = select(_895, _896, 0.6666666865348816f);
+  float _898 = log2(_886);
+  float _899 = _898 * 3.0f;
+  float _900 = exp2(_899);
+  float _901 = _900 + -1.0f;
+  float _902 = _886 + -1.0f;
+  float _903 = _901 / _902;
+  float _904 = _903 + -1.0f;
+  bool _905 = !(_886 == 1.0f);
+  float _906 = _904 / _903;
+  float _907 = select(_905, _906, 0.6666666865348816f);
+  float _908 = log2(_887);
+  float _909 = _908 * 3.0f;
+  float _910 = exp2(_909);
+  float _911 = _910 + -1.0f;
+  float _912 = _887 + -1.0f;
+  float _913 = _911 / _912;
+  float _914 = _913 + -1.0f;
+  bool _915 = !(_887 == 1.0f);
+  float _916 = _914 / _913;
+  float _917 = select(_915, _916, 0.6666666865348816f);
+  float _918 = saturate(_897);
+  float _919 = saturate(_907);
+  float _920 = saturate(_917);
+  float3 apt_tonemapped = APTApplyPostProcessToneMap(
+      float3(_382, _383, _384),
+      float3(_918, _919, _920),
+      false);
+  _918 = apt_tonemapped.x;
+  _919 = apt_tonemapped.y;
+  _920 = apt_tonemapped.z;
+  bool _921 = (_918 <= 0.0031308000907301903f);
+  bool _922 = (_919 <= 0.0031308000907301903f);
+  bool _923 = (_920 <= 0.0031308000907301903f);
+  float _924 = _918 * 12.920000076293945f;
+  float _925 = _919 * 12.920000076293945f;
+  float _926 = _920 * 12.920000076293945f;
+  float _927 = log2(_918);
+  float _928 = log2(_919);
+  float _929 = log2(_920);
+  float _930 = _927 * 0.4166666567325592f;
+  float _931 = _928 * 0.4166666567325592f;
+  float _932 = _929 * 0.4166666567325592f;
+  float _933 = exp2(_930);
+  float _934 = exp2(_931);
+  float _935 = exp2(_932);
+  float _936 = _933 * 1.0549999475479126f;
+  float _937 = _934 * 1.0549999475479126f;
+  float _938 = _935 * 1.0549999475479126f;
+  float _939 = _936 + -0.054999999701976776f;
+  float _940 = _937 + -0.054999999701976776f;
+  float _941 = _938 + -0.054999999701976776f;
+  float _942 = select(_921, _924, _939);
+  float _943 = select(_922, _925, _940);
+  float _944 = select(_923, _926, _941);
+  int _947 = asint((Global.c[1].w));
+  uint _948 = uint(SV_Position.x);
+  uint _949 = uint(SV_Position.y);
+  int _950 = _948 & 63;
+  int _951 = _949 & 63;
+  float4 _952 = sBlueNoiseR8.Load(int4(_950, _951, _947, 0));
+  float _954 = _952.x * 0.003921568859368563f;
+  float _955 = _942 + 0.003921568859368563f;
+  float _956 = _955 - _954;
+  float _957 = _954 + _943;
+  float _958 = _954 + _944;
+  SV_Target.x = _956;
+  SV_Target.y = _957;
+  SV_Target.z = _958;
+  SV_Target.w = _101.w;
+  return SV_Target;
+}
