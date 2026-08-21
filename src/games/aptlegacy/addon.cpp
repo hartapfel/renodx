@@ -21,14 +21,49 @@
 namespace {
 
 renodx::mods::shader::CustomShaders custom_shaders = {
+    CustomShaderEntry(0x01A44DD7),  // Post-process tonemap variant
+    CustomShaderEntry(0x0EC16507),  // Post-process tonemap variant
+    CustomShaderEntry(0x1561C60A),  // Post-process tonemap variant
+    CustomShaderEntry(0x22EA236E),  // Post-process tonemap variant
+    CustomShaderEntry(0x240C5BC8),  // Post-process tonemap variant
+    CustomShaderEntry(0x2522E2A6),  // Post-process tonemap variant
+    CustomShaderEntry(0x297D3D79),  // Post-process tonemap variant
+    CustomShaderEntry(0x2984493F),  // Post-process tonemap variant
+    CustomShaderEntry(0x2A7E977B),  // Post-process tonemap variant
     CustomShaderEntry(0x2B8E9672),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0x3EC88869),  // Post-process tonemap variant
+    CustomShaderEntry(0x44D95606),  // Post-process tonemap with extended grading
+    CustomShaderEntry(0x4AD83CEE),  // Post-process tonemap variant
+    CustomShaderEntry(0x4F46D1B0),  // Post-process tonemap variant
+    CustomShaderEntry(0x533B8B68),  // Post-process tonemap variant
+    CustomShaderEntry(0x5B02B51D),  // Post-process tonemap variant
+    CustomShaderEntry(0x68FF9BFE),  // Post-process tonemap variant
+    CustomShaderEntry(0x6980CFD2),  // Post-process tonemap variant
+    CustomShaderEntry(0x6AF21F5C),  // Post-process tonemap variant
+    CustomShaderEntry(0x73C4E9D6),  // Post-process tonemap variant
     CustomShaderEntry(0x7D349E9E),  // HDR display transform
+    CustomShaderEntry(0x7F0D5698),  // Post-process tonemap variant
+    CustomShaderEntry(0x7F37290F),  // Post-process tonemap variant
+    CustomShaderEntry(0x8A7F93FE),  // Post-process tonemap variant
+    CustomShaderEntry(0x9392A263),  // Post-process tonemap variant
+    CustomShaderEntry(0x95D09D91),  // Post-process tonemap variant
+    CustomShaderEntry(0x9F37EB1A),  // Post-process tonemap variant
     CustomShaderEntry(0xBB3A11D1),  // Post-process tonemap variant
     CustomShaderEntry(0xCCCA1D32),  // Post-process tonemap variant
+    CustomShaderEntry(0xD0330814),  // Post-process tonemap variant
+    CustomShaderEntry(0xD2CE7E98),  // Post-process tonemap variant
     CustomShaderEntry(0xD723512C),  // Motion-blur resolve
+    CustomShaderEntry(0xD57C5F66),  // Post-process tonemap variant
+    CustomShaderEntry(0xD6AA21CB),  // Post-process tonemap variant
+    CustomShaderEntry(0xE6972E37),  // Post-process tonemap variant
+    CustomShaderEntry(0xE81CE463),  // Post-process tonemap variant
+    CustomShaderEntry(0xEA6A571E),  // Post-process tonemap variant
     CustomShaderEntry(0xEA8DA350),  // Post-process tonemap
     CustomShaderEntry(0xEF5BAB14),  // Post-process tonemap variant
+    CustomShaderEntry(0xF51FE9AA),  // Post-process tonemap variant
     CustomShaderEntry(0xF6BD175C),  // Post-process tonemap with additional effects
+    CustomShaderEntry(0xF8142033),  // Post-process tonemap variant
+    CustomShaderEntry(0xF817D5BD),  // Post-process tonemap variant
 };
 
 ShaderInjectData shader_injection;
