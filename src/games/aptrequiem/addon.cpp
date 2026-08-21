@@ -41,6 +41,7 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0xC29908CB),  // Post-process tonemap variant
     CustomShaderEntry(0xC4D3A175),  // Post-process tonemap variant
     CustomShaderEntry(0xCEFC5D57),  // Post-process tonemap variant
+    CustomShaderEntry(0xD067C06B),  // Post-process tonemap variant
     CustomShaderEntry(0xD3A55CCB),  // Post-process tonemap variant
     CustomShaderEntry(0xD5CC0912),  // Post-process tonemap variant
     CustomShaderEntry(0xD7D00858),  // Post-process tonemap variant
