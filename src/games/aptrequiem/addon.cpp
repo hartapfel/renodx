@@ -58,6 +58,10 @@ bool IsVanillaPlus() {
   return shader_injection.tone_map_type == 1.f;
 }
 
+bool IsPsychoV() {
+  return shader_injection.tone_map_type == 2.f;
+}
+
 bool IsCustomToneMap() {
   return shader_injection.tone_map_type == 1.f || shader_injection.tone_map_type == 2.f;
 }
@@ -96,16 +100,53 @@ renodx::utils::settings::Settings settings = {
         .is_enabled = []() { return IsCustomToneMap(); },
     },
     new renodx::utils::settings::Setting{
+        .key = "ToneMapWhiteClip",
+        .binding = &shader_injection.tone_map_white_clip,
+        .default_value = 100.f,
+        .label = "White Clip",
+        .section = "Tone Mapping",
+        .tooltip = "Sets the scene-relative white point for Vanilla+'s RenoDRT shoulder. Lower values make highlights reach peak brightness sooner.",
+        .min = 1.f,
+        .max = 100.f,
+        .format = "%.2f",
+        .is_enabled = []() { return IsVanillaPlus(); },
+        .is_visible = []() { return IsVanillaPlus(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "ToneMapPsychoVCompression",
+        .binding = &shader_injection.psychov_compression_power,
+        .default_value = 2.f,
+        .label = "Compression Power",
+        .section = "Tone Mapping",
+        .tooltip = "Sets PsychoV-25's highlight compression power. Zero uses automatic compression; higher values make highlights approach peak brightness sooner.",
+        .max = 10.f,
+        .format = "%.2f",
+        .is_enabled = []() { return IsPsychoV(); },
+        .is_visible = []() { return IsPsychoV(); },
+    },
+    new renodx::utils::settings::Setting{
         .key = "ToneMapColorScale",
         .binding = &shader_injection.tone_map_color_scale,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 0.f,
+        .default_value = 1.f,
         .label = "Color Scaling",
         .section = "Tone Mapping",
         .tooltip = "Luminance preserves color relationships through the HDR rolloff. Per Channel saturates and blows out highlights sooner.",
         .labels = {"Luminance", "Per Channel"},
         .is_enabled = []() { return IsVanillaPlus(); },
         .is_visible = []() { return IsVanillaPlus(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "ToneMapHueShift",
+        .binding = &shader_injection.psychov_hue_shift,
+        .default_value = 100.f,
+        .label = "Hue Shift",
+        .section = "Tone Mapping",
+        .tooltip = "Corrects PsychoV-25 hue shifts for fires towards the original hue.",
+        .max = 100.f,
+        .is_enabled = []() { return IsPsychoV(); },
+        .parse = [](float value) { return value * 0.1f; },
+        .is_visible = []() { return IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeExposure",
@@ -282,7 +323,10 @@ void OnPresetOff() {
       {"ToneMapType", 0.f},
       {"ToneMapPeakNits", 1000.f},
       {"ToneMapGameNits", 203.f},
+      {"ToneMapWhiteClip", 100.f},
+      {"ToneMapPsychoVCompression", 0.f},
       {"ToneMapColorScale", 0.f},
+      {"ToneMapHueShift", 0.f},
       {"ColorGradeExposure", 1.f},
       {"ColorGradeGamma", 1.f},
       {"ColorGradeHighlights", 50.f},

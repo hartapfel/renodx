@@ -342,22 +342,11 @@ float3 APTApplyPostProcessToneMap(
     return clamp_vanilla ? saturate(vanilla_tonemapped_bt709) : vanilla_tonemapped_bt709;
   }
 
-  float3 color_bt2020 = renodx::color::bt2020::from::BT709(untonemapped_bt709);
-  color_bt2020 = APTApplyLuminanceColorGrade(color_bt2020);
-  float3 color_bt709 = renodx::color::bt709::from::BT2020(color_bt2020);
-
-  if (RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25) {
-    float peak_ratio = max(1.f, RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f));
-    float3 psychov_tonemapped_bt709 = renodx::tonemap::psychov::psychotm_test25(
-        color_bt709,
-        peak_ratio);
-    return APTPreparePostProcessOutput(psychov_tonemapped_bt709, vanilla_tonemapped_bt709);
-  }
-
   renodx::draw::Config config = renodx::draw::BuildConfig();
   config.tone_map_type = renodx::draw::TONE_MAP_TYPE_RENO_DRT;
   config.tone_map_exposure = 1.f;
-  config.tone_map_highlights = 1.f;
+  // Slightly soften only the Vanilla+ HDR shoulder; PsychoV does not use this RenoDRT pass.
+  config.tone_map_highlights = 0.8f;
   config.tone_map_shadows = 1.f;
   config.tone_map_contrast = 1.f;
   config.tone_map_saturation = 1.f;
@@ -375,6 +364,55 @@ float3 APTApplyPostProcessToneMap(
           ? renodx::tonemap::renodrt::config::scaling_method::LUMINANCE
           : renodx::tonemap::renodrt::config::scaling_method::PER_CHANNEL;
 
+  // The game's completed SDR reference contains its LUT, tint, contrast, and
+  // downstream per-channel grading. Reconstruct that look onto the scene HDR
+  // signal before user grading instead of replacing it with a neutral RenoDRT
+  // look. This preserves the art direction while retaining highlight headroom.
+  float3 neutral_sdr_bt709 = renodx::tonemap::renodrt::NeutralSDR(untonemapped_bt709);
+  float3 safe_vanilla_bt709 = renodx::math::Select(
+      or(isnan(vanilla_tonemapped_bt709), isinf(vanilla_tonemapped_bt709)),
+      neutral_sdr_bt709,
+      vanilla_tonemapped_bt709);
+  float3 game_graded_bt709 = renodx::draw::ComputeUntonemappedGraded(
+      untonemapped_bt709,
+      safe_vanilla_bt709,
+      neutral_sdr_bt709,
+      config);
+
+  float3 color_bt2020 = renodx::color::bt2020::from::BT709(game_graded_bt709);
+  color_bt2020 = APTApplyLuminanceColorGrade(color_bt2020);
+  float3 color_bt709 = renodx::color::bt709::from::BT2020(color_bt2020);
+
+  if (RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25) {
+    float peak_ratio = max(1.f, RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f));
+    float3 psychov_tonemapped_bt709 = renodx::tonemap::psychov::psychotm_test25(
+        color_bt709,
+        peak_ratio,
+        1.f,
+        0.75f,
+        1.f,
+        1.f,
+        1.f,
+        1.f,
+        100.f,
+        1.f,
+        1.f,
+        0,
+        1.f,
+        0.18f,
+        0.18f,
+        1.f,
+        1,
+        1.f,
+        RENODX_PSYCHOV_COMPRESSION_POWER);
+    psychov_tonemapped_bt709 = renodx::color::correct::Hue(
+        psychov_tonemapped_bt709,
+        color_bt709,
+        RENODX_PSYCHOV_HUE_SHIFT);
+    return APTPreparePostProcessOutput(psychov_tonemapped_bt709, vanilla_tonemapped_bt709);
+  }
+
+  config.reno_drt_white_clip = RENODX_TONE_MAP_WHITE_CLIP;
   return APTPreparePostProcessOutput(
       renodx::draw::ToneMapPass(color_bt709, config),
       vanilla_tonemapped_bt709);
