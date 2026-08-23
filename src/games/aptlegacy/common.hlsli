@@ -359,7 +359,7 @@ float3 APTApplyPostProcessToneMap(
 
   if (RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25) {
     float peak_ratio = max(1.f, RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f));
-    float3 psychov_tonemapped_bt709 = renodx::tonemap::psychov::psychotm_test25(
+    float3 psychov_tonemapped_bt709 = renodx::tonemap::psychov::psychotm_test25_fast60(
         color_bt709,
         peak_ratio);
     psychov_tonemapped_bt709 = renodx::color::correct::Hue(

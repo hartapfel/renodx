@@ -350,6 +350,27 @@ void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
   fired_on_init_swapchain = true;
 }
 
+bool ShouldInjectPostProcessLayout(
+    reshade::api::device* device,
+    std::span<const reshade::api::pipeline_layout_param> params) {
+  if (device->get_api() != reshade::api::device_api::d3d12) return false;
+
+  // All observed RenoDX post-process replacements use the same 19-parameter
+  // game root signature. Requiem's other layouts include the DXR path and must
+  // remain native or enabling ray-traced shadows can invalidate its state.
+  if (params.size() == 19u) return true;
+  if (params.size() != 20u) return false;
+
+  // OnInitPipelineLayout sees the post-create form with our cbuffer appended.
+  for (const auto& param : params) {
+    if (param.type != reshade::api::pipeline_layout_param_type::push_constants) continue;
+    if (param.push_constants.dx_register_index != 13u) continue;
+    if (param.push_constants.dx_register_space != 50u) continue;
+    return param.push_constants.count == sizeof(ShaderInjectData) / sizeof(uint32_t);
+  }
+  return false;
+}
+
 }  // namespace
 
 extern "C" __declspec(dllexport) constexpr const char* NAME = "RenoDX - A Plague Tale: Requiem";
@@ -361,6 +382,12 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
       if (!reshade::register_addon(h_module)) return FALSE;
 
       if (!initialized) {
+        renodx::mods::shader::on_create_pipeline_layout = [](auto* device, auto params) {
+          return ShouldInjectPostProcessLayout(device, params);
+        };
+        renodx::mods::shader::on_init_pipeline_layout = [](auto* device, auto, auto params) {
+          return ShouldInjectPostProcessLayout(device, params);
+        };
         renodx::mods::shader::force_pipeline_cloning = true;
         renodx::mods::shader::expected_constant_buffer_space = 50;
         renodx::mods::shader::expected_constant_buffer_index = 13;

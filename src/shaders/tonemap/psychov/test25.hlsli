@@ -4078,6 +4078,36 @@ float3 psychotm_test25(
   return renodx::color::bt709::from::LMS(output_lms);
 }
 
+// Real-time preset for full-screen use. The Fast60 hue method preserves the
+// PsychoV-25 gamut hull while avoiding the iterative per-pixel graph searches.
+float3 psychotm_test25_fast60(
+    float3 bt709_linear_input,
+    float peak_value = 1000.f / 203.f) {
+  return psychotm_test25(
+      bt709_linear_input,
+      peak_value,
+      1.f,    // exposure
+      1.f,    // highlights
+      1.f,    // shadows
+      1.f,    // contrast
+      1.f,    // purity_scale
+      1.f,    // bleaching_intensity (ignored)
+      100.f,  // clip_point (ignored)
+      1.f,    // hue_restore (ignored)
+      1.f,    // encoded_response_power
+      0,      // white_curve_mode (ignored)
+      1.f,    // cone_response_exponent
+      0.18f,
+      0.18f,
+      1.f,  // gamut_compression
+      1,    // gamut_compression_mode: BT.2020
+      1.f,  // adaptive_normalization (ignored)
+      0.f,  // compression: auto
+      1.f,  // highlight_saturation (ignored)
+      0.f,  // gamut_hue_restore (ignored)
+      PSYCHO25_HUE_METHOD_FAST_60);
+}
+
 }  // namespace psychov
 }  // namespace tonemap
 }  // namespace renodx
