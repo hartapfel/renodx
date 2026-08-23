@@ -366,7 +366,9 @@ float3 APTApplyPostProcessToneMap(
         psychov_tonemapped_bt709,
         color_bt709,
         RENODX_PSYCHOV_HUE_SHIFT);
-    return APTPreparePostProcessOutput(psychov_tonemapped_bt709, vanilla_tonemapped_bt709);
+    // PsychoV owns this path completely. Never fall back to the game's native
+    // HDR curve if an invalid component reaches the final safety boundary.
+    return APTPreparePostProcessOutput(psychov_tonemapped_bt709, 0.f.xxx);
   }
 
   config.reno_drt_white_clip = RENODX_TONE_MAP_WHITE_CLIP;
