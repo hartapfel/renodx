@@ -74,7 +74,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 2.f,
         .label = "Tone Mapper",
         .section = "Tone Mapping",
-        .tooltip = "Vanilla preserves the game's original HDR output. Vanilla+ uses RenoDRT Reinhard. PsychoV-25 uses the observer-based Test25 tonemapper.",
+        .tooltip = "Vanilla preserves the game's original HDR output. Vanilla+ uses RenoDRT Reinhard. PsychoV-25 uses the observer-based PsychoV-25 tonemapper.",
         .labels = {"Vanilla", "Vanilla+", "PsychoV-25"},
     },
     new renodx::utils::settings::Setting{

@@ -1,7 +1,7 @@
 #ifndef RENODX_SHADERS_TONEMAP_NRG_HLSL_
 #define RENODX_SHADERS_TONEMAP_NRG_HLSL_
 
-#include "../common.hlsli"
+#include "../../renodx.hlsl"
 #include "./acc_dkl.hlsli"
 #include "./bleaching.hlsli"
 #include "./stockman.hlsli"

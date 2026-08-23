@@ -1,7 +1,7 @@
 #ifndef RENODX_SHADERS_TONEMAP_PSYCHOV_TEST25_HLSL_
 #define RENODX_SHADERS_TONEMAP_PSYCHOV_TEST25_HLSL_
 
-#include "../common.hlsli"
+#include "../../renodx.hlsl"
 #include "./nrg.hlsli"
 
 /*

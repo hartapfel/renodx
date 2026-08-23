@@ -2,7 +2,7 @@
 #define SRC_GAMES_APTREQUIEM_COMMON_HLSLI_
 
 #include "./shared.h"
-#include "../../shaders/tonemap/psychov25/test25.hlsli"
+#include "../../shaders/tonemap/psychov/test25.hlsli"
 
 static const float APT_TONE_MAP_TYPE_VANILLA_PLUS = 1.f;
 static const float APT_TONE_MAP_TYPE_PSYCHOV25 = 2.f;

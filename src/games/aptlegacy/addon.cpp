@@ -57,6 +57,7 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0xD6AA21CB),  // Post-process tonemap variant
     CustomShaderEntry(0xE6972E37),  // Post-process tonemap variant
     CustomShaderEntry(0xE81CE463),  // Post-process tonemap variant
+    CustomShaderEntry(0xE919C4FD),  // Post-process tonemap variant
     CustomShaderEntry(0xEA6A571E),  // Post-process tonemap variant
     CustomShaderEntry(0xEA8DA350),  // Post-process tonemap
     CustomShaderEntry(0xEF5BAB14),  // Post-process tonemap variant
@@ -88,7 +89,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Tone Mapper",
         .section = "Tone Mapping",
-        .tooltip = "Vanilla preserves the game's original HDR output. Vanilla+ uses RenoDRT Reinhard. PsychoV-25 uses the observer-based Test25 tonemapper.",
+        .tooltip = "Vanilla preserves the game's original HDR output. Vanilla+ uses RenoDRT Reinhard. PsychoV-25 uses the observer-based PsychoV-25 tonemapper.",
         .labels = {"Vanilla", "Vanilla+", "PsychoV-25"},
     },
     new renodx::utils::settings::Setting{

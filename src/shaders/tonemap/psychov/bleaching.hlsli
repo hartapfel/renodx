@@ -1,7 +1,7 @@
 #ifndef SRC_SHADERS_COLOR_BLEACHING_HLSL_
 #define SRC_SHADERS_COLOR_BLEACHING_HLSL_
 
-#include "../common.hlsli"
+#include "../../renodx.hlsl"
 
 namespace renodx {
 namespace color {
