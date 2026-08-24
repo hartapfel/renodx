@@ -106,7 +106,7 @@ float4 main(
   float _1988;
   float _1989;
   float _1990;
-  if (!_41) {
+  if (!_41 || RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25) {
     bool _43 = (_35 < 1.0f);
     bool _44 = (_36 < 1.0f);
     bool _45 = (_37 < 1.0f);
@@ -174,27 +174,31 @@ float4 main(
   float _92 = _83 * 0.01639159955084324f;
   float _93 = mad(0.08801320195198059f, _84, _92);
   float _94 = mad(0.8955950140953064f, _85, _93);
+  // PsychoV is transported through the game's sRGB intermediate as BT.2020,
+  // so it must bypass the native BT.709-to-BT.2020 conversion here.
+  float3 apt_bt2020 = RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25
+      ? float3(_83, _84, _85)
+      : float3(_88, _91, _94);
   int _97 = int(User.c[3].y);
   bool _98 = (_97 == 0);
   if (!_98) {
-    float _100 = dot(float3(_88, _91, _94), float3(0.26269999146461487f, 0.6779999732971191f, 0.059300001710653305f));
+    float _100 = renodx::color::y::from::BT2020(apt_bt2020);
     _102 = _100;
     _103 = _100;
     _104 = _100;
   } else {
-    _102 = _88;
-    _103 = _91;
-    _104 = _94;
+    _102 = apt_bt2020.x;
+    _103 = apt_bt2020.y;
+    _104 = apt_bt2020.z;
   }
   float _107 = apt_game_nits * _102;
   float _108 = apt_game_nits * _103;
   float _109 = apt_game_nits * _104;
-  float3 apt_hdr_transformer_grade = APTApplyHDRTransformerColorGrade(
-      float3(_107, _108, _109),
-      apt_game_nits);
-  _107 = apt_hdr_transformer_grade.x;
-  _108 = apt_hdr_transformer_grade.y;
-  _109 = apt_hdr_transformer_grade.z;
+  float3 apt_finalized_color = APTFinalizeHDRTransformerColor(
+      float3(_107, _108, _109));
+  _107 = apt_finalized_color.x;
+  _108 = apt_finalized_color.y;
+  _109 = apt_finalized_color.z;
   int _111 = int(User.c[3].z);
   bool _112 = (_111 == 0);
   if (!_112) {

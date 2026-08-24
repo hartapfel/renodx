@@ -120,6 +120,15 @@ float4 main(
   float _39 = select(_36, _33, _30);
   float _40 = select(_37, _34, _31);
   float _41 = select(_38, _35, _32);
+  if (RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25) {
+    // PsychoV replaces the LUT's baked contrast, so emulate the SDR gamma 2.2
+    // presentation by decoding the sRGB intermediate as gamma 2.2. Preserve
+    // values above SDR reference white so the HDR highlight range is unchanged.
+    float3 apt_psychov_decoded = APTDecodeHDRTransformerInput(_14.rgb, 1.f);
+    _39 = apt_psychov_decoded.x;
+    _40 = apt_psychov_decoded.y;
+    _41 = apt_psychov_decoded.z;
+  }
   float apt_game_nits = APTGetGameNits(User_000.UserConstant_Z_000[0].x);
   float _44 = apt_game_nits * _39;
   float _45 = apt_game_nits * _40;
@@ -213,7 +222,7 @@ float4 main(
   float _1913;
   float _1914;
   float _1915;
-  if (!_50) {
+  if (!_50 && RENODX_TONE_MAP_TYPE != APT_TONE_MAP_TYPE_PSYCHOV25) {
     float _52 = log2(_44);
     float _53 = log2(_45);
     float _54 = log2(_46);
@@ -270,24 +279,28 @@ float4 main(
   float _101 = _92 * 0.01639159955084324f;
   float _102 = mad(0.08801320195198059f, _93, _101);
   float _103 = mad(0.8955950140953064f, _94, _102);
+  // PsychoV is transported through the game's sRGB intermediate as BT.2020,
+  // so it must bypass the native BT.709-to-BT.2020 conversion here.
+  float3 apt_bt2020_nits = RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25
+      ? float3(_92, _93, _94)
+      : float3(_97, _100, _103);
   int _106 = asint((User_000.UserConstant_Z_000[3].y));
   bool _107 = (_106 == 0);
   if (!_107) {
-    float _109 = dot(float3(_97, _100, _103), float3(0.26269999146461487f, 0.6779999732971191f, 0.059300001710653305f));
+    float _109 = renodx::color::y::from::BT2020(apt_bt2020_nits);
     _111 = _109;
     _112 = _109;
     _113 = _109;
   } else {
-    _111 = _97;
-    _112 = _100;
-    _113 = _103;
+    _111 = apt_bt2020_nits.x;
+    _112 = apt_bt2020_nits.y;
+    _113 = apt_bt2020_nits.z;
   }
-  float3 apt_hdr_transformer_grade = APTApplyHDRTransformerColorGrade(
-      float3(_111, _112, _113),
-      apt_game_nits);
-  _111 = apt_hdr_transformer_grade.x;
-  _112 = apt_hdr_transformer_grade.y;
-  _113 = apt_hdr_transformer_grade.z;
+  float3 apt_finalized_color = APTFinalizeHDRTransformerColor(
+      float3(_111, _112, _113));
+  _111 = apt_finalized_color.x;
+  _112 = apt_finalized_color.y;
+  _113 = apt_finalized_color.z;
   float _114 = _111 * 9.999999747378752e-05f;
   float _115 = _112 * 9.999999747378752e-05f;
   float _116 = _113 * 9.999999747378752e-05f;

@@ -28,7 +28,7 @@ struct ShaderInjectData {
   float custom_sharpness;
 
   float tone_map_white_clip;
-  float padding_0;
+  float psychov_wide_gamut;
   float padding_1;
   float padding_2;
 };
@@ -59,6 +59,7 @@ cbuffer shader_injection : register(b13, space50) {
 #define RENODX_COLOR_GRADE_LUT_SCALING shader_injection.color_grade_lut_scaling
 #define RENODX_TONE_MAP_COLOR_SCALE shader_injection.tone_map_color_scale
 #define RENODX_TONE_MAP_WHITE_CLIP shader_injection.tone_map_white_clip
+#define RENODX_PSYCHOV_WIDE_GAMUT shader_injection.psychov_wide_gamut
 #define CUSTOM_SHARPNESS shader_injection.custom_sharpness
 
 #include "../../shaders/renodx.hlsl"

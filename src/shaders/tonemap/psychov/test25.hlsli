@@ -4082,7 +4082,8 @@ float3 psychotm_test25(
 // PsychoV-25 gamut hull while avoiding the iterative per-pixel graph searches.
 float3 psychotm_test25_fast60(
     float3 bt709_linear_input,
-    float peak_value = 1000.f / 203.f) {
+    float peak_value = 1000.f / 203.f,
+    int gamut_compression_mode = 1) {
   return psychotm_test25(
       bt709_linear_input,
       peak_value,
@@ -4100,7 +4101,7 @@ float3 psychotm_test25_fast60(
       0.18f,
       0.18f,
       1.f,  // gamut_compression
-      1,    // gamut_compression_mode: BT.2020
+      gamut_compression_mode,  // target gamut: 0 = BT.709, 1 = BT.2020
       1.f,  // adaptive_normalization (ignored)
       0.f,  // compression: auto
       1.f,  // highlight_saturation (ignored)

@@ -85,6 +85,21 @@ float3 APTPreparePostProcessOutput(float3 color_bt709, float3 fallback_bt709) {
   return max(renodx::color::correct::GamutCompress(color_bt709, grayscale), 0.f.xxx);
 }
 
+float3 APTPreparePsychoVPostProcessOutput(float3 color_bt709) {
+  // PsychoV returns its selected target gamut represented in linear BT.709.
+  color_bt709 = renodx::math::ZeroNaN(color_bt709);
+  color_bt709 = renodx::math::Select(isinf(color_bt709), 0.f.xxx, color_bt709);
+
+  // Convert that result to the BT.2020 HDR10 container before carrying it
+  // through the game's per-channel sRGB intermediate.
+  float3 color_bt2020 = renodx::color::bt2020::from::BT709(color_bt709);
+  color_bt2020 = renodx::math::ZeroNaN(color_bt2020);
+  color_bt2020 = renodx::math::Select(isinf(color_bt2020), 0.f.xxx, color_bt2020);
+  // Keep this intermediate unconstrained. BT.709 mode is enforced after the
+  // HDR transformer's downstream grading; wide-gamut mode stays untouched.
+  return max(color_bt2020, 0.f.xxx);
+}
+
 float3 APTApplyPostProcessLUTScaling(
     float3 lut_input_linear,
     float3 lut_output_linear,
@@ -93,46 +108,63 @@ float3 APTApplyPostProcessLUTScaling(
     float lut_coordinate_scale,
     float lut_coordinate_offset,
     float3 lut_output_scale) {
-  if ((RENODX_TONE_MAP_TYPE != APT_TONE_MAP_TYPE_VANILLA_PLUS
-       && RENODX_TONE_MAP_TYPE != APT_TONE_MAP_TYPE_PSYCHOV25)
-      || RENODX_COLOR_GRADE_LUT_SCALING == 0.f) {
-    return lut_output_linear;
+  float3 scaled_lut_output = lut_output_linear;
+  const bool is_custom_tonemap =
+      RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_VANILLA_PLUS
+      || RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25;
+
+  if (is_custom_tonemap && RENODX_COLOR_GRADE_LUT_SCALING != 0.f) {
+    const float coordinate_scale = lut_coordinate_scale * 0.07434873282909393f;
+    const float black_coordinate = lut_coordinate_offset;
+    const float mid_coordinate = log2(0.18f * 335.718017578125f + 1.f) * coordinate_scale + lut_coordinate_offset;
+    const float white_coordinate = log2(335.718017578125f + 1.f) * coordinate_scale + lut_coordinate_offset;
+
+    float3 lut_black_encoded = lut_texture.Sample(
+        lut_sampler,
+        float3(black_coordinate, black_coordinate, black_coordinate)).rgb;
+    float3 lut_mid_encoded = lut_texture.Sample(
+        lut_sampler,
+        float3(mid_coordinate, mid_coordinate, mid_coordinate)).rgb;
+    float3 lut_white_encoded = lut_texture.Sample(
+        lut_sampler,
+        float3(white_coordinate, white_coordinate, white_coordinate)).rgb;
+
+    float3 lut_black_linear = (exp2(lut_black_encoded * 13.450128555297852f) - 1.f.xxx)
+        * 0.0029786902014166117f * lut_output_scale;
+    float3 lut_mid_linear = (exp2(lut_mid_encoded * 13.450128555297852f) - 1.f.xxx)
+        * 0.0029786902014166117f * lut_output_scale;
+    float3 lut_white_linear = (exp2(lut_white_encoded * 13.450128555297852f) - 1.f.xxx)
+        * 0.0029786902014166117f * lut_output_scale;
+
+    float3 unclamped_srgb = renodx::lut::Unclamp(
+        renodx::color::srgb::EncodeSafe(lut_output_linear),
+        renodx::color::srgb::EncodeSafe(lut_black_linear),
+        renodx::color::srgb::EncodeSafe(lut_mid_linear),
+        renodx::color::srgb::EncodeSafe(lut_white_linear),
+        renodx::color::srgb::EncodeSafe(lut_input_linear * lut_output_scale));
+    float3 unclamped_linear = renodx::color::srgb::DecodeSafe(unclamped_srgb);
+
+    scaled_lut_output = renodx::lut::RecolorUnclamped(
+        lut_output_linear,
+        unclamped_linear,
+        RENODX_COLOR_GRADE_LUT_SCALING);
   }
 
-  const float coordinate_scale = lut_coordinate_scale * 0.07434873282909393f;
-  const float black_coordinate = lut_coordinate_offset;
-  const float mid_coordinate = log2(0.18f * 335.718017578125f + 1.f) * coordinate_scale + lut_coordinate_offset;
-  const float white_coordinate = log2(335.718017578125f + 1.f) * coordinate_scale + lut_coordinate_offset;
+  if (RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25) {
+    // Legacy's LUT bakes exposure-dependent contrast and luminance curves into
+    // its artistic color grade. Preserve the LUT hue/purity, but restore the
+    // scene-linear luminance so PsychoV is the only display-referred curve.
+    float3 scene_linear = max(lut_input_linear * lut_output_scale, 0.f.xxx);
+    float scene_y = renodx::color::y::from::BT709(scene_linear);
+    float lut_y = renodx::color::y::from::BT709(max(scaled_lut_output, 0.f.xxx));
+    float3 color_graded_scene = lut_y > 1e-6f
+        ? scaled_lut_output * (scene_y / lut_y)
+        : scene_linear;
+    color_graded_scene = renodx::math::ZeroNaN(color_graded_scene);
+    return renodx::math::Select(isinf(color_graded_scene), scene_linear, color_graded_scene);
+  }
 
-  float3 lut_black_encoded = lut_texture.Sample(
-      lut_sampler,
-      float3(black_coordinate, black_coordinate, black_coordinate)).rgb;
-  float3 lut_mid_encoded = lut_texture.Sample(
-      lut_sampler,
-      float3(mid_coordinate, mid_coordinate, mid_coordinate)).rgb;
-  float3 lut_white_encoded = lut_texture.Sample(
-      lut_sampler,
-      float3(white_coordinate, white_coordinate, white_coordinate)).rgb;
-
-  float3 lut_black_linear = (exp2(lut_black_encoded * 13.450128555297852f) - 1.f.xxx)
-      * 0.0029786902014166117f * lut_output_scale;
-  float3 lut_mid_linear = (exp2(lut_mid_encoded * 13.450128555297852f) - 1.f.xxx)
-      * 0.0029786902014166117f * lut_output_scale;
-  float3 lut_white_linear = (exp2(lut_white_encoded * 13.450128555297852f) - 1.f.xxx)
-      * 0.0029786902014166117f * lut_output_scale;
-
-  float3 unclamped_srgb = renodx::lut::Unclamp(
-      renodx::color::srgb::EncodeSafe(lut_output_linear),
-      renodx::color::srgb::EncodeSafe(lut_black_linear),
-      renodx::color::srgb::EncodeSafe(lut_mid_linear),
-      renodx::color::srgb::EncodeSafe(lut_white_linear),
-      renodx::color::srgb::EncodeSafe(lut_input_linear * lut_output_scale));
-  float3 unclamped_linear = renodx::color::srgb::DecodeSafe(unclamped_srgb);
-
-  return renodx::lut::RecolorUnclamped(
-      lut_output_linear,
-      unclamped_linear,
-      RENODX_COLOR_GRADE_LUT_SCALING);
+  return scaled_lut_output;
 }
 
 float3 APTApplyExposureContrastFlareHighlightsShadowsByLuminance(
@@ -166,70 +198,85 @@ float3 APTApplyExposureContrastFlareHighlightsShadowsByLuminance(
   return renodx::color::correct::Luminance(color, y, max(y_shadowed, 0.f));
 }
 
-float3 APTApplyLuminanceColorGrade(float3 color_bt2020) {
+float3 APTApplyColorGrade(float3 color_bt2020) {
   renodx::color::grade::Config config = APTCreateColorGradeConfig();
-  if (config.exposure == 1.f
-      && RENODX_TONE_MAP_GAMMA == 1.f
-      && config.shadows == 1.f
-      && config.highlights == 1.f
-      && config.contrast == 1.f
-      && config.flare == 0.f) {
-    return color_bt2020;
-  }
-
-  float y = renodx::color::y::from::BT2020(color_bt2020);
-  color_bt2020 = APTApplyExposureContrastFlareHighlightsShadowsByLuminance(color_bt2020, y, config);
-
-  return APTGamutCompressBT2020(max(color_bt2020, 0.f.xxx));
-}
-
-float3 APTApplyWideGamutSaturationGrade(float3 color_bt2020) {
-  renodx::color::grade::Config config = APTCreateColorGradeConfig();
-  if (config.saturation == 1.f && config.dechroma == 0.f && config.blowout == 0.f) {
+  const bool apply_luminance_grade = config.exposure != 1.f
+      || RENODX_TONE_MAP_GAMMA != 1.f
+      || config.shadows != 1.f
+      || config.highlights != 1.f
+      || config.contrast != 1.f
+      || config.flare != 0.f;
+  const bool apply_chroma_grade = config.saturation != 1.f
+      || config.dechroma != 0.f
+      || config.blowout != 0.f;
+  if (!apply_luminance_grade && !apply_chroma_grade) {
     return color_bt2020;
   }
 
   color_bt2020 = max(color_bt2020, 0.f.xxx);
-  float y_adjusted = renodx::color::y::from::BT2020(color_bt2020);
-  // Signed BT.709 components are required to represent colors outside BT.709
-  // while they are still valid inside BT.2020. Clamping here collapses the
-  // wide-gamut chroma before the saturation adjustment can preserve it.
-  float3 color_bt709 = renodx::color::bt709::from::BT2020(color_bt2020);
-  float3 perceptual = renodx::color::oklab::from::BT709(color_bt709);
 
-  if (config.dechroma != 0.f) {
-    perceptual.yz *= lerp(1.f, 0.f, saturate(pow(y_adjusted / (10000.f / 100.f), (1.f - config.dechroma))));
+  if (apply_luminance_grade) {
+    float y = renodx::color::y::from::BT2020(color_bt2020);
+    color_bt2020 = APTApplyExposureContrastFlareHighlightsShadowsByLuminance(color_bt2020, y, config);
   }
 
-  if (config.blowout != 0.f) {
-    float percent_max = saturate(y_adjusted * 100.f / 10000.f);
-    float blowout_strength = 100.f;
-    float blowout_change = pow(1.f - percent_max, blowout_strength * abs(config.blowout));
-    if (config.blowout < 0.f) {
-      blowout_change = 2.f - blowout_change;
+  if (apply_chroma_grade) {
+    float y_adjusted = renodx::color::y::from::BT2020(color_bt2020);
+    float3 color_bt709 = renodx::color::bt709::from::BT2020(color_bt2020);
+    float3 perceptual = renodx::color::oklab::from::BT709(color_bt709);
+
+    if (config.dechroma != 0.f) {
+      perceptual.yz *= lerp(1.f, 0.f, saturate(pow(y_adjusted / (10000.f / 100.f), (1.f - config.dechroma))));
     }
 
-    perceptual.yz *= blowout_change;
+    if (config.blowout != 0.f) {
+      float percent_max = saturate(y_adjusted * 100.f / 10000.f);
+      float blowout_strength = 100.f;
+      float blowout_change = pow(1.f - percent_max, blowout_strength * abs(config.blowout));
+      if (config.blowout < 0.f) {
+        blowout_change = 2.f - blowout_change;
+      }
+
+      perceptual.yz *= blowout_change;
+    }
+
+    perceptual.yz *= config.saturation;
+    color_bt2020 = renodx::color::bt2020::from::BT709(
+        renodx::color::bt709::from::OkLab(perceptual));
   }
 
-  perceptual.yz *= config.saturation;
-
-  color_bt2020 = renodx::color::bt2020::from::BT709(renodx::color::bt709::from::OkLab(perceptual));
   return max(APTGamutCompressBT2020(color_bt2020), 0.f.xxx);
 }
 
-float3 APTApplyHDRTransformerColorGrade(float3 color_bt2020_nits, float game_nits) {
-  if (RENODX_TONE_MAP_TYPE != APT_TONE_MAP_TYPE_VANILLA_PLUS
-      && RENODX_TONE_MAP_TYPE != APT_TONE_MAP_TYPE_PSYCHOV25) {
+float3 APTFinalizeHDRTransformerColor(float3 color_bt2020_nits) {
+  if (RENODX_TONE_MAP_TYPE != APT_TONE_MAP_TYPE_PSYCHOV25
+      || RENODX_PSYCHOV_WIDE_GAMUT != 0.f) {
     return color_bt2020_nits;
   }
 
-  const float safe_game_nits = max(game_nits, 1.f);
-  return APTApplyWideGamutSaturationGrade(color_bt2020_nits / safe_game_nits) * safe_game_nits;
+  // This is the last linear-color operation before the custom HDR path enters
+  // PQ. Constrain here so gamma emulation and sharpening cannot re-expand the
+  // earlier PsychoV result outside the BT.709 primary triangle.
+  float3 color_bt709_nits = renodx::color::bt709::from::BT2020(color_bt2020_nits);
+  color_bt709_nits = APTPreparePostProcessOutput(color_bt709_nits, 0.f.xxx);
+  return renodx::color::bt2020::from::BT709(color_bt709_nits);
 }
 
-float3 APTDecodeHDRTransformerInput(float3 encoded_bt709, float game_nits) {
-  return renodx::color::srgb::DecodeSafe(encoded_bt709) * game_nits;
+float3 APTDecodeHDRTransformerInput(float3 encoded_color, float game_nits) {
+  float3 decoded_color = renodx::color::srgb::DecodeSafe(encoded_color);
+  if (RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25) {
+    decoded_color = lerp(
+        pow(max(encoded_color, 0.f.xxx), 2.2f),
+        decoded_color,
+        step(1.f.xxx, decoded_color));
+  }
+  return decoded_color * game_nits;
+}
+
+float APTGetHDRTransformerLuminance(float3 color) {
+  return RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25
+      ? renodx::color::y::from::BT2020(color)
+      : renodx::color::y::from::BT709(color);
 }
 
 // Lilium HDR RCAS: sharpen luminance in linear light and apply the resulting
@@ -267,11 +314,11 @@ float3 APTApplyLiliumHDRRCAS(
   // The display-transform input is measured in nits, so normalize luminance
   // against the selected display peak for RCAS's nominal 0..1 limiter range.
   const float rcp_normalization = rcp(max(RENODX_PEAK_WHITE_NITS, max(game_nits, 1.f)));
-  const float b_luma = renodx::color::y::from::BT709(max(b, 0.f.xxx)) * rcp_normalization;
-  const float d_luma = renodx::color::y::from::BT709(max(d, 0.f.xxx)) * rcp_normalization;
-  const float e_luma = renodx::color::y::from::BT709(max(center_bt709_nits, 0.f.xxx)) * rcp_normalization;
-  const float f_luma = renodx::color::y::from::BT709(max(f, 0.f.xxx)) * rcp_normalization;
-  const float h_luma = renodx::color::y::from::BT709(max(h, 0.f.xxx)) * rcp_normalization;
+  const float b_luma = APTGetHDRTransformerLuminance(max(b, 0.f.xxx)) * rcp_normalization;
+  const float d_luma = APTGetHDRTransformerLuminance(max(d, 0.f.xxx)) * rcp_normalization;
+  const float e_luma = APTGetHDRTransformerLuminance(max(center_bt709_nits, 0.f.xxx)) * rcp_normalization;
+  const float f_luma = APTGetHDRTransformerLuminance(max(f, 0.f.xxx)) * rcp_normalization;
+  const float h_luma = APTGetHDRTransformerLuminance(max(h, 0.f.xxx)) * rcp_normalization;
 
   const float min_ring_luma = min(min(b_luma, d_luma), min(f_luma, h_luma));
   const float max_ring_luma = max(max(b_luma, d_luma), max(f_luma, h_luma));
@@ -354,21 +401,24 @@ float3 APTApplyPostProcessToneMap(
   }
 
   float3 color_bt2020 = renodx::color::bt2020::from::BT709(color_bt709);
-  color_bt2020 = APTApplyLuminanceColorGrade(color_bt2020);
+  color_bt2020 = APTApplyColorGrade(color_bt2020);
   color_bt709 = renodx::color::bt709::from::BT2020(color_bt2020);
 
   if (RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25) {
     float peak_ratio = max(1.f, RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f));
     float3 psychov_tonemapped_bt709 = renodx::tonemap::psychov::psychotm_test25_fast60(
         color_bt709,
-        peak_ratio);
-    psychov_tonemapped_bt709 = renodx::color::correct::Hue(
-        psychov_tonemapped_bt709,
-        color_bt709,
-        RENODX_PSYCHOV_HUE_SHIFT);
+        peak_ratio,
+        int(RENODX_PSYCHOV_WIDE_GAMUT));
+    if (RENODX_PSYCHOV_HUE_SHIFT != 0.f) {
+      psychov_tonemapped_bt709 = renodx::color::correct::Hue(
+          psychov_tonemapped_bt709,
+          color_bt709,
+          RENODX_PSYCHOV_HUE_SHIFT);
+    }
     // PsychoV owns this path completely. Never fall back to the game's native
     // HDR curve if an invalid component reaches the final safety boundary.
-    return APTPreparePostProcessOutput(psychov_tonemapped_bt709, 0.f.xxx);
+    return APTPreparePsychoVPostProcessOutput(psychov_tonemapped_bt709);
   }
 
   config.reno_drt_white_clip = RENODX_TONE_MAP_WHITE_CLIP;
