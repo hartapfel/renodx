@@ -304,9 +304,11 @@ float3 APTApplyLiliumHDRRCAS(
       scene_texture.SampleLevel(scene_sampler, tex_coord + float2(0.f, 1.f) * texel_size, 0.f).rgb,
       game_nits);
 
-  // The display-transform input is measured in nits, so normalize luminance
-  // against the selected display peak for RCAS's nominal 0..1 limiter range.
-  const float rcp_normalization = rcp(max(RENODX_PEAK_WHITE_NITS, max(game_nits, 1.f)));
+  // Match Lilium's reference RCAS normalization. This is deliberately fixed
+  // rather than tied to display peak so sharpening strength does not collapse
+  // as the user's peak-brightness setting increases.
+  static const float sharpening_normalization_point = 125.f;
+  const float rcp_normalization = rcp(sharpening_normalization_point);
   const float b_luma = APTGetHDRTransformerLuminance(max(b, 0.f.xxx)) * rcp_normalization;
   const float d_luma = APTGetHDRTransformerLuminance(max(d, 0.f.xxx)) * rcp_normalization;
   const float e_luma = APTGetHDRTransformerLuminance(max(center_bt709_nits, 0.f.xxx)) * rcp_normalization;
@@ -317,6 +319,10 @@ float3 APTApplyLiliumHDRRCAS(
   const float max_ring_luma = max(max(b_luma, d_luma), max(f_luma, h_luma));
   const float limited_max_luma = min(max_ring_luma, 0.99f);
   const float epsilon = 1e-6f;
+
+  // Preserve genuine black instead of allowing the RCAS ratio resolve to
+  // manufacture a value from neighboring pixels.
+  if (e_luma <= epsilon) return center_bt709_nits;
 
   const float hit_min = min_ring_luma * rcp(max(4.f * limited_max_luma, epsilon));
   float hit_max_denominator = 4.f * min_ring_luma - 4.f;
@@ -336,14 +342,26 @@ float3 APTApplyLiliumHDRRCAS(
   lobe *= -0.5f * noise + 1.f;
 
   const float reciprocal_lobe = rcp(4.f * lobe + 1.f);
-  // Do not let sharpening create a new local minimum. This preserves genuine
-  // black samples while preventing isolated zero-valued edge artifacts.
-  const float sharpened_luma = clamp(
-      ((b_luma + d_luma + h_luma + f_luma) * lobe + e_luma) * reciprocal_lobe,
-      min_luma,
-      max_luma);
-  const float luma_ratio = clamp(renodx::math::DivideSafe(sharpened_luma, e_luma, 1.f), 0.f, 4.f);
-  return center_bt709_nits * luma_ratio;
+  const float sharpened_luma =
+      ((b_luma + d_luma + h_luma + f_luma) * lobe + e_luma) * reciprocal_lobe;
+  // Retain RCAS's contrast overshoot without allowing a non-black center to
+  // collapse to zero. The reciprocal bounds permit up to two stops either way.
+  const float luma_ratio = clamp(
+      renodx::math::DivideSafe(sharpened_luma, e_luma, 1.f),
+      0.25f,
+      4.f);
+  float3 sharpened_color_nits = center_bt709_nits * luma_ratio;
+
+  // RCAS runs after tonemapping, so its positive overshoot must respect the
+  // same peak limit. Scale RGB together to preserve hue instead of clipping
+  // individual channels.
+  const float sharpened_peak = max(
+      max(max(sharpened_color_nits.x, sharpened_color_nits.y), sharpened_color_nits.z),
+      0.f);
+  sharpened_color_nits *= min(
+      1.f,
+      max(RENODX_PEAK_WHITE_NITS, 1.f) / max(sharpened_peak, 1e-6f));
+  return sharpened_color_nits;
 }
 
 float3 APTApplyPostProcessToneMap(
