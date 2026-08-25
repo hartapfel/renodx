@@ -38,9 +38,11 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0x4F46D1B0),  // Post-process tonemap variant
     CustomShaderEntry(0x533B8B68),  // Post-process tonemap variant
     CustomShaderEntry(0x5B02B51D),  // Post-process tonemap variant
+    CustomShaderEntry(0x689AC917),  // Post-process tonemap variant
     CustomShaderEntry(0x68FF9BFE),  // Post-process tonemap variant
     CustomShaderEntry(0x6980CFD2),  // Post-process tonemap variant
     CustomShaderEntry(0x6AF21F5C),  // Post-process tonemap variant
+    CustomShaderEntry(0x6C0C44B5),  // Post-process tonemap variant
     CustomShaderEntry(0x73C4E9D6),  // Post-process tonemap variant
     CustomShaderEntry(0x7D349E9E),  // HDR display transform
     CustomShaderEntry(0x7F0D5698),  // Post-process tonemap variant
@@ -56,6 +58,7 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0xD723512C),  // Motion-blur resolve
     CustomShaderEntry(0xD57C5F66),  // Post-process tonemap variant
     CustomShaderEntry(0xD6AA21CB),  // Post-process tonemap variant
+    CustomShaderEntry(0xE2E26B6A),  // Post-process tonemap variant
     CustomShaderEntry(0xE6972E37),  // Post-process tonemap variant
     CustomShaderEntry(0xE81CE463),  // Post-process tonemap variant
     CustomShaderEntry(0xE919C4FD),  // Post-process tonemap variant
