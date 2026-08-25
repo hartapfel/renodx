@@ -800,13 +800,9 @@ float4 main(
   float _848 = _845 * 0.0029786902014166117f;
   float _849 = _846 * 0.0029786902014166117f;
   float _850 = _847 * 0.0029786902014166117f;
-  float3 apt_scaled_lut_output = APTApplyPostProcessLUTScaling(
+  float3 apt_scaled_lut_output = APTApplyPostProcessLUT(
       float3(_817 * 0.0029786902014166117f, _818 * 0.0029786902014166117f, _819 * 0.0029786902014166117f),
       float3(_848 * (User_000.UserConstant_Z_000[4].x), _849 * (User_000.UserConstant_Z_000[4].y), _850 * (User_000.UserConstant_Z_000[4].z)),
-      t3,
-      s3,
-      PostProcess_000.PostProcessConstant_Z_320[0].x,
-      PostProcess_000.PostProcessConstant_Z_320[0].y,
       User_000.UserConstant_Z_000[4].rgb);
   float _857 = apt_scaled_lut_output.x;
   float _858 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 2.0f;

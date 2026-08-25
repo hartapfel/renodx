@@ -436,15 +436,9 @@ float4 main(
   float _477 = _473 * _476;
   float _478 = _474 * _476;
   float _479 = _475 * _476;
-  float3 apt_lut_output = APTApplyPostProcessLUTScaling(
+  float3 apt_lut_output = APTApplyPostProcessLUT(
       float3(_428, _429, _430),
-      float3(_477, _478, _479),
-      s3_3D,
-      s3_3DSampler,
-      11190.6005859375f * _433,
-      PostProcess.OffsetWeight[0].x,
-      PostProcess.OffsetWeight[0].y,
-      8.936070662457496e-05f * _476);
+      float3(_477, _478, _479));
   _477 = apt_lut_output.x;
   _478 = apt_lut_output.y;
   _479 = apt_lut_output.z;

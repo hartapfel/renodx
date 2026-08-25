@@ -58,28 +58,20 @@ renodx::mods::shader::CustomShaders custom_shaders = {
 
 ShaderInjectData shader_injection;
 
-bool IsVanillaPlus() {
-  return shader_injection.tone_map_type == 1.f;
-}
-
 bool IsPsychoV() {
-  return shader_injection.tone_map_type == 2.f;
-}
-
-bool IsCustomToneMap() {
-  return shader_injection.tone_map_type == 1.f || shader_injection.tone_map_type == 2.f;
+  return shader_injection.tone_map_type != 0.f;
 }
 
 renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "ToneMapType",
         .binding = &shader_injection.tone_map_type,
-        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 2.f,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
         .label = "Tone Mapper",
         .section = "Tone Mapping",
-        .tooltip = "Vanilla preserves the game's original HDR output. Vanilla+ uses RenoDRT Reinhard. PsychoV-25 uses the observer-based PsychoV-25 tonemapper.",
-        .labels = {"Vanilla", "Vanilla+", "PsychoV-25"},
+        .tooltip = "Vanilla preserves the game's original HDR output. PsychoV-25 replaces the game's native HDR curve.",
+        .labels = {"Vanilla", "PsychoV-25"},
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapPeakNits",
@@ -90,7 +82,7 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Maximum HDR output brightness in nits.",
         .min = 400.f,
         .max = 4000.f,
-        .is_enabled = []() { return IsCustomToneMap(); },
+        .is_enabled = []() { return IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapGameNits",
@@ -101,38 +93,13 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Overrides the game's HDR brightness/paper white in nits.",
         .min = 80.f,
         .max = 500.f,
-        .is_enabled = []() { return IsCustomToneMap(); },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "ToneMapWhiteClip",
-        .binding = &shader_injection.tone_map_white_clip,
-        .default_value = 100.f,
-        .label = "White Clip",
-        .section = "Tone Mapping",
-        .tooltip = "Sets the scene-relative white point for Vanilla+'s RenoDRT shoulder. Lower values make highlights reach peak brightness sooner.",
-        .min = 1.f,
-        .max = 100.f,
-        .format = "%.2f",
-        .is_enabled = []() { return IsVanillaPlus(); },
-        .is_visible = []() { return IsVanillaPlus(); },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "ToneMapColorScale",
-        .binding = &shader_injection.tone_map_color_scale,
-        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f,
-        .label = "Color Scaling",
-        .section = "Tone Mapping",
-        .tooltip = "Luminance preserves color relationships through the HDR rolloff. Per Channel saturates and blows out highlights sooner.",
-        .labels = {"Luminance", "Per Channel"},
-        .is_enabled = []() { return IsVanillaPlus(); },
-        .is_visible = []() { return IsVanillaPlus(); },
+        .is_enabled = []() { return IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapWideGamut",
         .binding = &shader_injection.psychov_wide_gamut,
         .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
-        .default_value = 0.f,
+        .default_value = 1.f,
         .label = "Wide Gamut",
         .section = "Tone Mapping",
         .tooltip = "Selects PsychoV-25's target gamut. BT.709 preserves the game's narrower vanilla color range; BT.2020 allows wide-gamut HDR colors.",
@@ -143,7 +110,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "ToneMapHueShift",
         .binding = &shader_injection.psychov_hue_shift,
-        .default_value = 0.f,
+        .default_value = 100.f,
         .label = "Hue Shift",
         .section = "Tone Mapping",
         .tooltip = "Corrects PsychoV-25 hue shifts for fires towards the original hue.",
@@ -160,7 +127,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Color Grading",
         .max = 2.f,
         .format = "%.2f",
-        .is_enabled = []() { return IsCustomToneMap(); },
+        .is_enabled = []() { return IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeGamma",
@@ -171,7 +138,7 @@ renodx::utils::settings::Settings settings = {
         .min = 0.75f,
         .max = 1.25f,
         .format = "%.2f",
-        .is_enabled = []() { return IsCustomToneMap(); },
+        .is_enabled = []() { return IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeHighlights",
@@ -180,7 +147,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Highlights",
         .section = "Color Grading",
         .max = 100.f,
-        .is_enabled = []() { return IsCustomToneMap(); },
+        .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
@@ -190,7 +157,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Shadows",
         .section = "Color Grading",
         .max = 100.f,
-        .is_enabled = []() { return IsCustomToneMap(); },
+        .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
@@ -200,7 +167,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Contrast",
         .section = "Color Grading",
         .max = 100.f,
-        .is_enabled = []() { return IsCustomToneMap(); },
+        .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
@@ -210,7 +177,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Saturation",
         .section = "Color Grading",
         .max = 100.f,
-        .is_enabled = []() { return IsCustomToneMap(); },
+        .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
@@ -221,7 +188,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Color Grading",
         .tooltip = "Adds or removes highlight color.",
         .max = 100.f,
-        .is_enabled = []() { return IsCustomToneMap(); },
+        .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
@@ -232,7 +199,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Color Grading",
         .tooltip = "Controls color loss from overexposure.",
         .max = 100.f,
-        .is_enabled = []() { return IsCustomToneMap(); },
+        .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
@@ -243,18 +210,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Color Grading",
         .tooltip = "Flare/glare compensation.",
         .max = 100.f,
-        .is_enabled = []() { return IsCustomToneMap(); },
-        .parse = [](float value) { return value * 0.01f; },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "ColorGradeLUTScaling",
-        .binding = &shader_injection.color_grade_lut_scaling,
-        .default_value = 100.f,
-        .label = "LUT Scaling",
-        .section = "Color Grading",
-        .tooltip = "Scales the game's color grade LUT to its full range, allowing the black floor to reach zero.",
-        .max = 100.f,
-        .is_enabled = []() { return IsCustomToneMap(); },
+        .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
@@ -266,7 +222,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Effects",
         .tooltip = "Native leaves the game's sharpening path unchanged. Lilium HDR RCAS enables RenoDX's HDR-aware sharpening.",
         .labels = {"Native", "Lilium HDR RCAS"},
-        .is_enabled = []() { return IsCustomToneMap(); },
+        .is_enabled = []() { return IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
         .key = "FxSharpening",
@@ -276,7 +232,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Effects",
         .tooltip = "Adjusts Lilium's HDR-aware RCAS sharpening strength.",
         .max = 100.f,
-        .is_enabled = []() { return IsCustomToneMap() && shader_injection.custom_sharpening_type == 1.f; },
+        .is_enabled = []() { return IsPsychoV() && shader_injection.custom_sharpening_type == 1.f; },
         .parse = [](float value) { return value == 0.f ? 0.f : exp2(-(1.f - value * 0.01f)); },
     },
     new renodx::utils::settings::Setting{
@@ -338,8 +294,6 @@ void OnPresetOff() {
       {"ToneMapType", 0.f},
       {"ToneMapPeakNits", 1000.f},
       {"ToneMapGameNits", 203.f},
-      {"ToneMapWhiteClip", 100.f},
-      {"ToneMapColorScale", 0.f},
       {"ToneMapWideGamut", 0.f},
       {"ToneMapHueShift", 0.f},
       {"ColorGradeExposure", 1.f},
@@ -351,7 +305,6 @@ void OnPresetOff() {
       {"ColorGradeHighlightSaturation", 50.f},
       {"ColorGradeBlowout", 0.f},
       {"ColorGradeFlare", 0.f},
-      {"ColorGradeLUTScaling", 100.f},
       {"FxSharpeningType", 0.f},
       {"FxSharpening", 0.f},
   });

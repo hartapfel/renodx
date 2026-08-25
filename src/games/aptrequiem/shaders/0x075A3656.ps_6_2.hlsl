@@ -106,7 +106,7 @@ float4 main(
   float _1988;
   float _1989;
   float _1990;
-  if (!_41 || RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25) {
+  if (!_41 || APTIsPsychoV()) {
     bool _43 = (_35 < 1.0f);
     bool _44 = (_36 < 1.0f);
     bool _45 = (_37 < 1.0f);
@@ -176,7 +176,7 @@ float4 main(
   float _94 = mad(0.8955950140953064f, _85, _93);
   // PsychoV is transported through the game's sRGB intermediate as BT.2020,
   // so it must bypass the native BT.709-to-BT.2020 conversion here.
-  float3 apt_bt2020 = RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25
+  float3 apt_bt2020 = APTIsPsychoV()
       ? float3(_83, _84, _85)
       : float3(_88, _91, _94);
   int _97 = int(User.c[3].y);

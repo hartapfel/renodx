@@ -211,15 +211,9 @@ float4 main(
   float _216 = _212 * _213;
   const float apt_lut_input_encode_scale =
       11190.6005859375f * (PostProcess.Settings[10].w * 9.999999747378752e-05f);
-  float3 apt_lut_output = APTApplyPostProcessLUTScaling(
+  float3 apt_lut_output = APTApplyPostProcessLUT(
       float3(_170, _173, _176) / apt_lut_input_encode_scale,
-      float3(_214, _215, _216),
-      s3_3D,
-      s3_3DSampler,
-      apt_lut_input_encode_scale,
-      PostProcess.OffsetWeight[0].x,
-      PostProcess.OffsetWeight[0].y,
-      8.936070662457496e-05f * (10000.0f / PostProcess.Settings[10].w));
+      float3(_214, _215, _216));
   _214 = apt_lut_output.x;
   _215 = apt_lut_output.y;
   _216 = apt_lut_output.z;
