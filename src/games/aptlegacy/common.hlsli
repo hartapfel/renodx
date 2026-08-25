@@ -8,6 +8,77 @@ bool APTIsPsychoV() {
   return RENODX_TONE_MAP_TYPE != 0.f;
 }
 
+bool APTUseRenoDXChromaticAberration() {
+  return APTIsPsychoV() && CUSTOM_CHROMATIC_ABERRATION_TYPE == 1.f;
+}
+
+float3 APTApplyChromaticAberrationEncoded(
+    float3 center_color,
+    float2 tex_coord,
+    Texture2D<float4> scene_texture,
+    SamplerState scene_sampler,
+    float lod) {
+  if (!APTUseRenoDXChromaticAberration()
+      || CUSTOM_CHROMATIC_ABERRATION_STRENGTH <= 0.f) {
+    return center_color;
+  }
+
+  uint width, height;
+  scene_texture.GetDimensions(width, height);
+  if (width == 0 || height == 0) return center_color;
+
+  const float2 dimensions = float2(width, height);
+  const float2 texel_size = rcp(dimensions);
+  const float2 pixel_from_center = (tex_coord - 0.5f) * dimensions;
+  const float distance_from_center = length(pixel_from_center);
+  if (distance_from_center <= 1e-4f) return center_color;
+
+  const float edge_distance = saturate(
+      distance_from_center / (0.5f * length(dimensions)));
+  float edge_weight = smoothstep(0.15f, 1.f, edge_distance);
+  edge_weight *= edge_weight;
+
+  const float2 screen_edge_distance = abs(tex_coord * 2.f - 1.f);
+  const float axial_edge_weight = smoothstep(
+      0.55f,
+      1.f,
+      max(screen_edge_distance.x, screen_edge_distance.y)) * 0.35f;
+  edge_weight = max(edge_weight, axial_edge_weight);
+
+  const float2 direction = pixel_from_center / distance_from_center;
+  const float desired_offset_pixels =
+      CUSTOM_CHROMATIC_ABERRATION_STRENGTH * 9.f * edge_weight;
+  const float2 edge_room_pixels = min(tex_coord, 1.f - tex_coord) * dimensions;
+  const float2 safe_offset_pixels_xy =
+      edge_room_pixels / max(abs(direction), 1e-4f);
+  const float safe_offset_pixels = max(
+      0.f,
+      min(safe_offset_pixels_xy.x, safe_offset_pixels_xy.y) - 1.f);
+  const float2 offset = direction * texel_size
+      * min(desired_offset_pixels, safe_offset_pixels);
+
+  float3 color = center_color;
+  color.r = scene_texture.SampleLevel(scene_sampler, tex_coord + offset, lod).r;
+  color.b = scene_texture.SampleLevel(scene_sampler, tex_coord - offset, lod).b;
+  return max(color, 0.f.xxx);
+}
+
+float3 APTSelectChromaticAberrationInput(
+    float3 native_color,
+    float3 center_color,
+    float2 tex_coord,
+    Texture2D<float4> scene_texture,
+    SamplerState scene_sampler,
+    float lod) {
+  if (!APTUseRenoDXChromaticAberration()) return native_color;
+  return APTApplyChromaticAberrationEncoded(
+      center_color,
+      tex_coord,
+      scene_texture,
+      scene_sampler,
+      lod);
+}
+
 bool APTUsePerceptualFilmGrain() {
   return APTIsPsychoV() && CUSTOM_FILM_GRAIN_TYPE == 1.f;
 }

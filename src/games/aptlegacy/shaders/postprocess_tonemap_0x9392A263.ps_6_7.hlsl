@@ -451,6 +451,16 @@ float4 main(
   float _373 = max(_369, 0.0f);
   float _374 = max(_370, 0.0f);
   float _375 = max(_371, 0.0f);
+  float3 renodx_chromatic_aberration_input = APTSelectChromaticAberrationInput(
+      float3(_373, _374, _375),
+      float3(_373, _374, _375),
+      float2(_53, _54),
+      t0,
+      s1,
+      _56);
+  _373 = renodx_chromatic_aberration_input.x;
+  _374 = renodx_chromatic_aberration_input.y;
+  _375 = renodx_chromatic_aberration_input.z;
   int _378 = asint((User_000.UserConstant_Z_000[3].z));
   bool _379 = ((int)_378 > (int)0);
   [branch]

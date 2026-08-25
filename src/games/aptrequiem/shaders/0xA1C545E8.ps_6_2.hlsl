@@ -144,6 +144,16 @@ float4 main(
   float _117 = max(_110.x, 0.0f);
   float _118 = max(_112.y, 0.0f);
   float _119 = max(_114.z, 0.0f);
+  float3 renodx_chromatic_aberration_input = APTSelectChromaticAberrationInput(
+      float3(_117, _118, _119),
+      max(_114.rgb, 0.f.xxx),
+      float2(_60, _61),
+      s0,
+      s0Sampler,
+      _109);
+  _117 = renodx_chromatic_aberration_input.x;
+  _118 = renodx_chromatic_aberration_input.y;
+  _119 = renodx_chromatic_aberration_input.z;
   float _122 = (Global.c[32].w) * 11.0f;
   float _123 = _122 + -1.2000000476837158f;
   float _124 = saturate(_123);

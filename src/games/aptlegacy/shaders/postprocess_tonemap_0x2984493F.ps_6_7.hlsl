@@ -218,6 +218,16 @@ float4 main(
   float _137 = max(_130.x, 0.0f);
   float _138 = max(_132.y, 0.0f);
   float _139 = max(_134.z, 0.0f);
+  float3 renodx_chromatic_aberration_input = APTSelectChromaticAberrationInput(
+      float3(_137, _138, _139),
+      max(_134.rgb, 0.f.xxx),
+      float2(_56, _57),
+      t0,
+      s0,
+      _127);
+  _137 = renodx_chromatic_aberration_input.x;
+  _138 = renodx_chromatic_aberration_input.y;
+  _139 = renodx_chromatic_aberration_input.z;
   float4 _141 = t12.SampleLevel(s0, float2(_56, _57), 0.0f);
   float4 _147 = t8.Sample(s8, float2(_58, _59));
   int _153 = asint((User_000.UserConstant_Z_000[3].z));

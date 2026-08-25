@@ -422,6 +422,16 @@ float4 main(
   float _364 = max(_360, 0.0f);
   float _365 = max(_361, 0.0f);
   float _366 = max(_362, 0.0f);
+  float3 renodx_chromatic_aberration_input = APTSelectChromaticAberrationInput(
+      float3(_364, _365, _366),
+      float3(_364, _365, _366),
+      float2(_44, _46),
+      t0,
+      s1,
+      _48);
+  _364 = renodx_chromatic_aberration_input.x;
+  _365 = renodx_chromatic_aberration_input.y;
+  _366 = renodx_chromatic_aberration_input.z;
   float4 _370 = t17.Load(int3(0, 0, 0));
   float _379 = (Global_000.GlobalCB_Z_000.GlobalCB_Z__GlobalConstant_Z_000[87].y) * 335.718017578125f;
   float _380 = _370.x * _379;

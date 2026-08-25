@@ -30,11 +30,16 @@ struct ShaderInjectData {
   float custom_random;
   float psychov_wide_gamut;
   float custom_sharpening_type;
+  float custom_chromatic_aberration_type;
+
+  float custom_chromatic_aberration_strength;
+  float padding_1;
+  float padding_2;
   float padding_3;
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 80);
+static_assert(sizeof(ShaderInjectData) == 96);
 #endif
 
 #ifndef __cplusplus
@@ -62,6 +67,8 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_RANDOM shader_injection.custom_random
 #define CUSTOM_SHARPNESS shader_injection.custom_sharpness
 #define CUSTOM_SHARPENING_TYPE shader_injection.custom_sharpening_type
+#define CUSTOM_CHROMATIC_ABERRATION_TYPE shader_injection.custom_chromatic_aberration_type
+#define CUSTOM_CHROMATIC_ABERRATION_STRENGTH shader_injection.custom_chromatic_aberration_strength
 
 #include "../../shaders/renodx.hlsl"
 #endif
