@@ -378,6 +378,7 @@ float4 main(
   float3 apt_lut_output = APTApplyPostProcessLUT(
       float3(_354, _357, _360) / apt_lut_input_encode_scale,
       float3(_398, _399, _400));
+  apt_lut_output = APTApplyPerceptualFilmGrain(apt_lut_output, SV_Position.xy);
   _398 = apt_lut_output.x;
   _399 = apt_lut_output.y;
   _400 = apt_lut_output.z;
@@ -451,6 +452,12 @@ float4 main(
   float _484 = max(0.0f, _481);
   float _485 = max(0.0f, _482);
   float _486 = max(0.0f, _483);
+  float3 apt_film_grain_output = APTSelectFilmGrainOutput(
+      float3(_484, _485, _486),
+      apt_lut_output);
+  _484 = apt_film_grain_output.x;
+  _485 = apt_film_grain_output.y;
+  _486 = apt_film_grain_output.z;
   float _490 = (User.c[2].y) / (User.c[2].x);
   int _493 = asint((Global.c[1].w));
   uint _494 = _493 + 30u;

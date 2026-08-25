@@ -434,6 +434,7 @@ float4 main(
   float3 apt_lut_output = APTApplyPostProcessLUT(
       float3(_433, _435, _437) / apt_lut_input_encode_scale,
       float3(_475, _476, _477));
+  apt_lut_output = APTApplyPerceptualFilmGrain(apt_lut_output, SV_Position.xy);
   _475 = apt_lut_output.x;
   _476 = apt_lut_output.y;
   _477 = apt_lut_output.z;

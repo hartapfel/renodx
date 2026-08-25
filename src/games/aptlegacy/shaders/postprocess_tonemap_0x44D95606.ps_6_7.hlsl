@@ -1459,6 +1459,7 @@ float4 main(
           (User_000.UserConstant_Z_000[8].y) * _1452,
           _1451 * (User_000.UserConstant_Z_000[8].z)),
       User_000.UserConstant_Z_000[8].rgb);
+  apt_scaled_lut_output = APTApplyPerceptualFilmGrain(apt_scaled_lut_output, SV_Position.xy);
   float _1460 = apt_scaled_lut_output.x;
   float _1461 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 2.0f;
   float _1462 = log2(_1460);

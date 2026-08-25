@@ -14,6 +14,7 @@
 #include "../../mods/shader.hpp"
 #include "../../utils/date.hpp"
 #include "../../utils/platform.hpp"
+#include "../../utils/random.hpp"
 #include "../../utils/settings.hpp"
 #include "../../utils/swapchain.hpp"
 #include "./shared.h"
@@ -214,6 +215,28 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "FxFilmGrainType",
+        .binding = &shader_injection.custom_film_grain_type,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .label = "Film Grain Type",
+        .section = "Effects",
+        .tooltip = "Native leaves the game's film grain unchanged. Perceptual replaces it with RenoDX's luminance-aware film grain.",
+        .labels = {"Native", "Perceptual"},
+        .is_enabled = []() { return IsPsychoV(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxFilmGrain",
+        .binding = &shader_injection.custom_film_grain_strength,
+        .default_value = 50.f,
+        .label = "Film Grain Strength",
+        .section = "Effects",
+        .tooltip = "Controls the strength of RenoDX perceptual film grain.",
+        .max = 100.f,
+        .is_enabled = []() { return IsPsychoV() && shader_injection.custom_film_grain_type == 1.f; },
+        .parse = [](float value) { return value * 0.02f; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "FxSharpeningType",
         .binding = &shader_injection.custom_sharpening_type,
         .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
@@ -305,6 +328,8 @@ void OnPresetOff() {
       {"ColorGradeHighlightSaturation", 50.f},
       {"ColorGradeBlowout", 0.f},
       {"ColorGradeFlare", 0.f},
+      {"FxFilmGrainType", 0.f},
+      {"FxFilmGrain", 50.f},
       {"FxSharpeningType", 0.f},
       {"FxSharpening", 0.f},
   });
@@ -382,6 +407,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
   }
 
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
+  renodx::utils::random::Use(fdw_reason, {&shader_injection.custom_random});
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
 
   if (fdw_reason == DLL_PROCESS_DETACH) {

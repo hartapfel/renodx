@@ -23,11 +23,11 @@ struct ShaderInjectData {
   float tone_map_blowout;
 
   float tone_map_flare;
-  float padding_0;
-  float padding_1;
+  float custom_film_grain_type;
+  float custom_film_grain_strength;
   float custom_sharpness;
 
-  float padding_2;
+  float custom_random;
   float psychov_wide_gamut;
   float custom_sharpening_type;
   float padding_3;
@@ -57,6 +57,9 @@ cbuffer shader_injection : register(b13, space50) {
 #define RENODX_TONE_MAP_BLOWOUT shader_injection.tone_map_blowout
 #define RENODX_TONE_MAP_FLARE shader_injection.tone_map_flare
 #define RENODX_PSYCHOV_WIDE_GAMUT shader_injection.psychov_wide_gamut
+#define CUSTOM_FILM_GRAIN_TYPE shader_injection.custom_film_grain_type
+#define CUSTOM_FILM_GRAIN_STRENGTH shader_injection.custom_film_grain_strength
+#define CUSTOM_RANDOM shader_injection.custom_random
 #define CUSTOM_SHARPNESS shader_injection.custom_sharpness
 #define CUSTOM_SHARPENING_TYPE shader_injection.custom_sharpening_type
 

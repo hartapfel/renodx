@@ -8,6 +8,30 @@ bool APTIsPsychoV() {
   return RENODX_TONE_MAP_TYPE != 0.f;
 }
 
+bool APTUsePerceptualFilmGrain() {
+  return APTIsPsychoV() && CUSTOM_FILM_GRAIN_TYPE == 1.f;
+}
+
+float3 APTApplyPerceptualFilmGrain(float3 color, float2 pixel_position) {
+  if (!APTUsePerceptualFilmGrain()) return color;
+  // The sine-based hash used by ApplyFilmGrain can develop visible diagonal
+  // correlations when fed large integer pixel coordinates. Pre-scramble the
+  // pixel and frame seed with the precision-safe hash, then keep the standard
+  // perceptual density model unchanged.
+  const float3 grain_hash = renodx::random::Hash33(
+      float3(pixel_position, CUSTOM_RANDOM * 8192.f));
+  return renodx::effects::ApplyFilmGrain(
+      color,
+      grain_hash.xy,
+      grain_hash.z,
+      CUSTOM_FILM_GRAIN_STRENGTH * 0.03f,
+      1.f);
+}
+
+float3 APTSelectFilmGrainOutput(float3 native_grained, float3 perceptual_grained) {
+  return APTUsePerceptualFilmGrain() ? perceptual_grained : native_grained;
+}
+
 float APTGetGameNits(float native_game_nits) {
   return APTIsPsychoV() ? max(RENODX_DIFFUSE_WHITE_NITS, 1.f) : native_game_nits;
 }
