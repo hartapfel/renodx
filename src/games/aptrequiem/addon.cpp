@@ -258,14 +258,25 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "FxSharpeningType",
+        .binding = &shader_injection.custom_sharpening_type,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .label = "Sharpening Type",
+        .section = "Effects",
+        .tooltip = "Native leaves the game's sharpening path unchanged. Lilium HDR RCAS enables RenoDX's HDR-aware sharpening.",
+        .labels = {"Native", "Lilium HDR RCAS"},
+        .is_enabled = []() { return IsCustomToneMap(); },
+    },
+    new renodx::utils::settings::Setting{
         .key = "FxSharpening",
         .binding = &shader_injection.custom_sharpness,
         .default_value = 0.f,
-        .label = "Lilium HDR RCAS Sharpening",
+        .label = "Sharpening Strength",
         .section = "Effects",
-        .tooltip = "Adds Lilium's HDR-aware RCAS sharpening. Disable other sharpening to avoid double-sharpening.",
+        .tooltip = "Adjusts Lilium's HDR-aware RCAS sharpening strength.",
         .max = 100.f,
-        .is_enabled = []() { return IsCustomToneMap(); },
+        .is_enabled = []() { return IsCustomToneMap() && shader_injection.custom_sharpening_type == 1.f; },
         .parse = [](float value) { return value == 0.f ? 0.f : exp2(-(1.f - value * 0.01f)); },
     },
     new renodx::utils::settings::Setting{
@@ -341,6 +352,7 @@ void OnPresetOff() {
       {"ColorGradeBlowout", 0.f},
       {"ColorGradeFlare", 0.f},
       {"ColorGradeLUTScaling", 100.f},
+      {"FxSharpeningType", 0.f},
       {"FxSharpening", 0.f},
   });
 }

@@ -282,6 +282,7 @@ float3 APTApplyLiliumHDRRCAS(
     float game_nits) {
   if ((RENODX_TONE_MAP_TYPE != APT_TONE_MAP_TYPE_VANILLA_PLUS
        && RENODX_TONE_MAP_TYPE != APT_TONE_MAP_TYPE_PSYCHOV25)
+      || CUSTOM_SHARPENING_TYPE != 1.f
       || CUSTOM_SHARPNESS == 0.f) {
     return center_bt709_nits;
   }
