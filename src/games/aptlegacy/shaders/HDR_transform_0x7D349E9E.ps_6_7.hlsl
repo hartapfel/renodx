@@ -120,15 +120,6 @@ float4 main(
   float _39 = select(_36, _33, _30);
   float _40 = select(_37, _34, _31);
   float _41 = select(_38, _35, _32);
-  if (RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25) {
-    // PsychoV replaces the LUT's baked contrast, so emulate the SDR gamma 2.2
-    // presentation by decoding the sRGB intermediate as gamma 2.2. Preserve
-    // values above SDR reference white so the HDR highlight range is unchanged.
-    float3 apt_psychov_decoded = APTDecodeHDRTransformerInput(_14.rgb, 1.f);
-    _39 = apt_psychov_decoded.x;
-    _40 = apt_psychov_decoded.y;
-    _41 = apt_psychov_decoded.z;
-  }
   float apt_game_nits = APTGetGameNits(User_000.UserConstant_Z_000[0].x);
   float _44 = apt_game_nits * _39;
   float _45 = apt_game_nits * _40;

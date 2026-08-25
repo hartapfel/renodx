@@ -255,7 +255,7 @@ float3 APTFinalizeHDRTransformerColor(float3 color_bt2020_nits) {
   }
 
   // This is the last linear-color operation before the custom HDR path enters
-  // PQ. Constrain here so gamma emulation and sharpening cannot re-expand the
+  // PQ. Constrain here so downstream transforms and sharpening cannot re-expand
   // earlier PsychoV result outside the BT.709 primary triangle.
   float3 color_bt709_nits = renodx::color::bt709::from::BT2020(color_bt2020_nits);
   color_bt709_nits = APTPreparePostProcessOutput(color_bt709_nits, 0.f.xxx);
@@ -263,14 +263,7 @@ float3 APTFinalizeHDRTransformerColor(float3 color_bt2020_nits) {
 }
 
 float3 APTDecodeHDRTransformerInput(float3 encoded_color, float game_nits) {
-  float3 decoded_color = renodx::color::srgb::DecodeSafe(encoded_color);
-  if (RENODX_TONE_MAP_TYPE == APT_TONE_MAP_TYPE_PSYCHOV25) {
-    decoded_color = lerp(
-        pow(max(encoded_color, 0.f.xxx), 2.2f),
-        decoded_color,
-        step(1.f.xxx, decoded_color));
-  }
-  return decoded_color * game_nits;
+  return renodx::color::srgb::DecodeSafe(encoded_color) * game_nits;
 }
 
 float APTGetHDRTransformerLuminance(float3 color) {
