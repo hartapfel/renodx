@@ -199,13 +199,17 @@ float3 APTApplyPostProcessLUT(
   if (!APTIsPsychoV()) return lut_output_linear;
 
   // Legacy's LUT bakes exposure-dependent contrast and luminance curves into
-  // its artistic color grade. Preserve the LUT hue/purity, but restore the
-  // scene-linear luminance so PsychoV is the only display-referred curve.
+  // its artistic color grade. Preserve the LUT hue/purity and let the user
+  // blend its luminance response back over the scene-linear reference.
   float3 scene_linear = max(lut_input_linear * lut_output_scale, 0.f.xxx);
   float scene_y = renodx::color::y::from::BT709(scene_linear);
   float lut_y = renodx::color::y::from::BT709(max(lut_output_linear, 0.f.xxx));
+  float target_y = lerp(
+      scene_y,
+      lut_y,
+      saturate(RENODX_LUT_LUMINANCE_CURVE_STRENGTH));
   float3 color_graded_scene = lut_y > 1e-6f
-      ? lut_output_linear * (scene_y / lut_y)
+      ? lut_output_linear * (target_y / lut_y)
       : scene_linear;
   color_graded_scene = renodx::math::ZeroNaN(color_graded_scene);
   return renodx::math::Select(isinf(color_graded_scene), scene_linear, color_graded_scene);

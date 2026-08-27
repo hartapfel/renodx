@@ -33,7 +33,7 @@ struct ShaderInjectData {
   float custom_chromatic_aberration_type;
 
   float custom_chromatic_aberration_strength;
-  float padding_1;
+  float lut_luminance_curve_strength;
   float padding_2;
   float padding_3;
 };
@@ -69,6 +69,7 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_SHARPENING_TYPE shader_injection.custom_sharpening_type
 #define CUSTOM_CHROMATIC_ABERRATION_TYPE shader_injection.custom_chromatic_aberration_type
 #define CUSTOM_CHROMATIC_ABERRATION_STRENGTH shader_injection.custom_chromatic_aberration_strength
+#define RENODX_LUT_LUMINANCE_CURVE_STRENGTH shader_injection.lut_luminance_curve_strength
 
 #include "../../shaders/renodx.hlsl"
 #endif
