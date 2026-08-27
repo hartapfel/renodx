@@ -782,48 +782,58 @@ float4 main(
   float3 apt_film_grain_output = APTSelectFilmGrainOutput(
       float3(_814, _815, _816),
       apt_scaled_lut_output);
-  _814 = apt_film_grain_output.x;
-  _815 = apt_film_grain_output.y;
-  _816 = apt_film_grain_output.z;
-  float _819 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 2.0f;
-  float _820 = log2(_814);
-  float _821 = _819 * _820;
-  float _822 = exp2(_821);
-  float _823 = _822 + -1.0f;
-  float _824 = _814 + -1.0f;
-  float _825 = _823 / _824;
-  bool _826 = !(_814 == 1.0f);
-  float _827 = _825 + -1.0f;
-  float _828 = _827 / _825;
-  float _829 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 1.0f;
-  float _830 = _829 / _819;
-  float _831 = select(_826, _828, _830);
-  float _832 = log2(_815);
-  float _833 = _832 * _819;
-  float _834 = exp2(_833);
-  float _835 = _834 + -1.0f;
-  float _836 = _815 + -1.0f;
-  float _837 = _835 / _836;
-  bool _838 = !(_815 == 1.0f);
-  float _839 = _837 + -1.0f;
-  float _840 = _839 / _837;
-  float _841 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 1.0f;
-  float _842 = _841 / _819;
-  float _843 = select(_838, _840, _842);
-  float _844 = log2(_816);
-  float _845 = _844 * _819;
-  float _846 = exp2(_845);
-  float _847 = _846 + -1.0f;
-  float _848 = _816 + -1.0f;
-  float _849 = _847 / _848;
-  bool _850 = !(_816 == 1.0f);
-  float _851 = _849 + -1.0f;
-  float _852 = _851 / _849;
-  float _853 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 1.0f;
-  float _854 = _853 / _819;
-  float _855 = select(_850, _852, _854);
+  float _831;
+  float _843;
+  float _855;
+  [branch]
+  if (!APTIsPsychoV()) {
+    _814 = apt_film_grain_output.x;
+    _815 = apt_film_grain_output.y;
+    _816 = apt_film_grain_output.z;
+    float _819 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 2.0f;
+    float _820 = log2(_814);
+    float _821 = _819 * _820;
+    float _822 = exp2(_821);
+    float _823 = _822 + -1.0f;
+    float _824 = _814 + -1.0f;
+    float _825 = _823 / _824;
+    bool _826 = !(_814 == 1.0f);
+    float _827 = _825 + -1.0f;
+    float _828 = _827 / _825;
+    float _829 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 1.0f;
+    float _830 = _829 / _819;
+    _831 = select(_826, _828, _830);
+    float _832 = log2(_815);
+    float _833 = _832 * _819;
+    float _834 = exp2(_833);
+    float _835 = _834 + -1.0f;
+    float _836 = _815 + -1.0f;
+    float _837 = _835 / _836;
+    bool _838 = !(_815 == 1.0f);
+    float _839 = _837 + -1.0f;
+    float _840 = _839 / _837;
+    float _841 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 1.0f;
+    float _842 = _841 / _819;
+    _843 = select(_838, _840, _842);
+    float _844 = log2(_816);
+    float _845 = _844 * _819;
+    float _846 = exp2(_845);
+    float _847 = _846 + -1.0f;
+    float _848 = _816 + -1.0f;
+    float _849 = _847 / _848;
+    bool _850 = !(_816 == 1.0f);
+    float _851 = _849 + -1.0f;
+    float _852 = _851 / _849;
+    float _853 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 1.0f;
+    float _854 = _853 / _819;
+    _855 = select(_850, _852, _854);
+  } else {
+    _831 = 0.f;
+    _843 = 0.f;
+    _855 = 0.f;
+  }
   float3 apt_post_process_output = APTApplyPostProcessToneMap(
-      float3(_814, _815, _816),
+      apt_film_grain_output,
       float3(_831, _843, _855),
       true);
   float _856 = apt_post_process_output.x;

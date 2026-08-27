@@ -788,7 +788,7 @@ float4 main(
   _808 = apt_film_grain_output.x;
   _809 = apt_film_grain_output.y;
   _810 = apt_film_grain_output.z;
-  bool _813 = !((PostProcess_000.PostProcessConstant_Z_000[17].x) == 0.0f);
+  bool _813 = !((PostProcess_000.PostProcessConstant_Z_000[17].x) == 0.0f) && !APTIsPsychoV();
   if (_813) {
     float _822 = _808 * (PostProcess_000.PostProcessConstant_Z_000[10].w);
     float _823 = _809 * (PostProcess_000.PostProcessConstant_Z_000[10].w);

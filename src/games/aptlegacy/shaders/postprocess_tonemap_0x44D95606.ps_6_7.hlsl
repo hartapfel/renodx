@@ -897,7 +897,7 @@ float4 main(
   float _902 = exp2(_899);
   float _903 = exp2(_900);
   float _904 = exp2(_901);
-  bool _907 = ((User_000.UserConstant_Z_000[3].x) > 0.0f);
+  bool _907 = ((User_000.UserConstant_Z_000[3].x) > 0.0f) && !APTIsPsychoV();
   if (_907) {
     float _909 = log2(_902);
     float _910 = log2(_903);

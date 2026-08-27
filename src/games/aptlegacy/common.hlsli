@@ -196,23 +196,10 @@ float3 APTApplyPostProcessLUT(
     float3 lut_input_linear,
     float3 lut_output_linear,
     float3 lut_output_scale) {
-  if (!APTIsPsychoV()) return lut_output_linear;
-
-  // Legacy's LUT bakes exposure-dependent contrast and luminance curves into
-  // its artistic color grade. Preserve the LUT hue/purity and let the user
-  // blend its luminance response back over the scene-linear reference.
-  float3 scene_linear = max(lut_input_linear * lut_output_scale, 0.f.xxx);
-  float scene_y = renodx::color::y::from::BT709(scene_linear);
-  float lut_y = renodx::color::y::from::BT709(max(lut_output_linear, 0.f.xxx));
-  float target_y = lerp(
-      scene_y,
-      lut_y,
-      saturate(RENODX_LUT_LUMINANCE_CURVE_STRENGTH));
-  float3 color_graded_scene = lut_y > 1e-6f
-      ? lut_output_linear * (target_y / lut_y)
-      : scene_linear;
-  color_graded_scene = renodx::math::ZeroNaN(color_graded_scene);
-  return renodx::math::Select(isinf(color_graded_scene), scene_linear, color_graded_scene);
+  // PsychoV and user grading are baked into the generated 3D LUT. Keep this
+  // hook so every post-process variant shares one call site, but do not repeat
+  // that work for every screen pixel.
+  return lut_output_linear;
 }
 
 float3 APTApplyExposureContrastFlareHighlightsShadowsByLuminance(
@@ -294,6 +281,74 @@ float3 APTApplyColorGrade(float3 color_bt2020) {
   }
 
   return max(APTGamutCompressBT2020(color_bt2020), 0.f.xxx);
+}
+
+static const float APT_LUT_LOG_SCALE = 0.07434873282909393f;
+
+float3 APTDecodeLUTLog(float3 encoded, float linear_scale) {
+  return (exp2(encoded / APT_LUT_LOG_SCALE) - 1.f.xxx)
+      / max(linear_scale, 1e-6f);
+}
+
+float3 APTEncodeLUTLog(float3 linear_color, float linear_scale) {
+  return log2(max(linear_color, 0.f.xxx) * max(linear_scale, 1e-6f) + 1.f.xxx)
+      * APT_LUT_LOG_SCALE;
+}
+
+float3 APTApplyLUTBuilderPsychoV(
+    float3 lut_coordinates,
+    float3 native_lut_output,
+    float linear_scale,
+    float3 post_lut_scale) {
+  if (!APTIsPsychoV()) return native_lut_output;
+
+  // Decode both sides of the native LUT in the same scene-linear domain. This
+  // preserves its complete artistic grade while allowing its luminance curve
+  // contribution to be scaled independently.
+  float3 scene_linear = max(
+      APTDecodeLUTLog(lut_coordinates, linear_scale) * post_lut_scale,
+      0.f.xxx);
+  float3 native_graded = max(
+      APTDecodeLUTLog(native_lut_output, linear_scale) * post_lut_scale,
+      0.f.xxx);
+  const float scene_y = renodx::color::y::from::BT709(scene_linear);
+  const float native_y = renodx::color::y::from::BT709(native_graded);
+  const float target_y = lerp(
+      scene_y,
+      native_y,
+      saturate(RENODX_LUT_LUMINANCE_CURVE_STRENGTH));
+  float3 color_bt709 = native_y > 1e-6f
+      ? native_graded * (target_y / native_y)
+      : scene_linear;
+
+  // User grading follows the game's full LUT grade and precedes PsychoV.
+  float3 color_bt2020 = renodx::color::bt2020::from::BT709(color_bt709);
+  color_bt2020 = APTApplyColorGrade(color_bt2020);
+  color_bt709 = renodx::color::bt709::from::BT2020(color_bt2020);
+
+  const float peak_ratio = max(
+      1.f,
+      RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f));
+  float3 mapped_bt709 = renodx::tonemap::psychov::psychotm_test25_fast60(
+      color_bt709,
+      peak_ratio,
+      int(RENODX_PSYCHOV_WIDE_GAMUT));
+  if (RENODX_PSYCHOV_HUE_SHIFT != 0.f) {
+    mapped_bt709 = renodx::color::correct::Hue(
+        mapped_bt709,
+        color_bt709,
+        RENODX_PSYCHOV_HUE_SHIFT);
+  }
+
+  // The logarithmic LUT cannot represent negative wide-gamut BT.709 values.
+  // Store the mapped signal in the game's non-negative BT.2020 transport
+  // representation, then undo the post-sample scale before encoding.
+  float3 mapped_transport = APTPreparePsychoVPostProcessOutput(mapped_bt709);
+  mapped_transport = renodx::math::DivideSafe(
+      mapped_transport,
+      max(post_lut_scale, 1e-6f.xxx),
+      0.f.xxx);
+  return APTEncodeLUTLog(mapped_transport, linear_scale);
 }
 
 float3 APTFinalizeHDRTransformerColor(float3 color_bt2020_nits) {
@@ -417,25 +472,17 @@ float3 APTApplyPostProcessToneMap(
     return clamp_vanilla ? saturate(vanilla_tonemapped_bt709) : vanilla_tonemapped_bt709;
   }
 
-  float3 color_bt709 = untonemapped_bt709;
-  float3 color_bt2020 = renodx::color::bt2020::from::BT709(color_bt709);
-  color_bt2020 = APTApplyColorGrade(color_bt2020);
-  color_bt709 = renodx::color::bt709::from::BT2020(color_bt2020);
-
-  float peak_ratio = max(1.f, RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f));
-  float3 psychov_tonemapped_bt709 = renodx::tonemap::psychov::psychotm_test25_fast60(
-      color_bt709,
-      peak_ratio,
-      int(RENODX_PSYCHOV_WIDE_GAMUT));
-  if (RENODX_PSYCHOV_HUE_SHIFT != 0.f) {
-    psychov_tonemapped_bt709 = renodx::color::correct::Hue(
-        psychov_tonemapped_bt709,
-        color_bt709,
-        RENODX_PSYCHOV_HUE_SHIFT);
-  }
-  // PsychoV owns this path completely. Never fall back to the game's native
-  // HDR curve if an invalid component reaches the final safety boundary.
-  return APTPreparePsychoVPostProcessOutput(psychov_tonemapped_bt709);
+  // The generated LUT already contains user grading, PsychoV, hue correction,
+  // and conversion to the game's BT.2020 transport representation.
+  untonemapped_bt709 = renodx::math::ZeroNaN(untonemapped_bt709);
+  float3 mapped_transport = max(
+      renodx::math::Select(isinf(untonemapped_bt709), 0.f.xxx, untonemapped_bt709),
+      0.f.xxx);
+  const float mapped_peak = max(mapped_transport.x, max(mapped_transport.y, mapped_transport.z));
+  const float peak_ratio = max(
+      1.f,
+      RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f));
+  return mapped_transport * min(1.f, peak_ratio / max(mapped_peak, 1e-6f));
 }
 
 #endif  // SRC_GAMES_APTLEGACY_COMMON_HLSLI_

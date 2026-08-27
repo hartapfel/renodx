@@ -875,7 +875,7 @@ float4 main(
   _903 = apt_scaled_lut_output.x;
   _904 = apt_scaled_lut_output.y;
   _905 = apt_scaled_lut_output.z;
-  bool _908 = ((User_000.UserConstant_Z_000[3].x) > 0.0f);
+  bool _908 = ((User_000.UserConstant_Z_000[3].x) > 0.0f) && !APTIsPsychoV();
   if (_908) {
     float _910 = (PostProcess_000.PostProcessConstant_Z_000[10].w) * 1.1190600395202637f;
     float _911 = _903 * _910;

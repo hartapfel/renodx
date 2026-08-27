@@ -589,48 +589,58 @@ float4 main(
       float3(_609 * (User_000.UserConstant_Z_000[4].x), _610 * (User_000.UserConstant_Z_000[4].y), _611 * (User_000.UserConstant_Z_000[4].z)),
       User_000.UserConstant_Z_000[4].rgb);
   apt_scaled_lut_output = APTApplyPerceptualFilmGrain(apt_scaled_lut_output, SV_Position.xy);
-  float _618 = apt_scaled_lut_output.x;
-  float _619 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 2.0f;
-  float _620 = log2(_618);
-  float _621 = _619 * _620;
-  float _622 = exp2(_621);
-  float _623 = _622 + -1.0f;
-  float _624 = _618 + -1.0f;
-  float _625 = _623 / _624;
-  bool _626 = !(_618 == 1.0f);
-  float _627 = _625 + -1.0f;
-  float _628 = _627 / _625;
-  float _629 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 1.0f;
-  float _630 = _629 / _619;
-  float _631 = select(_626, _628, _630);
-  float _632 = apt_scaled_lut_output.y;
-  float _633 = log2(_632);
-  float _634 = _633 * _619;
-  float _635 = exp2(_634);
-  float _636 = _635 + -1.0f;
-  float _637 = _632 + -1.0f;
-  float _638 = _636 / _637;
-  bool _639 = !(_632 == 1.0f);
-  float _640 = _638 + -1.0f;
-  float _641 = _640 / _638;
-  float _642 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 1.0f;
-  float _643 = _642 / _619;
-  float _644 = select(_639, _641, _643);
-  float _645 = apt_scaled_lut_output.z;
-  float _646 = log2(_645);
-  float _647 = _646 * _619;
-  float _648 = exp2(_647);
-  float _649 = _648 + -1.0f;
-  float _650 = _645 + -1.0f;
-  float _651 = _649 / _650;
-  bool _652 = !(_645 == 1.0f);
-  float _653 = _651 + -1.0f;
-  float _654 = _653 / _651;
-  float _655 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 1.0f;
-  float _656 = _655 / _619;
-  float _657 = select(_652, _654, _656);
+  float _631;
+  float _644;
+  float _657;
+  [branch]
+  if (!APTIsPsychoV()) {
+    float _618 = apt_scaled_lut_output.x;
+    float _619 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 2.0f;
+    float _620 = log2(_618);
+    float _621 = _619 * _620;
+    float _622 = exp2(_621);
+    float _623 = _622 + -1.0f;
+    float _624 = _618 + -1.0f;
+    float _625 = _623 / _624;
+    bool _626 = !(_618 == 1.0f);
+    float _627 = _625 + -1.0f;
+    float _628 = _627 / _625;
+    float _629 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 1.0f;
+    float _630 = _629 / _619;
+    _631 = select(_626, _628, _630);
+    float _632 = apt_scaled_lut_output.y;
+    float _633 = log2(_632);
+    float _634 = _633 * _619;
+    float _635 = exp2(_634);
+    float _636 = _635 + -1.0f;
+    float _637 = _632 + -1.0f;
+    float _638 = _636 / _637;
+    bool _639 = !(_632 == 1.0f);
+    float _640 = _638 + -1.0f;
+    float _641 = _640 / _638;
+    float _642 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 1.0f;
+    float _643 = _642 / _619;
+    _644 = select(_639, _641, _643);
+    float _645 = apt_scaled_lut_output.z;
+    float _646 = log2(_645);
+    float _647 = _646 * _619;
+    float _648 = exp2(_647);
+    float _649 = _648 + -1.0f;
+    float _650 = _645 + -1.0f;
+    float _651 = _649 / _650;
+    bool _652 = !(_645 == 1.0f);
+    float _653 = _651 + -1.0f;
+    float _654 = _653 / _651;
+    float _655 = (PostProcess_000.PostProcessConstant_Z_000[17].y) + 1.0f;
+    float _656 = _655 / _619;
+    _657 = select(_652, _654, _656);
+  } else {
+    _631 = 0.f;
+    _644 = 0.f;
+    _657 = 0.f;
+  }
   float3 apt_post_process_output = APTApplyPostProcessToneMap(
-      float3(_618, _632, _645),
+      apt_scaled_lut_output,
       float3(_631, _644, _657),
       true);
   float _658 = apt_post_process_output.x;

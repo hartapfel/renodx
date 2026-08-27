@@ -1016,7 +1016,7 @@ float4 main(
   _1049 = apt_film_grain_output.x;
   _1050 = apt_film_grain_output.y;
   _1051 = apt_film_grain_output.z;
-  bool _1054 = !((PostProcess_000.PostProcessConstant_Z_000[17].x) == 0.0f);
+  bool _1054 = !((PostProcess_000.PostProcessConstant_Z_000[17].x) == 0.0f) && !APTIsPsychoV();
   if (_1054) {
     float _1063 = _1049 * (PostProcess_000.PostProcessConstant_Z_000[10].w);
     float _1064 = _1050 * (PostProcess_000.PostProcessConstant_Z_000[10].w);
