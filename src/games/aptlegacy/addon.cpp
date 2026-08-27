@@ -24,51 +24,108 @@ namespace {
 renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0x01A44DD7),  // Post-process tonemap variant
     CustomShaderEntry(0x0EC16507),  // Post-process tonemap variant
+    CustomShaderEntry(0x10C9B722),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0x14BA6DB9),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0x152643DB),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0x1561C60A),  // Post-process tonemap variant
+    CustomShaderEntry(0x16311814),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0x1882D2B2),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0x1EAD618C),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0x218CEC3A),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0x218D8871),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0x22EA236E),  // Post-process tonemap variant
     CustomShaderEntry(0x240C5BC8),  // Post-process tonemap variant
     CustomShaderEntry(0x2522E2A6),  // Post-process tonemap variant
     CustomShaderEntry(0x297D3D79),  // Post-process tonemap variant
     CustomShaderEntry(0x2984493F),  // Post-process tonemap variant
     CustomShaderEntry(0x2A7E977B),  // Post-process tonemap variant
+    CustomShaderEntry(0x2B09904F),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0x2B8E9672),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0x2D064B36),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0x2F4BCAF4),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0x3560EC29),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0x388F3CDB),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0x3EC88869),  // Post-process tonemap variant
     CustomShaderEntry(0x44D95606),  // Post-process tonemap with extended grading
+    CustomShaderEntry(0x46B7E0E0),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0x4AD83CEE),  // Post-process tonemap variant
+    CustomShaderEntry(0x4BC15232),  // Post-process tonemap, chromatic aberration off
     CustomShaderEntry(0x4F46D1B0),  // Post-process tonemap variant
+    CustomShaderEntry(0x4F9065C1),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0x533B8B68),  // Post-process tonemap variant
     CustomShaderEntry(0x5B02B51D),  // Post-process tonemap variant
     CustomShaderEntry(0x689AC917),  // Post-process tonemap variant
     CustomShaderEntry(0x68FF9BFE),  // Post-process tonemap variant
     CustomShaderEntry(0x6980CFD2),  // Post-process tonemap variant
     CustomShaderEntry(0x6AF21F5C),  // Post-process tonemap variant
+    CustomShaderEntry(0x6AFAEE75),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0x6B035A2B),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0x6C0C44B5),  // Post-process tonemap variant
+    CustomShaderEntry(0x704E5F21),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0x73C4E9D6),  // Post-process tonemap variant
+    CustomShaderEntry(0x74631BE1),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0x74A38036),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0x75E4BCEA),  // Post-process tonemap, chromatic aberration off
     CustomShaderEntry(0x7D349E9E),  // HDR display transform
     CustomShaderEntry(0x7F0D5698),  // Post-process tonemap variant
     CustomShaderEntry(0x7F37290F),  // Post-process tonemap variant
+    CustomShaderEntry(0x88D7A982),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0x8A7F93FE),  // Post-process tonemap variant
+    CustomShaderEntry(0x8EFBF854),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0x9392A263),  // Post-process tonemap variant
+    CustomShaderEntry(0x93E2CBBB),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0x93E32DDC),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0x93E4C231),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0x94D589FB),  // Post-process tonemap, chromatic aberration off
     CustomShaderEntry(0x95D09D91),  // Post-process tonemap variant
+    CustomShaderEntry(0x9D9662BA),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0x9EA975CA),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0x9ED8E33D),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0x9F37EB1A),  // Post-process tonemap variant
+    CustomShaderEntry(0x9F95E260),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0xA125F81F),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0xA5C624B7),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0xA66B0191),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0xA9DD56B5),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0xB265B41F),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0xB456803F),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0xB99119A2),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0xBB14EBDE),  // Post-process tonemap, chromatic aberration off
     CustomShaderEntry(0xBB3A11D1),  // Post-process tonemap variant
+    CustomShaderEntry(0xBE0A61FB),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0xC39F586F),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0xC5F05429),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0xC749B534),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0xC754E36D),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0xC78B734E),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0xC9890B06),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0xCCCA1D32),  // Post-process tonemap variant
     CustomShaderEntry(0xD0330814),  // Post-process tonemap variant
     CustomShaderEntry(0xD2CE7E98),  // Post-process tonemap variant
-    CustomShaderEntry(0xD723512C),  // Motion-blur resolve
     CustomShaderEntry(0xD57C5F66),  // Post-process tonemap variant
+    CustomShaderEntry(0xD589EE74),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0xD6AA21CB),  // Post-process tonemap variant
+    CustomShaderEntry(0xD723512C),  // Motion-blur resolve
+    CustomShaderEntry(0xD7910035),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0xDA35AC5A),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0xE2E26B6A),  // Post-process tonemap variant
+    CustomShaderEntry(0xE4CBAC08),  // Post-process tonemap, chromatic aberration off
     CustomShaderEntry(0xE6972E37),  // Post-process tonemap variant
     CustomShaderEntry(0xE81CE463),  // Post-process tonemap variant
+    CustomShaderEntry(0xE8B96AC3),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0xE919C4FD),  // Post-process tonemap variant
     CustomShaderEntry(0xEA6A571E),  // Post-process tonemap variant
     CustomShaderEntry(0xEA8DA350),  // Post-process tonemap
+    CustomShaderEntry(0xEBC3F578),  // Post-process tonemap, chromatic aberration off
+    CustomShaderEntry(0xEC71C465),  // Post-process tonemap, chromatic aberration on
+    CustomShaderEntry(0xED7A876C),  // Post-process tonemap, chromatic aberration off
     CustomShaderEntry(0xEF5BAB14),  // Post-process tonemap variant
     CustomShaderEntry(0xF51FE9AA),  // Post-process tonemap variant
     CustomShaderEntry(0xF6BD175C),  // Post-process tonemap with additional effects
+    CustomShaderEntry(0xF6DD376A),  // Post-process tonemap, chromatic aberration on
     CustomShaderEntry(0xF8142033),  // Post-process tonemap variant
     CustomShaderEntry(0xF817D5BD),  // Post-process tonemap variant
+    CustomShaderEntry(0xFA32D18B),  // Post-process tonemap, chromatic aberration off
 };
 
 ShaderInjectData shader_injection;
