@@ -91,13 +91,13 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "ToneMapHueShift",
         .binding = &shader_injection.psychov_hue_shift,
-        .default_value = 0.f,
+        .default_value = 100.f,
         .label = "Hue Shift",
         .section = "Tone Mapping",
-        .tooltip = "Corrects PsychoV-30 hue shifts for fires towards the original hue.",
+        .tooltip = "Shifts PsychoV-30 fire hues away from pink towards orange.",
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV(); },
-        .parse = [](float value) { return value * 0.1f; },
+        .parse = [](float value) { return value * 0.01f; },
         .is_visible = []() { return IsPsychoV() && settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{

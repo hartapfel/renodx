@@ -718,6 +718,7 @@ float3 psycho30_MeanA2ResponseFromPositiveQ(
     float3 adaptation_peak_ratio,
     float response_power,
     float response_h,
+    float hue_restore,
     out float normalized_response_yf) {
   bool uniform_response = response_h == 1.f;
   float3 anchor_power;
@@ -757,12 +758,22 @@ float3 psycho30_MeanA2ResponseFromPositiveQ(
       && response_radius6 > 6.f * PSYCHO30_EPSILON2) {
     float inverse_response_radius = rsqrt(response_radius6);
     float response_radius = response_radius6 * inverse_response_radius;
-    float2 mean_direction = source_dt * rsqrt(source_radius6)
-                            + response_dt * inverse_response_radius;
+    const float2 source_direction = source_dt * rsqrt(source_radius6);
+    const float2 response_direction = response_dt * inverse_response_radius;
+    float2 mean_direction = source_direction + response_direction;
     float mean_radius6 = psycho30_ScaledA2Radius6(mean_direction);
     if (mean_radius6 > PSYCHO30_EPSILON2) {
-      authored_dt = mean_direction
-                    * (response_radius * rsqrt(mean_radius6));
+      float2 authored_direction = mean_direction * rsqrt(mean_radius6);
+      if (hue_restore != 0.f) {
+        authored_direction = lerp(
+            authored_direction,
+            response_direction,
+            saturate(hue_restore));
+        authored_direction *= rsqrt(max(
+            psycho30_ScaledA2Radius6(authored_direction),
+            PSYCHO30_EPSILON2));
+      }
+      authored_dt = authored_direction * response_radius;
     }
   }
 
@@ -1224,7 +1235,7 @@ float3 psychotm_test30(
     float purity_scale = 1.f,                       // adaptation-relative LMS purity
     float bleaching_intensity = 1.f,                // positional compatibility placeholder
     float clip_point = 100.f,                       // positional compatibility placeholder
-    float hue_restore = 1.f,                        // positional compatibility placeholder
+    float hue_restore = 0.f,                        // response-side A2 hue shift strength
     float encoded_response_power = 1.f,             // positional compatibility placeholder
     int white_curve_mode = 0,                       // positional compatibility placeholder
     float cone_response_exponent = 1.f,             // second factor in cone power p
@@ -1331,6 +1342,7 @@ float3 psychotm_test30(
       anchor_out_lms / (PSYCHO30_D65_WHITE_LMS * target_rgb_peak),
       response_power,
       response_h,
+      hue_restore,
       response_yf);
 
   // -------------------------------------------------------------------------

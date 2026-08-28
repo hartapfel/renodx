@@ -247,13 +247,6 @@ float3 APTApplyPsychoVOutputExtensions(
     mapped_bt709 = renodx::color::bt709::from::OkLab(perceptual);
   }
 
-  if (RENODX_PSYCHOV_HUE_SHIFT != 0.f) {
-    mapped_bt709 = renodx::color::correct::Hue(
-        mapped_bt709,
-        source_bt709,
-        RENODX_PSYCHOV_HUE_SHIFT);
-  }
-
   const float3 adaptive_state_lms =
       renodx::color::lms::from::BT709(0.18f.xxx);
   const float compression_scale =
@@ -320,7 +313,7 @@ float3 APTApplyLUTBuilderPsychoV(
       RENODX_TONE_MAP_SATURATION,
       1.f,
       100.f,
-      1.f,
+      RENODX_PSYCHOV_HUE_SHIFT,
       1.f,
       0,
       1.f,
