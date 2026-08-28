@@ -50,7 +50,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Tone Mapper",
         .section = "Tone Mapping",
         .tooltip = "Sets the tone mapper type",
-        .labels = {"Vanilla", "PsychoV-30"},
+        .labels = {"Vanilla", "RenoDRT"},
         .parse = [](float value) { return value > 0.f ? 3.f : 0.f; },
     },
     new renodx::utils::settings::Setting{
@@ -78,7 +78,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "ToneMapLUTLuminanceCurve",
         .binding = &shader_injection.lut_luminance_curve_strength,
-        .default_value = 35.f,
+        .default_value = 0.f,
         .label = "LUT Luminance Curve",
         .section = "Tone Mapping",
         .tooltip = "Controls how much of the game's original LUT luminance and contrast response is retained after PsychoV-30. 0% keeps only the LUT's color grading; 100% restores its full luminance curve.",
@@ -313,6 +313,14 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
+        .label = "Ritsu's Ko-Fi",
+        .section = "Links",
+        .group = "button-line-3",
+        .tint = 0xFF5A16,
+        .on_change = []() { renodx::utils::platform::LaunchURL("https://ko-fi.com/ritsucecil"); },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Hartapfel's Ko-Fi",
         .section = "Links",
         .group = "button-line-3",
@@ -329,7 +337,7 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Game mod by Hartapfel; RenoDX framework by ShortFuse.",
+        .label = "Game mod by Ritsu; feature port by Hartapfel; RenoDX framework by ShortFuse.",
         .section = "About",
     },
     new renodx::utils::settings::Setting{
@@ -386,86 +394,10 @@ void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
   fired_on_init_swapchain = true;
 }
 
-bool ShouldInjectPostProcessLayout(
-    reshade::api::device* device,
-    std::span<const reshade::api::pipeline_layout_param> params) {
-  if (device->get_api() != reshade::api::device_api::d3d12) return false;
-
-  // Accept a layout that this addon has already extended. This is the form
-  // observed by the init callback after the create callback appends the RenoDX
-  // constants.
-  for (const auto& param : params) {
-    if (param.type != reshade::api::pipeline_layout_param_type::push_constants) continue;
-    if (param.push_constants.dx_register_index != 13u) continue;
-    if (param.push_constants.dx_register_space != 50u) continue;
-    return param.push_constants.count == sizeof(ShaderInjectData) / sizeof(uint32_t);
-  }
-
-  // Requiem's post-process shaders use this game root signature. Other root
-  // signatures must not be extended indiscriminately because doing so breaks
-  // the global DXR layouts used by ray-traced shadows.
-  if (params.size() == 19u) return true;
-
-  // The LUT builder uses a separate compute root signature. Identify it by the
-  // minimum bindings required by 0x3B2D1EB3 instead of relying on its parameter
-  // count, which differs from the post-process layout. Explicitly reject an
-  // acceleration-structure layout so the DXR safety invariant remains intact.
-  bool has_user_constants = false;
-  bool has_exposure = false;
-  bool has_lut_uav = false;
-  bool has_acceleration_structure = false;
-
-  const auto inspect_range = [&](const reshade::api::descriptor_range& range) {
-    if (range.type == reshade::api::descriptor_type::acceleration_structure) {
-      has_acceleration_structure = true;
-      return;
-    }
-    if (range.dx_register_space != 0u || range.dx_register_index != 0u || range.count == 0u) return;
-
-    switch (range.type) {
-      case reshade::api::descriptor_type::constant_buffer:
-        has_user_constants = true;
-        break;
-      case reshade::api::descriptor_type::shader_resource_view:
-        has_exposure = true;
-        break;
-      case reshade::api::descriptor_type::unordered_access_view:
-        has_lut_uav = true;
-        break;
-      default:
-        break;
-    }
-  };
-
-  for (const auto& param : params) {
-    switch (param.type) {
-      case reshade::api::pipeline_layout_param_type::descriptor_table:
-      case reshade::api::pipeline_layout_param_type::push_descriptors_with_ranges:
-        for (uint32_t i = 0; i < param.descriptor_table.count; ++i) {
-          inspect_range(param.descriptor_table.ranges[i]);
-        }
-        break;
-      case reshade::api::pipeline_layout_param_type::push_descriptors:
-        inspect_range(param.push_descriptors);
-        break;
-      case reshade::api::pipeline_layout_param_type::descriptor_table_with_static_samplers:
-      case reshade::api::pipeline_layout_param_type::push_descriptors_with_static_samplers:
-        for (uint32_t i = 0; i < param.descriptor_table_with_static_samplers.count; ++i) {
-          inspect_range(param.descriptor_table_with_static_samplers.ranges[i]);
-        }
-        break;
-      default:
-        break;
-    }
-  }
-
-  return !has_acceleration_structure && has_user_constants && has_exposure && has_lut_uav;
-}
-
 }  // namespace
 
-extern "C" __declspec(dllexport) constexpr const char* NAME = "RenoDX - A Plague Tale: Requiem";
-extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "RenoDX for A Plague Tale: Requiem";
+extern "C" __declspec(dllexport) constexpr const char* NAME = "RenoDX - Resonance: A Plague Tale Legacy";
+extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "RenoDX for Resonance: A Plague Tale Legacy";
 
 BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
   switch (fdw_reason) {
@@ -473,12 +405,6 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
       if (!reshade::register_addon(h_module)) return FALSE;
 
       if (!initialized) {
-        renodx::mods::shader::on_create_pipeline_layout = [](auto* device, auto params) {
-          return ShouldInjectPostProcessLayout(device, params);
-        };
-        renodx::mods::shader::on_init_pipeline_layout = [](auto* device, auto, auto params) {
-          return ShouldInjectPostProcessLayout(device, params);
-        };
         renodx::mods::shader::force_pipeline_cloning = true;
         renodx::mods::shader::expected_constant_buffer_space = 50;
         renodx::mods::shader::expected_constant_buffer_index = 13;

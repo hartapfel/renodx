@@ -1,24 +1,24 @@
-#ifndef SRC_GAMES_APTREQUIEM_COMMON_HLSLI_
-#define SRC_GAMES_APTREQUIEM_COMMON_HLSLI_
+#ifndef SRC_GAMES_RESONANCEPLAGUETALELEGACY_COMMON_HLSLI_
+#define SRC_GAMES_RESONANCEPLAGUETALELEGACY_COMMON_HLSLI_
 
 #include "./shared.h"
 #include "./test30.hlsl"
 
-bool APTIsPsychoV() {
+bool ResonanceIsPsychoV() {
   return RENODX_TONE_MAP_TYPE != 0.f;
 }
 
-bool APTUseRenoDXChromaticAberration() {
-  return APTIsPsychoV() && CUSTOM_CHROMATIC_ABERRATION_TYPE == 1.f;
+bool ResonanceUseRenoDXChromaticAberration() {
+  return ResonanceIsPsychoV() && CUSTOM_CHROMATIC_ABERRATION_TYPE == 1.f;
 }
 
-float3 APTApplyChromaticAberrationEncoded(
+float3 ResonanceApplyChromaticAberrationEncoded(
     float3 center_color,
     float2 tex_coord,
     Texture2D<float4> scene_texture,
     SamplerState scene_sampler,
     float lod) {
-  if (!APTUseRenoDXChromaticAberration()
+  if (!ResonanceUseRenoDXChromaticAberration()
       || CUSTOM_CHROMATIC_ABERRATION_STRENGTH <= 0.f) {
     return center_color;
   }
@@ -63,15 +63,15 @@ float3 APTApplyChromaticAberrationEncoded(
   return max(color, 0.f.xxx);
 }
 
-float3 APTSelectChromaticAberrationInput(
+float3 ResonanceSelectChromaticAberrationInput(
     float3 native_color,
     float3 center_color,
     float2 tex_coord,
     Texture2D<float4> scene_texture,
     SamplerState scene_sampler,
     float lod) {
-  if (!APTUseRenoDXChromaticAberration()) return native_color;
-  return APTApplyChromaticAberrationEncoded(
+  if (!ResonanceUseRenoDXChromaticAberration()) return native_color;
+  return ResonanceApplyChromaticAberrationEncoded(
       center_color,
       tex_coord,
       scene_texture,
@@ -79,12 +79,12 @@ float3 APTSelectChromaticAberrationInput(
       lod);
 }
 
-bool APTUsePerceptualFilmGrain() {
-  return APTIsPsychoV() && CUSTOM_FILM_GRAIN_TYPE == 1.f;
+bool ResonanceUsePerceptualFilmGrain() {
+  return ResonanceIsPsychoV() && CUSTOM_FILM_GRAIN_TYPE == 1.f;
 }
 
-float3 APTApplyPerceptualFilmGrain(float3 color, float2 pixel_position) {
-  if (!APTUsePerceptualFilmGrain()) return color;
+float3 ResonanceApplyPerceptualFilmGrain(float3 color, float2 pixel_position) {
+  if (!ResonanceUsePerceptualFilmGrain()) return color;
 
   const float3 grain_hash = renodx::random::Hash33(
       float3(pixel_position, CUSTOM_RANDOM * 8192.f));
@@ -96,15 +96,15 @@ float3 APTApplyPerceptualFilmGrain(float3 color, float2 pixel_position) {
       1.f);
 }
 
-float3 APTSelectFilmGrainOutput(
+float3 ResonanceSelectFilmGrainOutput(
     float3 native_grained,
     float3 perceptual_grained) {
-  return APTUsePerceptualFilmGrain()
+  return ResonanceUsePerceptualFilmGrain()
       ? perceptual_grained
       : native_grained;
 }
 
-float3 APTRenderIntermediatePassDithered(
+float3 ResonanceRenderIntermediatePassDithered(
     float3 color,
     float2 pixel_position) {
   float3 encoded = renodx::draw::RenderIntermediatePass(color);
@@ -124,9 +124,10 @@ float3 APTRenderIntermediatePassDithered(
   return max(encoded + noise * quantization_step, 0.f.xxx);
 }
 
-float3 APTApplyPostProcessLUT(
+float3 ResonanceApplyPostProcessLUT(
     float3 lut_input_linear,
-    float3 lut_output_linear) {
+    float3 lut_output_linear,
+    float3 lut_output_scale) {
   // PsychoV and the scaled artistic LUT are baked by the LUT builder. Keep a
   // shared post-process hook without repeating either operation per pixel.
   return lut_output_linear;
@@ -137,11 +138,11 @@ float3 APTApplyPostProcessLUT(
 // final RGB assignment with RenderIntermediatePass when PsychoV is selected.
 // This is the generalized form of the author's four original postprocess
 // branches and keeps every variant's native math intact.
-float3 APTApplyPostProcessToneMap(
+float3 ResonanceApplyPostProcessToneMap(
     float3 post_lut_bt709,
     float3 native_tonemapped_bt709,
     bool clamp_vanilla) {
-  if (!APTIsPsychoV()) {
+  if (!ResonanceIsPsychoV()) {
     return clamp_vanilla
         ? saturate(native_tonemapped_bt709)
         : native_tonemapped_bt709;
@@ -159,13 +160,13 @@ float3 APTApplyPostProcessToneMap(
 // scaled from diffuse white to graphics white. The output shader consequently
 // decodes custom content using graphics white rather than the game's paper
 // white constant.
-float APTGetGameNits(float native_game_nits) {
-  return APTIsPsychoV()
+float ResonanceGetGameNits(float native_game_nits) {
+  return ResonanceIsPsychoV()
       ? max(RENODX_GRAPHICS_WHITE_NITS, 1.f)
       : native_game_nits;
 }
 
-float3 APTApplyPsychoVInputExtensions(float3 color_bt709) {
+float3 ResonanceApplyPsychoVInputExtensions(float3 color_bt709) {
   color_bt709 = renodx::math::ZeroNaN(color_bt709);
   color_bt709 = renodx::math::Select(isinf(color_bt709), 0.f.xxx, color_bt709);
 
@@ -204,7 +205,7 @@ float3 APTApplyPsychoVInputExtensions(float3 color_bt709) {
       max(adjusted_luminance, 0.f));
 }
 
-float3 APTApplyPsychoVOutputExtensions(
+float3 ResonanceApplyPsychoVOutputExtensions(
     float3 source_bt709,
     float3 mapped_bt709) {
   mapped_bt709 = renodx::math::ZeroNaN(mapped_bt709);
@@ -268,34 +269,34 @@ float3 APTApplyPsychoVOutputExtensions(
   return max(mapped_bt709, 0.f.xxx);
 }
 
-static const float APT_COMMON_LUT_LOG_SCALE = 0.07434873282909393f;
+static const float RESONANCE_COMMON_LUT_LOG_SCALE = 0.07434873282909393f;
 
-float3 APTDecodeLUTLog(float3 encoded, float linear_scale) {
-  return (exp2(encoded / APT_COMMON_LUT_LOG_SCALE) - 1.f.xxx)
+float3 ResonanceDecodeLUTLog(float3 encoded, float linear_scale) {
+  return (exp2(encoded / RESONANCE_COMMON_LUT_LOG_SCALE) - 1.f.xxx)
       / max(linear_scale, 1e-6f);
 }
 
-float3 APTEncodeLUTLog(float3 linear_color, float linear_scale) {
+float3 ResonanceEncodeLUTLog(float3 linear_color, float linear_scale) {
   return log2(max(linear_color, 0.f.xxx) * max(linear_scale, 1e-6f) + 1.f.xxx)
-      * APT_COMMON_LUT_LOG_SCALE;
+      * RESONANCE_COMMON_LUT_LOG_SCALE;
 }
 
-float3 APTApplyLUTBuilderPsychoV(
+float3 ResonanceApplyLUTBuilderPsychoV(
     float3 lut_coordinates,
     float3 native_lut_output,
     float linear_scale,
     float3 post_lut_scale) {
-  if (!APTIsPsychoV()) return native_lut_output;
+  if (!ResonanceIsPsychoV()) return native_lut_output;
 
   // Match APTLegacy's proven ordering: decode the native LUT input and output
   // into one scene-linear domain, retain the LUT's RGB grade, and scale only
   // its luminance delta before PsychoV. At 0% the LUT keeps its hue/tint while
   // contributing no contrast curve; at 100% the complete native LUT is used.
   const float3 scene_linear = max(
-      APTDecodeLUTLog(lut_coordinates, linear_scale) * post_lut_scale,
+      ResonanceDecodeLUTLog(lut_coordinates, linear_scale) * post_lut_scale,
       0.f.xxx);
   const float3 native_graded = max(
-      APTDecodeLUTLog(native_lut_output, linear_scale) * post_lut_scale,
+      ResonanceDecodeLUTLog(native_lut_output, linear_scale) * post_lut_scale,
       0.f.xxx);
   const float scene_luminance =
       renodx::color::y::from::BT709(scene_linear);
@@ -309,7 +310,7 @@ float3 APTApplyLUTBuilderPsychoV(
       ? native_graded * (target_luminance / native_luminance)
       : scene_linear;
 
-  psychov_input = APTApplyPsychoVInputExtensions(psychov_input);
+  psychov_input = ResonanceApplyPsychoVInputExtensions(psychov_input);
   float3 mapped_bt709 = renodx::tonemap::psychov::psychotm_test30(
       psychov_input,
       RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f),
@@ -328,7 +329,7 @@ float3 APTApplyLUTBuilderPsychoV(
       0.18f.xxx,
       1.f,
       0);
-  mapped_bt709 = APTApplyPsychoVOutputExtensions(
+  mapped_bt709 = ResonanceApplyPsychoVOutputExtensions(
       psychov_input,
       mapped_bt709);
 
@@ -336,16 +337,16 @@ float3 APTApplyLUTBuilderPsychoV(
       mapped_bt709,
       max(post_lut_scale, 1e-6f.xxx),
       0.f.xxx);
-  return APTEncodeLUTLog(mapped_bt709, linear_scale);
+  return ResonanceEncodeLUTLog(mapped_bt709, linear_scale);
 }
 
-float3 APTDecodeHDRTransformerInput(
+float3 ResonanceDecodeHDRTransformerInput(
     float3 encoded_color,
     float game_nits) {
   return renodx::color::srgb::DecodeSafe(encoded_color) * game_nits;
 }
 
-float APTGetHDRTransformerLuminance(float3 color) {
+float ResonanceGetHDRTransformerLuminance(float3 color) {
   return renodx::color::y::from::BT2020(color);
 }
 
@@ -353,13 +354,13 @@ float APTGetHDRTransformerLuminance(float3 color) {
 // BT.709 HUD and scene pixels share one unambiguous space.
 // Convert the filter neighborhood to BT.2020 for luminance sharpening, then
 // return to signed BT.709 for the game's final gamut conversion.
-float3 APTApplyLiliumHDRRCAS(
+float3 ResonanceApplyLiliumHDRRCAS(
     float3 center_bt709_nits,
     float2 tex_coord,
     Texture2D<float4> scene_texture,
     SamplerState scene_sampler,
     float game_nits) {
-  if (!APTIsPsychoV()
+  if (!ResonanceIsPsychoV()
       || CUSTOM_SHARPENING_TYPE != 1.f
       || CUSTOM_SHARPNESS == 0.f) {
     return center_bt709_nits;
@@ -372,29 +373,29 @@ float3 APTApplyLiliumHDRRCAS(
   const float3 center_bt2020_nits =
       renodx::color::bt2020::from::BT709(center_bt709_nits);
   const float3 b = renodx::color::bt2020::from::BT709(
-      APTDecodeHDRTransformerInput(
+      ResonanceDecodeHDRTransformerInput(
           scene_texture.SampleLevel(scene_sampler, tex_coord + float2(0.f, -1.f) * texel_size, 0.f).rgb,
           game_nits));
   const float3 d = renodx::color::bt2020::from::BT709(
-      APTDecodeHDRTransformerInput(
+      ResonanceDecodeHDRTransformerInput(
           scene_texture.SampleLevel(scene_sampler, tex_coord + float2(-1.f, 0.f) * texel_size, 0.f).rgb,
           game_nits));
   const float3 f = renodx::color::bt2020::from::BT709(
-      APTDecodeHDRTransformerInput(
+      ResonanceDecodeHDRTransformerInput(
           scene_texture.SampleLevel(scene_sampler, tex_coord + float2(1.f, 0.f) * texel_size, 0.f).rgb,
           game_nits));
   const float3 h = renodx::color::bt2020::from::BT709(
-      APTDecodeHDRTransformerInput(
+      ResonanceDecodeHDRTransformerInput(
           scene_texture.SampleLevel(scene_sampler, tex_coord + float2(0.f, 1.f) * texel_size, 0.f).rgb,
           game_nits));
 
   static const float sharpening_normalization_point = 125.f;
   const float rcp_normalization = rcp(sharpening_normalization_point);
-  const float b_luma = APTGetHDRTransformerLuminance(max(b, 0.f.xxx)) * rcp_normalization;
-  const float d_luma = APTGetHDRTransformerLuminance(max(d, 0.f.xxx)) * rcp_normalization;
-  const float e_luma = APTGetHDRTransformerLuminance(max(center_bt2020_nits, 0.f.xxx)) * rcp_normalization;
-  const float f_luma = APTGetHDRTransformerLuminance(max(f, 0.f.xxx)) * rcp_normalization;
-  const float h_luma = APTGetHDRTransformerLuminance(max(h, 0.f.xxx)) * rcp_normalization;
+  const float b_luma = ResonanceGetHDRTransformerLuminance(max(b, 0.f.xxx)) * rcp_normalization;
+  const float d_luma = ResonanceGetHDRTransformerLuminance(max(d, 0.f.xxx)) * rcp_normalization;
+  const float e_luma = ResonanceGetHDRTransformerLuminance(max(center_bt2020_nits, 0.f.xxx)) * rcp_normalization;
+  const float f_luma = ResonanceGetHDRTransformerLuminance(max(f, 0.f.xxx)) * rcp_normalization;
+  const float h_luma = ResonanceGetHDRTransformerLuminance(max(h, 0.f.xxx)) * rcp_normalization;
 
   const float min_ring_luma = min(min(b_luma, d_luma), min(f_luma, h_luma));
   const float max_ring_luma = max(max(b_luma, d_luma), max(f_luma, h_luma));
@@ -437,4 +438,4 @@ float3 APTApplyLiliumHDRRCAS(
   return renodx::color::bt709::from::BT2020(sharpened_color_nits);
 }
 
-#endif  // SRC_GAMES_APTREQUIEM_COMMON_HLSLI_
+#endif  // SRC_GAMES_RESONANCEPLAGUETALELEGACY_COMMON_HLSLI_
