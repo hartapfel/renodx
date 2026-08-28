@@ -78,7 +78,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "ToneMapLUTLuminanceCurve",
         .binding = &shader_injection.lut_luminance_curve_strength,
-        .default_value = 0.f,
+        .default_value = 35.f,
         .label = "LUT Luminance Curve",
         .section = "Tone Mapping",
         .tooltip = "Controls how much of the game's original LUT luminance and contrast response is retained after PsychoV-30. 0% keeps only the LUT's color grading; 100% restores its full luminance curve.",
