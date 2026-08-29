@@ -97,7 +97,7 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Shifts PsychoV-30 fire hues away from pink towards orange.",
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV(); },
-        .parse = [](float value) { return value * 0.01f; },
+        .parse = [](float value) { return value * 0.02f; },
         .is_visible = []() { return IsPsychoV() && settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{

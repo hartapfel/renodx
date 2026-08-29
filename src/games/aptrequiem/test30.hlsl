@@ -768,7 +768,8 @@ float3 psycho30_MeanA2ResponseFromPositiveQ(
         authored_direction = lerp(
             authored_direction,
             response_direction,
-            saturate(hue_restore));
+            // saturate(hue_restore));
+            clamp(hue_restore, 0.f, 2.f));
         authored_direction *= rsqrt(max(
             psycho30_ScaledA2Radius6(authored_direction),
             PSYCHO30_EPSILON2));
@@ -1235,7 +1236,7 @@ float3 psychotm_test30(
     float purity_scale = 1.f,                       // adaptation-relative LMS purity
     float bleaching_intensity = 1.f,                // positional compatibility placeholder
     float clip_point = 100.f,                       // positional compatibility placeholder
-    float hue_restore = 0.f,                        // response-side A2 hue shift strength
+    float hue_restore = 0.f,                        // response-side A2 hue shift, 0 to 2
     float encoded_response_power = 1.f,             // positional compatibility placeholder
     int white_curve_mode = 0,                       // positional compatibility placeholder
     float cone_response_exponent = 1.f,             // second factor in cone power p

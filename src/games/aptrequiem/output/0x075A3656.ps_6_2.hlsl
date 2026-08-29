@@ -3,6 +3,7 @@ Texture2D<float4> sDiffuse : register(t0);
 Texture2DArray<float4> sBlueNoiseR8 : register(t1);
 
 #include "../common.hlsli"
+#include "../../../shaders/color/pq.hlsl"
 
 cbuffer CBufferGlobalConstant_Z : register(b1) {
   struct StructGlobalConstant_Z {
@@ -2213,6 +2214,31 @@ float4 main(
     _1988 = _236;
     _1989 = _237;
     _1990 = _238;
+  }
+
+  // PsychoV already produces the final display-mapped signal in the LUT
+  // builder.  At this point _107.._109 are that signal in absolute linear
+  // BT.2020 nits, after the optional RCAS pass.  Requiem's remaining native
+  // HDR display transform would tone map it a second time and prevent it from
+  // reaching the configured peak, so transport it directly to PQ instead.
+  // Keep the native path above completely unchanged for the Vanilla mode.
+  if (APTIsPsychoV()) {
+    float3 apt_psychov_bt2020_nits = max(
+        float3(_107, _108, _109),
+        0.f);
+    const float apt_psychov_max_nits = max(
+        apt_psychov_bt2020_nits.x,
+        max(apt_psychov_bt2020_nits.y, apt_psychov_bt2020_nits.z));
+    apt_psychov_bt2020_nits *= min(
+        1.f,
+        max(RENODX_PEAK_WHITE_NITS, 1.f)
+            / max(apt_psychov_max_nits, 1e-6f));
+
+    const float3 apt_psychov_pq =
+        renodx::color::pq::EncodeSafe(apt_psychov_bt2020_nits, 1.f);
+    _1988 = apt_psychov_pq.x;
+    _1989 = apt_psychov_pq.y;
+    _1990 = apt_psychov_pq.z;
   }
   SV_Target.x = _1988;
   SV_Target.y = _1989;

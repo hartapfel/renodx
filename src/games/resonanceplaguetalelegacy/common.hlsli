@@ -274,6 +274,27 @@ float3 ResonanceEncodeLUTLog(float3 linear_color, float linear_scale) {
       * RESONANCE_COMMON_LUT_LOG_SCALE;
 }
 
+float3 ResonanceToneMapPsychoV30(float3 color_bt709) {
+  return renodx::tonemap::psychov::psychotm_test30(
+      color_bt709,
+      RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f),
+      RENODX_TONE_MAP_EXPOSURE,
+      RENODX_TONE_MAP_HIGHLIGHTS,
+      RENODX_TONE_MAP_SHADOWS,
+      RENODX_TONE_MAP_CONTRAST,
+      RENODX_TONE_MAP_SATURATION,
+      1.f,
+      100.f,
+      RENODX_PSYCHOV_HUE_SHIFT,
+      1.f,
+      0,
+      1.f,
+      0.18f.xxx,
+      0.18f.xxx,
+      1.f,
+      0);
+}
+
 float3 ResonanceApplyLUTBuilderPsychoV(
     float3 lut_coordinates,
     float3 native_lut_output,
@@ -304,27 +325,51 @@ float3 ResonanceApplyLUTBuilderPsychoV(
       : scene_linear;
 
   psychov_input = ResonanceApplyPsychoVInputExtensions(psychov_input);
-  float3 mapped_bt709 = renodx::tonemap::psychov::psychotm_test30(
-      psychov_input,
-      RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f),
-      RENODX_TONE_MAP_EXPOSURE,
-      RENODX_TONE_MAP_HIGHLIGHTS,
-      RENODX_TONE_MAP_SHADOWS,
-      RENODX_TONE_MAP_CONTRAST,
-      RENODX_TONE_MAP_SATURATION,
-      1.f,
-      100.f,
-      RENODX_PSYCHOV_HUE_SHIFT,
-      1.f,
-      0,
-      1.f,
-      0.18f.xxx,
-      0.18f.xxx,
-      1.f,
-      0);
+  float3 mapped_bt709 = ResonanceToneMapPsychoV30(psychov_input);
   mapped_bt709 = ResonanceApplyPsychoVOutputExtensions(
       psychov_input,
       mapped_bt709);
+
+  // PsychoV's finite shoulder approaches the selected peak asymptotically,
+  // but the generated LUT has a finite upper log-domain entry. Normalize that
+  // entry to the display peak while leaving diffuse white and everything below
+  // it unchanged. Estimate the graded endpoint from the current LUT luminance
+  // ratio so the normalization also remains correct when the native LUT curve
+  // is retained at less than or equal to 100%.
+  const float mapped_peak = renodx::math::Max(mapped_bt709);
+  const float peak_ratio = max(
+      RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f),
+      1.f);
+  if (mapped_peak > 1.f && peak_ratio > 1.f) {
+    const float lut_luminance_gain = renodx::math::DivideSafe(
+        target_luminance,
+        scene_luminance,
+        1.f);
+    const float lut_endpoint_luminance = max(
+        renodx::color::y::from::BT709(
+            ResonanceDecodeLUTLog(1.f.xxx, linear_scale) * post_lut_scale)
+            * max(lut_luminance_gain, 0.f),
+        1.f);
+    const float3 endpoint_input = ResonanceApplyPsychoVInputExtensions(
+        lut_endpoint_luminance.xxx);
+    const float endpoint_peak = renodx::math::Max(
+        ResonanceApplyPsychoVOutputExtensions(
+            endpoint_input,
+            ResonanceToneMapPsychoV30(endpoint_input)));
+    const float highlight_gain = max(
+        1.f,
+        renodx::math::DivideSafe(
+            peak_ratio - 1.f,
+            endpoint_peak - 1.f,
+            1.f));
+    const float stretched_peak = min(
+        1.f + (mapped_peak - 1.f) * highlight_gain,
+        peak_ratio);
+    mapped_bt709 *= renodx::math::DivideSafe(
+        stretched_peak,
+        mapped_peak,
+        1.f);
+  }
 
   mapped_bt709 = renodx::math::DivideSafe(
       mapped_bt709,
