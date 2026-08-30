@@ -165,6 +165,34 @@ float APTGetGameNits(float native_game_nits) {
       : native_game_nits;
 }
 
+// Confirmed HUD shaders output sRGB-encoded RGB into the same intermediate
+// used by the native UI compositor. Apply the selected SDR display response and
+// brightness scale in linear light, re-encode, and leave alpha untouched so the
+// game's blend state and coverage remain native.
+float3 APTScaleUIEncoded(float3 encoded_color) {
+  if (!APTIsPsychoV()) return encoded_color;
+
+  const float ui_scale = max(RENODX_UI_WHITE_NITS, 1.f)
+      / RENODX_GRAPHICS_WHITE_NITS;
+  if (ui_scale == 1.f
+      && RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_NONE) {
+    return encoded_color;
+  }
+
+  float3 linear_color = renodx::color::srgb::DecodeSafe(encoded_color);
+  if (RENODX_GAMMA_CORRECTION
+      == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
+    linear_color = renodx::color::correct::GammaSafe(
+        linear_color, false, 2.2f);
+  } else if (RENODX_GAMMA_CORRECTION
+             == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
+    linear_color = renodx::color::correct::GammaSafe(
+        linear_color, false, 2.4f);
+  }
+
+  return renodx::color::srgb::EncodeSafe(linear_color * ui_scale);
+}
+
 float3 APTApplyPsychoVInputExtensions(float3 color_bt709) {
   color_bt709 = renodx::math::ZeroNaN(color_bt709);
   color_bt709 = renodx::math::Select(isinf(color_bt709), 0.f.xxx, color_bt709);

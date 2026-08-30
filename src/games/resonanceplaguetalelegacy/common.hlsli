@@ -167,17 +167,32 @@ float ResonanceGetGameNits(float native_game_nits) {
 }
 
 // The confirmed HUD shaders output sRGB-encoded RGB into the same intermediate
-// used by the native UI compositor. Scale in linear light, re-encode, and leave
-// alpha untouched so the game's blend state and coverage remain native.
+// used by the native UI compositor. Apply the selected SDR display response and
+// brightness scale in linear light, re-encode, and leave alpha untouched so the
+// game's blend state and coverage remain native.
 float3 ResonanceScaleUIEncoded(float3 encoded_color) {
   if (!ResonanceIsPsychoV()) return encoded_color;
 
   const float ui_scale = max(RENODX_UI_WHITE_NITS, 1.f)
       / RENODX_GRAPHICS_WHITE_NITS;
-  if (ui_scale == 1.f) return encoded_color;
+  if (ui_scale == 1.f
+      && RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_NONE) {
+    return encoded_color;
+  }
+
+  float3 linear_color = renodx::color::srgb::DecodeSafe(encoded_color);
+  if (RENODX_GAMMA_CORRECTION
+      == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
+    linear_color = renodx::color::correct::GammaSafe(
+        linear_color, false, 2.2f);
+  } else if (RENODX_GAMMA_CORRECTION
+             == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
+    linear_color = renodx::color::correct::GammaSafe(
+        linear_color, false, 2.4f);
+  }
 
   return renodx::color::srgb::EncodeSafe(
-      renodx::color::srgb::DecodeSafe(encoded_color) * ui_scale);
+      linear_color * ui_scale);
 }
 
 float3 ResonanceApplyPsychoVInputExtensions(float3 color_bt709) {

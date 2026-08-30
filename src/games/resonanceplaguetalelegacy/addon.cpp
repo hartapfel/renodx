@@ -93,7 +93,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "SDR Gamma Emulation",
         .section = "Tone Mapping",
-        .tooltip = "Emulates the display EOTF used for the game's SDR presentation.",
+        .tooltip = "Emulates the display EOTF used for the game's SDR presentation across the scene and UI.",
         .labels = {"None", "2.2", "BT.1886"},
         .is_enabled = []() { return IsPsychoV(); },
     },
