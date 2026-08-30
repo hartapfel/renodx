@@ -246,16 +246,17 @@ float3 ResonanceApplyPsychoVOutputExtensions(
   if (RENODX_TONE_MAP_BLOWOUT != 0.f
       || RENODX_TONE_MAP_HIGHLIGHT_SATURATION != 1.f) {
     float3 perceptual = renodx::color::oklab::from::BT709(mapped_bt709);
-    const float peak_ratio = max(
-        RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f),
-        1.f);
-    const float percent_peak = saturate(mapped_luminance / peak_ratio);
 
     if (RENODX_TONE_MAP_BLOWOUT != 0.f) {
-      perceptual.yz *= lerp(
-          1.f,
-          0.f,
-          saturate(pow(percent_peak, 1.f - RENODX_TONE_MAP_BLOWOUT)));
+      // Match RenoDX's standard exposure blowout response. Weighting against
+      // the 10,000-nit HDR container keeps low and mid luminance chroma stable
+      // at moderate settings, while still allowing a full-strength setting to
+      // progressively bleach the complete image.
+      const float percent_hdr_container = saturate(
+          mapped_luminance * max(RENODX_DIFFUSE_WHITE_NITS, 1.f) / 10000.f);
+      perceptual.yz *= pow(
+          1.f - percent_hdr_container,
+          100.f * saturate(RENODX_TONE_MAP_BLOWOUT));
     }
 
     if (RENODX_TONE_MAP_HIGHLIGHT_SATURATION != 1.f) {
@@ -369,6 +370,20 @@ float3 ResonanceApplyLUTBuilderPsychoV(
   const float peak_ratio = max(
       RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f),
       1.f);
+  // RenderIntermediatePass applies SDR gamma emulation after this LUT. Its
+  // forward correction compresses values above diffuse white, so normalize
+  // the finite LUT endpoint to the inverse-corrected transport value. After
+  // the intermediate is decoded, the endpoint lands exactly at peak_ratio.
+  float transport_peak_ratio = peak_ratio;
+  if (RENODX_GAMMA_CORRECTION
+      == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
+    transport_peak_ratio = renodx::color::correct::GammaSafe(
+        peak_ratio, true, 2.2f);
+  } else if (RENODX_GAMMA_CORRECTION
+             == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
+    transport_peak_ratio = renodx::color::correct::GammaSafe(
+        peak_ratio, true, 2.4f);
+  }
   if (mapped_peak > 1.f && peak_ratio > 1.f) {
     const float lut_luminance_gain = renodx::math::DivideSafe(
         target_luminance,
@@ -388,12 +403,12 @@ float3 ResonanceApplyLUTBuilderPsychoV(
     const float highlight_gain = max(
         1.f,
         renodx::math::DivideSafe(
-            peak_ratio - 1.f,
+            transport_peak_ratio - 1.f,
             endpoint_peak - 1.f,
             1.f));
     const float stretched_peak = min(
         1.f + (mapped_peak - 1.f) * highlight_gain,
-        peak_ratio);
+        transport_peak_ratio);
     mapped_bt709 *= renodx::math::DivideSafe(
         stretched_peak,
         mapped_peak,

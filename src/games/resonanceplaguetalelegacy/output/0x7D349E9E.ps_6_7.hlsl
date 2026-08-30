@@ -272,6 +272,15 @@ float4 main(
   float _103 = mad(0.8955950140953064f, _94, _102);
   // Keep the native BT.709-to-BT.2020 conversion for both scene and HUD.
   float3 resonance_bt2020_nits = float3(_97, _100, _103);
+  if (ResonanceIsPsychoV()) {
+    resonance_bt2020_nits = max(resonance_bt2020_nits, 0.f.xxx);
+    const float resonance_psychov_max_nits = renodx::math::Max(
+        resonance_bt2020_nits);
+    resonance_bt2020_nits *= min(
+        1.f,
+        max(RENODX_PEAK_WHITE_NITS, 1.f)
+            / max(resonance_psychov_max_nits, 1e-6f));
+  }
   int _106 = asint((User_000.UserConstant_Z_000[3].y));
   bool _107 = (_106 == 0);
   if (!_107) {
