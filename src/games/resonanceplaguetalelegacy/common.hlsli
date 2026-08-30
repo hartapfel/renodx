@@ -156,14 +156,28 @@ float3 ResonanceApplyPostProcessToneMap(
   return max(post_lut_bt709, 0.f.xxx);
 }
 
-// The author's custom path uses RenderIntermediatePass, whose intermediate is
-// scaled from diffuse white to graphics white. The output shader consequently
-// decodes custom content using graphics white rather than the game's paper
-// white constant.
+// Keep the scene and final output transform pinned to one reference white.
+// UI brightness is applied in the dedicated HUD draws before composition so
+// changing it cannot alter the already-rendered scene underneath translucent
+// overlays.
 float ResonanceGetGameNits(float native_game_nits) {
   return ResonanceIsPsychoV()
-      ? max(RENODX_GRAPHICS_WHITE_NITS, 1.f)
+      ? RENODX_GRAPHICS_WHITE_NITS
       : native_game_nits;
+}
+
+// The confirmed HUD shaders output sRGB-encoded RGB into the same intermediate
+// used by the native UI compositor. Scale in linear light, re-encode, and leave
+// alpha untouched so the game's blend state and coverage remain native.
+float3 ResonanceScaleUIEncoded(float3 encoded_color) {
+  if (!ResonanceIsPsychoV()) return encoded_color;
+
+  const float ui_scale = max(RENODX_UI_WHITE_NITS, 1.f)
+      / RENODX_GRAPHICS_WHITE_NITS;
+  if (ui_scale == 1.f) return encoded_color;
+
+  return renodx::color::srgb::EncodeSafe(
+      renodx::color::srgb::DecodeSafe(encoded_color) * ui_scale);
 }
 
 float3 ResonanceApplyPsychoVInputExtensions(float3 color_bt709) {
