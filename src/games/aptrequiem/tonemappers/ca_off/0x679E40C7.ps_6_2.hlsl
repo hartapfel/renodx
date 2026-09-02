@@ -357,7 +357,7 @@ float4 main(
   float _367 = saturate(_366);
   float _369 = log2(_367);
   float _370 = _369 * (PostProcess.Settings[13].z);
-  float _371 = exp2(_370);
+  float _371 = APTScaleVignetteMask(exp2(_370));
   float _372 = _347 * (PostProcess.Settings[12].x);
   float _373 = _348 * (PostProcess.Settings[12].y);
   float _374 = _349 * (PostProcess.Settings[12].z);

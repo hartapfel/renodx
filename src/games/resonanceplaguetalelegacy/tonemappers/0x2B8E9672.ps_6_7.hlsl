@@ -833,10 +833,10 @@ float4 main(linear float4 TEXCOORD : TEXCOORD,
   _880 = (PostProcess_000.PostProcessConstant_Z_000[13].w) *
          ((_57 * 2.0f) + -1.0f);
   _893 =
-      exp2(log2(saturate(((PostProcess_000.PostProcessConstant_Z_000[13].x) *
+      ResonanceScaleVignetteMask(exp2(log2(saturate(((PostProcess_000.PostProcessConstant_Z_000[13].x) *
                           sqrt((_880 * _880) + (_876 * _876))) +
                          (PostProcess_000.PostProcessConstant_Z_000[13].y))) *
-           (PostProcess_000.PostProcessConstant_Z_000[13].z));
+           (PostProcess_000.PostProcessConstant_Z_000[13].z)));
   _918 =
       (PostProcess_000.PostProcessConstant_Z_320[0].x) * 0.07434873282909393f;
 

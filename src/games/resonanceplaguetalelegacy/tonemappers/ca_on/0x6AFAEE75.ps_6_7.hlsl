@@ -654,7 +654,7 @@ float4 main(
   float _648 = saturate(_647);
   float _650 = log2(_648);
   float _651 = _650 * (PostProcess_000.PostProcessConstant_Z_000[13].z);
-  float _652 = exp2(_651);
+  float _652 = ResonanceScaleVignetteMask(exp2(_651));
   float _653 = _624 * (PostProcess_000.PostProcessConstant_Z_000[12].x);
   float _654 = _626 * (PostProcess_000.PostProcessConstant_Z_000[12].y);
   float _655 = _628 * (PostProcess_000.PostProcessConstant_Z_000[12].z);

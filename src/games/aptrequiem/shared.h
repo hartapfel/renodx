@@ -35,7 +35,7 @@ struct ShaderInjectData {
   float custom_random;
   float custom_chromatic_aberration_type;
   float custom_chromatic_aberration_strength;
-  float padding_3;
+  float custom_vignette_intensity;
 };
 
 #ifdef __cplusplus
@@ -76,6 +76,7 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_SHARPENING_TYPE shader_injection.custom_sharpening_type
 #define CUSTOM_CHROMATIC_ABERRATION_TYPE shader_injection.custom_chromatic_aberration_type
 #define CUSTOM_CHROMATIC_ABERRATION_STRENGTH shader_injection.custom_chromatic_aberration_strength
+#define CUSTOM_VIGNETTE_INTENSITY shader_injection.custom_vignette_intensity
 #define RENODX_LUT_LUMINANCE_CURVE_STRENGTH shader_injection.lut_luminance_curve_strength
 
 #define RENODX_SWAP_CHAIN_OUTPUT_PRESET renodx::draw::SWAP_CHAIN_OUTPUT_PRESET_HDR10

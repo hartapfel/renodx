@@ -8,6 +8,10 @@ bool APTIsPsychoV() {
   return RENODX_TONE_MAP_TYPE != 0.f;
 }
 
+float APTScaleVignetteMask(float native_mask) {
+  return native_mask * saturate(CUSTOM_VIGNETTE_INTENSITY);
+}
+
 bool APTUseRenoDXChromaticAberration() {
   return APTIsPsychoV() && CUSTOM_CHROMATIC_ABERRATION_TYPE == 1.f;
 }

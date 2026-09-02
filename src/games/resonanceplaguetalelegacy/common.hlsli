@@ -8,6 +8,10 @@ bool ResonanceIsPsychoV() {
   return RENODX_TONE_MAP_TYPE != 0.f;
 }
 
+float ResonanceScaleVignetteMask(float native_mask) {
+  return native_mask * saturate(CUSTOM_VIGNETTE_INTENSITY);
+}
+
 bool ResonanceUseRenoDXChromaticAberration() {
   return ResonanceIsPsychoV() && CUSTOM_CHROMATIC_ABERRATION_TYPE == 1.f;
 }

@@ -486,7 +486,7 @@ float4 main(
   _482 = (_476 * _466) * (PostProcess_000.PostProcessConstant_Z_000[14].z);
   _489 = (_51 * 2.0f) + -1.0f;
   _493 = (PostProcess_000.PostProcessConstant_Z_000[13].w) * ((_52 * 2.0f) + -1.0f);
-  _506 = exp2(log2(saturate(((PostProcess_000.PostProcessConstant_Z_000[13].x) * sqrt((_493 * _493) + (_489 * _489))) + (PostProcess_000.PostProcessConstant_Z_000[13].y))) * (PostProcess_000.PostProcessConstant_Z_000[13].z));
+  _506 = ResonanceScaleVignetteMask(exp2(log2(saturate(((PostProcess_000.PostProcessConstant_Z_000[13].x) * sqrt((_493 * _493) + (_489 * _489))) + (PostProcess_000.PostProcessConstant_Z_000[13].y))) * (PostProcess_000.PostProcessConstant_Z_000[13].z)));
   _531 = (PostProcess_000.PostProcessConstant_Z_320[0].x) * 0.07434873282909393f;
   _540 = t3.Sample(s3, float3(((_531 * log2((((_506 * ((_478 * (PostProcess_000.PostProcessConstant_Z_000[12].x)) - _478)) + _478) * 335.718017578125f) + 1.0f)) + (PostProcess_000.PostProcessConstant_Z_320[0].y)), ((_531 * log2((((_506 * ((_480 * (PostProcess_000.PostProcessConstant_Z_000[12].y)) - _480)) + _480) * 335.718017578125f) + 1.0f)) + (PostProcess_000.PostProcessConstant_Z_320[0].y)), ((log2((((_506 * ((_482 * (PostProcess_000.PostProcessConstant_Z_000[12].z)) - _482)) + _482) * 335.718017578125f) + 1.0f) * _531) + (PostProcess_000.PostProcessConstant_Z_320[0].y))));
   _560 = ((exp2(_540.x * 13.450128555297852f) + -1.0f) * 0.0029786902014166117f) * (User_000.UserConstant_Z_000[4].x);
