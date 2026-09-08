@@ -126,7 +126,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "ColorGradeHighlights",
         .binding = &shader_injection.tone_map_highlights,
-        .default_value = 39.f,
+        .default_value = 50.f,
         .label = "Highlights",
         .section = "Color Grading",
         .max = 100.f,
@@ -137,7 +137,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "ColorGradeShadows",
         .binding = &shader_injection.tone_map_shadows,
-        .default_value = 90.f,
+        .default_value = 50.f,
         .label = "Shadows",
         .section = "Color Grading",
         .max = 100.f,
@@ -182,7 +182,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "ColorGradeBlowout",
         .binding = &shader_injection.tone_map_blowout,
-        .default_value = 10.f,
+        .default_value = 0.f,
         .label = "Blowout",
         .section = "Color Grading",
         .tooltip = "Controls color loss from overexposure.",
@@ -206,7 +206,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "PsychoVConeResponseExponent",
         .binding = &shader_injection.psychov_cone_response_exponent,
-        .default_value = 1.38f,
+        .default_value = 1.0f,
         .label = "Cone Response Exponent",
         .section = "PsychoV30",
         .tooltip = "Scales PsychoV-30's adaptation-point contrast and cone-response shaping.",
@@ -232,7 +232,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "PsychoVBackgroundAnchor",
         .binding = &shader_injection.psychov_background_anchor,
-        .default_value = 0.16f,
+        .default_value = 0.18f,
         .label = "Background Anchor",
         .section = "PsychoV30",
         .tooltip = "Sets the output/background value matched to the adaptation anchor.",
@@ -282,9 +282,36 @@ renodx::utils::settings::Settings settings = {
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Reset All",
         .section = "Options",
+        .group = "button-line-1",
         .on_change = []() { renodx::utils::settings::ResetSettings(); },
     },
-            new renodx::utils::settings::Setting{
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
+        .label = "Match native",
+        .section = "Options",
+        .group = "button-line-1",
+        .tooltip = "Applies the native-match Color Grading and PsychoV30 preset without changing tone mapping or brightness settings.",
+        .on_change = []() {
+          renodx::utils::settings::UpdateSettings({
+              {"ColorGradeExposure", 1.f},
+              {"ColorGradeGamma", 1.f},
+              {"ColorGradeHighlights", 45.f},
+              {"ColorGradeShadows", 93.f},
+              {"ColorGradeContrast", 50.f},
+              {"ColorGradeSaturation", 50.f},
+              {"ColorGradeHighlightSaturation", 50.f},
+              {"ColorGradeBlowout", 5.f},
+              {"ColorGradeFlare", 0.f},
+              {"PsychoVConeResponseExponent", 1.37f},
+              {"PsychoVAdaptationAnchor", 0.18f},
+              {"PsychoVBackgroundAnchor", 0.11f},
+              {"PsychoVGamutCompression", 1.f},
+              {"PsychoVGamutCompressionMode", 1.f},
+              {"PsychoVCompression", 0.f},
+          });
+        },
+    },
+    new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
         .label = " - Native HDR MUST BE ENABLED in game!",
         .section = "Instructions",
