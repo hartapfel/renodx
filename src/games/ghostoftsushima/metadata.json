@@ -1,0 +1,22 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/gh/clshortfuse/renodx/renodx-metadata-schema.json",
+  "id": "ghostoftsushima",
+  "title": "Ghost of Tsushima DIRECTOR'S CUT",
+  "summary": "RenoDX mod for Ghost of Tsushima DIRECTOR'S CUT.",
+  "status": "experimental",
+  "deploy": {
+    "steam_appid": 2215430,
+    "game_exe": "GhostOfTsushima.exe",
+    "process_name": "GhostOfTsushima.exe",
+    "api": "d3d12",
+    "architecture": [
+      "x64"
+    ],
+    "reshade_preferred_name": "dxgi.dll",
+    "detection": {
+      "default_install_paths": [
+        "E:\\SteamLibrary\\steamapps\\common\\Ghost of Tsushima DIRECTOR'S CUT"
+      ]
+    }
+  }
+}
