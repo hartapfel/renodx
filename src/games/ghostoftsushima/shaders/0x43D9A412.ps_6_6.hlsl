@@ -130,6 +130,9 @@ OutputSignature main(
   int4 _172 = asint(t1_space1.Load4(RootSrtCbv_000));
   Texture2D<float4> _175 = ResourceDescriptorHeap[(uint)(_172.x)];
   float4 _177 = _175.Sample(s12, float2(_170, _171));
+  if (GhostIsPsychoV()) {
+    _177.rgb = GhostApplyRCAS(_177.rgb, float2(_170, _171), _175, s12);
+  }
   float _181 = max(0.0f, _177.x);
   float _182 = max(0.0f, _177.y);
   float _183 = max(0.0f, _177.z);
@@ -483,7 +486,7 @@ OutputSignature main(
     const float3 ghost_psychov = GhostNormalizePsychoVEndpoint(
         GhostToneMapPsychoV30(ghost_linear_lut),
         GhostGetPsychoVEndpoint());
-    float3 ghost_intermediate = GhostRenderIntermediate(ghost_psychov);
+    float3 ghost_intermediate = GhostRenderIntermediate(ghost_psychov, TEXCOORD);
     ghost_intermediate += _511;
     const float ghost_luminance = dot(
         ghost_intermediate,

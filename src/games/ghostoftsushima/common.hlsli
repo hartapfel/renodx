@@ -3,6 +3,7 @@
 
 #include "./shared.h"
 #include "./test30.hlsl"
+#include "./lilium_rcas.hlsli"
 
 bool GhostIsPsychoV() {
   return RENODX_TONE_MAP_TYPE != 0.f;
@@ -209,13 +210,20 @@ float3 GhostDecodeLUTOutput(float3 encoded_bt709) {
   return max(encoded_bt709, 0.f.xxx) * max(encoded_bt709, 0.f.xxx);
 }
 
-float3 GhostRenderIntermediate(float3 color_bt709) {
+float3 GhostRenderIntermediate(float3 color_bt709, float2 uv) {
   // PsychoV returns its target-gamut result represented as linear BT.709.
   // Convert it to BT.2020 before PQ transport so valid wide-gamut
   // colors do not require negative channels in the RGB10A2 intermediate.
-  const float3 color_bt2020 =
-      renodx::color::bt2020::from::BT709(color_bt709);
-  return renodx::draw::RenderIntermediatePass(max(color_bt2020, 0.f.xxx));
+  float3 color_bt2020 = max(
+      renodx::color::bt2020::from::BT709(color_bt709), 0.f.xxx);
+  if (CUSTOM_FILM_GRAIN > 0.f) {
+    // Perceptual film density is evaluated in linear display-referred color,
+    // relative to scene white. Apply after PsychoV, before gamma/PQ and HUD.
+    color_bt2020 = renodx::effects::ApplyFilmGrain(
+        color_bt2020, uv, CUSTOM_RANDOM, CUSTOM_FILM_GRAIN * 0.03f,
+        1.f, false, renodx::color::BT2020_TO_XYZ_MAT);
+  }
+  return renodx::draw::RenderIntermediatePass(color_bt2020);
 }
 
 float3 GhostEncodeHDR10(float3 intermediate_encoded) {

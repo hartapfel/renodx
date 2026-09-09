@@ -17,6 +17,7 @@
 #include "../../mods/shader.hpp"
 #include "../../utils/date.hpp"
 #include "../../utils/platform.hpp"
+#include "../../utils/random.hpp"
 #include "../../utils/settings.hpp"
 #include "../../utils/swapchain.hpp"
 #include "./shared.h"
@@ -311,6 +312,28 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return IsPsychoV() && settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "FxFilmGrain",
+        .binding = &shader_injection.film_grain,
+        .default_value = 0.f,
+        .label = "Perceptual Film Grain",
+        .section = "Effects",
+        .tooltip = "Adds luminance-adaptive film grain to the scene. 0 disables it. Does not affect HUD or menu graphics.",
+        .max = 100.f,
+        .is_enabled = []() { return IsPsychoV(); },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxSharpening",
+        .binding = &shader_injection.sharpening,
+        .default_value = 0.f,
+        .label = "Lilium RCAS Sharpening",
+        .section = "Effects",
+        .tooltip = "Sharpens scene detail with noise attenuation. 0 disables it. Does not sharpen HUD or menu graphics.",
+        .max = 100.f,
+        .is_enabled = []() { return IsPsychoV(); },
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Recommended",
         .section = "Presets",
@@ -324,6 +347,7 @@ renodx::utils::settings::Settings settings = {
             }
           }
           renodx::utils::settings::UpdateSettings({
+              {"ToneMapHueShift", 0.f},
               {"PsychoVConeResponseExponent", 1.15f},
               {"ColorGradeHighlights", 44.f},
           });
@@ -337,6 +361,7 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Applies the native-match Color Grading and PsychoV30 preset without changing tone mapping or brightness settings.",
         .on_change = []() {
           renodx::utils::settings::UpdateSettings({
+              {"ToneMapHueShift", 100.f},
               {"ColorGradeExposure", 1.f},
               {"ColorGradeGamma", 1.f},
               {"ColorGradeHighlights", 45.f},
@@ -442,6 +467,8 @@ void OnPresetOff() {
       {"ColorGradeHighlightSaturation", 50.f},
       {"ColorGradeBlowout", 0.f},
       {"ColorGradeFlare", 0.f},
+      {"FxFilmGrain", 0.f},
+      {"FxSharpening", 0.f},
   });
 }
 
@@ -492,7 +519,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
                  0x8B2B6654u, 0x8F1774B4u, 0x91A4B40Du, 0x993F64DBu,
                  0x9AECF3C3u, 0x9E36EC97u, 0xB14E2DD7u, 0xB422BAB9u,
                  0xB787EAF7u, 0xB983666Du, 0xD78E8A46u, 0xD7BD2603u,
-                 0xE4EC4156u, 0xF2927008u,
+                 0xE4EC4156u, 0xF2927008u, 0x85013553u,
              }) {
           custom_shaders.at(hash).on_replace = &IsUIColorDraw;
         }
@@ -513,6 +540,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
   }
 
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
+  renodx::utils::random::Use(fdw_reason, {&shader_injection.random_seed});
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
 
   return TRUE;

@@ -28,10 +28,13 @@ struct ShaderInjectData {
   float psychov_compression;
 
   float graphics_white_nits;
+  float film_grain;
+  float sharpening;
+  float random_seed;
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 84);
+static_assert(sizeof(ShaderInjectData) == 96);
 #endif
 
 #ifndef __cplusplus
@@ -60,6 +63,9 @@ cbuffer shader_injection : register(b13, space50) {
 #define RENODX_PSYCHOV_GAMUT_COMPRESSION shader_injection.psychov_gamut_compression
 #define RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE shader_injection.psychov_gamut_compression_mode
 #define RENODX_PSYCHOV_COMPRESSION shader_injection.psychov_compression
+#define CUSTOM_FILM_GRAIN shader_injection.film_grain
+#define CUSTOM_SHARPENING shader_injection.sharpening
+#define CUSTOM_RANDOM shader_injection.random_seed
 
 // Carry the PsychoV result as absolute-nit PQ through the game's bounded
 // post-tonemap RGB10A2 UNORM target. The final pass only clamps and re-encodes
