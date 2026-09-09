@@ -1,5 +1,5 @@
-#ifndef SRC_GAMES_GHOSTOFTSUSHIMA_COMMON_HLSLI_
-#define SRC_GAMES_GHOSTOFTSUSHIMA_COMMON_HLSLI_
+#ifndef SRC_GAMES_GOTSUSHIMA_COMMON_HLSLI_
+#define SRC_GAMES_GOTSUSHIMA_COMMON_HLSLI_
 
 #include "./shared.h"
 #include "./test30.hlsl"
@@ -239,4 +239,4 @@ float3 GhostEncodeHDR10(float3 intermediate_encoded) {
   return renodx::color::pq::EncodeSafe(color_bt2020_nits, 1.f);
 }
 
-#endif  // SRC_GAMES_GHOSTOFTSUSHIMA_COMMON_HLSLI_
+#endif  // SRC_GAMES_GOTSUSHIMA_COMMON_HLSLI_

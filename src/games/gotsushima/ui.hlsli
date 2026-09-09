@@ -1,5 +1,5 @@
-#ifndef SRC_GAMES_GHOSTOFTSUSHIMA_UI_HLSLI_
-#define SRC_GAMES_GHOSTOFTSUSHIMA_UI_HLSLI_
+#ifndef SRC_GAMES_GOTSUSHIMA_UI_HLSLI_
+#define SRC_GAMES_GOTSUSHIMA_UI_HLSLI_
 
 #include "./shared.h"
 
@@ -36,4 +36,4 @@ float3 GhostRenderUI(float3 color_bt709, float coverage, bool linear_input = fal
          * coverage;
 }
 
-#endif  // SRC_GAMES_GHOSTOFTSUSHIMA_UI_HLSLI_
+#endif  // SRC_GAMES_GOTSUSHIMA_UI_HLSLI_

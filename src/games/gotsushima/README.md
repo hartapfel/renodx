@@ -1,0 +1,208 @@
+# Ghost of Tsushima DIRECTOR'S CUT — RenoDX
+
+A native HDR mod for the PC version of **Ghost of Tsushima DIRECTOR'S CUT**, using Direct3D 12. It replaces the game's HDR tone curves with **PsychoV-30**, retains the game's LUT-based artistic grading, and gives scene and UI brightness separate controls.
+
+The mod also corrects HUD and video colors for BT.2020 output, applies the selected SDR gamma emulation to both scene and UI, and offers optional perceptual film grain and Lilium RCAS sharpening. These changes are implemented in the game's shaders, before the completed frame is presented.
+
+**Native HDR must be enabled in the game.** The addon is `renodx-gotsushima.addon64`.
+
+## Getting started
+
+1. Use an x64 ReShade installation with addon support configured for the game's D3D12 executable, `GhostOfTsushima.exe`.
+2. With the game closed, place `renodx-gotsushima.addon64` in ReShade's configured addon directory. In the development installation this is `reshade-shaders/Addons/`.
+3. If upgrading from the former `ghostoftsushima` mod, remove `renodx-ghostoftsushima.addon64` from that directory. Load only one copy of this game addon. The displayed addon name and saved RenoDX setting keys are unchanged.
+4. Enable native HDR, open the RenoDX panel, and select **PsychoV-30**. The red **Recommended** button applies the mod's recommended grading values.
+5. Set **Peak Brightness** for your display, then adjust **Game Brightness** and **UI Brightness** to taste.
+
+The UI brightness override replaces the native HUD brightness multiplier on supported color draws. With PsychoV active, use the RenoDX brightness controls. Selecting **Vanilla** restores the original shader paths and native brightness behavior.
+
+## Controls and presets
+
+### Main controls
+
+| Control | Default | Purpose |
+|---|---|---|
+| Tone Mapper | PsychoV-30 | Chooses the custom HDR pipeline or the native Vanilla paths. |
+| Peak Brightness | Detected display peak when available; otherwise 1000 nits | Sets the custom output ceiling. Range: 400–4000 nits. |
+| Game Brightness | 203 nits | Sets scene reference white. Range: 80–500 nits. |
+| UI Brightness | 203 nits | Sets HUD, menu, and supported video reference white independently of the scene. Range: 80–500 nits. |
+| SDR Gamma Emulation | 2.2 | Selects None, 2.2, or BT.1886 display-response emulation. HDR output remains PQ in every mode. |
+| Perceptual Film Grain | 0 | Adds animated, luminance-dependent scene grain. Range: 0–100; 0 disables it. |
+| Lilium RCAS Sharpening | 0 | Sharpens scene detail with noise attenuation. Range: 0–100; 0 disables it. |
+
+The custom brightness, grading, and effect controls operate with PsychoV selected. **Advanced** settings expose exposure, gamma, highlights, shadows, contrast, saturation, highlight saturation, blowout, flare, hue shift, and PsychoV's response/gamut parameters. The grading **Gamma** control is separate from **SDR Gamma Emulation**.
+
+PsychoV defaults to a BT.2020 gamut target, full gamut compression, and automatic compression power. Adaptation and Background Anchor default to 0.18; Cone Response Exponent defaults to 1.0. Hue Shift adjusts PsychoV's fire-hue behavior and defaults to 0.
+
+### Preset buttons
+
+Values below are the numbers shown in the UI.
+
+| Setting | Recommended | Match native |
+|---|---:|---:|
+| Hue Shift | 0 | 100 |
+| Cone Response Exponent | 1.15 | 1.37 |
+| Highlights | 44 | 45 |
+| Shadows | 50 | 93 |
+| Blowout | 0 | 5 |
+| Background Anchor | 0.18 | 0.11 |
+
+Both buttons restore the remaining Color Grading and PsychoV30 settings to their defaults. They preserve the selected tone mapper, peak/game/UI brightness, SDR Gamma Emulation, and effect strengths. **Recommended** is an explicit button action; it is not applied automatically on startup. **Match native** is a grading preset within PsychoV, rather than a switch to the Vanilla shader paths.
+
+**Reset All** resets the settings marked as resettable, including both effects. It retains the selected Tone Mapper and Settings Mode. **Preset Off** explicitly selects Vanilla and disables the custom effects and gamma emulation.
+
+## Rendering pipeline
+
+### Native pipeline
+
+The game's scene postprocessing applies local exposure and spatial effects, color matrices, a component-wise HDR curve, and LUT grading. Its LUT lookup uses square-root-encoded RGB and a max-channel shoulder. The result is scaled into a bounded RGB10A2 intermediate, where HUD/video draws are composited.
+
+The final shader, `0x53EBE0F3`, then applies a scalar rational display curve, a BT.709-to-BT.2020 matrix, an approximate output encoding, and dither. Scene and UI therefore share the native final display transform: the native HUD multiplier does not directly express an absolute brightness in nits.
+
+The native rational response is not a simple, exact gamma-2.4 power function. The PsychoV route bypasses that final curve and approximate encoding, as well as the earlier component-wise HDR curve.
+
+### PsychoV pipeline
+
+```mermaid
+flowchart TD
+    A[Linear scene input and optional RCAS] --> B[Native local processing and color matrices]
+    B --> C[Linear LUT shoulder, native LUT grade, reconstruction]
+    C --> D[PsychoV-30 and peak normalization]
+    D --> E[BT.2020, optional grain, gamma emulation, PQ]
+    U[HUD and video colors] --> V[SDR decode, gamma emulation, BT.2020, UI-white PQ]
+    E --> F[Existing scene and UI composition]
+    V --> F
+    F --> G[Peak limiting, PQ output and dither]
+```
+
+The two scene shaders, `0x313ABA52` and `0x43D9A412`, preserve the native upstream processing and both color matrices while bypassing the HDR curve between those matrices. Both retain native LUT addressing and blending; `0x43D9A412` also retains its per-pixel LUT blend mask.
+
+**PsychoV runs after LUT grading.** The curve before the LUT controls lookup coordinates and their reconstruction; it does not replace the post-LUT display tone mapper.
+
+### Linear-light LUT shoulder
+
+[GhostGetLUTSamplingScale](common.hlsli) replaces the entire native max-channel LUT shoulder in the PsychoV branch. The native shoulder remains available in Vanilla.
+
+The replacement is an anchored C-infinity shoulder with these parameters:
+
+| Parameter | Value |
+|---|---:|
+| Peak | 1 |
+| Anchor | `0.475² = 0.225625` |
+| Compression strength | 1.5 |
+
+The anchor preserves the native identity threshold after converting it from square-root space to linear light. Below the anchor the scale is exactly 1. Above it, the maximum channel approaches the LUT boundary smoothly without the native curve's finite plateau.
+
+For linear maximum channel `x`, anchor `a`, range `r = 1 - a`, and `x > a`:
+
+```text
+d = x - a
+w = exp2(-r / (1.5 * d))
+compressed_max = a + r * d / (r + d * w)
+lookup_scale = sqrt(compressed_max / x)
+```
+
+The native square-root RGB coordinates are multiplied by `lookup_scale`, then passed through the game's existing LUT sampling and blending. The LUT result is divided by that same scale, clamped nonnegative, and squared to recover linear RGB before PsychoV. Black and values at or below the anchor bypass the divisions.
+
+This keeps the LUT's artistic grade while allowing HDR brightness reconstruction outside the LUT's bounded coordinate range. It does not invert or remove the LUT's own color grading.
+
+### PsychoV, gamut, and HDR transport
+
+The local [PsychoV-30 implementation](test30.hlsl) receives the reconstructed linear LUT result. User gamma, contrast, and flare extensions operate on luminance before PsychoV. Contrast is kept out of PsychoV's cone-response parameter to avoid amplifying quantization into colored bands. Highlight saturation and blowout are applied through the output grading extension.
+
+PsychoV can constrain colors to BT.709 or BT.2020, but returns its result represented in linear BT.709 coordinates. A valid BT.2020 color can have negative components in that representation. The mod preserves those components until conversion to BT.2020 so that wide-gamut colors are not prematurely clipped to BT.709.
+
+Peak normalization evaluates PsychoV at the finite FP16 endpoint, 65504, and adjusts the highlight range with the selected gamma response taken into account. This lets the scene reach the selected HDR peak. The result is converted to BT.2020, optionally grained, passed through SDR Gamma Emulation, scaled by Game Brightness, and encoded as absolute-nit PQ.
+
+PQ carries the HDR signal through the game's existing bounded RGB10A2 intermediate. At final output, `0x53EBE0F3` decodes PQ to nits, uniformly scales colors whose maximum channel exceeds Peak Brightness, re-encodes PQ, and adds native dither with a final clamp to the selected PQ peak. The native display curve is not applied again.
+
+## HUD, menus, and video
+
+### Color and brightness
+
+All 51 HUD/video replacements share [ui.hlsli](ui.hlsli). Ordinary color draws bypass the native HUD scale (`b12.c8.w` or `b0.c16.z`, depending on the shader family) and use this sequence:
+
+1. Recover the unpremultiplied SDR color where required.
+2. Decode sRGB, unless the original shader has already produced linear RGB.
+3. Apply the selected SDR Gamma Emulation response.
+4. Convert linear BT.709 to BT.2020 and encode PQ at UI Brightness.
+5. Restore RGB coverage for premultiplied output, preserving the original output alpha.
+
+The linear gamut conversion retains the appearance of BT.709 UI colors in the BT.2020 output container. **None** keeps the decoded sRGB response; **2.2** and **BT.1886** apply RenoDX's forward 2.2 and 2.4 emulation, respectively. UI applies that operation in BT.709 before gamut conversion; the scene applies it in BT.2020 before PQ transport.
+
+Native texture sampling, masks, clipping, depth fades, tinting, and alpha behavior remain in the individual shaders. `0x6A947342` uses the helper's linear-input option because it already decodes its texture. Its RGB coverage is separate from its destination-attenuation alpha, preserving the shader's additive contribution.
+
+### Multiply overlays and the dark-box fix
+
+A shader hash can be used for ordinary UI color draws and destination-color multiply draws. [IsUIColorDraw](addon.cpp) checks the actual pipeline blend state for every registered HUD/video hash. Draws using source/destination color factors retain the native shader instead of receiving the PQ color conversion.
+
+For the observed destination-color blend:
+
+```text
+result = destination * (source + 1 - alpha)
+```
+
+The neutral source is `source = alpha`. Encoding that multiplier as a PQ color would change its neutral value and darken the entire quad, exposing a rectangle around otherwise invisible UI geometry. Keeping the native multiplier fixes the box while ordinary color draws still receive the brightness and gamut correction.
+
+Composition continues in the existing PQ intermediate. The mod preserves the game's blend states; it does not replace the compositor with linear-light blending. The resulting HUD appearance and behavior have been checked in game and confirmed correct.
+
+### Video handling
+
+The four [video shaders](video/) preserve the game's YUV-to-RGB coefficients and their existing masks and fades, then use the same UI color pipeline. Video colors therefore receive the BT.709-to-BT.2020 correction and follow UI Brightness.
+
+`0x85013553` also mixes a constant tint after the native brightness scale and adds output dither. Its replacement expresses the tint in the video's unscaled domain before mixing, using the tint directly if the native scale is zero. The completed color then goes through the UI helper. Its straight-alpha smoothstep fade is unchanged, and dither stays after PQ encoding.
+
+## Optional scene effects
+
+**Lilium RCAS** runs on the linear scene input before local processing, LUT grading, and PsychoV. Its center pixel and four source-texel neighbors all use the same signal domain and native distorted UV. The luminance implementation retains HDR normalization of 125, the 0.99 overshoot limiter, noise attenuation, and a bounded luminance-ratio resolve. Black and flat neighborhoods are guarded against undefined divisions. See [lilium_rcas.hlsli](lilium_rcas.hlsli).
+
+**Perceptual Film Grain** runs after PsychoV and peak normalization, on linear BT.2020 color before gamma emulation and PQ encoding. It uses RenoDX's shared film-density response with BT.2020 luminance weights, scene white as the reference, and a new random seed on each present. Strength is scaled to the shared effect's 0–0.03 range.
+
+Sharpening precedes the added grain, and both effects precede HUD composition. Neither is applied to HUD/video draws or to the completed frame. Any upstream native grain/sharpening and native output dithering remain in place. RCAS operates at source-texture resolution and grain at scene-pass output resolution, so their appearance can vary with the game's resolution/upscaling configuration.
+
+## Source layout and development
+
+The canonical mod folder and CMake target are **`gotsushima`**.
+
+| Path | Responsibility |
+|---|---|
+| [addon.cpp](addon.cpp) | Settings, presets, shader registration, blend-state guard, display-peak detection, and grain seed binding |
+| [shared.h](shared.h) | 96-byte C++/HLSL injection structure at `b13, space50` and PQ transport configuration |
+| [common.hlsli](common.hlsli) | LUT shoulder, PsychoV integration, peak normalization, grain, and output helpers |
+| [test30.hlsl](test30.hlsl) | Local PsychoV-30 tone mapper |
+| [ui.hlsli](ui.hlsli) | Shared HUD/video color and brightness conversion |
+| [lilium_rcas.hlsli](lilium_rcas.hlsli) | Scene sharpening |
+| [tonemappers/](tonemappers/) | 2 scene/LUT shaders |
+| [output/](output/) | 1 final HDR10 output shader |
+| [hud/](hud/) | 47 HUD/menu shader variants |
+| [video/](video/) | 4 YUV video shader variants |
+
+All 54 replacements retain their hash/profile filenames. CMake discovers the folders recursively and generates the embedded registration list.
+
+### Build and live development
+
+Close the game before building its deployed addon. Use **Release**, with compatible game-addon and DevKit configurations:
+
+```powershell
+# Configure when setting up the checkout or changing the addon target.
+cmake --preset vs-x64
+cmake --build --preset vs-x64-release --target gotsushima
+```
+
+The addon is written to `build.vs/Release/renodx-gotsushima.addon64`. Generated shader binaries, headers, and `shaders.h` are in `build.vs/gotsushima.include/embed/`.
+
+Set DevKit's **LivePath** to the absolute path of `src/games/gotsushima` in the checkout. Its recursive watcher includes all four shader folders. Keep vanilla dumps and `.cso` archives outside that tree to avoid duplicate hashes shadowing editable replacements. Rebuild and restart the addon after changing `shared.h`; live HLSL compilation alone cannot update the C++ injection layout.
+
+The local development installation uses an addon symlink to the Release binary, so a successful build updates the deployed file. The former `ghostoftsushima` source folder and deployed addon link have been replaced by `gotsushima`.
+
+### Validation and future regression checks
+
+In-game checks have confirmed that the UI, video colors, brightness controls, gamma response, fades, and overlay composition look correct and behave as expected with the addon. The current implementation has passed strict shader compilation and the Release build. Moving the mod to `gotsushima` preserved all 54 compiled shaders byte-for-byte.
+
+For subsequent shader changes, recheck scene highlights and LUT transitions; HUD/video colors and transparency; independence of Game Brightness and UI Brightness; native HUD-slider override; gamma-emulation modes; both optional effects; and restoration of the native paths with Vanilla/Preset Off. Include the chosen upscaling mode when checking scene effects.
+
+Reusable vanilla HLSL and audit metadata from local development remain in `tmp/ghostoftsushima/vanilla/ui/`, with original shader binaries in `tmp/ghostoftsushima/original/`. These are local development artifacts, not required installation files or guaranteed contents of a fresh checkout. The archived candidate shaders are not all registered: output masks and procedural noise passes require composition evidence before adding a color transform.
+
+## Credits
+
+Game integration and tuning by **Hartapfel**. RenoDX framework, shared color/effect utilities, and PsychoV-30 by **Carlos Lopez / ShortFuse**. RCAS sharpening uses **Lilium's** luminance adaptation, with integration references from the Crimson Desert and Nioh 3 mods.

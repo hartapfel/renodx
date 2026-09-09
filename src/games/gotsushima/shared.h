@@ -1,5 +1,5 @@
-#ifndef SRC_GAMES_GHOSTOFTSUSHIMA_SHARED_H_
-#define SRC_GAMES_GHOSTOFTSUSHIMA_SHARED_H_
+#ifndef SRC_GAMES_GOTSUSHIMA_SHARED_H_
+#define SRC_GAMES_GOTSUSHIMA_SHARED_H_
 
 struct ShaderInjectData {
   float peak_white_nits;
@@ -81,4 +81,4 @@ cbuffer shader_injection : register(b13, space50) {
 #include "../../shaders/renodx.hlsl"
 #endif
 
-#endif  // SRC_GAMES_GHOSTOFTSUSHIMA_SHARED_H_
+#endif  // SRC_GAMES_GOTSUSHIMA_SHARED_H_
