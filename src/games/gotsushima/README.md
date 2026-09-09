@@ -69,7 +69,7 @@ flowchart TD
     B --> C[Linear LUT shoulder, native LUT grade, reconstruction]
     C --> D[PsychoV-30 and peak normalization]
     D --> E[BT.2020, optional grain, gamma emulation, PQ]
-    U[HUD and video colors] --> V[SDR decode, gamma emulation, BT.2020, UI-white PQ]
+    U[HUD and video colors] --> V[Native SDR transfer, gamma emulation, BT.2020, UI-white PQ]
     E --> F[Existing scene and UI composition]
     V --> F
     F --> G[Peak limiting, PQ output and dither]
@@ -124,11 +124,13 @@ All 51 HUD/video replacements share [ui.hlsli](ui.hlsli). Ordinary color draws b
 
 1. Recover the unpremultiplied SDR color where required.
 2. Decode sRGB, unless the original shader has already produced linear RGB.
-3. Apply the selected SDR Gamma Emulation response.
+3. Reproduce the native SDR output's BT.709 OETF, then interpret those display code values with the selected SDR Gamma Emulation response.
 4. Convert linear BT.709 to BT.2020 and encode PQ at UI Brightness.
 5. Restore RGB coverage for premultiplied output, preserving the original output alpha.
 
-The linear gamut conversion retains the appearance of BT.709 UI colors in the BT.2020 output container. **None** keeps the decoded sRGB response; **2.2** and **BT.1886** apply RenoDX's forward 2.2 and 2.4 emulation, respectively. UI applies that operation in BT.709 before gamut conversion; the scene applies it in BT.2020 before PQ transport.
+The native SDR output shader, `0x571EE768`, includes an sRGB decode followed by the BT.709 OETF. Omitting that conversion makes midtones and weaker color channels too bright, washing out the HUD. A capture of the native SDR swapchain confirmed this transfer against the preceding UI buffer. The mod reproduces it on UI colors before PQ encoding; it does not apply the native HDR rational display curve.
+
+The linear gamut conversion retains BT.709 primaries in the BT.2020 output container. **None** interprets the native SDR display codes as sRGB; **2.2** and **BT.1886** interpret them with gamma 2.2 and 2.4, respectively. UI applies that response in BT.709 before gamut conversion; the scene applies gamma emulation in BT.2020 before PQ transport. Black and reference white stay fixed, so UI Brightness continues to control white independently of the scene.
 
 Native texture sampling, masks, clipping, depth fades, tinting, and alpha behavior remain in the individual shaders. `0x6A947342` uses the helper's linear-input option because it already decodes its texture. Its RGB coverage is separate from its destination-attenuation alpha, preserving the shader's additive contribution.
 
@@ -144,7 +146,7 @@ result = destination * (source + 1 - alpha)
 
 The neutral source is `source = alpha`. Encoding that multiplier as a PQ color would change its neutral value and darken the entire quad, exposing a rectangle around otherwise invisible UI geometry. Keeping the native multiplier fixes the box while ordinary color draws still receive the brightness and gamut correction.
 
-Composition continues in the existing PQ intermediate. The mod preserves the game's blend states; it does not replace the compositor with linear-light blending. The resulting HUD appearance and behavior have been checked in game and confirmed correct.
+Composition continues in the existing PQ intermediate. The mod preserves the game's blend states; it does not replace the compositor with linear-light blending. Since the UI transfer runs before composition, translucent blends can differ from native SDR, whose output transfer runs after composition.
 
 ### Video handling
 
@@ -198,6 +200,8 @@ The local development installation uses an addon symlink to the Release binary, 
 ### Validation and future regression checks
 
 In-game checks have confirmed that the UI, video colors, brightness controls, gamma response, fades, and overlay composition look correct and behave as expected with the addon. The current implementation has passed strict shader compilation and the Release build. Moving the mod to `gotsushima` preserved all 54 compiled shaders byte-for-byte.
+
+The subsequent HUD transfer correction was checked against native SDR and PsychoV captures of the settings menu. At UI Brightness 203 nits and gamma 2.2, converting the HDR capture back to comparable SDR display codes reduced the sampled red tile's mean error from 12.4 to 0.56 on an 8-bit scale, with the white reference unchanged. The user confirmed the improved appearance in game. All 51 affected HUD/video shaders passed strict compilation, and the Release addon build passed. This comparison covers the captured menu; translucent blends and other screens still need the checks below.
 
 For subsequent shader changes, recheck scene highlights and LUT transitions; HUD/video colors and transparency; independence of Game Brightness and UI Brightness; native HUD-slider override; gamma-emulation modes; both optional effects; and restoration of the native paths with Vanilla/Preset Off. Include the chosen upscaling mode when checking scene effects.
 

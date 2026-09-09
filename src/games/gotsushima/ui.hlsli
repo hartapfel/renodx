@@ -18,13 +18,22 @@ float3 GhostRenderUI(float3 color_bt709, float coverage, bool linear_input = fal
   if (coverage <= 0.f) return 0.f.xxx;
   color_bt709 /= coverage;
 
-  // HUD textures/tints are display-encoded colors, not PQ values. Vanilla
-  // scales them into the scene intermediate and applies its display curve
-  // after blending. Decode the SDR color here, then use the same forward
-  // SDR gamma emulation as the scene before encoding for our PQ compositor.
+  // Recover the SDR source, including shaders that already decode sRGB.
   float3 linear_bt709 = linear_input
                            ? color_bt709
                            : renodx::color::srgb::DecodeSafe(color_bt709);
+
+  // Native SDR output (0x571EE768) applies the BT.709 OETF after its sRGB
+  // decode. These are the display code values, not linear-light RGB.
+  // Omitting this step lifts HUD midtones and weak color channels. Preserve
+  // that response before applying the user's selected display EOTF.
+  float3 sdr_display_code = renodx::math::CopySign(
+      renodx::math::Select(
+          abs(linear_bt709) <= 0.018f,
+          abs(linear_bt709) * 4.5f,
+          1.099f * pow(abs(linear_bt709), 0.45f) - 0.099f),
+      linear_bt709);
+  linear_bt709 = renodx::color::srgb::DecodeSafe(sdr_display_code);
   if (RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
     linear_bt709 = renodx::color::correct::GammaSafe(linear_bt709, false, 2.2f);
   } else if (RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
