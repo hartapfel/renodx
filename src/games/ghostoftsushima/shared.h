@@ -26,10 +26,12 @@ struct ShaderInjectData {
   float psychov_gamut_compression;
   float psychov_gamut_compression_mode;
   float psychov_compression;
+
+  float graphics_white_nits;
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 80);
+static_assert(sizeof(ShaderInjectData) == 84);
 #endif
 
 #ifndef __cplusplus
@@ -39,7 +41,7 @@ cbuffer shader_injection : register(b13, space50) {
 
 #define RENODX_PEAK_WHITE_NITS shader_injection.peak_white_nits
 #define RENODX_DIFFUSE_WHITE_NITS shader_injection.diffuse_white_nits
-#define RENODX_GRAPHICS_WHITE_NITS 203.f
+#define RENODX_GRAPHICS_WHITE_NITS shader_injection.graphics_white_nits
 #define RENODX_TONE_MAP_TYPE shader_injection.tone_map_type
 #define RENODX_TONE_MAP_EXPOSURE shader_injection.tone_map_exposure
 #define RENODX_TONE_MAP_GAMMA shader_injection.tone_map_gamma

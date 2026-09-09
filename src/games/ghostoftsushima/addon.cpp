@@ -33,6 +33,27 @@ bool IsPsychoV() {
   return shader_injection.tone_map_type != 0.f;
 }
 
+bool IsUIColorDraw(reshade::api::command_list* cmd_list) {
+  const auto* state = renodx::utils::shader::GetCurrentPixelState(
+      renodx::utils::shader::GetCurrentState(cmd_list));
+  if (state->pipeline_details == nullptr) return false;
+
+  for (const auto& subobject : state->pipeline_details->subobjects) {
+    if (subobject.type != reshade::api::pipeline_subobject_type::blend_state
+        || subobject.count == 0u) continue;
+    const auto& blend = *static_cast<const reshade::api::blend_desc*>(subobject.data);
+    // The same HUD shader can draw colors or multiply the destination.
+    // Multipliers must retain their native identity of 1; treating them as
+    // PQ colors makes the neutral region of a quad darken the background.
+    return !blend.blend_enable[0]
+           || (blend.source_color_blend_factor[0] != reshade::api::blend_factor::dest_color
+               && blend.source_color_blend_factor[0] != reshade::api::blend_factor::one_minus_dest_color
+               && blend.dest_color_blend_factor[0] != reshade::api::blend_factor::source_color
+               && blend.dest_color_blend_factor[0] != reshade::api::blend_factor::one_minus_source_color);
+  }
+  return false;
+}
+
 renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "SettingsMode",
@@ -73,6 +94,17 @@ renodx::utils::settings::Settings settings = {
         .label = "Game Brightness",
         .section = "Tone Mapping",
         .tooltip = "Overrides the game's paper white setting in nits.",
+        .min = 80.f,
+        .max = 500.f,
+        .is_enabled = []() { return IsPsychoV(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "ToneMapUINits",
+        .binding = &shader_injection.graphics_white_nits,
+        .default_value = 203.f,
+        .label = "UI Brightness",
+        .section = "Tone Mapping",
+        .tooltip = "Sets HUD and menu white brightness in nits, overriding the in-game HUD brightness setting.",
         .min = 80.f,
         .max = 500.f,
         .is_enabled = []() { return IsPsychoV(); },
@@ -373,6 +405,7 @@ void OnPresetOff() {
       {"ToneMapType", 0.f},
       {"ToneMapPeakNits", 1000.f},
       {"ToneMapGameNits", 203.f},
+      {"ToneMapUINits", 203.f},
       {"ToneMapGammaCorrection", 0.f},
       {"ToneMapHueShift", 0.f},
       {"PsychoVConeResponseExponent", 1.f},
@@ -427,6 +460,14 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
       if (!reshade::register_addon(h_module)) return FALSE;
 
       if (!initialized) {
+        for (const auto hash : {
+                 0x85EC39B6u, 0x9D97A7C7u, 0x2128DADEu, 0x083CEF82u,
+                 0x37D7A160u, 0x6E8460A0u, 0x6B74C298u, 0x168D9561u,
+                 0x09804E52u, 0x04DC2391u, 0x236094BAu, 0x13D89EB3u,
+                 0x0B710B3Au, 0xED608505u, 0xE0DCA3C7u, 0x4F8C2C1Du,
+             }) {
+          custom_shaders.at(hash).on_replace = &IsUIColorDraw;
+        }
         renodx::mods::shader::force_pipeline_cloning = true;
         renodx::mods::shader::expected_constant_buffer_space = 50;
         renodx::mods::shader::expected_constant_buffer_index = 13;
