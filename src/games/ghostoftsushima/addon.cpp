@@ -123,7 +123,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "ToneMapHueShift",
         .binding = &shader_injection.psychov_hue_shift,
-        .default_value = 100.f,
+        .default_value = 0.f,
         .label = "Hue Shift",
         .section = "Tone Mapping",
         .tooltip = "Shifts PsychoV-30 fire hues away from pink towards orange.",
@@ -312,15 +312,27 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
-        .label = "Reset All",
-        .section = "Options",
+        .label = "Recommended",
+        .section = "Presets",
         .group = "button-line-1",
-        .on_change = []() { renodx::utils::settings::ResetSettings(); },
+        .tooltip = "Resets Color Grading and PsychoV30 to defaults, then sets Cone Response to 1.15 and Highlights to 44. Preserves tone mapping and brightness settings.",
+        .tint = 0xFF5F5F,
+        .on_change = []() {
+          for (const auto* setting : settings) {
+            if (setting->section == "Color Grading" || setting->section == "PsychoV30") {
+              renodx::utils::settings::UpdateSetting(setting->key, setting->default_value);
+            }
+          }
+          renodx::utils::settings::UpdateSettings({
+              {"PsychoVConeResponseExponent", 1.15f},
+              {"ColorGradeHighlights", 44.f},
+          });
+        },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Match native",
-        .section = "Options",
+        .section = "Presets",
         .group = "button-line-1",
         .tooltip = "Applies the native-match Color Grading and PsychoV30 preset without changing tone mapping or brightness settings.",
         .on_change = []() {
@@ -342,6 +354,13 @@ renodx::utils::settings::Settings settings = {
               {"PsychoVCompression", 0.f},
           });
         },
+    },
+        new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
+        .label = "Reset All",
+        .section = "Presets",
+        .group = "button-line-2",
+        .on_change = []() { renodx::utils::settings::ResetSettings(); },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
@@ -465,6 +484,15 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
                  0x37D7A160u, 0x6E8460A0u, 0x6B74C298u, 0x168D9561u,
                  0x09804E52u, 0x04DC2391u, 0x236094BAu, 0x13D89EB3u,
                  0x0B710B3Au, 0xED608505u, 0xE0DCA3C7u, 0x4F8C2C1Du,
+                 0x027C0198u, 0x04F475C4u, 0x059F7117u, 0x15995B1Bu,
+                 0x2588C976u, 0x262C634Du, 0x27D78F1Bu, 0x2BB323B6u,
+                 0x2C0D8F65u, 0x2F104DEAu, 0x33DA8A2Fu, 0x380D3C1Cu,
+                 0x38519174u, 0x499BFA9Bu, 0x540CD1C7u, 0x6A947342u,
+                 0x6F5B640Du, 0x790A518Du, 0x7E02AAEAu, 0x878CCC82u,
+                 0x8B2B6654u, 0x8F1774B4u, 0x91A4B40Du, 0x993F64DBu,
+                 0x9AECF3C3u, 0x9E36EC97u, 0xB14E2DD7u, 0xB422BAB9u,
+                 0xB787EAF7u, 0xB983666Du, 0xD78E8A46u, 0xD7BD2603u,
+                 0xE4EC4156u, 0xF2927008u,
              }) {
           custom_shaders.at(hash).on_replace = &IsUIColorDraw;
         }

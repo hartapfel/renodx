@@ -5,6 +5,11 @@ HUD/menu white independently of Game Brightness, overriding the native HUD
 brightness multiplier. Its default is 203 nits and its range is 80–500 nits.
 Vanilla and Preset Off restore native HUD behavior.
 
+The red **Recommended** button before **Match native** resets Color Grading
+and PsychoV30 to their defaults, then applies Cone Response Exponent 1.15
+and Highlights 44. Like Match native, it preserves tone mapping and brightness
+settings. Check it after changing grading values or using Match native.
+
 The PsychoV scene path uses an anchored C-infinity shoulder on the linear
 maximum channel for LUT sampling. Its peak is 1, anchor is `0.475² = 0.225625`
 (the native shoulder's identity threshold converted to linear light), and
@@ -21,13 +26,51 @@ The shoulder change passed strict compilation of all 19 shaders, the
 black/anchor behavior, and colored identity-LUT brightness reconstruction.
 In-game visual validation of this shoulder is still pending.
 
-The 16 HUD replacements use `ui.hlsli`. Ordinary color draws bypass
-`b12.c8.w`, or `b0.c16.z` for the straight-alpha `0x9D97A7C7` variant.
+The 50 HUD/UI replacements use `ui.hlsli`. Ordinary color draws bypass
+`b12.c8.w`, or `b0.c16.z` for the bindless UI family.
 Premultiplied colors are unpremultiplied before the color transform and
 premultiplied again afterward. The helper decodes SDR UI colors, applies the
 same forward SDR Gamma Emulation operation as the scene, converts BT.709 to
 BT.2020 in linear light, and encodes PQ at the selected UI white. None uses the
 sRGB response; 2.2 and BT.1886 use the scene's 2.2 and 2.4 emulation modes.
+`0x6A947342` already decodes its texture to linear light, so it uses the
+helper's linear-input option. Its RGB coverage is kept separate from its
+destination-attenuation alpha, preserving its additive contribution.
+
+### Additional UI shader coverage
+
+The dump review added 34 color-output variants, including masked, clipped,
+depth-faded, straight-alpha, filtered texture, and YUV video-texture paths.
+Their original texture sampling, tinting, masks, discards, and output alpha
+are retained. Every added hash uses the same blend-state callback as the
+original HUD replacements.
+
+Reusable vanilla HLSL is stored locally outside the live shader tree in
+`tmp/ghostoftsushima/vanilla/ui/`. Its `manifest.json` records 57 baselines,
+original dump paths, byte lengths, SHA-256 hashes, and baseline audit results.
+Original binaries are preserved in `tmp/ghostoftsushima/original/`.
+Do not copy these vanilla baselines or binaries into the live mod folder.
+
+Seven related candidates are archived but not replaced without render-target
+and composition evidence:
+
+| Hashes | Reason for separate investigation |
+|---|---|
+| `0x2371FE0A`, `0x7C2278BF`, `0x834EFFF9`, `0xA0F21C2B`, `0xA30D7C35` | Replicate a sum of RGB into all channels; may be mask/extraction variants rather than display colors |
+| `0x14A3103E` | Procedural monochrome/noise output with a squared response |
+| `0x85013553` | YUV video with additional constant-color blending and dithering after brightness scaling |
+
+The review used 3,523 existing SM6 pixel-shader decompilations and attempted
+the remaining 2,546 SM6 pixel dumps. Some unrelated/complex shaders still
+fail decompilation; this is not proof of complete UI coverage. The new 34
+baselines passed strict compilation and signature, interpolation, binding,
+control-flow, and sampling checks. Changes in repeated constant loads,
+handle annotations, redundant initial output stores, and duplicate max
+operations were reviewed as compiler differences. All 53 mod shaders passed
+strict DXC compilation and the Release addon build, with all hashes embedded.
+The game's addon symlink resolves to that verified Release binary.
+In-game verification of the new variants is pending;
+check map/menus, masked transitions, depth-faded markers, and video panels.
 
 ### Composition and multiply overlays
 
@@ -64,7 +107,7 @@ readbacks report current contents, not historical images of each draw.
 The destination-color blend computes `D * (S + 1 - alpha)`. Its neutral source
 is `S = alpha`, not PQ-encoded white. Converting that neutral multiplier into
 a 203-nit PQ color produces a dark rectangle. `IsUIColorDraw` checks the actual
-pipeline blend state for all 16 hashes and leaves color-factor blends on the
+pipeline blend state for all HUD/UI hashes and leaves color-factor blends on the
 native shader. A hash alone cannot distinguish a HUD color from a multiplier.
 
 The original UI fix also incorrectly treated SDR RGB as scaled PQ: at a
@@ -82,7 +125,7 @@ Build from a Visual Studio developer shell, with the game closed:
 cmake --build --preset vs-x64-release --target ghostoftsushima
 ```
 
-Output: `build.vs/Release/renodx-ghostoftsushima.addon64`. Confirm the 16 HUD hashes
+Output: `build.vs/Release/renodx-ghostoftsushima.addon64`. Confirm the 50 HUD/UI hashes
 appear alongside the three scene shaders in
 `build.vs/ghostoftsushima.include/embed/shaders.h` and have generated `.h` files.
 Rebuild/reload the addon when changing `shared.h`; live HLSL alone does not
