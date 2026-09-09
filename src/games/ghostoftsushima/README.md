@@ -1,5 +1,23 @@
 # Ghost of Tsushima
 
+## Folder layout
+
+Shaders are grouped by purpose, following the Resonance mod's layout:
+
+| Folder | Contents |
+|---|---|
+| `tonemappers/` | Two scene LUT/PsychoV passes, including scene sharpening and grain |
+| `output/` | Final HDR10 compositor/output pass (`0x53EBE0F3`) |
+| `hud/` | 47 HUD/menu color, mask, and overlay variants |
+| `video/` | Four YUV video variants, including `0x85013553` |
+
+Shared includes (`common.hlsli`, `ui.hlsli`, `shared.h`, `test30.hlsl`, and
+`lilium_rcas.hlsli`) stay at the mod root. Shader hash/profile filenames are
+unchanged. CMake discovers all 54 shader replacements recursively.
+Set DevKit's **LivePath** to `src/games/ghostoftsushima` in this checkout;
+its recursive watcher includes all four folders. The former `shaders/`
+directory is no longer used.
+
 Enable native HDR in the game. With PsychoV selected, **UI Brightness** controls
 HUD/menu white independently of Game Brightness, overriding the native HUD
 brightness multiplier. Its default is 203 nits and its range is 80–500 nits.
