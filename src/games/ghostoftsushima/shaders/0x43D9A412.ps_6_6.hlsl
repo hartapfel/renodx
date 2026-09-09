@@ -365,22 +365,29 @@ OutputSignature main(
   float _405 = sqrt(_398);
   float _406 = sqrt(_401);
   float _407 = sqrt(_404);
-  float _408 = max(_406, _407);
-  float _409 = max(_405, _408);
-  float _410 = max(_409, 9.999999974752427e-07f);
-  float _411 = 1.0f - _410;
-  float _412 = _411 * 0.9523810148239136f;
-  float _413 = _412 + 0.5f;
-  float _414 = saturate(_413);
-  float _415 = _414 * _414;
-  float _416 = _415 * 0.5249999761581421f;
-  bool _417 = (_411 < 0.5249999761581421f);
-  float _418 = select(_417, _416, _411);
-  float _419 = 1.0f - _418;
-  float _420 = _419 / _410;
-  float _421 = _420 * _405;
-  float _422 = _420 * _406;
-  float _423 = _420 * _407;
+  float ghost_lut_scale;
+  if (GhostIsPsychoV()) {
+    // Linear-light C-infinity shoulder replaces the entire native LUT curve.
+    ghost_lut_scale = GhostGetLUTSamplingScale(float3(_398, _401, _404));
+  } else {
+    // Preserve the original gamma-domain shoulder only for Vanilla.
+    float _408 = max(_406, _407);
+    float _409 = max(_405, _408);
+    float _410 = max(_409, 9.999999974752427e-07f);
+    float _411 = 1.0f - _410;
+    float _412 = _411 * 0.9523810148239136f;
+    float _413 = _412 + 0.5f;
+    float _414 = saturate(_413);
+    float _415 = _414 * _414;
+    float _416 = _415 * 0.5249999761581421f;
+    bool _417 = (_411 < 0.5249999761581421f);
+    float _418 = select(_417, _416, _411);
+    float _419 = 1.0f - _418;
+    ghost_lut_scale = _419 / _410;
+  }
+  float _421 = ghost_lut_scale * _405;
+  float _422 = ghost_lut_scale * _406;
+  float _423 = ghost_lut_scale * _407;
   float _424 = _421 * _107.x;
   float _425 = _422 * _107.x;
   float _426 = _423 * _107.x;
@@ -440,9 +447,9 @@ OutputSignature main(
     _493 = _435.y;
     _494 = _435.z;
   }
-  float _495 = _492 / _420;
-  float _496 = _493 / _420;
-  float _497 = _494 / _420;
+  float _495 = _492 / ghost_lut_scale;
+  float _496 = _493 / ghost_lut_scale;
+  float _497 = _494 / ghost_lut_scale;
   float _498 = _495 * _52.x;
   float _499 = _496 * _52.x;
   float _500 = _497 * _52.x;

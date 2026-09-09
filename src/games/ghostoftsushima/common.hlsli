@@ -181,6 +181,28 @@ float3 GhostNormalizePsychoVEndpoint(
   return mapped_bt709;
 }
 
+// Replace the native gamma-domain LUT shoulder with a linear-light
+// anchored C-infinity shoulder. Preserve its identity threshold (0.475 in
+// square-root space), and approach the LUT boundary without a hard plateau.
+// Return the square-root-domain scale for both lookup and reconstruction.
+float GhostGetLUTSamplingScale(float3 linear_bt709) {
+  const float max_channel = renodx::math::Max(linear_bt709);
+  static const float anchor = 0.475f * 0.475f;
+  static const float shoulder_range = 1.f - anchor;
+  static const float compression_strength = 1.5f;
+  // Includes black; avoids dividing by zero at the anchor and in the ratio.
+  if (max_channel <= anchor) return 1.f;
+
+  const float distance_from_anchor = max_channel - anchor;
+  const float flat_weight = exp2(
+      -shoulder_range / (compression_strength * distance_from_anchor));
+  const float response_denominator = mad(
+      distance_from_anchor, flat_weight, shoulder_range);
+  const float mapped_max = mad(
+      shoulder_range, distance_from_anchor / response_denominator, anchor);
+  return sqrt(mapped_max / max_channel);
+}
+
 // Ghost's complete native grade is returned from the LUT in a square-root
 // transfer domain. Decode it to linear before using it as PsychoV input.
 float3 GhostDecodeLUTOutput(float3 encoded_bt709) {

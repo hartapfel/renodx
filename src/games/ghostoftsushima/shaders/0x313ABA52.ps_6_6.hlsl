@@ -364,22 +364,29 @@ OutputSignature main(
   float _404 = sqrt(_397);
   float _405 = sqrt(_400);
   float _406 = sqrt(_403);
-  float _407 = max(_405, _406);
-  float _408 = max(_404, _407);
-  float _409 = max(_408, 9.999999974752427e-07f);
-  float _410 = 1.0f - _409;
-  float _411 = _410 * 0.9523810148239136f;
-  float _412 = _411 + 0.5f;
-  float _413 = saturate(_412);
-  float _414 = _413 * _413;
-  float _415 = _414 * 0.5249999761581421f;
-  bool _416 = (_410 < 0.5249999761581421f);
-  float _417 = select(_416, _415, _410);
-  float _418 = 1.0f - _417;
-  float _419 = _418 / _409;
-  float _420 = _419 * _404;
-  float _421 = _419 * _405;
-  float _422 = _419 * _406;
+  float ghost_lut_scale;
+  if (GhostIsPsychoV()) {
+    // Linear-light C-infinity shoulder replaces the entire native LUT curve.
+    ghost_lut_scale = GhostGetLUTSamplingScale(float3(_397, _400, _403));
+  } else {
+    // Preserve the original gamma-domain shoulder only for Vanilla.
+    float _407 = max(_405, _406);
+    float _408 = max(_404, _407);
+    float _409 = max(_408, 9.999999974752427e-07f);
+    float _410 = 1.0f - _409;
+    float _411 = _410 * 0.9523810148239136f;
+    float _412 = _411 + 0.5f;
+    float _413 = saturate(_412);
+    float _414 = _413 * _413;
+    float _415 = _414 * 0.5249999761581421f;
+    bool _416 = (_410 < 0.5249999761581421f);
+    float _417 = select(_416, _415, _410);
+    float _418 = 1.0f - _417;
+    ghost_lut_scale = _418 / _409;
+  }
+  float _420 = ghost_lut_scale * _404;
+  float _421 = ghost_lut_scale * _405;
+  float _422 = ghost_lut_scale * _406;
   float _423 = _420 * _106.x;
   float _424 = _421 * _106.x;
   float _425 = _422 * _106.x;
@@ -417,9 +424,9 @@ OutputSignature main(
     _465 = _434.y;
     _466 = _434.z;
   }
-  float _467 = _464 / _419;
-  float _468 = _465 / _419;
-  float _469 = _466 / _419;
+  float _467 = _464 / ghost_lut_scale;
+  float _468 = _465 / ghost_lut_scale;
+  float _469 = _466 / ghost_lut_scale;
   float _470 = _467 * _51.x;
   float _471 = _468 * _51.x;
   float _472 = _469 * _51.x;

@@ -5,6 +5,22 @@ HUD/menu white independently of Game Brightness, overriding the native HUD
 brightness multiplier. Its default is 203 nits and its range is 80–500 nits.
 Vanilla and Preset Off restore native HUD behavior.
 
+The PsychoV scene path uses an anchored C-infinity shoulder on the linear
+maximum channel for LUT sampling. Its peak is 1, anchor is `0.475² = 0.225625`
+(the native shoulder's identity threshold converted to linear light), and
+compression strength is 1.5. The square root of the compressed/original
+maximum ratio scales the gamma-2.0 LUT coordinates. The same scale is divided
+out after native LUT sampling and blending, before decoding to linear and
+running PsychoV. This replaces the native sampling curve's finite plateau
+while preserving brightness reconstruction, LUT addressing, and masks.
+The complete native sampling-shoulder block runs only in the Vanilla branch;
+PsychoV uses only the replacement curve. Check bright neutral and
+saturated gradients and LUT transitions in game when validating this change.
+The shoulder change passed strict compilation of all 19 shaders, the
+`vs-x64-release` addon build, and numerical checks for monotonicity, bounds,
+black/anchor behavior, and colored identity-LUT brightness reconstruction.
+In-game visual validation of this shoulder is still pending.
+
 The 16 HUD replacements use `ui.hlsli`. Ordinary color draws bypass
 `b12.c8.w`, or `b0.c16.z` for the straight-alpha `0x9D97A7C7` variant.
 Premultiplied colors are unpremultiplied before the color transform and
@@ -77,8 +93,8 @@ the Clang Debug game addon beside the installed DevKit caused an access
 violation during shared `command_action` callback registration, before any
 draw. The crash stack is consistent with incompatible Debug/Release STL
 container layouts. The VS Release addon starts correctly with this DevKit.
-The local game addon is currently a regular copy of the VS Release binary;
-rebuilding that binary alone does not update the deployed copy.
+The local game addon is now a symlink to the VS Release binary;
+rebuilding that binary with the game closed updates the deployed addon.
 
 In-game regression checks:
 
