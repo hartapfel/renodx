@@ -253,15 +253,19 @@ float GhostEvaluateGray(float gray, GhostSceneGrade grade, SamplerState lut_samp
 }
 
 GhostSDRCalibration GhostCalibratePsychoV(GhostSceneGrade grade, SamplerState lut_sampler) {
+  // Keep LUT calibration independent of the user anchors. Moving the sample
+  // positions also changed the estimated cone slope across LUT cells, making
+  // anchor adjustments change contrast or trigger the flat-slope fallback.
+  static const float reference_gray = 0.18f;
   GhostSDRCalibration calibration;
-  calibration.input_anchor = GhostEvaluateGray(RENODX_PSYCHOV_ADAPTATION_ANCHOR, grade, lut_sampler, false);
-  calibration.output_anchor = GhostEvaluateGray(RENODX_PSYCHOV_BACKGROUND_ANCHOR, grade, lut_sampler, true);
+  calibration.input_anchor = GhostEvaluateGray(reference_gray, grade, lut_sampler, false);
+  calibration.output_anchor = GhostEvaluateGray(reference_gray, grade, lut_sampler, true);
   // Centered +/- 1/64-stop samples measure logarithmic slope through the
   // actual artistic LUT blend, including the masked variant's blend weight.
-  float input_low = GhostEvaluateGray(RENODX_PSYCHOV_ADAPTATION_ANCHOR * 0.9892280132f, grade, lut_sampler, false);
-  float input_high = GhostEvaluateGray(RENODX_PSYCHOV_ADAPTATION_ANCHOR * 1.0108892861f, grade, lut_sampler, false);
-  float output_low = GhostEvaluateGray(RENODX_PSYCHOV_BACKGROUND_ANCHOR * 0.9892280132f, grade, lut_sampler, true);
-  float output_high = GhostEvaluateGray(RENODX_PSYCHOV_BACKGROUND_ANCHOR * 1.0108892861f, grade, lut_sampler, true);
+  float input_low = GhostEvaluateGray(reference_gray * 0.9892280132f, grade, lut_sampler, false);
+  float input_high = GhostEvaluateGray(reference_gray * 1.0108892861f, grade, lut_sampler, false);
+  float output_low = GhostEvaluateGray(reference_gray * 0.9892280132f, grade, lut_sampler, true);
+  float output_high = GhostEvaluateGray(reference_gray * 1.0108892861f, grade, lut_sampler, true);
   float input_slope = log2(input_high / input_low);
   float output_slope = log2(output_high / output_low);
   // A flat or reversed LUT segment cannot define a positive tone-curve
@@ -269,6 +273,10 @@ GhostSDRCalibration GhostCalibratePsychoV(GhostSceneGrade grade, SamplerState lu
   calibration.contrast = input_slope > 1e-4f && output_slope > 1e-4f
                              ? output_slope / input_slope
                              : 1.f;
+  // 0.18 leaves the calibrated look intact. Each slider scales only its
+  // corresponding PsychoV anchor, without moving the calibration samples.
+  calibration.input_anchor *= RENODX_PSYCHOV_ADAPTATION_ANCHOR / reference_gray;
+  calibration.output_anchor *= RENODX_PSYCHOV_BACKGROUND_ANCHOR / reference_gray;
   return calibration;
 }
 
