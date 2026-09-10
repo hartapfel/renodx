@@ -1,7 +1,7 @@
 #ifndef SRC_GAMES_GOTSUSHIMA_UI_HLSLI_
 #define SRC_GAMES_GOTSUSHIMA_UI_HLSLI_
 
-#include "./shared.h"
+#include "./sdr.hlsli"
 
 bool GhostIsUIOverrideActive() {
   return RENODX_TONE_MAP_TYPE != 0.f
@@ -15,6 +15,9 @@ bool GhostIsUIOverrideActive() {
 // linear_input preserves that result without a second SDR decode.
 // Keep coverage outside the nonlinear color transform.
 float3 GhostRenderUI(float3 color_bt709, float coverage, bool linear_input = false) {
+  // The reference blends the original SDR shader values and coverage first.
+  // Its SDR display transfer and HDR container conversion run after all UI.
+  if (GhostIsSDRReference()) return color_bt709;
   if (coverage <= 0.f) return 0.f.xxx;
   color_bt709 /= coverage;
 
@@ -27,13 +30,7 @@ float3 GhostRenderUI(float3 color_bt709, float coverage, bool linear_input = fal
   // decode. These are the display code values, not linear-light RGB.
   // Omitting this step lifts HUD midtones and weak color channels. Preserve
   // that response before applying the user's selected display EOTF.
-  float3 sdr_display_code = renodx::math::CopySign(
-      renodx::math::Select(
-          abs(linear_bt709) <= 0.018f,
-          abs(linear_bt709) * 4.5f,
-          1.099f * pow(abs(linear_bt709), 0.45f) - 0.099f),
-      linear_bt709);
-  linear_bt709 = renodx::color::srgb::DecodeSafe(sdr_display_code);
+  linear_bt709 = renodx::color::srgb::DecodeSafe(GhostSDRDisplayCode(linear_bt709));
   if (RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
     linear_bt709 = renodx::color::correct::GammaSafe(linear_bt709, false, 2.2f);
   } else if (RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {

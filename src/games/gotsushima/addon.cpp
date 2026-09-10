@@ -31,7 +31,7 @@ renodx::mods::shader::CustomShaders custom_shaders = {
 ShaderInjectData shader_injection;
 
 bool IsPsychoV() {
-  return shader_injection.tone_map_type != 0.f;
+  return shader_injection.tone_map_type == 1.f;
 }
 
 bool IsUIColorDraw(reshade::api::command_list* cmd_list) {
@@ -73,8 +73,8 @@ renodx::utils::settings::Settings settings = {
         .can_reset = false,
         .label = "Tone Mapper",
         .section = "Tone Mapping",
-        .tooltip = "Vanilla preserves the game's HDR pipeline. PsychoV-30 replaces the native tone curve and HDR10 transform.",
-        .labels = {"Vanilla", "PsychoV-30"},
+        .tooltip = "Vanilla preserves native HDR. PsychoV-30 provides custom HDR. SDR in HDR reproduces the native SDR shader path at 203 nits with fixed gamma 2.2 and no mod grading or effects.",
+        .labels = {"Vanilla", "PsychoV-30", "SDR in HDR"},
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapPeakNits",
@@ -117,14 +117,14 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "SDR Gamma Emulation",
         .section = "Tone Mapping",
-        .tooltip = "Emulates the display EOTF used for the game's SDR presentation while retaining the selected HDR peak.",
+        .tooltip = "Selects sRGB, gamma 2.2, or gamma 2.4 decoding. Scene LUT colors omit the native SDR display contrast; UI retains its native SDR transfer.",
         .labels = {"None", "2.2", "BT.1886"},
         .is_enabled = []() { return IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapHueShift",
         .binding = &shader_injection.psychov_hue_shift,
-        .default_value = 0.f,
+        .default_value = 100.f,
         .label = "Hue Shift",
         .section = "Tone Mapping",
         .tooltip = "Shifts PsychoV-30 fire hues away from pink towards orange.",
@@ -242,7 +242,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.0f,
         .label = "Cone Response Exponent",
         .section = "PsychoV30",
-        .tooltip = "Scales PsychoV-30's adaptation-point contrast and cone-response shaping.",
+        .tooltip = "Scales contrast calibrated to the native SDR curve and LUT before its display transform. 1.0 preserves the calibrated slope at the anchor.",
         .min = 0.1f,
         .max = 5.f,
         .format = "%.2f",
@@ -255,7 +255,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.18f,
         .label = "Adaptation Anchor",
         .section = "PsychoV30",
-        .tooltip = "Sets the scene-linear input value anchored by PsychoV-30.",
+        .tooltip = "Sets the scene gray sampled through the active grade to determine PsychoV-30's input anchor.",
         .min = 0.01f,
         .max = 0.5f,
         .format = "%.2f",
@@ -268,7 +268,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.18f,
         .label = "Background Anchor",
         .section = "PsychoV30",
-        .tooltip = "Sets the output/background value matched to the adaptation anchor.",
+        .tooltip = "Sets the scene gray sampled through the native SDR curve and grade, without its display transform, to determine the output anchor.",
         .min = 0.01f,
         .max = 0.5f,
         .format = "%.2f",
@@ -338,59 +338,45 @@ renodx::utils::settings::Settings settings = {
         .label = "Recommended",
         .section = "Presets",
         .group = "button-line-1",
-        .tooltip = "Resets Color Grading and PsychoV30 to defaults, then sets Cone Response to 1.15 and Highlights to 44. Preserves tone mapping and brightness settings.",
+        .tooltip = "Restores tone-mapping and grading defaults, then sets Cone Response to 1.15, Highlights to 45, Shadows to 80, and Blowout to 5. Preserves Game Brightness, UI Brightness, and effects.",
         .tint = 0xFF5F5F,
+        .is_enabled = []() { return IsPsychoV(); },
         .on_change = []() {
           for (const auto* setting : settings) {
-            if (setting->section == "Color Grading" || setting->section == "PsychoV30") {
-              renodx::utils::settings::UpdateSetting(setting->key, setting->default_value);
-            }
+            if (setting->section != "Tone Mapping"
+                && setting->section != "Color Grading"
+                && setting->section != "PsychoV30") continue;
+            if (setting->key == "ToneMapType"
+                || setting->key == "ToneMapGameNits"
+                || setting->key == "ToneMapUINits") continue;
+            renodx::utils::settings::UpdateSetting(setting->key, setting->default_value);
           }
           renodx::utils::settings::UpdateSettings({
-              {"ToneMapHueShift", 0.f},
               {"PsychoVConeResponseExponent", 1.15f},
-              {"ColorGradeHighlights", 44.f},
+              {"ColorGradeHighlights", 45.f},
+              {"ColorGradeShadows", 80.f},
+              {"ColorGradeBlowout", 5.f},
           });
         },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
-        .label = "Match native",
-        .section = "Presets",
-        .group = "button-line-1",
-        .tooltip = "Applies the native-match Color Grading and PsychoV30 preset without changing tone mapping or brightness settings.",
-        .on_change = []() {
-          renodx::utils::settings::UpdateSettings({
-              {"ToneMapHueShift", 100.f},
-              {"ColorGradeExposure", 1.f},
-              {"ColorGradeGamma", 1.f},
-              {"ColorGradeHighlights", 45.f},
-              {"ColorGradeShadows", 93.f},
-              {"ColorGradeContrast", 50.f},
-              {"ColorGradeSaturation", 50.f},
-              {"ColorGradeHighlightSaturation", 50.f},
-              {"ColorGradeBlowout", 5.f},
-              {"ColorGradeFlare", 0.f},
-              {"PsychoVConeResponseExponent", 1.37f},
-              {"PsychoVAdaptationAnchor", 0.18f},
-              {"PsychoVBackgroundAnchor", 0.11f},
-              {"PsychoVGamutCompression", 1.f},
-              {"PsychoVGamutCompressionMode", 1.f},
-              {"PsychoVCompression", 0.f},
-          });
-        },
-    },
-        new renodx::utils::settings::Setting{
-        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Reset All",
         .section = "Presets",
         .group = "button-line-2",
+        .is_enabled = []() { return shader_injection.tone_map_type != GHOST_TONE_MAP_SDR_REFERENCE; },
         .on_change = []() { renodx::utils::settings::ResetSettings(); },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
         .label = " - Native HDR MUST BE ENABLED in game!",
         .section = "Instructions",
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::TEXT,
+        .label = "SDR reference: 203 nits, gamma 2.2. Mod grading and effects are bypassed.",
+        .section = "Instructions",
+        .is_visible = []() { return shader_injection.tone_map_type == GHOST_TONE_MAP_SDR_REFERENCE; },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,

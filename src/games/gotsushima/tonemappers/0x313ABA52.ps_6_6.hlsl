@@ -340,6 +340,12 @@ OutputSignature main(
   float _392 = _362 / _389;
   float _393 = _363 / _390;
   float _394 = _364 / _391;
+  if (GhostIsSDRReference()) {
+    float3 ghost_sdr_curve = GhostToneMapSDR(float3(_335, _338, _341));
+    _392 = ghost_sdr_curve.x;
+    _393 = ghost_sdr_curve.y;
+    _394 = ghost_sdr_curve.z;
+  }
   float _395 = _392 * _35.x;
   float _396 = mad(_393, _35.w, _395);
   float _397 = mad(_394, _41.z, _396);
@@ -371,6 +377,9 @@ OutputSignature main(
   if (GhostIsPsychoV()) {
     // Linear-light C-infinity shoulder replaces the entire native LUT curve.
     ghost_lut_scale = GhostGetLUTSamplingScale(float3(_397, _400, _403));
+  } else if (GhostIsSDRReference()) {
+    // Native SDR samples the bounded grade directly, without an HDR shoulder.
+    ghost_lut_scale = 1.f;
   } else {
     // Preserve the original gamma-domain shoulder only for Vanilla.
     float _407 = max(_405, _406);
@@ -396,6 +405,8 @@ OutputSignature main(
   float _426 = _423 + _106.y;
   float _427 = _424 + _106.y;
   float _428 = _425 + _106.y;
+  uint ghost_secondary_lut = 0u;
+  float ghost_lut_blend = 0.f;
   int4 _429 = asint(t1_space1.Load4(_14));
   Texture3D<float4> _432 = ResourceDescriptorHeap[(uint)(_429.x)];
   float4 _434 = _432.Sample(s1, float3(_426, _427, _428));
@@ -408,8 +419,10 @@ OutputSignature main(
     float _444 = _441 + _106.w;
     float _445 = _442 + _106.w;
     int4 _446 = asint(t1_space1.Load4(_15));
+    ghost_secondary_lut = (uint)(_446.x);
     Texture3D<float4> _449 = ResourceDescriptorHeap[(uint)(_446.x)];
     float4 _450 = _449.Sample(s1, float3(_443, _444, _445));
+    ghost_lut_blend = _103.x;
     float _454 = _450.x - _434.x;
     float _455 = _450.y - _434.y;
     float _456 = _450.z - _434.z;
@@ -457,12 +470,27 @@ OutputSignature main(
   bool _497 = !(_495 == TEXCOORD.x);
   bool _498 = !(_496 == TEXCOORD.y);
   bool _499 = _497 || _498;
+  if (GhostIsSDRReference()) {
+    // Match the SDR shader's LUT output, 8-bit dither amplitude and viewport
+    // mask. Keep the encoded SDR domain through upscaling and HUD blending.
+    // The HDR-native scene brightness multiplier is deliberately bypassed.
+    float3 ghost_sdr = saturate(float3(_464, _465, _466) + (_480.x - 0.5f) / 255.f);
+    float ghost_luminance = dot(float3(_464, _465, _466), float3(0.2126f, 0.7152f, 0.0722f));
+    SV_Target_1 = select(_499, 0.f, ghost_luminance);
+    SV_Target = float4(select(_499, 0.f.xxx, ghost_sdr), SV_Target_1);
+    OutputSignature output_signature = {SV_Target, SV_Target_1};
+    return output_signature;
+  }
   if (GhostIsPsychoV()) {
+    GhostSceneGrade ghost_grade = {
+        _20, _26, _32, _35, _41, _47,
+        uint2((uint)(_429.x), ghost_secondary_lut), _106, ghost_lut_blend};
+    const GhostSDRCalibration ghost_calibration = GhostCalibratePsychoV(ghost_grade, s1);
     const float3 ghost_linear_lut = GhostDecodeLUTOutput(
         float3(_467, _468, _469));
     const float3 ghost_psychov = GhostNormalizePsychoVEndpoint(
-        GhostToneMapPsychoV30(ghost_linear_lut),
-        GhostGetPsychoVEndpoint());
+        GhostToneMapPsychoV30(ghost_linear_lut, ghost_calibration),
+        GhostGetPsychoVEndpoint(ghost_calibration));
     float3 ghost_intermediate = GhostRenderIntermediate(ghost_psychov, TEXCOORD);
     ghost_intermediate += _483;
     const float ghost_luminance = dot(

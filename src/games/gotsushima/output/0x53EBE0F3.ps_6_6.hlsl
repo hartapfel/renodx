@@ -31,6 +31,19 @@ float4 main(
   int4 _17 = asint(t1_space1.Load4(RootSrtCbv_000));
   Texture2D<float4> _20 = ResourceDescriptorHeap[(uint)(_17.x)];
   float4 _22 = _20.Sample(s12, float2(TEXCOORD.x, TEXCOORD.y));
+  if (GhostIsSDRReference()) {
+    // Native SDR composes scene and HUD before 0x571EE768 applies its
+    // display transfer. Interpret those codes with gamma 2.2 exactly once,
+    // then place the bounded BT.709 image in a fixed 203-nit HDR10 container.
+    return float4(renodx::color::pq::EncodeSafe(
+                      renodx::color::bt2020::from::BT709(
+                          renodx::color::gamma::DecodeSafe(
+                              saturate(GhostSDRDisplayCode(
+                                  renodx::color::srgb::DecodeSafe(saturate(_22.rgb)))),
+                              2.2f)),
+                      GHOST_SDR_REFERENCE_WHITE_NITS),
+                  1.f);
+  }
   uint _26 = (uint)(RootSrtCbv_000) + 112u;
   float4 _27 = asfloat(t1_space1.Load4(_26));
   float _29 = _27.x * _22.x;

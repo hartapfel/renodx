@@ -22,7 +22,7 @@ The UI brightness override replaces the native HUD brightness multiplier on supp
 
 | Control | Default | Purpose |
 |---|---|---|
-| Tone Mapper | PsychoV-30 | Chooses the custom HDR pipeline or the native Vanilla paths. |
+| Tone Mapper | PsychoV-30 | Chooses Vanilla HDR, PsychoV-30, or the SDR in HDR reference. |
 | Peak Brightness | Detected display peak when available; otherwise 1000 nits | Sets the custom output ceiling. Range: 400–4000 nits. |
 | Game Brightness | 203 nits | Sets scene reference white. Range: 80–500 nits. |
 | UI Brightness | 203 nits | Sets HUD, menu, and supported video reference white independently of the scene. Range: 80–500 nits. |
@@ -32,22 +32,34 @@ The UI brightness override replaces the native HUD brightness multiplier on supp
 
 The custom brightness, grading, and effect controls operate with PsychoV selected. **Advanced** settings expose exposure, gamma, highlights, shadows, contrast, saturation, highlight saturation, blowout, flare, hue shift, and PsychoV's response/gamut parameters. The grading **Gamma** control is separate from **SDR Gamma Emulation**.
 
-PsychoV defaults to a BT.2020 gamut target, full gamut compression, and automatic compression power. Adaptation and Background Anchor default to 0.18; Cone Response Exponent defaults to 1.0. Hue Shift adjusts PsychoV's fire-hue behavior and defaults to 0.
+PsychoV defaults to a BT.2020 gamut target, full gamut compression, and automatic compression power. Adaptation and Background Anchor default to scene gray 0.18. The mod evaluates those gray values through the active grade to calibrate PsychoV's actual input/output anchors. Cone Response Exponent defaults to 1.0, a multiplier on the contrast calibrated to the native SDR curve and LUT **before the native display transform**. Hue Shift adjusts PsychoV's fire-hue behavior and defaults to 100.
+
+### SDR in HDR reference
+
+Select **SDR in HDR** in Tone Mapper while keeping native HDR enabled. This comparison mode reproduces the game's SDR shader response in a BT.2020/PQ HDR container, with fixed **203-nit white** and **gamma 2.2** for both scene and HUD. It does not extend SDR highlights or expand the SDR gamut.
+
+All mod brightness, gamma-emulation, color-grading, PsychoV, grain, and sharpening controls are disabled and bypassed in this mode. The grading preset and reset buttons are disabled as well. Their saved values are retained; switching back to PsychoV restores their effect. The native artistic LUT grade remains part of the SDR reference.
+
+For a comparison at matching reference white, use default Color Grading and PsychoV30 settings, set PsychoV's Game Brightness and UI Brightness to 203 nits and SDR Gamma Emulation to 2.2, then switch between PsychoV-30 and SDR in HDR on the same scene. PsychoV deliberately omits the native SDR display transform's additional contrast, so its scene shadows and midtones can be brighter even at matching white. The named grading presets further change the calibrated response. The reference always uses gamma 2.2 regardless of the saved gamma dropdown value. It is an SDR display response, applied once before PQ encoding.
+
+The reference restores the SDR scene curve captured from `0x24A0E87E` at RootSrt offsets 344–364. Live SDR/HDR captures confirmed that these coefficients differ between modes while the surrounding color matrices match. It clamps the curve before the second matrix, retains the square-root LUT input and native LUT blends, and bypasses both HDR LUT shoulders and the native HDR scene brightness multiplier. It also restores the SDR scene dither amplitude.
+
+Scene and HUD stay in the SDR composition domain until final output. Ordinary UI draws bypass the native HDR brightness scale without applying the PsychoV UI conversion; multiply overlays retain their native blend behavior. After composition, the output pass reproduces `0x571EE768`'s neutral SDR transfer (sRGB decode followed by the BT.709 OETF), decodes those display codes with gamma 2.2, converts linear BT.709 to BT.2020, and encodes PQ at 203 nits.
+
+The mode uses the captured SDR curve and neutral SDR output calibration. It retains the HDR path's 10-bit intermediate and existing upscaler, rather than recreating every 8-bit resource and rounding step of the native SDR renderer. It is therefore a color/tonal reference, not a promise of identical SDR screenshot bytes. In-game calibration changes, temporal effects, and upscaling can also affect comparisons.
 
 ### Preset buttons
 
 Values below are the numbers shown in the UI.
 
-| Setting | Recommended | Match native |
-|---|---:|---:|
-| Hue Shift | 0 | 100 |
-| Cone Response Exponent | 1.15 | 1.37 |
-| Highlights | 44 | 45 |
-| Shadows | 50 | 93 |
-| Blowout | 0 | 5 |
-| Background Anchor | 0.18 | 0.11 |
+| Setting | Recommended |
+|---|---:|
+| Cone Response Exponent | 1.15 |
+| Highlights | 45 |
+| Shadows | 80 |
+| Blowout | 5 |
 
-Both buttons restore the remaining Color Grading and PsychoV30 settings to their defaults. They preserve the selected tone mapper, peak/game/UI brightness, SDR Gamma Emulation, and effect strengths. **Recommended** is an explicit button action; it is not applied automatically on startup. **Match native** is a grading preset within PsychoV, rather than a switch to the Vanilla shader paths.
+The red **Recommended** button restores the remaining Tone Mapping, Color Grading, and PsychoV30 settings to their current defaults, including Peak Brightness, SDR Gamma Emulation, and Hue Shift. It preserves **Game Brightness**, **UI Brightness**, and both **Effects** sliders. Tone Mapper and Settings Mode also remain selected. Peak Brightness resets to the detected display default when available, otherwise 1000 nits. Recommended is available only with PsychoV selected and is not applied automatically on startup. The former Match native preset has been removed.
 
 **Reset All** resets the settings marked as resettable, including both effects. It retains the selected Tone Mapper and Settings Mode. **Preset Off** explicitly selects Vanilla and disables the custom effects and gamma emulation.
 
@@ -67,8 +79,9 @@ The native rational response is not a simple, exact gamma-2.4 power function. Th
 flowchart TD
     A[Linear scene input and optional RCAS] --> B[Native local processing and color matrices]
     B --> C[Linear LUT shoulder, native LUT grade, reconstruction]
-    C --> D[PsychoV-30 and peak normalization]
-    D --> E[BT.2020, optional grain, gamma emulation, PQ]
+    C --> T[Direct LUT decode with selected gamma emulation]
+    T --> D[Grade-calibrated PsychoV-30 and peak normalization]
+    D --> E[BT.2020, optional grain, PQ]
     U[HUD and video colors] --> V[Native SDR transfer, gamma emulation, BT.2020, UI-white PQ]
     E --> F[Existing scene and UI composition]
     V --> F
@@ -102,17 +115,25 @@ compressed_max = a + r * d / (r + d * w)
 lookup_scale = sqrt(compressed_max / x)
 ```
 
-The native square-root RGB coordinates are multiplied by `lookup_scale`, then passed through the game's existing LUT sampling and blending. The LUT result is divided by that same scale, clamped nonnegative, and squared to recover linear RGB before PsychoV. Black and values at or below the anchor bypass the divisions.
+The native square-root RGB coordinates are multiplied by `lookup_scale`, then passed through the game's existing LUT sampling and blending. The LUT result is divided by that same scale and clamped nonnegative. Its output encoding is distinct from the square-root input coordinates: PsychoV decodes the LUT's sRGB representation directly, with the selected gamma-emulation adjustment, instead of squaring it. It omits the native SDR output's BT.709 OETF. This decode does not clamp to SDR white, so reconstruction retains HDR headroom. Black and values at or below the shoulder anchor bypass the scale divisions.
 
 This keeps the LUT's artistic grade while allowing HDR brightness reconstruction outside the LUT's bounded coordinate range. It does not invert or remove the LUT's own color grading.
 
 ### PsychoV, gamut, and HDR transport
 
-The local [PsychoV-30 implementation](test30.hlsl) receives the reconstructed linear LUT result. User gamma, contrast, and flare extensions operate on luminance before PsychoV. Contrast is kept out of PsychoV's cone-response parameter to avoid amplifying quantization into colored bands. Highlight saturation and blowout are applied through the output grading extension.
+The local [PsychoV-30 implementation](test30.hlsl) receives the directly decoded LUT result. **None** uses sRGB decode; **2.2** and **BT.1886** substitute gamma 2.2 and 2.4 decoding, respectively. This is equivalent to sRGB decode followed by RenoDX's corresponding gamma-emulation correction, applied once before PsychoV.
+
+PsychoV intentionally omits the native BT.709 OETF followed by display decoding. That combination darkens shadows and midtones; preserving it is useful for an SDR reference but is no longer the custom scene's target. This is a deliberate presentation choice to soften the native contrast, not a claim that BT.709 encoding paired with a display EOTF is inherently erroneous. The original square-decode approximation is not restored. SDR in HDR and the validated HUD/video path retain their native SDR display transfer.
+
+The input anchor is measured by passing a neutral scene sample through the native matrices, reconstructable LUT shoulder, active LUT blend, and direct LUT decode. The output anchor passes the corresponding scene sample through the captured native SDR curve and grade instead. Both calibration routes omit the native SDR display transform, so anchor matching cannot add its contrast back. Centered samples at +/- 1/64 stop measure both logarithmic slopes; their ratio supplies PsychoV's baseline cone response. Flat or reversed LUT segments fall back to unit slope. Calibration includes the masked shader's local blend weight and uses luminance anchors to avoid imposing a new white balance.
+
+This matches the gray anchor and local contrast to the active SDR grade before its display transform; it does not target the completed SDR image or reproduce every colored pixel exactly. The SDR reference remains available for comparisons across scenes and LUT transitions. Calibration adds six grade evaluations per pixel, each sampling one or two LUTs depending on the active blend.
+
+User gamma, contrast, and flare extensions operate on luminance before PsychoV. User Contrast is kept out of PsychoV's contrast argument to avoid its purity rescaling amplifying quantization into colored bands; calibrated slope is supplied through the cone-response exponent instead. Highlight saturation and blowout are applied through the output grading extension.
 
 PsychoV can constrain colors to BT.709 or BT.2020, but returns its result represented in linear BT.709 coordinates. A valid BT.2020 color can have negative components in that representation. The mod preserves those components until conversion to BT.2020 so that wide-gamut colors are not prematurely clipped to BT.709.
 
-Peak normalization evaluates PsychoV at the finite FP16 endpoint, 65504, and adjusts the highlight range with the selected gamma response taken into account. This lets the scene reach the selected HDR peak. The result is converted to BT.2020, optionally grained, passed through SDR Gamma Emulation, scaled by Game Brightness, and encoded as absolute-nit PQ.
+Peak normalization evaluates PsychoV at a large finite input, 65504, and adjusts only values above scene reference white toward the selected HDR peak. It operates directly in display-linear light. The result is converted to BT.2020, optionally grained, scaled by Game Brightness, and encoded as absolute-nit PQ. Gamma emulation is not repeated at this stage.
 
 PQ carries the HDR signal through the game's existing bounded RGB10A2 intermediate. At final output, `0x53EBE0F3` decodes PQ to nits, uniformly scales colors whose maximum channel exceeds Peak Brightness, re-encodes PQ, and adds native dither with a final clamp to the selected PQ peak. The native display curve is not applied again.
 
@@ -130,7 +151,7 @@ All 51 HUD/video replacements share [ui.hlsli](ui.hlsli). Ordinary color draws b
 
 The native SDR output shader, `0x571EE768`, includes an sRGB decode followed by the BT.709 OETF. Omitting that conversion makes midtones and weaker color channels too bright, washing out the HUD. A capture of the native SDR swapchain confirmed this transfer against the preceding UI buffer. The mod reproduces it on UI colors before PQ encoding; it does not apply the native HDR rational display curve.
 
-The linear gamut conversion retains BT.709 primaries in the BT.2020 output container. **None** interprets the native SDR display codes as sRGB; **2.2** and **BT.1886** interpret them with gamma 2.2 and 2.4, respectively. UI applies that response in BT.709 before gamut conversion; the scene applies gamma emulation in BT.2020 before PQ transport. Black and reference white stay fixed, so UI Brightness continues to control white independently of the scene.
+The linear gamut conversion retains BT.709 primaries in the BT.2020 output container. For UI, **None** interprets the native SDR display codes as sRGB; **2.2** and **BT.1886** interpret them with gamma 2.2 and 2.4, respectively. The scene applies the selected decode directly to its reconstructed LUT values, omitting the native BT.709 OETF, before its calibrated PsychoV response. Both perform decoding in BT.709 before gamut conversion. Black and reference white stay fixed by these transfers, so UI Brightness continues to control white independently of the scene.
 
 Native texture sampling, masks, clipping, depth fades, tinting, and alpha behavior remain in the individual shaders. `0x6A947342` uses the helper's linear-input option because it already decodes its texture. Its RGB coverage is separate from its destination-attenuation alpha, preserving the shader's additive contribution.
 
@@ -158,7 +179,7 @@ The four [video shaders](video/) preserve the game's YUV-to-RGB coefficients and
 
 **Lilium RCAS** runs on the linear scene input before local processing, LUT grading, and PsychoV. Its center pixel and four source-texel neighbors all use the same signal domain and native distorted UV. The luminance implementation retains HDR normalization of 125, the 0.99 overshoot limiter, noise attenuation, and a bounded luminance-ratio resolve. Black and flat neighborhoods are guarded against undefined divisions. See [lilium_rcas.hlsli](lilium_rcas.hlsli).
 
-**Perceptual Film Grain** runs after PsychoV and peak normalization, on linear BT.2020 color before gamma emulation and PQ encoding. It uses RenoDX's shared film-density response with BT.2020 luminance weights, scene white as the reference, and a new random seed on each present. Strength is scaled to the shared effect's 0–0.03 range.
+**Perceptual Film Grain** runs after gamma emulation, PsychoV, and peak normalization, on linear BT.2020 color before PQ encoding. It uses RenoDX's shared film-density response with BT.2020 luminance weights, scene white as the reference, and a new random seed on each present. Strength is scaled to the shared effect's 0–0.03 range.
 
 Sharpening precedes the added grain, and both effects precede HUD composition. Neither is applied to HUD/video draws or to the completed frame. Any upstream native grain/sharpening and native output dithering remain in place. RCAS operates at source-texture resolution and grain at scene-pass output resolution, so their appearance can vary with the game's resolution/upscaling configuration.
 
@@ -173,6 +194,7 @@ The canonical mod folder and CMake target are **`gotsushima`**.
 | [common.hlsli](common.hlsli) | LUT shoulder, PsychoV integration, peak normalization, grain, and output helpers |
 | [test30.hlsl](test30.hlsl) | Local PsychoV-30 tone mapper |
 | [ui.hlsli](ui.hlsli) | Shared HUD/video color and brightness conversion |
+| [sdr.hlsli](sdr.hlsli) | Captured native SDR curve and shared SDR display transfer |
 | [lilium_rcas.hlsli](lilium_rcas.hlsli) | Scene sharpening |
 | [tonemappers/](tonemappers/) | 2 scene/LUT shaders |
 | [output/](output/) | 1 final HDR10 output shader |
@@ -193,7 +215,7 @@ cmake --build --preset vs-x64-release --target gotsushima
 
 The addon is written to `build.vs/Release/renodx-gotsushima.addon64`. Generated shader binaries, headers, and `shaders.h` are in `build.vs/gotsushima.include/embed/`.
 
-Set DevKit's **LivePath** to the absolute path of `src/games/gotsushima` in the checkout. Its recursive watcher includes all four shader folders. Keep vanilla dumps and `.cso` archives outside that tree to avoid duplicate hashes shadowing editable replacements. Rebuild and restart the addon after changing `shared.h`; live HLSL compilation alone cannot update the C++ injection layout.
+Keep vanilla dumps and `.cso` archives outside the source tree to avoid duplicate hashes shadowing editable replacements. Live shader replacement has crashed this game during testing. Use Release builds loaded at game startup for shader changes, and use DevKit for read-only captures and inspection. Changes to `shared.h` also require rebuilding the C++ addon.
 
 The local development installation uses an addon symlink to the Release binary, so a successful build updates the deployed file. The former `ghostoftsushima` source folder and deployed addon link have been replaced by `gotsushima`.
 
@@ -204,6 +226,14 @@ In-game checks have confirmed that the UI, video colors, brightness controls, ga
 The subsequent HUD transfer correction was checked against native SDR and PsychoV captures of the settings menu. At UI Brightness 203 nits and gamma 2.2, converting the HDR capture back to comparable SDR display codes reduced the sampled red tile's mean error from 12.4 to 0.56 on an 8-bit scale, with the white reference unchanged. The user confirmed the improved appearance in game. All 51 affected HUD/video shaders passed strict compilation, and the Release addon build passed. This comparison covers the captured menu; translucent blends and other screens still need the checks below.
 
 For subsequent shader changes, recheck scene highlights and LUT transitions; HUD/video colors and transparency; independence of Game Brightness and UI Brightness; native HUD-slider override; gamma-emulation modes; both optional effects; and restoration of the native paths with Vanilla/Preset Off. Include the chosen upscaling mode when checking scene effects.
+
+For direct LUT decoding, check shadows and midtones against the SDR reference at matching white, expecting a softer scene response rather than an exact SDR match. Also check highlight headroom, all gamma settings, both LUT shader variants, transitions, and HUD consistency. Synthetic neutral-LUT checks assess anchor matching, local slope, black, monotonicity, and HDR headroom; they do not establish an image match with the game's artistic LUTs.
+
+The direct-decode revision passed strict compilation for all 54 shaders and the Release build. Only the two scene shader binaries changed; the output and all 51 HUD/video binaries remained identical to the preceding build. Fixing either scene shader to Vanilla or SDR in HDR also produced unchanged binaries. Across 27 synthetic LUT/gamma/peak cases, the gray anchor matched exactly, local slope error stayed below 0.1%, and the response retained black, monotonicity, and HDR headroom. Visual confirmation of this revision remains pending.
+
+For SDR in HDR, verify that white remains 203 nits, all mod grading/effect controls are disabled, previously saved extreme settings do not affect the reference, and switching back restores the PsychoV settings. Compare the same scene and map/menu against native SDR at matching white and gamma 2.2. The reference shaders passed strict `ps_6_6` compilation and the `vs-x64-release` build; temporary diagnostic shaders are excluded from the finished addon.
+
+The initial reference-mode map capture reached 202.9 nits after HDR10 quantization, with no NaN/Inf pixels. The static legend panel differed from the native SDR capture by an average of 0.44 equivalent 8-bit code values. The map projection and animated background changed between captures, so these results do not establish a scene-wide pixel match. Compiling the scene and output shaders with reference mode fixed removed all injected grading-buffer dependencies. The user confirmed that the new mode worked in game.
 
 Reusable vanilla HLSL and audit metadata from local development remain in `tmp/ghostoftsushima/vanilla/ui/`, with original shader binaries in `tmp/ghostoftsushima/original/`. These are local development artifacts, not required installation files or guaranteed contents of a fresh checkout. The archived candidate shaders are not all registered: output masks and procedural noise passes require composition evidence before adding a color transform.
 

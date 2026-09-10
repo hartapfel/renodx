@@ -134,7 +134,9 @@ float4 main(
         // At zero native scale, retain the tint instead of dividing by zero.
         const float3 ghost_video = lerp(
             float3(_60, _83, _85),
-            renodx::math::DivideSafe(_33.rgb, cbufGlobal_264.xxx, _33.rgb),
+            GhostIsSDRReference()
+                ? _33.rgb
+                : renodx::math::DivideSafe(_33.rgb, cbufGlobal_264.xxx, _33.rgb),
             _33.w);
         // SDR decode/gamma -> linear BT.709-to-BT.2020 -> UI-white PQ.
         // Native output dither stays after encoding, outside the transform.

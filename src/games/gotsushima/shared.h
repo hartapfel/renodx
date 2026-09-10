@@ -1,6 +1,9 @@
 #ifndef SRC_GAMES_GOTSUSHIMA_SHARED_H_
 #define SRC_GAMES_GOTSUSHIMA_SHARED_H_
 
+static const float GHOST_TONE_MAP_SDR_REFERENCE = 2.f;
+static const float GHOST_SDR_REFERENCE_WHITE_NITS = 203.f;
+
 struct ShaderInjectData {
   float peak_white_nits;
   float diffuse_white_nits;

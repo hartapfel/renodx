@@ -2,11 +2,12 @@
 #define SRC_GAMES_GOTSUSHIMA_COMMON_HLSLI_
 
 #include "./shared.h"
+#include "./sdr.hlsli"
 #include "./test30.hlsl"
 #include "./lilium_rcas.hlsli"
 
 bool GhostIsPsychoV() {
-  return RENODX_TONE_MAP_TYPE != 0.f;
+  return RENODX_TONE_MAP_TYPE == 1.f;
 }
 
 float3 GhostApplyPsychoVInputExtensions(float3 color_bt709) {
@@ -92,7 +93,13 @@ float3 GhostApplyPsychoVOutputExtensions(
   return mapped_bt709;
 }
 
-float3 GhostToneMapPsychoV30(float3 color_bt709) {
+struct GhostSDRCalibration {
+  float input_anchor;
+  float output_anchor;
+  float contrast;
+};
+
+float3 GhostToneMapPsychoV30(float3 color_bt709, GhostSDRCalibration calibration) {
   color_bt709 = GhostApplyPsychoVInputExtensions(color_bt709);
   float3 mapped_bt709 = renodx::tonemap::psychov::psychotm_test30(
       color_bt709,
@@ -110,9 +117,9 @@ float3 GhostToneMapPsychoV30(float3 color_bt709) {
       RENODX_PSYCHOV_HUE_SHIFT,
       1.f,
       0,
-      RENODX_PSYCHOV_CONE_RESPONSE_EXPONENT,
-      RENODX_PSYCHOV_ADAPTATION_ANCHOR.xxx,
-      RENODX_PSYCHOV_BACKGROUND_ANCHOR.xxx,
+      RENODX_PSYCHOV_CONE_RESPONSE_EXPONENT * calibration.contrast,
+      calibration.input_anchor.xxx,
+      calibration.output_anchor.xxx,
       RENODX_PSYCHOV_GAMUT_COMPRESSION,
       int(RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE),
       1.f,
@@ -120,10 +127,10 @@ float3 GhostToneMapPsychoV30(float3 color_bt709) {
   return GhostApplyPsychoVOutputExtensions(color_bt709, mapped_bt709);
 }
 
-float3 GhostGetPsychoVEndpoint() {
-  // The scene source is FP16. Evaluate PsychoV at the brightest finite value
-  // the source can carry so the selected display peak remains reachable.
-  return GhostToneMapPsychoV30(65504.f.xxx);
+float3 GhostGetPsychoVEndpoint(GhostSDRCalibration calibration) {
+  // Use a large finite reference input to normalize PsychoV's highlight
+  // endpoint without evaluating its response at infinity.
+  return GhostToneMapPsychoV30(65504.f.xxx, calibration);
 }
 
 float3 GhostApplyPackedColorMatrix(
@@ -150,30 +157,19 @@ float3 GhostNormalizePsychoVEndpoint(
       RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f),
       1.f);
 
-  // RenderIntermediatePass applies the forward SDR response after PsychoV.
-  // Stretch its finite endpoint to the inverse-corrected value so decoding
-  // the bounded PQ transport still lands exactly on the selected peak.
-  float transport_peak_ratio = peak_ratio;
-  if (RENODX_GAMMA_CORRECTION
-      == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
-    transport_peak_ratio = renodx::color::correct::GammaSafe(
-        peak_ratio, true, 2.2f);
-  } else if (RENODX_GAMMA_CORRECTION
-             == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
-    transport_peak_ratio = renodx::color::correct::GammaSafe(
-        peak_ratio, true, 2.4f);
-  }
-
+  // Gamma emulation is part of the decoded LUT input. PsychoV and its
+  // endpoint now operate in display-linear light, so no inverse gamma
+  // compensation is needed when normalizing the HDR endpoint.
   if (mapped_peak > 1.f && endpoint_peak > 1.f && peak_ratio > 1.f) {
     const float highlight_gain = max(
         1.f,
         renodx::math::DivideSafe(
-            transport_peak_ratio - 1.f,
+            peak_ratio - 1.f,
             endpoint_peak - 1.f,
             1.f));
     const float stretched_peak = min(
         1.f + (mapped_peak - 1.f) * highlight_gain,
-        transport_peak_ratio);
+        peak_ratio);
     mapped_bt709 *= renodx::math::DivideSafe(
         stretched_peak,
         mapped_peak,
@@ -204,10 +200,76 @@ float GhostGetLUTSamplingScale(float3 linear_bt709) {
   return sqrt(mapped_max / max_channel);
 }
 
-// Ghost's complete native grade is returned from the LUT in a square-root
-// transfer domain. Decode it to linear before using it as PsychoV input.
+// Decode the reconstructed LUT's sRGB representation directly. PsychoV
+// deliberately omits the native BT.709 OETF/display-EOTF contrast; that
+// presentation remains available in SDR in HDR and on the validated UI path.
+// Optional gamma emulation substitutes the selected EOTF for sRGB here,
+// equivalent to sRGB decode followed by GammaSafe(..., false, gamma).
+// Do not saturate here: LUT reconstruction must retain HDR headroom.
 float3 GhostDecodeLUTOutput(float3 encoded_bt709) {
-  return max(encoded_bt709, 0.f.xxx) * max(encoded_bt709, 0.f.xxx);
+  encoded_bt709 = max(encoded_bt709, 0.f.xxx);
+  if (RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
+    return renodx::color::gamma::DecodeSafe(encoded_bt709, 2.2f);
+  }
+  if (RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
+    return renodx::color::gamma::DecodeSafe(encoded_bt709, 2.4f);
+  }
+  return renodx::color::srgb::DecodeSafe(encoded_bt709);
+}
+
+struct GhostSceneGrade {
+  float4 pre_0;
+  float4 pre_1;
+  float4 pre_2;
+  float4 post_0;
+  float4 post_1;
+  float4 post_2;
+  uint2 lut_indices;
+  float4 lut_coordinates;
+  float lut_blend;
+};
+
+// Evaluate a neutral scene sample through the active matrices and LUTs.
+// Both routes use the same output decode; only native SDR has its scene
+// curve/clamp, while the HDR route uses the existing reconstructable shoulder.
+// Neither calibration route includes the native SDR display transform, so
+// matching the anchor/slope cannot reintroduce its additional contrast.
+float GhostEvaluateGray(float gray, GhostSceneGrade grade, SamplerState lut_sampler, bool native_sdr) {
+  float3 color = GhostApplyPackedColorMatrix(gray.xxx, grade.pre_0, grade.pre_1, grade.pre_2);
+  if (native_sdr) color = GhostToneMapSDR(color);
+  color = max(GhostApplyPackedColorMatrix(color, grade.post_0, grade.post_1, grade.post_2), 0.f.xxx);
+  float scale = native_sdr ? 1.f : GhostGetLUTSamplingScale(color);
+  color = sqrt(color) * scale;
+  Texture3D<float4> lut = ResourceDescriptorHeap[grade.lut_indices.x];
+  float3 graded = lut.SampleLevel(lut_sampler, color * grade.lut_coordinates.x + grade.lut_coordinates.y, 0.f).rgb;
+  if (grade.lut_blend > 0.f) {
+    Texture3D<float4> second_lut = ResourceDescriptorHeap[grade.lut_indices.y];
+    graded = lerp(graded,
+                  second_lut.SampleLevel(lut_sampler, color * grade.lut_coordinates.z + grade.lut_coordinates.w, 0.f).rgb,
+                  grade.lut_blend);
+  }
+  if (native_sdr) graded = saturate(graded);
+  return max(renodx::color::y::from::BT709(GhostDecodeLUTOutput(graded / scale)), 1e-6f);
+}
+
+GhostSDRCalibration GhostCalibratePsychoV(GhostSceneGrade grade, SamplerState lut_sampler) {
+  GhostSDRCalibration calibration;
+  calibration.input_anchor = GhostEvaluateGray(RENODX_PSYCHOV_ADAPTATION_ANCHOR, grade, lut_sampler, false);
+  calibration.output_anchor = GhostEvaluateGray(RENODX_PSYCHOV_BACKGROUND_ANCHOR, grade, lut_sampler, true);
+  // Centered +/- 1/64-stop samples measure logarithmic slope through the
+  // actual artistic LUT blend, including the masked variant's blend weight.
+  float input_low = GhostEvaluateGray(RENODX_PSYCHOV_ADAPTATION_ANCHOR * 0.9892280132f, grade, lut_sampler, false);
+  float input_high = GhostEvaluateGray(RENODX_PSYCHOV_ADAPTATION_ANCHOR * 1.0108892861f, grade, lut_sampler, false);
+  float output_low = GhostEvaluateGray(RENODX_PSYCHOV_BACKGROUND_ANCHOR * 0.9892280132f, grade, lut_sampler, true);
+  float output_high = GhostEvaluateGray(RENODX_PSYCHOV_BACKGROUND_ANCHOR * 1.0108892861f, grade, lut_sampler, true);
+  float input_slope = log2(input_high / input_low);
+  float output_slope = log2(output_high / output_low);
+  // A flat or reversed LUT segment cannot define a positive tone-curve
+  // slope. Retain unit slope there instead of dividing by zero/noise.
+  calibration.contrast = input_slope > 1e-4f && output_slope > 1e-4f
+                             ? output_slope / input_slope
+                             : 1.f;
+  return calibration;
 }
 
 float3 GhostRenderIntermediate(float3 color_bt709, float2 uv) {
@@ -218,12 +280,14 @@ float3 GhostRenderIntermediate(float3 color_bt709, float2 uv) {
       renodx::color::bt2020::from::BT709(color_bt709), 0.f.xxx);
   if (CUSTOM_FILM_GRAIN > 0.f) {
     // Perceptual film density is evaluated in linear display-referred color,
-    // relative to scene white. Apply after PsychoV, before gamma/PQ and HUD.
+    // relative to scene white. Apply after PsychoV, before PQ and HUD.
     color_bt2020 = renodx::effects::ApplyFilmGrain(
         color_bt2020, uv, CUSTOM_RANDOM, CUSTOM_FILM_GRAIN * 0.03f,
         1.f, false, renodx::color::BT2020_TO_XYZ_MAT);
   }
-  return renodx::draw::RenderIntermediatePass(color_bt2020);
+  // The display EOTF has already been applied to the LUT result. Applying
+  // RenderIntermediatePass here would apply gamma emulation a second time.
+  return renodx::color::pq::EncodeSafe(color_bt2020, RENODX_DIFFUSE_WHITE_NITS);
 }
 
 float3 GhostEncodeHDR10(float3 intermediate_encoded) {
