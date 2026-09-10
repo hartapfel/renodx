@@ -130,7 +130,7 @@ OutputSignature main(
   Texture2D<float4> _174 = ResourceDescriptorHeap[(uint)(_171.x)];
   float4 _176 = _174.Sample(s12, float2(_169, _170));
   if (GhostIsPsychoV()) {
-    _176.rgb = GhostApplyRCAS(_176.rgb, float2(_169, _170), _174, s12);
+    _176.rgb = GhostApplySceneLensEffects(_176.rgb, float2(_169, _170), TEXCOORD, _174, s12);
   }
   float _180 = max(0.0f, _176.x);
   float _181 = max(0.0f, _176.y);

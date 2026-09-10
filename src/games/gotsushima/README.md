@@ -2,7 +2,7 @@
 
 A native HDR mod for the PC version of **Ghost of Tsushima DIRECTOR'S CUT**, using Direct3D 12. It replaces the game's HDR tone curves with **PsychoV-30**, retains the game's LUT-based artistic grading, and gives scene and UI brightness separate controls.
 
-The mod also corrects HUD and video colors for BT.2020 output, applies the selected SDR gamma emulation to both scene and UI, and offers optional perceptual film grain and Lilium RCAS sharpening. These changes are implemented in the game's shaders, before the completed frame is presented.
+The mod also corrects HUD and video colors for BT.2020 output, applies the selected SDR gamma emulation to both scene and UI, and offers optional perceptual film grain, Lilium RCAS sharpening, and UE5-style chromatic aberration. These changes are implemented in the game's shaders, before the completed frame is presented.
 
 **Native HDR must be enabled in the game.** The addon is `renodx-gotsushima.addon64`.
 
@@ -29,6 +29,9 @@ The UI brightness override replaces the native HUD brightness multiplier on supp
 | SDR Gamma Emulation | 2.2 | Selects None, 2.2, or BT.1886 display-response emulation. HDR output remains PQ in every mode. |
 | Perceptual Film Grain | 0 | Adds animated, luminance-dependent scene grain. Range: 0–100; 0 disables it. |
 | Lilium RCAS Sharpening | 0 | Sharpens scene detail with noise attenuation. Range: 0–100; 0 disables it. |
+| Chromatic Aberration | Off | Enables UE5-style scene color fringing, before HUD composition. |
+| CA Intensity | 1.00 | Red/green separation strength, from 0–5. Zero bypasses the effect. |
+| CA Start Offset | 0.00 | Unaffected central region, from 0–0.95. Higher values confine fringing to the edges. |
 
 The custom brightness, grading, and effect controls operate with PsychoV selected. **Advanced** settings expose exposure, gamma, highlights, shadows, contrast, saturation, highlight saturation, blowout, flare, hue shift, and PsychoV's response/gamut parameters. The grading **Gamma** control is separate from **SDR Gamma Emulation**.
 
@@ -77,7 +80,7 @@ The native rational response is not a simple, exact gamma-2.4 power function. Th
 
 ```mermaid
 flowchart TD
-    A[Linear scene input and optional RCAS] --> B[Native local processing and color matrices]
+    A[Linear scene input, optional RCAS and chromatic aberration] --> B[Native local processing and color matrices]
     B --> C[Linear LUT shoulder, native LUT grade, reconstruction]
     C --> T[Direct LUT decode with selected gamma emulation]
     T --> D[Grade-calibrated PsychoV-30 and peak normalization]
@@ -181,6 +184,10 @@ The four [video shaders](video/) preserve the game's YUV-to-RGB coefficients and
 
 **Lilium RCAS** runs on the linear scene input before local processing, LUT grading, and PsychoV. Its center pixel and four source-texel neighbors all use the same signal domain and native distorted UV. The luminance implementation retains HDR normalization of 125, the 0.99 overshoot limiter, noise attenuation, and a bounded luminance-ratio resolve. Black and flat neighborhoods are guarded against undefined divisions. See [lilium_rcas.hlsli](lilium_rcas.hlsli).
 
+**Chromatic aberration** uses the inward red/green sampling pattern in the repo's decompiled UE5 Hellblade 2 (`0x189339AE`) and Oblivion Remastered (`0x99B126EC`) shaders, with blue undisplaced. Start Offset thresholds each centered screen-coordinate axis, matching those shaders' shape rather than using a circular mask. Red and green use wavelength differences of 147 and 85 nm relative to blue, with a 0.007 dispersion coefficient and percent intensity. This recreates UE5-style scene fringe within Ghost's pipeline; it does not reproduce UE5's entire camera/tonemapping pipeline. Epic documents the corresponding [Intensity and Start Offset controls](https://dev.epicgames.com/documentation/unreal-engine/post-process-effects-in-unreal-engine).
+
+The effect retains Ghost's distorted scene UV as its base coordinate and clamps displaced samples to source texel centers. It runs before local processing, LUT grading, and PsychoV, with no PQ-domain filtering or change to alpha. When RCAS is enabled, each displaced channel samples its own sharpened source neighborhood. CA adds two scene reads without RCAS, or ten with RCAS. Off, zero intensity, and the protected center bypass the extra samples. Vanilla and SDR in HDR bypass the effect; Recommended preserves its settings and Reset All disables it. See [chromatic_aberration.hlsli](chromatic_aberration.hlsli).
+
 **Perceptual Film Grain** runs after gamma emulation, PsychoV, and peak normalization, on linear BT.2020 color before PQ encoding. It uses RenoDX's shared film-density response with BT.2020 luminance weights, scene white as the reference, and a new random seed on each present. Strength is scaled to the shared effect's 0–0.03 range.
 
 Sharpening precedes the added grain, and both effects precede HUD composition. Neither is applied to HUD/video draws or to the completed frame. Any upstream native grain/sharpening and native output dithering remain in place. RCAS operates at source-texture resolution and grain at scene-pass output resolution, so their appearance can vary with the game's resolution/upscaling configuration.
@@ -192,12 +199,13 @@ The canonical mod folder and CMake target are **`gotsushima`**.
 | Path | Responsibility |
 |---|---|
 | [addon.cpp](addon.cpp) | Settings, presets, shader registration, blend-state guard, display-peak detection, and grain seed binding |
-| [shared.h](shared.h) | 96-byte C++/HLSL injection structure at `b13, space50` and PQ transport configuration |
+| [shared.h](shared.h) | 108-byte C++/HLSL injection structure at `b13, space50` and PQ transport configuration |
 | [common.hlsli](common.hlsli) | LUT shoulder, PsychoV integration, peak normalization, grain, and output helpers |
 | [test30.hlsl](test30.hlsl) | Local PsychoV-30 tone mapper |
 | [ui.hlsli](ui.hlsli) | Shared HUD/video color and brightness conversion |
 | [sdr.hlsli](sdr.hlsli) | Captured native SDR curve and shared SDR display transfer |
 | [lilium_rcas.hlsli](lilium_rcas.hlsli) | Scene sharpening |
+| [chromatic_aberration.hlsli](chromatic_aberration.hlsli) | UE5-style scene fringe and consistent RCAS sampling |
 | [tonemappers/](tonemappers/) | 2 scene/LUT shaders |
 | [output/](output/) | 1 final HDR10 output shader |
 | [hud/](hud/) | 47 HUD/menu shader variants |
@@ -236,6 +244,8 @@ The direct-decode revision passed strict compilation for all 54 shaders and the 
 The independent-anchor revision passed strict compilation for all 54 shaders and the Release build. Fixing both anchors at 0.18 produced scene binaries identical to the preceding version for PsychoV, Vanilla, and SDR in HDR. Synthetic neutral-response sweeps across the full anchor range at 0.0001 increments remained finite, bounded, and monotonic. In game, compare the default 0.1800/0.1800 appearance, then adjust each anchor separately and together on a fixed scene; repeat with the Recommended preset's highlight/shadow settings. Non-default saved anchor values now scale the calibrated anchors instead of selecting different LUT calibration samples.
 
 The user tested the independent-anchor Release build in game and confirmed that both sliders now adjust smoothly.
+
+The chromatic-aberration revision passed strict compilation for all 54 shaders. With CA disabled and the three added unused injection fields removed for the comparison, both scene shader binaries are identical to the previous version. Coordinate checks cover the protected center, zero intensity, offset limits, inward channel order, and texel bounds across four resolutions. Runtime appearance still needs verification: toggle CA on a fixed scene with sharp peripheral edges, sweep Intensity and Start Offset, then repeat with RCAS enabled. Check that menus/HUD stay unfringed and that Recommended preserves the effect settings while Reset All turns it off.
 
 For SDR in HDR, verify that white remains 203 nits, all mod grading/effect controls are disabled, previously saved extreme settings do not affect the reference, and switching back restores the PsychoV settings. Compare the same scene and map/menu against native SDR at matching white and gamma 2.2. The reference shaders passed strict `ps_6_6` compilation and the `vs-x64-release` build; temporary diagnostic shaders are excluded from the finished addon.
 

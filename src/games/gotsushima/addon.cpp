@@ -334,6 +334,38 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "FxChromaticAberration",
+        .binding = &shader_injection.chromatic_aberration_enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 0.f,
+        .label = "Chromatic Aberration",
+        .section = "Effects",
+        .tooltip = "Adds lens color fringing to the scene.",
+        .is_enabled = []() { return IsPsychoV(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxChromaticAberrationIntensity",
+        .binding = &shader_injection.chromatic_aberration_intensity,
+        .default_value = 0.75f,
+        .label = "CA Intensity",
+        .section = "Effects",
+        .tooltip = "Strength of the red/green lens separation. 0 removes fringing;",
+        .max = 5.f,
+        .format = "%.2f",
+        .is_enabled = []() { return IsPsychoV() && shader_injection.chromatic_aberration_enabled != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxChromaticAberrationStartOffset",
+        .binding = &shader_injection.chromatic_aberration_start_offset,
+        .default_value = 0.5f,
+        .label = "CA Start Offset",
+        .section = "Effects",
+        .tooltip = "Protects the center from fringing. 0 starts at the center; 0.5 keeps the middle half clear; values near 1 confine the effect to the edges.",
+        .max = 0.95f,
+        .format = "%.2f",
+        .is_enabled = []() { return IsPsychoV() && shader_injection.chromatic_aberration_enabled != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Recommended",
         .section = "Presets",
@@ -455,6 +487,9 @@ void OnPresetOff() {
       {"ColorGradeFlare", 0.f},
       {"FxFilmGrain", 0.f},
       {"FxSharpening", 0.f},
+      {"FxChromaticAberration", 0.f},
+      {"FxChromaticAberrationIntensity", 1.f},
+      {"FxChromaticAberrationStartOffset", 0.f},
   });
 }
 

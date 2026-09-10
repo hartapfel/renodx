@@ -4,7 +4,7 @@
 #include "./shared.h"
 #include "./sdr.hlsli"
 #include "./test30.hlsl"
-#include "./lilium_rcas.hlsli"
+#include "./chromatic_aberration.hlsli"
 
 bool GhostIsPsychoV() {
   return RENODX_TONE_MAP_TYPE == 1.f;

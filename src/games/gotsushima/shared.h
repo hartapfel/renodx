@@ -34,10 +34,14 @@ struct ShaderInjectData {
   float film_grain;
   float sharpening;
   float random_seed;
+
+  float chromatic_aberration_enabled;
+  float chromatic_aberration_intensity;
+  float chromatic_aberration_start_offset;
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 96);
+static_assert(sizeof(ShaderInjectData) == 108);
 #endif
 
 #ifndef __cplusplus
@@ -69,6 +73,9 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_FILM_GRAIN shader_injection.film_grain
 #define CUSTOM_SHARPENING shader_injection.sharpening
 #define CUSTOM_RANDOM shader_injection.random_seed
+#define CUSTOM_CA_ENABLED shader_injection.chromatic_aberration_enabled
+#define CUSTOM_CA_INTENSITY shader_injection.chromatic_aberration_intensity
+#define CUSTOM_CA_START_OFFSET shader_injection.chromatic_aberration_start_offset
 
 // Carry the PsychoV result as absolute-nit PQ through the game's bounded
 // post-tonemap RGB10A2 UNORM target. The final pass only clamps and re-encodes
