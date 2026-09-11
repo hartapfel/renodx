@@ -214,6 +214,40 @@ struct GhostSceneGrade {
   float lut_blend;
 };
 
+float3 GhostApplySceneColorFilter(
+    float3 filtered_bt709,
+    float3 scene_bt709,
+    GhostSDRCalibration calibration) {
+  // An identity LUT with the existing square-root shaper/reconstruction
+  // returns sqrt(scene). Omit native matrices and LUT color grading for this
+  // reference, but retain the selected decode and all user PsychoV controls.
+  float3 unfiltered_bt2020 = max(renodx::color::bt2020::from::BT709(
+      GhostToneMapPsychoV30(GhostDecodeLUTOutput(sqrt(max(scene_bt709, 0.f.xxx))), calibration)), 0.f.xxx);
+  const float peak = RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f);
+  // Match the original RGB10A2 transport bounds and final peak guard before
+  // choosing a luminance. This also covers UI white above the display peak.
+  float3 filtered_bt2020 = clamp(renodx::color::bt2020::from::BT709(filtered_bt709),
+                                0.f.xxx, (RENODX_INTERMEDIATE_SCALING / max(RENODX_DIFFUSE_WHITE_NITS, 1.f)).xxx);
+  filtered_bt2020 *= min(1.f, peak / max(renodx::math::Max(filtered_bt2020), 1e-6f));
+  const float luminance = renodx::color::y::from::BT2020(filtered_bt2020);
+  const float unfiltered_luminance = renodx::color::y::from::BT2020(unfiltered_bt2020);
+  unfiltered_bt2020 = unfiltered_luminance > 1e-6f
+                         ? unfiltered_bt2020 * (luminance / unfiltered_luminance)
+                         : luminance.xxx;
+  float3 chroma = lerp(unfiltered_bt2020, filtered_bt2020, saturate(CUSTOM_COLOR_FILTER)) - luminance;
+  // Reduce only chroma to fit the display volume, at fixed physical Y. A
+  // per-channel clamp or a max-channel scale here would change luminance.
+  const float3 target_chroma = RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE == 0.f
+                                  ? renodx::color::bt709::from::BT2020(chroma)
+                                  : chroma;
+  const float3 chroma_limit = renodx::math::Select(
+      target_chroma > 0.f,
+      (peak - luminance) / max(target_chroma, 1e-6f.xxx),
+      luminance / max(-target_chroma, 1e-6f.xxx));
+  chroma *= saturate(min(chroma_limit.x, min(chroma_limit.y, chroma_limit.z)));
+  return renodx::color::bt709::from::BT2020(luminance + chroma);
+}
+
 // Evaluate a neutral scene sample through the active matrices and LUTs.
 // Both routes use the same output decode; only native SDR has its scene
 // curve/clamp, while the HDR route uses the existing reconstructable shoulder.

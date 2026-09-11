@@ -35,6 +35,8 @@ The UI brightness override replaces the native HUD brightness multiplier on supp
 
 The custom brightness, grading, and effect controls operate with PsychoV selected. **Advanced** settings expose exposure, gamma, highlights, shadows, contrast, saturation, highlight saturation, blowout, flare, hue shift, and PsychoV's response/gamut parameters. The grading **Gamma** control is separate from **SDR Gamma Emulation**.
 
+**Color Filter**, at the bottom of Color Grading, controls the native matrices/LUT grade's color contribution from 0–100 (default 100). At 0, colors come from the scene before those grading stages; scene lighting, fog, and upstream local processing remain. The fully graded result still supplies luminance, so removing the filter does not remove the LUT's brightness or contrast curve. Recommended and Reset All restore 100.
+
 PsychoV defaults to a BT.2020 gamut target, full gamut compression, and automatic compression power. Adaptation and Background Anchor default to 0.1800, which preserves the calibrated baseline. Each slider scales its corresponding input or output anchor by `value / 0.18`; it does not move the LUT calibration samples. Both sliders have four-decimal precision. Cone Response Exponent defaults to 1.0, a multiplier on the contrast calibrated to the native SDR scene curve **before LUT grading and the native display transform**. Hue Shift adjusts PsychoV's fire-hue behavior and defaults to 100.
 
 ### SDR in HDR reference
@@ -84,7 +86,8 @@ flowchart TD
     B --> C[Linear LUT shoulder, native LUT grade, reconstruction]
     C --> T[Direct LUT decode with selected gamma emulation]
     T --> D[Grade-calibrated PsychoV-30 and display roll-off]
-    D --> E[BT.2020, optional grain, gamma-2.2 transport]
+    D --> CF[Optional Color Filter blend at fixed graded luminance]
+    CF --> E[BT.2020, optional grain, gamma-2.2 transport]
     U[HUD and video colors] --> V[Native SDR transfer, gamma emulation, BT.2020, gamma-2.2 transport]
     E --> F[Existing scene and UI composition]
     V --> F
@@ -94,6 +97,8 @@ flowchart TD
 The two scene shaders, `0x313ABA52` and `0x43D9A412`, preserve the native upstream processing and both color matrices while bypassing the HDR curve between those matrices. Both retain native LUT addressing and blending; `0x43D9A412` also retains its per-pixel LUT blend mask.
 
 **PsychoV runs after LUT grading.** The curve before the LUT controls lookup coordinates and their reconstruction; it does not replace the post-LUT display tone mapper.
+
+Below Color Filter 100, both scene shader variants also evaluate PsychoV on an identity-grade reference before the native color matrices and LUTs. This reference retains the selected decoding, user grading, and existing calibration. After tone mapping, its chromaticity is normalized to the fully graded output's linear luminance and blended with the graded color. Chroma is reduced toward neutral only as needed to fit the selected gamut and peak, preserving that luminance. This occurs before grain and HUD composition; HUD/video colors and Vanilla/SDR-reference modes are unaffected. Values below 100 cost an additional PsychoV evaluation but no additional LUT samples. At 100 the reference evaluation and blend are bypassed.
 
 ### Linear-light LUT shoulder
 
@@ -263,6 +268,8 @@ For SDR in HDR, verify that white remains 203 nits, all mod grading/effect contr
 The initial reference-mode map capture reached 202.9 nits after HDR10 quantization, with no NaN/Inf pixels. The static legend panel differed from the native SDR capture by an average of 0.44 equivalent 8-bit code values. The map projection and animated background changed between captures, so these results do not establish a scene-wide pixel match. Compiling the scene and output shaders with reference mode fixed removed all injected grading-buffer dependencies. The user confirmed that the new mode worked in game.
 
 Reusable vanilla HLSL and audit metadata from local development remain in `tmp/ghostoftsushima/vanilla/ui/`, with original shader binaries in `tmp/ghostoftsushima/original/`. These are local development artifacts, not required installation files or guaranteed contents of a fresh checkout. The archived candidate shaders are not all registered: output masks and procedural noise passes require composition evidence before adding a color transform.
+
+Color Filter validation: all 54 shaders passed strict `ps_6_6` compilation. With the added unused injection field excluded from the binary comparison, Filter 100 reproduces the preceding shader binaries. Numerical checks of the post-tone-map blend covered 192,000 combinations, including black, gamut boundaries, both gamut targets, and multiple peaks, retaining luminance to double-precision rounding. The addon rebuild and visual check are pending: build `cmake --build --preset vs-x64-release --target gotsushima`, then sweep Color Filter from 100 to 0 on a fixed tinted scene with grain off. Verify changing color with stable scene luminance, unchanged HUD, and reset to 100 through Recommended/Reset All. The injection layout grew to 112 bytes, so rebuild the addon rather than loading only the modified shaders.
 
 ## Credits
 

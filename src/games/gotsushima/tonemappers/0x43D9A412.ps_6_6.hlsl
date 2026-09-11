@@ -511,7 +511,10 @@ OutputSignature main(
     const GhostSDRCalibration ghost_calibration = GhostCalibratePsychoV(ghost_grade, s1);
     const float3 ghost_linear_lut = GhostDecodeLUTOutput(
         float3(_495, _496, _497));
-    const float3 ghost_psychov = GhostToneMapPsychoV30(ghost_linear_lut, ghost_calibration);
+    float3 ghost_psychov = GhostToneMapPsychoV30(ghost_linear_lut, ghost_calibration);
+    if (CUSTOM_COLOR_FILTER < 1.f) {
+      ghost_psychov = GhostApplySceneColorFilter(ghost_psychov, float3(_331, _332, _333), ghost_calibration);
+    }
     float3 ghost_intermediate = GhostRenderIntermediate(ghost_psychov, TEXCOORD);
     ghost_intermediate += _511;
     const float ghost_luminance = dot(
