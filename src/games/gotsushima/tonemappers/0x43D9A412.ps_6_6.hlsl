@@ -511,9 +511,7 @@ OutputSignature main(
     const GhostSDRCalibration ghost_calibration = GhostCalibratePsychoV(ghost_grade, s1);
     const float3 ghost_linear_lut = GhostDecodeLUTOutput(
         float3(_495, _496, _497));
-    const float3 ghost_psychov = GhostNormalizePsychoVEndpoint(
-        GhostToneMapPsychoV30(ghost_linear_lut, ghost_calibration),
-        GhostGetPsychoVEndpoint(ghost_calibration));
+    const float3 ghost_psychov = GhostToneMapPsychoV30(ghost_linear_lut, ghost_calibration);
     float3 ghost_intermediate = GhostRenderIntermediate(ghost_psychov, TEXCOORD);
     ghost_intermediate += _511;
     const float ghost_luminance = dot(

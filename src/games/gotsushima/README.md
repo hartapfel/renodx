@@ -35,7 +35,7 @@ The UI brightness override replaces the native HUD brightness multiplier on supp
 
 The custom brightness, grading, and effect controls operate with PsychoV selected. **Advanced** settings expose exposure, gamma, highlights, shadows, contrast, saturation, highlight saturation, blowout, flare, hue shift, and PsychoV's response/gamut parameters. The grading **Gamma** control is separate from **SDR Gamma Emulation**.
 
-PsychoV defaults to a BT.2020 gamut target, full gamut compression, and automatic compression power. Adaptation and Background Anchor default to 0.1800, which preserves the calibrated baseline. Each slider scales its corresponding input or output anchor by `value / 0.18`; it does not move the LUT calibration samples. Both sliders have four-decimal precision. Cone Response Exponent defaults to 1.0, a multiplier on the contrast calibrated to the native SDR curve and LUT **before the native display transform**. Hue Shift adjusts PsychoV's fire-hue behavior and defaults to 100.
+PsychoV defaults to a BT.2020 gamut target, full gamut compression, and automatic compression power. Adaptation and Background Anchor default to 0.1800, which preserves the calibrated baseline. Each slider scales its corresponding input or output anchor by `value / 0.18`; it does not move the LUT calibration samples. Both sliders have four-decimal precision. Cone Response Exponent defaults to 1.0, a multiplier on the contrast calibrated to the native SDR scene curve **before LUT grading and the native display transform**. Hue Shift adjusts PsychoV's fire-hue behavior and defaults to 100.
 
 ### SDR in HDR reference
 
@@ -83,7 +83,7 @@ flowchart TD
     A[Linear scene input, optional RCAS and chromatic aberration] --> B[Native local processing and color matrices]
     B --> C[Linear LUT shoulder, native LUT grade, reconstruction]
     C --> T[Direct LUT decode with selected gamma emulation]
-    T --> D[Grade-calibrated PsychoV-30 and peak normalization]
+    T --> D[Grade-calibrated PsychoV-30 and display roll-off]
     D --> E[BT.2020, optional grain, PQ]
     U[HUD and video colors] --> V[Native SDR transfer, gamma emulation, BT.2020, UI-white PQ]
     E --> F[Existing scene and UI composition]
@@ -128,17 +128,21 @@ The local [PsychoV-30 implementation](test30.hlsl) receives the directly decoded
 
 PsychoV intentionally omits the native BT.709 OETF followed by display decoding. That combination darkens shadows and midtones; preserving it is useful for an SDR reference but is no longer the custom scene's target. This is a deliberate presentation choice to soften the native contrast, not a claim that BT.709 encoding paired with a display EOTF is inherently erroneous. The original square-decode approximation is not restored. SDR in HDR and the validated HUD/video path retain their native SDR display transfer.
 
-The baseline input anchor is measured by passing a fixed neutral scene value of 0.18 through the native matrices, reconstructable LUT shoulder, active LUT blend, and direct LUT decode. The baseline output anchor passes the same fixed scene value through the captured native SDR curve and grade instead. Both calibration routes omit the native SDR display transform, so anchor matching cannot add its contrast back. Centered samples at +/- 1/64 stop around that fixed reference measure both logarithmic slopes; their ratio supplies PsychoV's baseline cone response. Flat or reversed LUT segments fall back to unit slope. Calibration includes the masked shader's local blend weight and uses luminance anchors to avoid imposing a new white balance.
+The baseline input anchor is measured by passing a fixed neutral scene value of 0.18 through the native matrices, reconstructable LUT shoulder, active LUT blend, and direct LUT decode. The baseline output anchor passes the same fixed scene value through the captured native SDR curve and grade instead. Both calibration routes omit the native SDR display transform, so anchor matching cannot add its contrast back. Anchor calibration includes the masked shader's local blend weight and uses luminance anchors to avoid imposing a new white balance.
+
+Contrast calibration samples at +/- 1/64 stop around that fixed reference **without the artistic LUT**, retaining the native matrices, scene curve, and selected decode. Their logarithmic slope ratio supplies PsychoV's baseline cone response; flat or reversed scene-curve segments fall back to unit slope. Previously this ratio used two different neighborhoods of the artistic LUT. A nearly flat HDR-side neighborhood could make the ratio enormous even for a monotonic LUT, producing excessive contrast and saturated edges. The LUT still supplies the color grade and both anchor levels, but no longer controls the contrast multiplier through that unstable division.
 
 The anchor sliders scale those baseline anchors only after calibration. This keeps the default 0.18/0.18 appearance while preventing slider movement from crossing LUT slope changes or toggling the calibration fallback. Adaptation Anchor generally darkens the scene as it increases; Background Anchor generally brightens it. PsychoV's normal dependence of highlight/shadow shaping and automatic compression on the anchors remains. Calibration can still change with the game's active LUT, blend mask, matrices, or selected gamma emulation.
 
-This matches the gray anchor and local contrast to the active SDR grade before its display transform; it does not target the completed SDR image or reproduce every colored pixel exactly. The SDR reference remains available for comparisons across scenes and LUT transitions. Calibration adds six grade evaluations per pixel, each sampling one or two LUTs depending on the active blend.
+This matches the gray anchors through the active SDR grade and the contrast of the native scene curve before LUT grading; it does not target the completed SDR image or reproduce every colored pixel exactly. The SDR reference remains available for comparisons across scenes and LUT transitions. Calibration now adds two grade evaluations per pixel, each sampling one or two LUTs depending on the active blend, plus four curve evaluations without texture reads.
 
 User gamma, contrast, and flare extensions operate on luminance before PsychoV. User Contrast is kept out of PsychoV's contrast argument to avoid its purity rescaling amplifying quantization into colored bands; calibrated slope is supplied through the cone-response exponent instead. Highlight saturation and blowout are applied through the output grading extension.
 
 PsychoV can constrain colors to BT.709 or BT.2020, but returns its result represented in linear BT.709 coordinates. A valid BT.2020 color can have negative components in that representation. The mod preserves those components until conversion to BT.2020 so that wide-gamut colors are not prematurely clipped to BT.709.
 
-Peak normalization evaluates PsychoV at a large finite input, 65504, and adjusts only values above scene reference white toward the selected HDR peak. It operates directly in display-linear light. The result is converted to BT.2020, optionally grained, scaled by Game Brightness, and encoded as absolute-nit PQ. Gamma emulation is not repeated at this stage.
+With Compression set to Auto/0, PsychoV uses an internal peak of at least 4000 nits to retain highlight gradients before fitting them to the selected display peak. An anchored finite-range Reinhard shoulder scales linear RGB uniformly using the BT.2020 maximum channel. It is identity below its knee, joins with unit slope, and maps the working peak exactly to the display peak. The knee is scene reference white, or half the display peak when that is lower. This replaces the previous finite-input endpoint stretch; the wider PsychoV response can also affect tones below the knee, even though the subsequent shoulder leaves them unchanged.
+
+Positive Compression values retain direct PsychoV evaluation at the selected peak. At peaks of 4000 nits or higher, Auto needs no additional range compression. The result is converted to BT.2020, optionally grained, scaled by Game Brightness, and encoded as absolute-nit PQ. Gamma emulation is not repeated at this stage.
 
 PQ carries the HDR signal through the game's existing bounded RGB10A2 intermediate. At final output, `0x53EBE0F3` decodes PQ to nits, uniformly scales colors whose maximum channel exceeds Peak Brightness, re-encodes PQ, and adds native dither with a final clamp to the selected PQ peak. The native display curve is not applied again.
 
@@ -188,7 +192,7 @@ The four [video shaders](video/) preserve the game's YUV-to-RGB coefficients and
 
 The effect retains Ghost's distorted scene UV as its base coordinate and clamps displaced samples to source texel centers. It runs before local processing, LUT grading, and PsychoV, with no PQ-domain filtering or change to alpha. When RCAS is enabled, each displaced channel samples its own sharpened source neighborhood. CA adds two scene reads without RCAS, or ten with RCAS. Off, zero intensity, and the protected center bypass the extra samples. Vanilla and SDR in HDR bypass the effect; Recommended preserves its settings and Reset All disables it. See [chromatic_aberration.hlsli](chromatic_aberration.hlsli).
 
-**Perceptual Film Grain** runs after gamma emulation, PsychoV, and peak normalization, on linear BT.2020 color before PQ encoding. It uses RenoDX's shared film-density response with BT.2020 luminance weights, scene white as the reference, and a new random seed on each present. Strength is scaled to the shared effect's 0–0.03 range.
+**Perceptual Film Grain** runs after gamma emulation, PsychoV, and display roll-off, on linear BT.2020 color before PQ encoding. It uses RenoDX's shared film-density response with BT.2020 luminance weights, scene white as the reference, and a new random seed on each present. Strength is scaled to the shared effect's 0–0.03 range.
 
 Sharpening precedes the added grain, and both effects precede HUD composition. Neither is applied to HUD/video draws or to the completed frame. Any upstream native grain/sharpening and native output dithering remain in place. RCAS operates at source-texture resolution and grain at scene-pass output resolution, so their appearance can vary with the game's resolution/upscaling configuration.
 
@@ -200,7 +204,7 @@ The canonical mod folder and CMake target are **`gotsushima`**.
 |---|---|
 | [addon.cpp](addon.cpp) | Settings, presets, shader registration, blend-state guard, display-peak detection, and grain seed binding |
 | [shared.h](shared.h) | 108-byte C++/HLSL injection structure at `b13, space50` and PQ transport configuration |
-| [common.hlsli](common.hlsli) | LUT shoulder, PsychoV integration, peak normalization, grain, and output helpers |
+| [common.hlsli](common.hlsli) | LUT shoulder, PsychoV integration, display roll-off, grain, and output helpers |
 | [test30.hlsl](test30.hlsl) | Local PsychoV-30 tone mapper |
 | [ui.hlsli](ui.hlsli) | Shared HUD/video color and brightness conversion |
 | [sdr.hlsli](sdr.hlsli) | Captured native SDR curve and shared SDR display transfer |
@@ -231,6 +235,8 @@ The local development installation uses an addon symlink to the Release binary, 
 
 ### Validation and future regression checks
 
+The Auto highlight-rolloff revision passed strict compilation for all 54 shaders and a Release build. Forced Vanilla and SDR-reference scene binaries remain unchanged. Numerical sweeps across 21 white/peak combinations verified monotonicity, bounded output, the knee, and exact endpoint mapping. Applying the shoulder offline to a 4000-nit fire capture retained gradients while reaching approximately 1000 nits after 10-bit PQ quantization. This is a simulation on an animated capture, not runtime confirmation. Retest the fire at 1000 nits and Compression Auto/0, then check ordinary scenes, saturated highlights, manual Compression, and peak settings above and below 4000 nits. The final output peak guard remains for HUD composition and effect overshoot.
+
 In-game checks have confirmed that the UI, video colors, brightness controls, gamma response, fades, and overlay composition look correct and behave as expected with the addon. The current implementation has passed strict shader compilation and the Release build. Moving the mod to `gotsushima` preserved all 54 compiled shaders byte-for-byte.
 
 The subsequent HUD transfer correction was checked against native SDR and PsychoV captures of the settings menu. At UI Brightness 203 nits and gamma 2.2, converting the HDR capture back to comparable SDR display codes reduced the sampled red tile's mean error from 12.4 to 0.56 on an 8-bit scale, with the white reference unchanged. The user confirmed the improved appearance in game. All 51 affected HUD/video shaders passed strict compilation, and the Release addon build passed. This comparison covers the captured menu; translucent blends and other screens still need the checks below.
@@ -244,6 +250,8 @@ The direct-decode revision passed strict compilation for all 54 shaders and the 
 The independent-anchor revision passed strict compilation for all 54 shaders and the Release build. Fixing both anchors at 0.18 produced scene binaries identical to the preceding version for PsychoV, Vanilla, and SDR in HDR. Synthetic neutral-response sweeps across the full anchor range at 0.0001 increments remained finite, bounded, and monotonic. In game, compare the default 0.1800/0.1800 appearance, then adjust each anchor separately and together on a fixed scene; repeat with the Recommended preset's highlight/shadow settings. Non-default saved anchor values now scale the calibrated anchors instead of selecting different LUT calibration samples.
 
 The user tested the independent-anchor Release build in game and confirmed that both sliders now adjust smoothly.
+
+The pre-LUT contrast-calibration correction passed strict compilation of all 54 shaders and a Release build. Both scene shaders remain byte-identical in forced Vanilla and SDR-reference modes. A synthetic monotonic LUT reproduces an old contrast multiplier above 150 while the corrected multiplier remains approximately 1.08; this demonstrates the numerical vulnerability, not a measurement of the affected game's LUT. Runtime verification should revisit the foggy scene at Cone Response 1.0 with optional effects off, then check ordinary scenes and LUT transitions. The user confirmed that lowering Cone Response to 0.5 mitigated the original issue; visual confirmation of the correction is pending.
 
 The chromatic-aberration revision passed strict compilation for all 54 shaders. With CA disabled and the three added unused injection fields removed for the comparison, both scene shader binaries are identical to the previous version. Coordinate checks cover the protected center, zero intensity, offset limits, inward channel order, and texel bounds across four resolutions. Runtime appearance still needs verification: toggle CA on a fixed scene with sharp peripheral edges, sweep Intensity and Start Offset, then repeat with RCAS enabled. Check that menus/HUD stay unfringed and that Recommended preserves the effect settings while Reset All turns it off.
 
