@@ -84,8 +84,8 @@ flowchart TD
     B --> C[Linear LUT shoulder, native LUT grade, reconstruction]
     C --> T[Direct LUT decode with selected gamma emulation]
     T --> D[Grade-calibrated PsychoV-30 and display roll-off]
-    D --> E[BT.2020, optional grain, PQ]
-    U[HUD and video colors] --> V[Native SDR transfer, gamma emulation, BT.2020, UI-white PQ]
+    D --> E[BT.2020, optional grain, gamma-2.2 transport]
+    U[HUD and video colors] --> V[Native SDR transfer, gamma emulation, BT.2020, gamma-2.2 transport]
     E --> F[Existing scene and UI composition]
     V --> F
     F --> G[Peak limiting, PQ output and dither]
@@ -142,9 +142,9 @@ PsychoV can constrain colors to BT.709 or BT.2020, but returns its result repres
 
 With Compression set to Auto/0, PsychoV uses an internal peak of at least 4000 nits to retain highlight gradients before fitting them to the selected display peak. An anchored finite-range Reinhard shoulder scales linear RGB uniformly using the BT.2020 maximum channel. It is identity below its knee, joins with unit slope, and maps the working peak exactly to the display peak. The knee is scene reference white, or half the display peak when that is lower. This replaces the previous finite-input endpoint stretch; the wider PsychoV response can also affect tones below the knee, even though the subsequent shoulder leaves them unchanged.
 
-Positive Compression values retain direct PsychoV evaluation at the selected peak. At peaks of 4000 nits or higher, Auto needs no additional range compression. The result is converted to BT.2020, optionally grained, scaled by Game Brightness, and encoded as absolute-nit PQ. Gamma emulation is not repeated at this stage.
+Positive Compression values retain direct PsychoV evaluation at the selected peak. At peaks of 4000 nits or higher, Auto needs no additional range compression. The result is converted to BT.2020, optionally grained, scaled by Game Brightness, and encoded for gamma-2.2 composition. Gamma emulation is not repeated at this stage.
 
-PQ carries the HDR signal through the game's existing bounded RGB10A2 intermediate. At final output, `0x53EBE0F3` decodes PQ to nits, uniformly scales colors whose maximum channel exceeds Peak Brightness, re-encodes PQ, and adds native dither with a final clamp to the selected PQ peak. The native display curve is not applied again.
+A gamma-2.2 BT.2020 signal carries HDR through the existing bounded RGB10A2 intermediate. Scene and HUD share a transport scale equal to the larger of Peak Brightness and UI Brightness, while their physical brightness is set independently before encoding. At final output, `0x53EBE0F3` decodes this transport to nits, uniformly scales colors whose maximum channel exceeds Peak Brightness, encodes PQ, and adds native dither with a final clamp to the selected PQ peak. This encoding/decoding pair does not apply another display grade. Intermediate filtering, blending, and 10-bit quantization do depend on its encoding.
 
 ## HUD, menus, and video
 
@@ -155,10 +155,10 @@ All 51 HUD/video replacements share [ui.hlsli](ui.hlsli). Ordinary color draws b
 1. Recover the unpremultiplied SDR color where required.
 2. Decode sRGB, unless the original shader has already produced linear RGB.
 3. Reproduce the native SDR output's BT.709 OETF, then interpret those display code values with the selected SDR Gamma Emulation response.
-4. Convert linear BT.709 to BT.2020 and encode PQ at UI Brightness.
+4. Convert linear BT.709 to BT.2020, scale to UI Brightness in nits, and encode into the common gamma-2.2 composition domain.
 5. Restore RGB coverage for premultiplied output, preserving the original output alpha.
 
-The native SDR output shader, `0x571EE768`, includes an sRGB decode followed by the BT.709 OETF. Omitting that conversion makes midtones and weaker color channels too bright, washing out the HUD. A capture of the native SDR swapchain confirmed this transfer against the preceding UI buffer. The mod reproduces it on UI colors before PQ encoding; it does not apply the native HDR rational display curve.
+The native SDR output shader, `0x571EE768`, includes an sRGB decode followed by the BT.709 OETF. Omitting that conversion makes midtones and weaker color channels too bright, washing out the HUD. A capture of the native SDR swapchain confirmed this transfer against the preceding UI buffer. The mod reproduces it on UI colors before composition encoding; it does not apply the native HDR rational display curve.
 
 The linear gamut conversion retains BT.709 primaries in the BT.2020 output container. For UI, **None** interprets the native SDR display codes as sRGB; **2.2** and **BT.1886** interpret them with gamma 2.2 and 2.4, respectively. The scene applies the selected decode directly to its reconstructed LUT values, omitting the native BT.709 OETF, before its calibrated PsychoV response. Both perform decoding in BT.709 before gamut conversion. Black and reference white stay fixed by these transfers, so UI Brightness continues to control white independently of the scene.
 
@@ -166,7 +166,7 @@ Native texture sampling, masks, clipping, depth fades, tinting, and alpha behavi
 
 ### Multiply overlays and the dark-box fix
 
-A shader hash can be used for ordinary UI color draws and destination-color multiply draws. [IsUIColorDraw](addon.cpp) checks the actual pipeline blend state for every registered HUD/video hash. Draws using source/destination color factors retain the native shader instead of receiving the PQ color conversion.
+A shader hash can be used for ordinary UI color draws and destination-color multiply draws. [IsUIColorDraw](addon.cpp) checks the actual pipeline blend state for every registered HUD/video hash. Draws using source/destination color factors retain the native shader instead of receiving the color conversion.
 
 For the observed destination-color blend:
 
@@ -174,9 +174,9 @@ For the observed destination-color blend:
 result = destination * (source + 1 - alpha)
 ```
 
-The neutral source is `source = alpha`. Encoding that multiplier as a PQ color would change its neutral value and darken the entire quad, exposing a rectangle around otherwise invisible UI geometry. Keeping the native multiplier fixes the box while ordinary color draws still receive the brightness and gamut correction.
+The neutral source is `source = alpha`. Encoding that multiplier as a display color would change its neutral value and darken the entire quad, exposing a rectangle around otherwise invisible UI geometry. Keeping the native multiplier fixes the box while ordinary color draws still receive the brightness and gamut correction.
 
-Composition continues in the existing PQ intermediate. The mod preserves the game's blend states; it does not replace the compositor with linear-light blending. Since the UI transfer runs before composition, translucent blends can differ from native SDR, whose output transfer runs after composition.
+Composition uses gamma-2.2-encoded BT.2020 rather than PQ. PQ blending made partially covered dark strokes much too dark: analytically, 50% black over 203-nit white produces about 8.9 nits in PQ, versus 44.2 nits in gamma 2.2. Moving PQ encoding to final output restores a power-law blending response closer to the native encoded compositor, without changing alpha, coverage, opaque HUD colors, or the scene tone mapper. This remains an approximation to native blending, since vanilla blends in BT.709 before its display curve. Gamma emulation still controls the HUD's source color response; the composition encoding is fixed independently.
 
 ### Video handling
 
@@ -192,7 +192,7 @@ The four [video shaders](video/) preserve the game's YUV-to-RGB coefficients and
 
 The effect retains Ghost's distorted scene UV as its base coordinate and clamps displaced samples to source texel centers. It runs before local processing, LUT grading, and PsychoV, with no PQ-domain filtering or change to alpha. When RCAS is enabled, each displaced channel samples its own sharpened source neighborhood. CA adds two scene reads without RCAS, or ten with RCAS. Off, zero intensity, and the protected center bypass the extra samples. Vanilla and SDR in HDR bypass the effect; Recommended preserves its settings and Reset All disables it. See [chromatic_aberration.hlsli](chromatic_aberration.hlsli).
 
-**Perceptual Film Grain** runs after gamma emulation, PsychoV, and display roll-off, on linear BT.2020 color before PQ encoding. It uses RenoDX's shared film-density response with BT.2020 luminance weights, scene white as the reference, and a new random seed on each present. Strength is scaled to the shared effect's 0–0.03 range.
+**Perceptual Film Grain** runs after gamma emulation, PsychoV, and display roll-off, on linear BT.2020 color before composition encoding. It uses RenoDX's shared film-density response with BT.2020 luminance weights, scene white as the reference, and a new random seed on each present. Strength is scaled to the shared effect's 0–0.03 range.
 
 Sharpening precedes the added grain, and both effects precede HUD composition. Neither is applied to HUD/video draws or to the completed frame. Any upstream native grain/sharpening and native output dithering remain in place. RCAS operates at source-texture resolution and grain at scene-pass output resolution, so their appearance can vary with the game's resolution/upscaling configuration.
 
@@ -203,9 +203,10 @@ The canonical mod folder and CMake target are **`gotsushima`**.
 | Path | Responsibility |
 |---|---|
 | [addon.cpp](addon.cpp) | Settings, presets, shader registration, blend-state guard, display-peak detection, and grain seed binding |
-| [shared.h](shared.h) | 108-byte C++/HLSL injection structure at `b13, space50` and PQ transport configuration |
+| [shared.h](shared.h) | 108-byte C++/HLSL injection structure at `b13, space50` and gamma composition configuration |
 | [common.hlsli](common.hlsli) | LUT shoulder, PsychoV integration, display roll-off, grain, and output helpers |
 | [test30.hlsl](test30.hlsl) | Local PsychoV-30 tone mapper |
+| [intermediate.hlsli](intermediate.hlsli) | Shared scene/UI gamma-2.2 transport encoder |
 | [ui.hlsli](ui.hlsli) | Shared HUD/video color and brightness conversion |
 | [sdr.hlsli](sdr.hlsli) | Captured native SDR curve and shared SDR display transfer |
 | [lilium_rcas.hlsli](lilium_rcas.hlsli) | Scene sharpening |
@@ -234,6 +235,8 @@ Keep vanilla dumps and `.cso` archives outside the source tree to avoid duplicat
 The local development installation uses an addon symlink to the Release binary, so a successful build updates the deployed file. The former `ghostoftsushima` source folder and deployed addon link have been replaced by `gotsushima`.
 
 ### Validation and future regression checks
+
+The map HUD investigation found ordinary straight/premultiplied-alpha draws in the scene intermediate and full-resolution composite, plus an OptiScaler sharpening pass between them. Disabling OptiScaler sharpening did not resolve the heavy borders. The gamma-composition correction passed strict compilation of all 54 shaders and a Release build, with all forced Vanilla and SDR-reference binaries unchanged. Numerical checks verified transport roundtrips and black-over-white coverage across 15 display/UI-white combinations. Runtime validation is pending: compare map icons, text, panels, multiply overlays, UI fades, videos, scene gradients, and fire highlights; repeat with the usual upscaler and optional effects.
 
 The Auto highlight-rolloff revision passed strict compilation for all 54 shaders and a Release build. Forced Vanilla and SDR-reference scene binaries remain unchanged. Numerical sweeps across 21 white/peak combinations verified monotonicity, bounded output, the knee, and exact endpoint mapping. Applying the shoulder offline to a 4000-nit fire capture retained gradients while reaching approximately 1000 nits after 10-bit PQ quantization. This is a simulation on an animated capture, not runtime confirmation. Retest the fire at 1000 nits and Compression Auto/0, then check ordinary scenes, saturated highlights, manual Compression, and peak settings above and below 4000 nits. The final output peak guard remains for HUD composition and effect overshoot.
 

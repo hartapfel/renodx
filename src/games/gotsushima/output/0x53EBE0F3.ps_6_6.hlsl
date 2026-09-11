@@ -162,7 +162,7 @@ float4 main(
   float _153 = _151.x * 0.0009775171056389809f;
   float _154 = _153 + -0.0004887585528194904f;
   if (GhostIsPsychoV()) {
-    // Clamp the absolute-nit PQ BT.2020 intermediate and write HDR10 PQ.
+    // Decode the gamma-2.2 composition buffer and write final HDR10 PQ.
     const float ghost_peak_pq = renodx::color::pq::EncodeSafe(
         max(RENODX_PEAK_WHITE_NITS, 1.f).xxx,
         1.f).x;

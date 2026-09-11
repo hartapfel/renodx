@@ -138,7 +138,7 @@ float4 main(
                 ? _33.rgb
                 : renodx::math::DivideSafe(_33.rgb, cbufGlobal_264.xxx, _33.rgb),
             _33.w);
-        // SDR decode/gamma -> linear BT.709-to-BT.2020 -> UI-white PQ.
+        // SDR decode/gamma -> linear BT.709-to-BT.2020 -> composition encoding.
         // Native output dither stays after encoding, outside the transform.
         SV_Target.rgb = GhostRenderUI(ghost_video, 1.f) + _106;
       }

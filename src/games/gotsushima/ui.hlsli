@@ -2,6 +2,7 @@
 #define SRC_GAMES_GOTSUSHIMA_UI_HLSLI_
 
 #include "./sdr.hlsli"
+#include "./intermediate.hlsli"
 
 bool GhostIsUIOverrideActive() {
   return RENODX_TONE_MAP_TYPE != 0.f
@@ -36,9 +37,8 @@ float3 GhostRenderUI(float3 color_bt709, float coverage, bool linear_input = fal
   } else if (RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
     linear_bt709 = renodx::color::correct::GammaSafe(linear_bt709, false, 2.4f);
   }
-  return renodx::color::pq::EncodeSafe(
-             renodx::color::bt2020::from::BT709(linear_bt709),
-             RENODX_GRAPHICS_WHITE_NITS)
+  return GhostEncodeIntermediate(
+             renodx::color::bt2020::from::BT709(linear_bt709) * RENODX_GRAPHICS_WHITE_NITS)
          * coverage;
 }
 

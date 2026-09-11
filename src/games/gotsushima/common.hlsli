@@ -2,6 +2,7 @@
 #define SRC_GAMES_GOTSUSHIMA_COMMON_HLSLI_
 
 #include "./shared.h"
+#include "./intermediate.hlsli"
 #include "./sdr.hlsli"
 #include "./test30.hlsl"
 #include "./chromatic_aberration.hlsli"
@@ -272,28 +273,28 @@ GhostSDRCalibration GhostCalibratePsychoV(GhostSceneGrade grade, SamplerState lu
 
 float3 GhostRenderIntermediate(float3 color_bt709, float2 uv) {
   // PsychoV returns its target-gamut result represented as linear BT.709.
-  // Convert it to BT.2020 before PQ transport so valid wide-gamut
+  // Convert it to BT.2020 before transport so valid wide-gamut
   // colors do not require negative channels in the RGB10A2 intermediate.
   float3 color_bt2020 = max(
       renodx::color::bt2020::from::BT709(color_bt709), 0.f.xxx);
   if (CUSTOM_FILM_GRAIN > 0.f) {
     // Perceptual film density is evaluated in linear display-referred color,
-    // relative to scene white. Apply after PsychoV, before PQ and HUD.
+    // relative to scene white. Apply after PsychoV, before encoding and HUD.
     color_bt2020 = renodx::effects::ApplyFilmGrain(
         color_bt2020, uv, CUSTOM_RANDOM, CUSTOM_FILM_GRAIN * 0.03f,
         1.f, false, renodx::color::BT2020_TO_XYZ_MAT);
   }
   // The display EOTF has already been applied to the LUT result. Applying
   // RenderIntermediatePass here would apply gamma emulation a second time.
-  return renodx::color::pq::EncodeSafe(color_bt2020, RENODX_DIFFUSE_WHITE_NITS);
+  return GhostEncodeIntermediate(color_bt2020 * RENODX_DIFFUSE_WHITE_NITS);
 }
 
 float3 GhostEncodeHDR10(float3 intermediate_encoded) {
-  // The intermediate is already absolute-nit PQ. Decode it only to clamp at
-  // the selected display peak, then emit HDR10 PQ without an SDR transfer.
+  // Undo the composition encoding, preserving the scene/UI display response.
+  // Apply the peak guard and encode PQ only after native HUD composition.
   float3 color_bt2020_nits = max(
-      renodx::color::pq::DecodeSafe(intermediate_encoded, 1.f),
-      0.f.xxx);
+      renodx::color::gamma::DecodeSafe(intermediate_encoded, 2.2f),
+      0.f.xxx) * RENODX_INTERMEDIATE_SCALING;
   const float max_nits = renodx::math::Max(color_bt2020_nits);
   color_bt2020_nits *= min(
       1.f,

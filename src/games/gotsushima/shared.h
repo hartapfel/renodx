@@ -77,15 +77,15 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_CA_INTENSITY shader_injection.chromatic_aberration_intensity
 #define CUSTOM_CA_START_OFFSET shader_injection.chromatic_aberration_start_offset
 
-// Carry the PsychoV result as absolute-nit PQ through the game's bounded
-// post-tonemap RGB10A2 UNORM target. The final pass only clamps and re-encodes
-// that PQ signal; it must not apply an SDR transfer to the composed frame.
-#define RENODX_INTERMEDIATE_SCALING RENODX_DIFFUSE_WHITE_NITS
-#define RENODX_INTERMEDIATE_ENCODING renodx::draw::ENCODING_PQ
-#define RENODX_SWAP_CHAIN_DECODING renodx::draw::ENCODING_PQ
+// Use a common gamma-2.2 BT.2020 composition domain for scene and HUD.
+// Reserve the full display/UI range in RGB10A2; convert to PQ only after
+// native alpha blending and filtering. This is transport, not another grade.
+#define RENODX_INTERMEDIATE_SCALING max(max(RENODX_PEAK_WHITE_NITS, RENODX_GRAPHICS_WHITE_NITS), 1.f)
+#define RENODX_INTERMEDIATE_ENCODING renodx::draw::ENCODING_GAMMA_2_2
+#define RENODX_SWAP_CHAIN_DECODING renodx::draw::ENCODING_GAMMA_2_2
 #define RENODX_SWAP_CHAIN_DECODING_COLOR_SPACE \
   renodx::color::convert::COLOR_SPACE_BT2020
-#define RENODX_SWAP_CHAIN_SCALING_NITS 1.f
+#define RENODX_SWAP_CHAIN_SCALING_NITS RENODX_INTERMEDIATE_SCALING
 #define RENODX_SWAP_CHAIN_OUTPUT_PRESET renodx::draw::SWAP_CHAIN_OUTPUT_PRESET_HDR10
 
 #include "../../shaders/renodx.hlsl"

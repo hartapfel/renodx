@@ -45,7 +45,7 @@ bool IsUIColorDraw(reshade::api::command_list* cmd_list) {
     const auto& blend = *static_cast<const reshade::api::blend_desc*>(subobject.data);
     // The same HUD shader can draw colors or multiply the destination.
     // Multipliers must retain their native identity of 1; treating them as
-    // PQ colors makes the neutral region of a quad darken the background.
+    // encoded colors makes the neutral region of a quad darken the background.
     return !blend.blend_enable[0]
            || (blend.source_color_blend_factor[0] != reshade::api::blend_factor::dest_color
                && blend.source_color_blend_factor[0] != reshade::api::blend_factor::one_minus_dest_color
