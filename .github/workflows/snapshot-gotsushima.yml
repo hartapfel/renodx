@@ -1,0 +1,100 @@
+name: Ghost of Tsushima snapshot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up shader tools
+        shell: pwsh
+        run: .\scripts\setup-dev-env.ps1 -Update -Tools dxc,slang,glslang
+
+      - name: Set up Clang
+        uses: egor-tensin/setup-clang@v1
+        with:
+          version: latest
+          platform: x64
+
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Configure
+        run: cmake --preset clang-x64
+
+      - name: Build Ghost only (Release)
+        run: cmake --build --preset clang-x64-release --target gotsushima
+
+      - name: Prepare download and build information
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path site | Out-Null
+          Copy-Item -LiteralPath build/Release/renodx-gotsushima.addon64 -Destination site/
+          $checksum = (Get-FileHash -Algorithm SHA256 -LiteralPath site/renodx-gotsushima.addon64).Hash.ToLowerInvariant()
+          "$checksum  renodx-gotsushima.addon64" | Set-Content -Encoding utf8 site/SHA256SUMS.txt
+          @{
+            repository = $env:GITHUB_REPOSITORY
+            commit = $env:GITHUB_SHA
+            configuration = 'Release'
+            target = 'gotsushima'
+            sha256 = $checksum
+            run = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          } | ConvertTo-Json | Set-Content -Encoding utf8 site/build.json
+          @"
+          <!doctype html>
+          <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+          <title>Ghost of Tsushima RenoDX snapshot</title>
+          <h1>Ghost of Tsushima RenoDX snapshot</h1>
+          <p><a href="renodx-gotsushima.addon64">Download the Release addon</a></p>
+          <p>Built from <a href="https://github.com/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA">$env:GITHUB_SHA</a>.</p>
+          <p><a href="build.json">Build details</a> | <a href="SHA256SUMS.txt">SHA-256 checksum</a></p>
+          </html>
+          "@ | Set-Content -Encoding utf8 site/index.html
+          New-Item -ItemType File -Path site/.nojekyll | Out-Null
+
+      - name: Save snapshot with this workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: gotsushima-release-${{ github.sha }}
+          path: |
+            site/renodx-gotsushima.addon64
+            site/build.json
+            site/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Prepare GitHub Pages deployment
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish download
+        id: deployment
+        uses: actions/deploy-pages@v4
