@@ -765,10 +765,13 @@ float3 psycho30_MeanA2ResponseFromPositiveQ(
     if (mean_radius6 > PSYCHO30_EPSILON2) {
       float2 authored_direction = mean_direction * rsqrt(mean_radius6);
       if (hue_restore != 0.f) {
+        // Ghost: retain the baseline angular midpoint at 0, restore the
+        // pre-response source direction at 1 without extrapolating past it.
+        // Keep the finite response radius and luminance/peak solve unchanged.
         authored_direction = lerp(
             authored_direction,
-            response_direction,
-            clamp(hue_restore, 0.f, 2.f));
+            source_direction,
+            saturate(hue_restore));
         authored_direction *= rsqrt(max(
             psycho30_ScaledA2Radius6(authored_direction),
             PSYCHO30_EPSILON2));
@@ -1235,7 +1238,7 @@ float3 psychotm_test30(
     float purity_scale = 1.f,                       // adaptation-relative LMS purity
     float bleaching_intensity = 1.f,                // positional compatibility placeholder
     float clip_point = 100.f,                       // positional compatibility placeholder
-    float hue_restore = 0.f,                        // response-side A2 hue shift, 0 to 2
+    float hue_restore = 0.f,                        // Ghost: source A2 hue restoration, 0 to 1
     float encoded_response_power = 1.f,             // positional compatibility placeholder
     int white_curve_mode = 0,                       // positional compatibility placeholder
     float cone_response_exponent = 1.f,             // second factor in cone power p

@@ -127,10 +127,10 @@ renodx::utils::settings::Settings settings = {
         .default_value = 100.f,
         .label = "Hue Shift",
         .section = "Tone Mapping",
-        .tooltip = "Shifts PsychoV-30 fire hues away from pink towards orange.",
+        .tooltip = "Restores hue toward the LUT-graded input before PsychoV. 0 keeps the default tone-mapped hue; 100 restores the source hue direction within the output gamut. Affects scene colors, not only flames.",
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV(); },
-        .parse = [](float value) { return value * 0.02f; },
+        .parse = [](float value) { return value * 0.01f; },
         .is_visible = []() { return IsPsychoV() && settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
@@ -382,7 +382,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Recommended",
         .section = "Presets",
         .group = "button-line-1",
-        .tooltip = "Restores tone-mapping and grading defaults, then sets Cone Response to 1.15, Highlights to 45, Shadows to 80, and Blowout to 5. Preserves Game Brightness, UI Brightness, and effects.",
+        .tooltip = "Recommended settings for balanced, more natural contrast and shadow detail.",
         .tint = 0xFF5F5F,
         .is_enabled = []() { return IsPsychoV(); },
         .on_change = []() {
@@ -400,6 +400,32 @@ renodx::utils::settings::Settings settings = {
               {"ColorGradeHighlights", 45.f},
               {"ColorGradeShadows", 80.f},
               {"ColorGradeBlowout", 5.f},
+          });
+        },
+    },
+        new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
+        .label = "Enhanced native look",
+        .section = "Presets",
+        .group = "button-line-1",
+        .tooltip = "Tries to emulate the native HDR look through adding contrast to the tonemapper while retaining some shadow detail.",
+        .is_enabled = []() { return IsPsychoV(); },
+        .on_change = []() {
+          for (const auto* setting : settings) {
+            if (setting->section != "Tone Mapping"
+                && setting->section != "Color Grading"
+                && setting->section != "PsychoV30") continue;
+            if (setting->key == "ToneMapType"
+                || setting->key == "ToneMapGameNits"
+                || setting->key == "ToneMapUINits") continue;
+            renodx::utils::settings::UpdateSetting(setting->key, setting->default_value);
+          }
+          renodx::utils::settings::UpdateSettings({
+              {"PsychoVConeResponseExponent", 1.29f},
+              {"PsychoVAdaptationAnchor", 0.2f},
+              {"PsychoVBackgroundAnchor", 0.17f},
+              {"ColorGradeSaturation", 46.f},
+              {"ColorGradeHighlights", 40.f},
           });
         },
     },
