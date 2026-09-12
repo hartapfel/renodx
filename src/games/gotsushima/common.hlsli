@@ -185,6 +185,23 @@ float GhostGetLUTSamplingScale(float3 linear_bt709) {
   return sqrt(mapped_max / max_channel);
 }
 
+float3 GhostFitLUTInputGamut(float3 color_bt709) {
+  const float min_channel = renodx::math::Min(color_bt709);
+  if (min_channel >= 0.f) return color_bt709;
+
+  // The native pre/post matrices are not inverses. With their scene curve
+  // bypassed, real pixels can leave BT.709 before the square-root LUT shaper.
+  // Project toward neutral at fixed physical Y instead of clipping channels
+  // independently. This preserves the RGB chroma direction, but necessarily
+  // reduces out-of-gamut saturation; the bounded LUT cannot represent it.
+  const float luminance = renodx::color::y::from::BT709(color_bt709);
+  if (luminance <= 0.f) return 0.f.xxx;
+
+  // Equivalent to Y + (RGB - Y) * Y / (Y - min(RGB)). This form produces
+  // an exact zero in the minimum channel without cancellation below zero.
+  return (color_bt709 - min_channel) * (luminance / (luminance - min_channel));
+}
+
 // Decode the reconstructed LUT's sRGB representation directly. PsychoV
 // deliberately omits the native BT.709 OETF/display-EOTF contrast; that
 // presentation remains available in SDR in HDR and on the validated UI path.
@@ -256,7 +273,8 @@ float3 GhostApplySceneColorFilter(
 float GhostEvaluateGray(float gray, GhostSceneGrade grade, SamplerState lut_sampler, bool native_sdr, bool sample_lut) {
   float3 color = GhostApplyPackedColorMatrix(gray.xxx, grade.pre_0, grade.pre_1, grade.pre_2);
   if (native_sdr) color = GhostToneMapSDR(color);
-  color = max(GhostApplyPackedColorMatrix(color, grade.post_0, grade.post_1, grade.post_2), 0.f.xxx);
+  color = GhostApplyPackedColorMatrix(color, grade.post_0, grade.post_1, grade.post_2);
+  color = native_sdr ? max(color, 0.f.xxx) : GhostFitLUTInputGamut(color);
   // Contrast calibration uses the native scene curve, not derivatives of
   // different artistic LUT cells. A nearly flat HDR-side LUT segment can
   // otherwise turn their slope ratio into an arbitrarily strong cone power.

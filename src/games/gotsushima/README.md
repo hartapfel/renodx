@@ -127,6 +127,8 @@ The native square-root RGB coordinates are multiplied by `lookup_scale`, then pa
 
 This keeps the LUT's artistic grade while allowing HDR brightness reconstruction outside the LUT's bounded coordinate range. It does not invert or remove the LUT's own color grading.
 
+The native matrices on either side of the bypassed scene curve are retained, but they are not inverses. Real scene captures confirmed that their combined output can contain negative channels before LUT sampling. PsychoV now fits these colors toward neutral at constant linear BT.709 luminance until the lowest channel reaches zero, instead of clipping individual channels. Already nonnegative colors pass through unchanged. This preserves the RGB chroma direction and pre-LUT luminance while reducing out-of-gamut saturation; it does not recover the full signed color through the bounded LUT or guarantee unchanged luminance after artistic LUT grading. The HDR-side gray calibration uses the same fit. Native and SDR-reference paths retain their original behavior.
+
 ### PsychoV, gamut, and HDR transport
 
 The local [PsychoV-30 implementation](test30.hlsl) receives the directly decoded LUT result. **None** uses sRGB decode; **2.2** and **BT.1886** substitute gamma 2.2 and 2.4 decoding, respectively. This is equivalent to sRGB decode followed by RenoDX's corresponding gamma-emulation correction, applied once before PsychoV.

@@ -365,7 +365,7 @@ OutputSignature main(
         ghost_pre_lut, _20, _26, _32);
     ghost_pre_lut = GhostApplyPackedColorMatrix(
         ghost_pre_lut, _35, _41, _47);
-    ghost_pre_lut = max(ghost_pre_lut, 0.f.xxx);
+    ghost_pre_lut = GhostFitLUTInputGamut(ghost_pre_lut);
     _397 = ghost_pre_lut.x;
     _400 = ghost_pre_lut.y;
     _403 = ghost_pre_lut.z;

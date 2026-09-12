@@ -542,7 +542,8 @@ void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
   auto peak = renodx::utils::swapchain::GetPeakNits(swapchain);
   if (!peak.has_value()) return;
 
-  auto* peak_setting = settings[2];
+  auto* peak_setting = renodx::utils::settings::FindSetting("ToneMapPeakNits");
+  if (peak_setting == nullptr) return;
   const bool using_default_peak = peak_setting->GetValue() == peak_setting->default_value;
   peak_setting->default_value = std::clamp(peak.value(), peak_setting->min, peak_setting->max);
   peak_setting->can_reset = true;
