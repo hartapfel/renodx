@@ -39,10 +39,11 @@ struct ShaderInjectData {
   float chromatic_aberration_intensity;
   float chromatic_aberration_start_offset;
   float color_filter;
+  float bloom_intensity;
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 112);
+static_assert(sizeof(ShaderInjectData) == 116);
 #endif
 
 #ifndef __cplusplus
@@ -78,6 +79,7 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_CA_INTENSITY shader_injection.chromatic_aberration_intensity
 #define CUSTOM_CA_START_OFFSET shader_injection.chromatic_aberration_start_offset
 #define CUSTOM_COLOR_FILTER shader_injection.color_filter
+#define CUSTOM_BLOOM_INTENSITY shader_injection.bloom_intensity
 
 // Use a common gamma-2.2 BT.2020 composition domain for scene and HUD.
 // Reserve the full display/UI range in RGB10A2; convert to PQ only after

@@ -64,7 +64,7 @@ Values below are the numbers shown in the UI.
 | Shadows | 80 |
 | Blowout | 5 |
 
-The red **Recommended** button restores the remaining Tone Mapping, Color Grading, and PsychoV30 settings to their current defaults, including Peak Brightness, SDR Gamma Emulation, and Hue Shift. It preserves **Game Brightness**, **UI Brightness**, and both **Effects** sliders. Tone Mapper and Settings Mode also remain selected. Peak Brightness resets to the detected display default when available, otherwise 1000 nits. Recommended is available only with PsychoV selected and is not applied automatically on startup. The former Match native preset has been removed.
+The red **Recommended** button restores the remaining Tone Mapping, Color Grading, and PsychoV30 settings to their current defaults, including Peak Brightness, SDR Gamma Emulation, and Hue Shift. It preserves **Game Brightness**, **UI Brightness**, and all **Effects** settings. Tone Mapper and Settings Mode also remain selected. Peak Brightness resets to the detected display default when available, otherwise 1000 nits. Recommended is available only with PsychoV selected and is not applied automatically on startup. The former Match native preset has been removed.
 
 **Reset All** resets the settings marked as resettable, including both effects. It retains the selected Tone Mapper and Settings Mode. **Preset Off** explicitly selects Vanilla and disables the custom effects and gamma emulation.
 
@@ -193,6 +193,10 @@ The four [video shaders](video/) preserve the game's YUV-to-RGB coefficients and
 
 ## Optional scene effects
 
+**Bloom Intensity** scales the native bloom extraction output before the blur pyramid and scene tone mapping. The native threshold, limiter, blur shape, and reconstruction weights remain intact; scaling all packed color components together preserves their relative color. This controls the bloom contribution without scaling the separately generated lens flares.
+
+Bloom Intensity ranges from 0% (disabled) to 200%, with 100% preserving native intensity. It is active only with PsychoV; Vanilla and SDR in HDR retain native bloom. Recommended preserves the selected intensity, while Reset All and Preset Off restore 100%. Lens flares use the original game shader without a replacement.
+
 **Lilium RCAS** runs on the linear scene input before local processing, LUT grading, and PsychoV. Its center pixel and four source-texel neighbors all use the same signal domain and native distorted UV. The luminance implementation retains HDR normalization of 125, the 0.99 overshoot limiter, noise attenuation, and a bounded luminance-ratio resolve. Black and flat neighborhoods are guarded against undefined divisions. See [lilium_rcas.hlsli](lilium_rcas.hlsli).
 
 **Chromatic aberration** uses the inward red/green sampling pattern in the repo's decompiled UE5 Hellblade 2 (`0x189339AE`) and Oblivion Remastered (`0x99B126EC`) shaders, with blue undisplaced. Start Offset thresholds each centered screen-coordinate axis, matching those shaders' shape rather than using a circular mask. Red and green use wavelength differences of 147 and 85 nm relative to blue, with a 0.007 dispersion coefficient and percent intensity. This recreates UE5-style scene fringe within Ghost's pipeline; it does not reproduce UE5's entire camera/tonemapping pipeline. Epic documents the corresponding [Intensity and Start Offset controls](https://dev.epicgames.com/documentation/unreal-engine/post-process-effects-in-unreal-engine).
@@ -210,7 +214,7 @@ The canonical mod folder and CMake target are **`gotsushima`**.
 | Path | Responsibility |
 |---|---|
 | [addon.cpp](addon.cpp) | Settings, presets, shader registration, blend-state guard, display-peak detection, and grain seed binding |
-| [shared.h](shared.h) | 108-byte C++/HLSL injection structure at `b13, space50` and gamma composition configuration |
+| [shared.h](shared.h) | 116-byte C++/HLSL injection structure at `b13, space50` and gamma composition configuration |
 | [common.hlsli](common.hlsli) | LUT shoulder, PsychoV integration, display roll-off, grain, and output helpers |
 | [test30.hlsl](test30.hlsl) | Local PsychoV-30 tone mapper |
 | [intermediate.hlsli](intermediate.hlsli) | Shared scene/UI gamma-2.2 transport encoder |
@@ -222,8 +226,9 @@ The canonical mod folder and CMake target are **`gotsushima`**.
 | [output/](output/) | 1 final HDR10 output shader |
 | [hud/](hud/) | 47 HUD/menu shader variants |
 | [video/](video/) | 4 YUV video shader variants |
+| [effects/](effects/) | Native bloom extraction intensity control |
 
-All 54 replacements retain their hash/profile filenames. CMake discovers the folders recursively and generates the embedded registration list.
+All 55 replacements retain their hash/profile filenames. CMake discovers the folders recursively and generates the embedded registration list.
 
 ### Build and live development
 
@@ -302,3 +307,6 @@ Validation: diagnostic and normal x64 Release builds passed; the diagnostic has 
 Standalone HUD metadata correction: the AMD diagnostic log matched 11 HUD/video hashes, but every observed draw was rejected with `decision=missing_blend` while injection/replacement readiness was true. UI Brightness changes also reached the CPU binding. The guard reads cached pipeline subobjects; the shader utility retains these only when shader caching or asynchronous replacement is enabled. DevKit enables caching, hiding this dependency during development. Ghost now explicitly enables `renodx::utils::shader::use_shader_cache` before attaching the shader utility. The existing multiply-draw guard is unchanged, and no shader hash or color math changes are required.
 
 Both corrected Release builds passed and all 54 shader binaries remain identical between normal and diagnostic builds. Diagnostic v2 adds the cached subobject count. Verify without DevKit: UI Brightness should affect HUD/video, ordinary draws should report `blend_found=1` and `allowed=1`, and multiply draws should still be rejected. Check menus for the prior dark rectangles. The user confirmed that diagnostic v2 fixed the issue on AMD. The normal Release addon was then rebuilt with diagnostics disabled; all 54 shader binaries are unchanged and diagnostic markers are absent.
+
+
+Bloom Intensity: the extraction shader passed strict compilation, and fixed 100% PsychoV intensity plus forced Vanilla/SDR-reference variants compile identically to the recompiled vanilla baseline. The lens-flare control and shader replacement were removed after reported artifacts, restoring native flare rendering. Runtime verification: vary Bloom Intensity through 0/100/200 on a fixed scene, check unchanged HUD and native lens flares, and confirm native bloom in Vanilla/SDR in HDR. Recommended should preserve the bloom value; Reset All should restore 100%.

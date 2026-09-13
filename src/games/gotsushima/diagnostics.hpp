@@ -158,7 +158,7 @@ inline void OnPresent(
 
 inline void Attach(renodx::mods::shader::CustomShaders* shaders, const renodx::utils::settings::Settings* settings) {
   observed_settings = settings;
-  Log("START Release " __DATE__ " " __TIME__ "; UI diagnostic v2; 112-byte injection b13 space50; pipeline metadata retention enabled; shaders and blend guard unchanged.");
+  Log("START Release " __DATE__ " " __TIME__ "; UI diagnostic v2; " + std::to_string(sizeof(ShaderInjectData)) + "-byte injection b13 space50; pipeline metadata retention enabled; shaders and blend guard unchanged.");
   Log("Readiness and cpu_bound are CPU-side evidence, not GPU readback. Initial replacement_ready=0 can be normal lazy creation.");
   for (auto& [hash, shader] : *shaders) {
     auto* counts = &counters.try_emplace(hash).first->second;
