@@ -22,6 +22,10 @@
 #include "../../utils/swapchain.hpp"
 #include "./shared.h"
 
+#if defined(GOTSUSHIMA_UI_DIAGNOSTICS)
+#include "./diagnostics.hpp"
+#endif
+
 namespace {
 
 renodx::mods::shader::CustomShaders custom_shaders = {
@@ -558,8 +562,13 @@ void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
 }  // namespace
 
 extern "C" __declspec(dllexport) constexpr const char* NAME = "RenoDX - Ghost of Tsushima";
+#if defined(GOTSUSHIMA_UI_DIAGNOSTICS)
+extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
+    "Ghost of Tsushima - UI diagnostic Release v2; GHOST-UI-DIAG entries in ReShade.log";
+#else
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
     "RenoDX for Ghost of Tsushima DIRECTOR'S CUT";
+#endif
 
 BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
   switch (fdw_reason) {
@@ -588,6 +597,13 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
         renodx::mods::shader::expected_constant_buffer_space = 50;
         renodx::mods::shader::expected_constant_buffer_index = 13;
         renodx::mods::shader::allow_multiple_push_constants = true;
+        // IsUIColorDraw needs retained pipeline subobjects even without DevKit.
+        // Otherwise its missing-blend fallback rejects every HUD replacement.
+        renodx::utils::shader::use_shader_cache = true;
+
+#if defined(GOTSUSHIMA_UI_DIAGNOSTICS)
+        gotsushima::diagnostics::Attach(&custom_shaders, &settings);
+#endif
 
         initialized = true;
       }
@@ -603,6 +619,10 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
   renodx::utils::random::Use(fdw_reason, {&shader_injection.random_seed});
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
+
+#if defined(GOTSUSHIMA_UI_DIAGNOSTICS)
+  gotsushima::diagnostics::Use(fdw_reason);
+#endif
 
   return TRUE;
 }

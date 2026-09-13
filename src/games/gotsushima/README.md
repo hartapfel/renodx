@@ -278,3 +278,27 @@ The Hue Shift restoration revision maps the UI's 0–100 range to a bounded 0–1 bl
 ## Credits
 
 Game integration and tuning by **Hartapfel**. RenoDX framework, shared color/effect utilities, and PsychoV-30 by **Carlos Lopez / ShortFuse**. RCAS sharpening uses **Lilium's** luminance adaptation, with integration references from the Crimson Desert and Nioh 3 mods.
+
+
+## Optional AMD UI diagnostic build
+
+Compile the existing Release target with `GOTSUSHIMA_UI_DIAGNOSTICS=1` to enable `diagnostics.hpp`. It logs `[GHOST-UI-DIAG v2]` entries to ReShade.log without changing shader binaries or the existing HUD blend guard. The normal build excludes the diagnostic code.
+
+In a dedicated PowerShell process:
+
+```powershell
+$env:CL = "$env:CL /DGOTSUSHIMA_UI_DIAGNOSTICS=1"
+(Get-Item src/games/gotsushima/addon.cpp).LastWriteTime = Get-Date
+cmake --build --preset vs-x64-release --target gotsushima
+```
+
+Copy the resulting addon to a separate diagnostic file. In a fresh shell without that compiler flag, touch addon.cpp again and rebuild the same Release target to restore the normal local build. MSBuild does not reliably invalidate an existing object when only the compiler environment changes. Close the game before either build.
+
+For the AMD test, temporarily replace the regular Ghost addon with the diagnostic; load only one Ghost addon. Enable native HDR and PsychoV-30, open the affected map/menu, then hold UI Brightness at 80, 203 and 500 for at least three seconds each. Exit and return the complete ReShade.log before relaunching. No DevKit is required. Logs include GPU IDs, shader registration/creation, HUD acceptance and blend factors, injection/replacement readiness, sampled UI/parsed/CPU-bound settings and bounded draw summaries for ten minutes. CPU readiness is not proof of GPU execution. Initial replacement readiness can be false before lazy creation.
+
+Validation: diagnostic and normal x64 Release builds passed; the diagnostic has no Debug CRT dependency; all 54 embedded shader binaries match the normal build. The user confirmed the metadata correction on AMD with diagnostic v2.
+
+
+Standalone HUD metadata correction: the AMD diagnostic log matched 11 HUD/video hashes, but every observed draw was rejected with `decision=missing_blend` while injection/replacement readiness was true. UI Brightness changes also reached the CPU binding. The guard reads cached pipeline subobjects; the shader utility retains these only when shader caching or asynchronous replacement is enabled. DevKit enables caching, hiding this dependency during development. Ghost now explicitly enables `renodx::utils::shader::use_shader_cache` before attaching the shader utility. The existing multiply-draw guard is unchanged, and no shader hash or color math changes are required.
+
+Both corrected Release builds passed and all 54 shader binaries remain identical between normal and diagnostic builds. Diagnostic v2 adds the cached subobject count. Verify without DevKit: UI Brightness should affect HUD/video, ordinary draws should report `blend_found=1` and `allowed=1`, and multiply draws should still be rejected. Check menus for the prior dark rectangles. The user confirmed that diagnostic v2 fixed the issue on AMD. The normal Release addon was then rebuilt with diagnostics disabled; all 54 shader binaries are unchanged and diagnostic markers are absent.
