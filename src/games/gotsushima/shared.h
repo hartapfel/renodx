@@ -20,7 +20,6 @@ struct ShaderInjectData {
   float tone_map_blowout;
   float tone_map_flare;
 
-  float gamma_correction;
   float psychov_hue_shift;
   float psychov_cone_response_exponent;
   float psychov_adaptation_anchor;
@@ -43,7 +42,7 @@ struct ShaderInjectData {
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 116);
+static_assert(sizeof(ShaderInjectData) == 112);
 #endif
 
 #ifndef __cplusplus
@@ -64,7 +63,8 @@ cbuffer shader_injection : register(b13, space50) {
 #define RENODX_TONE_MAP_HIGHLIGHT_SATURATION shader_injection.tone_map_highlight_saturation
 #define RENODX_TONE_MAP_BLOWOUT shader_injection.tone_map_blowout
 #define RENODX_TONE_MAP_FLARE shader_injection.tone_map_flare
-#define RENODX_GAMMA_CORRECTION shader_injection.gamma_correction
+// PsychoV handles the scene response; do not add SDR EOTF emulation.
+#define RENODX_GAMMA_CORRECTION 0.f
 #define RENODX_PSYCHOV_HUE_SHIFT shader_injection.psychov_hue_shift
 #define RENODX_PSYCHOV_CONE_RESPONSE_EXPONENT shader_injection.psychov_cone_response_exponent
 #define RENODX_PSYCHOV_ADAPTATION_ANCHOR shader_injection.psychov_adaptation_anchor

@@ -202,21 +202,11 @@ float3 GhostFitLUTInputGamut(float3 color_bt709) {
   return (color_bt709 - min_channel) * (luminance / (luminance - min_channel));
 }
 
-// Decode the reconstructed LUT's sRGB representation directly. PsychoV
-// deliberately omits the native BT.709 OETF/display-EOTF contrast; that
-// presentation remains available in SDR in HDR and on the validated UI path.
-// Optional gamma emulation substitutes the selected EOTF for sRGB here,
-// equivalent to sRGB decode followed by GammaSafe(..., false, gamma).
+// Decode the reconstructed LUT's sRGB representation to linear input for
+// PsychoV. This is a signal decode, with no SDR display-EOTF emulation.
 // Do not saturate here: LUT reconstruction must retain HDR headroom.
 float3 GhostDecodeLUTOutput(float3 encoded_bt709) {
-  encoded_bt709 = max(encoded_bt709, 0.f.xxx);
-  if (RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
-    return renodx::color::gamma::DecodeSafe(encoded_bt709, 2.2f);
-  }
-  if (RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
-    return renodx::color::gamma::DecodeSafe(encoded_bt709, 2.4f);
-  }
-  return renodx::color::srgb::DecodeSafe(encoded_bt709);
+  return renodx::color::srgb::DecodeSafe(max(encoded_bt709, 0.f.xxx));
 }
 
 struct GhostSceneGrade {
@@ -237,7 +227,7 @@ float3 GhostApplySceneColorFilter(
     GhostSDRCalibration calibration) {
   // An identity LUT with the existing square-root shaper/reconstruction
   // returns sqrt(scene). Omit native matrices and LUT color grading for this
-  // reference, but retain the selected decode and all user PsychoV controls.
+  // reference, but retain the sRGB decode and all user PsychoV controls.
   float3 unfiltered_bt2020 = max(renodx::color::bt2020::from::BT709(
       GhostToneMapPsychoV30(GhostDecodeLUTOutput(sqrt(max(scene_bt709, 0.f.xxx))), calibration)), 0.f.xxx);
   const float peak = RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f);
@@ -336,8 +326,8 @@ float3 GhostRenderIntermediate(float3 color_bt709, float2 uv) {
         color_bt2020, uv, CUSTOM_RANDOM, CUSTOM_FILM_GRAIN * 0.03f,
         1.f, false, renodx::color::BT2020_TO_XYZ_MAT);
   }
-  // The display EOTF has already been applied to the LUT result. Applying
-  // RenderIntermediatePass here would apply gamma emulation a second time.
+  // PsychoV has produced linear display color. Only encode for composition;
+  // no additional SDR display response is applied.
   return GhostEncodeIntermediate(color_bt2020 * RENODX_DIFFUSE_WHITE_NITS);
 }
 

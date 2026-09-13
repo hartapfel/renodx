@@ -27,16 +27,11 @@ float3 GhostRenderUI(float3 color_bt709, float coverage, bool linear_input = fal
                            ? color_bt709
                            : renodx::color::srgb::DecodeSafe(color_bt709);
 
-  // Native SDR output (0x571EE768) applies the BT.709 OETF after its sRGB
-  // decode. These are the display code values, not linear-light RGB.
-  // Omitting this step lifts HUD midtones and weak color channels. Preserve
-  // that response before applying the user's selected display EOTF.
-  linear_bt709 = renodx::color::srgb::DecodeSafe(GhostSDRDisplayCode(linear_bt709));
-  if (RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
-    linear_bt709 = renodx::color::correct::GammaSafe(linear_bt709, false, 2.2f);
-  } else if (RENODX_GAMMA_CORRECTION == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
-    linear_bt709 = renodx::color::correct::GammaSafe(linear_bt709, false, 2.4f);
-  }
+  // Fixed native-style UI display response: Rec.709 OETF followed by
+  // gamma 2.4 decoding, in BT.709 before gamut conversion. Keep source
+  // decoding and coverage separate; scene grading never controls this EOTF.
+  linear_bt709 = renodx::color::gamma::DecodeSafe(
+      GhostSDRDisplayCode(linear_bt709), 2.4f);
   return GhostEncodeIntermediate(
              renodx::color::bt2020::from::BT709(linear_bt709) * RENODX_GRAPHICS_WHITE_NITS)
          * coverage;
