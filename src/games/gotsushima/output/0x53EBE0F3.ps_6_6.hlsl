@@ -34,8 +34,8 @@ float4 main(
   float4 _22 = _20.Sample(s12, float2(TEXCOORD.x, TEXCOORD.y));
   if (GhostIsPsychoV() && shader_injection.post_effects_output_fallback != 0.f
       && GhostPostEffectsEnabled()) {
-    // No HUD was composited this frame: run the same full-resolution effects
-    // used before visible HUD, without another copy or a second application.
+    // This branch is scene-only (hidden HUD or the early frame-generation
+    // output). Run the same effects used before visible HUD composition.
     _22 = GhostApplyPostUpscaleEffects(_20, uint2(SV_Position.xy));
     // Match the RGB10A2 write of the pre-HUD pass so toggling HUD visibility
     // does not change the effects signal's range or intermediate quantization.

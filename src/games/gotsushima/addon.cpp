@@ -590,6 +590,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
         custom_shaders.at(0x313ABA52u).on_draw = &gotsushima::lens::OnScene;
         custom_shaders.at(0x43D9A412u).on_draw = &gotsushima::lens::OnScene;
         custom_shaders.at(0x53EBE0F3u).on_draw = &gotsushima::lens::OnOutput;
+        custom_shaders.at(0x53EBE0F3u).on_inject = &gotsushima::lens::InjectOutput;
         for (const auto hash : {
                  0x85EC39B6u, 0x9D97A7C7u, 0x2128DADEu, 0x083CEF82u,
                  0x37D7A160u, 0x6E8460A0u, 0x6B74C298u, 0x168D9561u,
