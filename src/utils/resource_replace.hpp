@@ -140,7 +140,9 @@ static thread_local struct PendingCreateObservation {
 } pending_create_observations[8];
 static thread_local std::size_t pending_create_observation_count = 0u;
 
+// Bound retained upload samples across the device, including animated/video textures.
 inline constexpr std::uint64_t MAX_CAPTURE_BYTES = 64ull * 1024ull * 1024ull;
+inline constexpr std::size_t MAX_OBSERVATIONS = 4096u;
 
 inline std::uint32_t GetEffectiveRowPitch(
     const reshade::api::resource_desc& destination_desc,
@@ -455,6 +457,13 @@ inline std::uint64_t RecordObservation(
     return item.id;
   }
 
+  if (device_data->observations.size() >= MAX_OBSERVATIONS) return 0u;
+
+  std::uint64_t captured_bytes = 0u;
+  for (const auto& observation : device_data->observations) {
+    captured_bytes += observation.sample_bytes.size();
+  }
+
   TextureObservation item = {
       .id = device_data->next_observation_id++,
       .upload_path = context.upload_path,
@@ -475,13 +484,19 @@ inline std::uint64_t RecordObservation(
       .last_destination_handle = context.destination.handle,
       .has_sample = false,
   };
-  if (source_size <= MAX_CAPTURE_BYTES) {
-    item.sample_bytes.assign(bytes, bytes + static_cast<std::size_t>(source_size));
-    item.has_sample = true;
+  // Observation capture is optional; allocation failure must not abort the
+  // application's texture upload. Keep metadata after the sample budget fills.
+  try {
+    if (captured_bytes < MAX_CAPTURE_BYTES && source_size <= MAX_CAPTURE_BYTES - captured_bytes) {
+      item.sample_bytes.assign(bytes, bytes + static_cast<std::size_t>(source_size));
+      item.has_sample = true;
+    }
+    const auto observation_id = item.id;
+    device_data->observations.push_back(std::move(item));
+    return observation_id;
+  } catch (const std::bad_alloc&) {
+    return 0u;
   }
-  const auto observation_id = item.id;
-  device_data->observations.push_back(std::move(item));
-  return observation_id;
 }
 
 inline void UpdateObservationDestinationHandle(

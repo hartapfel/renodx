@@ -29,6 +29,37 @@
 
 namespace renodx::utils::platform {
 
+namespace internal {
+
+template <typename T>
+inline void* AllocateProcessMemory(std::size_t size, DWORD flags = 0) {
+  if constexpr (alignof(T) <= MEMORY_ALLOCATION_ALIGNMENT) {
+    return ::HeapAlloc(::GetProcessHeap(), flags, size);
+  } else {
+    constexpr auto padding = alignof(T) - 1u + sizeof(void*);
+    if (size > (std::numeric_limits<std::size_t>::max)() - padding) return nullptr;
+    auto* allocation = ::HeapAlloc(::GetProcessHeap(), flags, size + padding);
+    if (allocation == nullptr) return nullptr;
+    const auto aligned = (reinterpret_cast<std::uintptr_t>(allocation) + padding)
+                         & ~(static_cast<std::uintptr_t>(alignof(T)) - 1u);
+    // Keep the process-heap base for release from any participating addon.
+    reinterpret_cast<void**>(aligned)[-1] = allocation;
+    return reinterpret_cast<void*>(aligned);
+  }
+}
+
+template <typename T>
+inline void FreeProcessMemory(T* storage) noexcept {
+  if (storage == nullptr) return;
+  if constexpr (alignof(T) <= MEMORY_ALLOCATION_ALIGNMENT) {
+    ::HeapFree(::GetProcessHeap(), 0, storage);
+  } else {
+    ::HeapFree(::GetProcessHeap(), 0, reinterpret_cast<void**>(storage)[-1]);
+  }
+}
+
+}  // namespace internal
+
 template <typename T>
 struct ProcessAllocator {
   using value_type = T;
@@ -45,7 +76,7 @@ struct ProcessAllocator {
       throw std::bad_array_new_length();
     }
 
-    auto* storage = static_cast<T*>(::HeapAlloc(::GetProcessHeap(), 0, count * sizeof(T)));
+    auto* storage = static_cast<T*>(internal::AllocateProcessMemory<T>(count * sizeof(T)));
     if (storage == nullptr) {
       throw std::bad_alloc();
     }
@@ -54,8 +85,7 @@ struct ProcessAllocator {
 
   void deallocate(T* storage, std::size_t count) noexcept {  // NOLINT(readability-identifier-naming)
     (void)count;
-    if (storage == nullptr) return;
-    ::HeapFree(::GetProcessHeap(), 0, storage);
+    internal::FreeProcessMemory(storage);
   }
 };
 
@@ -75,11 +105,16 @@ inline bool operator!=(const ProcessAllocator<T>& left, const ProcessAllocator<U
 
 template <typename T, typename... Args>
 inline T* CreateSharedObject(Args&&... args) {
-  auto* storage = static_cast<T*>(::HeapAlloc(::GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(T)));
+  auto* storage = static_cast<T*>(internal::AllocateProcessMemory<T>(sizeof(T), HEAP_ZERO_MEMORY));
   assert(storage != nullptr);
   if (storage == nullptr) return nullptr;
 
-  return std::construct_at(storage, std::forward<Args>(args)...);
+  try {
+    return std::construct_at(storage, std::forward<Args>(args)...);
+  } catch (...) {
+    internal::FreeProcessMemory(storage);
+    throw;
+  }
 }
 
 template <typename T>
@@ -87,7 +122,7 @@ inline void DeleteSharedObject(T* object) {
   if (object == nullptr) return;
 
   object->~T();
-  ::HeapFree(::GetProcessHeap(), 0, object);
+  internal::FreeProcessMemory(object);
 }
 
 template <typename T>

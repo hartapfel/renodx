@@ -2,17 +2,21 @@
   "$schema": "https://cdn.jsdelivr.net/gh/clshortfuse/renodx/renodx-metadata-schema.json",
   "id": "asscreed2",
   "title": "Assassin's Creed II",
-  "maintainers": [
-    "Vik"
-  ],
-  "status": "WIP",
+  "variant": "dgVoodoo DX11",
+  "maintainers": ["hartapfel"],
+  "status": "experimental",
+  "summary": "32-bit dgVoodoo DX11 HDR mod with PsychoV-30, reconstructed LUT grading, FP16 intermediates, and HUD brightness control.",
   "notes": [
-    "DX9 game without native HDR. Uses the swapchain proxy path for HDR presentation."
+    "Requires dgVoodoo translating DX9 to DX11 and 32-bit ReShade with addon support.",
+    "Includes Ghost of Tsushima's PsychoV-30 and color-grading controls; no effect controls.",
+    "Normal gameplay verifies FP16 scene headroom; other aspect ratios, special rendering paths, and resource recreation need further validation."
   ],
   "deploy": {
     "steam_appid": 33230,
-    "architecture": [
-      "x86"
-    ]
+    "game_exe": "AssassinsCreedIIGame.exe",
+    "process_name": "AssassinsCreedIIGame.exe",
+    "api": "d3d11",
+    "architecture": ["x86"],
+    "reshade_preferred_name": "dxgi.dll"
   }
 }
