@@ -66,7 +66,8 @@ cbuffer shader_injection : register(b13, space50) {
 #define RENODX_TONE_MAP_HIGHLIGHT_SATURATION shader_injection.tone_map_highlight_saturation
 #define RENODX_TONE_MAP_BLOWOUT shader_injection.tone_map_blowout
 #define RENODX_TONE_MAP_FLARE shader_injection.tone_map_flare
-// PsychoV handles the scene response; do not add SDR EOTF emulation.
+// Ghost applies fixed scene gamma-2.2 emulation explicitly after PsychoV.
+// Disable the generic correction to avoid a second application or UI changes.
 #define RENODX_GAMMA_CORRECTION 0.f
 #define RENODX_PSYCHOV_HUE_SHIFT shader_injection.psychov_hue_shift
 #define RENODX_PSYCHOV_CONE_RESPONSE_EXPONENT shader_injection.psychov_cone_response_exponent

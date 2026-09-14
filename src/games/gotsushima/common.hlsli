@@ -101,14 +101,19 @@ struct GhostSDRCalibration {
 
 float3 GhostToneMapPsychoV30(float3 color_bt709, GhostSDRCalibration calibration) {
   color_bt709 = GhostApplyPsychoVInputExtensions(color_bt709);
-  const float display_peak = RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f);
+  // Solve endpoints before the fixed sRGB -> gamma-2.2 display response.
+  // Its HDR extension compresses values above scene white; inverse-correct
+  // the target so the forward response still reaches the selected peak.
+  const float display_peak = renodx::color::correct::GammaSafe(
+      RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f), true, 2.2f);
   // Auto retains a wider HDR response before fitting it to the display.
   // At 1000 nits, direct target-volume projection can pin fire channels to
   // the peak before their luminance gradient has been resolved. The 4000-nit
   // reference was checked against the affected fire scene. Manual compression
   // remains a direct PsychoV response at the selected display peak.
   const float working_peak = RENODX_PSYCHOV_COMPRESSION == 0.f
-                                 ? max(display_peak, 4000.f / max(RENODX_DIFFUSE_WHITE_NITS, 1.f))
+                                 ? max(display_peak, renodx::color::correct::GammaSafe(
+                                                         4000.f / max(RENODX_DIFFUSE_WHITE_NITS, 1.f), true, 2.2f))
                                  : display_peak;
   float3 mapped_bt709 = renodx::tonemap::psychov::psychotm_test30(
       color_bt709,
@@ -148,7 +153,17 @@ float3 GhostToneMapPsychoV30(float3 color_bt709, GhostSDRCalibration calibration
       mapped_bt709 *= shoulder / max_channel;
     }
   }
-  return GhostApplyPsychoVOutputExtensions(color_bt709, mapped_bt709);
+  mapped_bt709 = GhostApplyPsychoVOutputExtensions(color_bt709, mapped_bt709);
+  // Fixed scene display response, separate from the reversible composition
+  // encoding and the HUD's Rec.709/gamma-2.4 response. Work in the selected
+  // target primaries so valid wide-gamut colors need no negative channels.
+  // Both Color Filter references receive this once, before matching luminance.
+  if (RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE == 0.f) {
+    return renodx::color::correct::GammaSafe(mapped_bt709, false, 2.2f);
+  }
+  return renodx::color::bt709::from::BT2020(
+      renodx::color::correct::GammaSafe(
+          renodx::color::bt2020::from::BT709(mapped_bt709), false, 2.2f));
 }
 
 float3 GhostApplyPackedColorMatrix(
@@ -318,8 +333,8 @@ float3 GhostRenderIntermediate(float3 color_bt709) {
   // colors do not require negative channels in the RGB10A2 intermediate.
   float3 color_bt2020 = max(
       renodx::color::bt2020::from::BT709(color_bt709), 0.f.xxx);
-  // PsychoV has produced linear display color. Only encode for composition;
-  // no additional SDR display response is applied.
+  // The fixed gamma-2.2 display response is already applied after PsychoV.
+  // Only encode for composition here; do not apply that response again.
   return GhostEncodeIntermediate(color_bt2020 * RENODX_DIFFUSE_WHITE_NITS);
 }
 
