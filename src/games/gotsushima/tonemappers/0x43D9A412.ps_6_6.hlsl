@@ -130,9 +130,6 @@ OutputSignature main(
   int4 _172 = asint(t1_space1.Load4(RootSrtCbv_000));
   Texture2D<float4> _175 = ResourceDescriptorHeap[(uint)(_172.x)];
   float4 _177 = _175.Sample(s12, float2(_170, _171));
-  if (GhostIsPsychoV()) {
-    _177.rgb = GhostApplySceneLensEffects(_177.rgb, float2(_170, _171), TEXCOORD, _175, s12);
-  }
   float _181 = max(0.0f, _177.x);
   float _182 = max(0.0f, _177.y);
   float _183 = max(0.0f, _177.z);
@@ -515,7 +512,7 @@ OutputSignature main(
     if (CUSTOM_COLOR_FILTER < 1.f) {
       ghost_psychov = GhostApplySceneColorFilter(ghost_psychov, float3(_331, _332, _333), ghost_calibration);
     }
-    float3 ghost_intermediate = GhostRenderIntermediate(ghost_psychov, TEXCOORD);
+    float3 ghost_intermediate = GhostRenderIntermediate(ghost_psychov);
     ghost_intermediate += _511;
     const float ghost_luminance = dot(
         ghost_intermediate,

@@ -52,7 +52,8 @@ inline void OnInitPipeline(
     reshade::api::device*, reshade::api::pipeline_layout layout, uint32_t count,
     const reshade::api::pipeline_subobject* subobjects, reshade::api::pipeline pipeline) {
   for (uint32_t i = 0; i < count; ++i) {
-    if (subobjects[i].type != reshade::api::pipeline_subobject_type::pixel_shader
+    if ((subobjects[i].type != reshade::api::pipeline_subobject_type::pixel_shader
+         && subobjects[i].type != reshade::api::pipeline_subobject_type::compute_shader)
         || subobjects[i].count == 0 || subobjects[i].data == nullptr) continue;
     const auto& desc = *static_cast<const reshade::api::shader_desc*>(subobjects[i].data);
     if (desc.code == nullptr || desc.code_size == 0) continue;
@@ -61,7 +62,8 @@ inline void OnInitPipeline(
     const std::lock_guard lock(inventory_mutex);
     if (seen_shaders.size() >= 8192 || !seen_shaders.insert(hash).second) continue;
     std::ostringstream line;
-    line << "PS hash=0x" << std::hex << hash << " pipeline=0x" << pipeline.handle
+    line << (subobjects[i].type == reshade::api::pipeline_subobject_type::compute_shader ? "CS" : "PS")
+         << " hash=0x" << std::hex << hash << " pipeline=0x" << pipeline.handle
          << " layout=0x" << layout.handle << std::dec << " bytes=" << desc.code_size
          << " registered=" << counters.contains(hash);
     if (const auto found = replacements.find(hash); found != replacements.end()) {
@@ -75,8 +77,17 @@ inline void Observe(reshade::api::command_list* cmd_list, uint32_t hash, Counter
   counts->matched.fetch_add(1, std::memory_order_relaxed);
   if (accepted) counts->accepted.fetch_add(1, std::memory_order_relaxed);
   const auto* command_state = renodx::utils::shader::GetCurrentState(cmd_list);
-  const auto* details = command_state == nullptr ? nullptr
-      : command_state->stage_states[renodx::utils::shader::PIXEL_INDEX].pipeline_details;
+  const renodx::utils::shader::PipelineShaderDetails* details = nullptr;
+  // Include the bloom compute shader without reading an unrelated pixel PSO.
+  if (command_state != nullptr) {
+    for (const auto index : {renodx::utils::shader::PIXEL_INDEX, renodx::utils::shader::COMPUTE_INDEX}) {
+      const auto* candidate = command_state->stage_states[index].pipeline_details;
+      if (candidate != nullptr && candidate->compatible_shader_infos[index].shader_hash == hash) {
+        details = candidate;
+        break;
+      }
+    }
+  }
   const reshade::api::blend_desc* blend = nullptr;
   if (details != nullptr) {
     for (const auto& item : details->subobjects) {
@@ -94,7 +105,7 @@ inline void Observe(reshade::api::command_list* cmd_list, uint32_t hash, Counter
       | (uint32_t(replacement) << 2) | (uint32_t(blend != nullptr) << 3) | (uint32_t(details != nullptr) << 4));
   if ((counts->reported_states.fetch_or(bit, std::memory_order_relaxed) & bit) != 0) return;
   std::ostringstream line;
-  line << "MATCH hash=0x" << std::hex << hash << std::dec << " hud=" << hud
+  line << "MATCH hash=0x" << std::hex << hash << " cmd=0x" << cmd_list->get_native() << std::dec << " hud=" << hud
        << " allowed=" << accepted << " details=" << (details != nullptr)
        << " blend_found=" << (blend != nullptr) << " injection_ready=" << injection
        << " replacement_ready=" << replacement;

@@ -21,9 +21,13 @@
 #include "../../utils/settings.hpp"
 #include "../../utils/swapchain.hpp"
 #include "./shared.h"
+#include "./lens.hpp"
 
-#if defined(GOTSUSHIMA_UI_DIAGNOSTICS)
+#if defined(GOTSUSHIMA_UI_DIAGNOSTICS) || defined(GOTSUSHIMA_CRASH_DIAGNOSTICS)
 #include "./diagnostics.hpp"
+#endif
+#if defined(GOTSUSHIMA_CRASH_DIAGNOSTICS)
+#include "./crash_diagnostics.hpp"
 #endif
 
 namespace {
@@ -363,7 +367,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "FxChromaticAberrationIntensity",
         .binding = &shader_injection.chromatic_aberration_intensity,
-        .default_value = 0.2f,
+        .default_value = 1.0f,
         .label = "CA Intensity",
         .section = "Effects",
         .tooltip = "Strength of the red/green lens separation. 0 removes fringing;",
@@ -563,7 +567,10 @@ void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
 }  // namespace
 
 extern "C" __declspec(dllexport) constexpr const char* NAME = "RenoDX - Ghost of Tsushima";
-#if defined(GOTSUSHIMA_UI_DIAGNOSTICS)
+#if defined(GOTSUSHIMA_CRASH_DIAGNOSTICS)
+extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
+    "Ghost of Tsushima - GPU crash diagnostic Release v1; GHOST-CRASH-DIAG entries in ReShade.log";
+#elif defined(GOTSUSHIMA_UI_DIAGNOSTICS)
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
     "Ghost of Tsushima - UI diagnostic Release v2; GHOST-UI-DIAG entries in ReShade.log";
 #else
@@ -577,6 +584,12 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
       if (!reshade::register_addon(h_module)) return FALSE;
 
       if (!initialized) {
+        // Locally authored fullscreen pass binaries, not game replacements.
+        custom_shaders.erase(0x7C4BC81Cu);
+        custom_shaders.erase(0xE4B02509u);
+        custom_shaders.at(0x313ABA52u).on_draw = &gotsushima::lens::OnScene;
+        custom_shaders.at(0x43D9A412u).on_draw = &gotsushima::lens::OnScene;
+        custom_shaders.at(0x53EBE0F3u).on_draw = &gotsushima::lens::OnOutput;
         for (const auto hash : {
                  0x85EC39B6u, 0x9D97A7C7u, 0x2128DADEu, 0x083CEF82u,
                  0x37D7A160u, 0x6E8460A0u, 0x6B74C298u, 0x168D9561u,
@@ -593,6 +606,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
                  0xE4EC4156u, 0xF2927008u, 0x85013553u,
              }) {
           custom_shaders.at(hash).on_replace = &IsUIColorDraw;
+          custom_shaders.at(hash).on_draw = &gotsushima::lens::BeforeHUD;
         }
         renodx::mods::shader::force_pipeline_cloning = true;
         renodx::mods::shader::expected_constant_buffer_space = 50;
@@ -602,7 +616,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
         // Otherwise its missing-blend fallback rejects every HUD replacement.
         renodx::utils::shader::use_shader_cache = true;
 
-#if defined(GOTSUSHIMA_UI_DIAGNOSTICS)
+#if defined(GOTSUSHIMA_UI_DIAGNOSTICS) || defined(GOTSUSHIMA_CRASH_DIAGNOSTICS)
         gotsushima::diagnostics::Attach(&custom_shaders, &settings);
 #endif
 
@@ -620,9 +634,13 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
   renodx::utils::random::Use(fdw_reason, {&shader_injection.random_seed});
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
+  gotsushima::lens::Use(fdw_reason, &shader_injection);
 
-#if defined(GOTSUSHIMA_UI_DIAGNOSTICS)
+#if defined(GOTSUSHIMA_UI_DIAGNOSTICS) || defined(GOTSUSHIMA_CRASH_DIAGNOSTICS)
   gotsushima::diagnostics::Use(fdw_reason);
+#endif
+#if defined(GOTSUSHIMA_CRASH_DIAGNOSTICS)
+  gotsushima::crash_diagnostics::Use(fdw_reason);
 #endif
 
   return TRUE;

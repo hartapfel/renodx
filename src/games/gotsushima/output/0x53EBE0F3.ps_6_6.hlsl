@@ -1,4 +1,5 @@
 #include "../common.hlsli"
+#include "../post_effects.hlsli"
 
 ByteAddressBuffer t1_space1 : register(t1, space1);
 
@@ -31,6 +32,15 @@ float4 main(
   int4 _17 = asint(t1_space1.Load4(RootSrtCbv_000));
   Texture2D<float4> _20 = ResourceDescriptorHeap[(uint)(_17.x)];
   float4 _22 = _20.Sample(s12, float2(TEXCOORD.x, TEXCOORD.y));
+  if (GhostIsPsychoV() && shader_injection.post_effects_output_fallback != 0.f
+      && GhostPostEffectsEnabled()) {
+    // No HUD was composited this frame: run the same full-resolution effects
+    // used before visible HUD, without another copy or a second application.
+    _22 = GhostApplyPostUpscaleEffects(_20, uint2(SV_Position.xy));
+    // Match the RGB10A2 write of the pre-HUD pass so toggling HUD visibility
+    // does not change the effects signal's range or intermediate quantization.
+    _22.rgb = round(saturate(_22.rgb) * 1023.f) / 1023.f;
+  }
   if (GhostIsSDRReference()) {
     // Native SDR composes scene and HUD before 0x571EE768 applies its
     // display transfer. Interpret those codes with gamma 2.2 exactly once,

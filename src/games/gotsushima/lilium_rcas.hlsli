@@ -6,30 +6,25 @@
 // Lilium's luminance RCAS, adapted from the Crimson Desert/Nioh 3 mods.
 // Retains the HDR normalization, 0.99 overshoot limiter, noise attenuation,
 // and luminance-ratio resolve. Black and constant neighborhoods are guarded.
-// Input is the linear BT.709 scene texture, before local exposure/LUT/PsychoV.
-float3 GhostApplyRCAS(
-    float3 center, float2 uv, Texture2D<float4> scene, SamplerState scene_sampler) {
+// Input is the full-resolution gamma-2.2 BT.2020 composition texture.
+// Sharpen individual decoded texels before CA performs bilinear reconstruction.
+float3 GhostLoadSharpenedScene(Texture2D<float4> scene, int2 pixel, uint2 size) {
+  pixel = clamp(pixel, int2(0, 0), int2(size) - 1);
+  const float3 center = pow(max(scene.Load(int3(pixel, 0)).rgb, 0.f), 2.2f);
   if (CUSTOM_SHARPENING <= 0.f) return center;
 
-  center = max(center, 0.f.xxx);
-  static const float normalization = 125.f;
-  const float e = renodx::color::y::from::BT709(center) / normalization;
+  // Retain Lilium's 125-scene-white HDR normalization in the transport domain.
+  const float normalization = 125.f * max(RENODX_DIFFUSE_WHITE_NITS, 1.f) / RENODX_INTERMEDIATE_SCALING;
+  const float e = renodx::color::y::from::BT2020(center) / normalization;
   if (e <= 0.f) return center;
-
-  uint width, height;
-  scene.GetDimensions(width, height);
-  const float2 texel = rcp(float2(width, height));
-
-  // Cross neighborhood in source texels. All five samples use the same
-  // linear signal and the same native sampler at the distorted scene UV.
-  const float b = renodx::color::y::from::BT709(max(
-      scene.SampleLevel(scene_sampler, uv + float2(0.f, -texel.y), 0).rgb, 0.f.xxx)) / normalization;
-  const float d = renodx::color::y::from::BT709(max(
-      scene.SampleLevel(scene_sampler, uv + float2(-texel.x, 0.f), 0).rgb, 0.f.xxx)) / normalization;
-  const float f = renodx::color::y::from::BT709(max(
-      scene.SampleLevel(scene_sampler, uv + float2(texel.x, 0.f), 0).rgb, 0.f.xxx)) / normalization;
-  const float h = renodx::color::y::from::BT709(max(
-      scene.SampleLevel(scene_sampler, uv + float2(0.f, texel.y), 0).rgb, 0.f.xxx)) / normalization;
+  const float b = renodx::color::y::from::BT2020(pow(max(scene.Load(
+      int3(clamp(pixel + int2(0, -1), int2(0, 0), int2(size) - 1), 0)).rgb, 0.f), 2.2f)) / normalization;
+  const float d = renodx::color::y::from::BT2020(pow(max(scene.Load(
+      int3(clamp(pixel + int2(-1, 0), int2(0, 0), int2(size) - 1), 0)).rgb, 0.f), 2.2f)) / normalization;
+  const float f = renodx::color::y::from::BT2020(pow(max(scene.Load(
+      int3(clamp(pixel + int2(1, 0), int2(0, 0), int2(size) - 1), 0)).rgb, 0.f), 2.2f)) / normalization;
+  const float h = renodx::color::y::from::BT2020(pow(max(scene.Load(
+      int3(clamp(pixel + int2(0, 1), int2(0, 0), int2(size) - 1), 0)).rgb, 0.f), 2.2f)) / normalization;
 
   const float ring_min = min(min(b, d), min(f, h));
   const float ring_max = max(max(b, d), max(f, h));

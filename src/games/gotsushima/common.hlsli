@@ -5,7 +5,6 @@
 #include "./intermediate.hlsli"
 #include "./sdr.hlsli"
 #include "./test30.hlsl"
-#include "./chromatic_aberration.hlsli"
 
 bool GhostIsPsychoV() {
   return RENODX_TONE_MAP_TYPE == 1.f;
@@ -313,19 +312,12 @@ GhostSDRCalibration GhostCalibratePsychoV(GhostSceneGrade grade, SamplerState lu
   return calibration;
 }
 
-float3 GhostRenderIntermediate(float3 color_bt709, float2 uv) {
+float3 GhostRenderIntermediate(float3 color_bt709) {
   // PsychoV returns its target-gamut result represented as linear BT.709.
   // Convert it to BT.2020 before transport so valid wide-gamut
   // colors do not require negative channels in the RGB10A2 intermediate.
   float3 color_bt2020 = max(
       renodx::color::bt2020::from::BT709(color_bt709), 0.f.xxx);
-  if (CUSTOM_FILM_GRAIN > 0.f) {
-    // Perceptual film density is evaluated in linear display-referred color,
-    // relative to scene white. Apply after PsychoV, before encoding and HUD.
-    color_bt2020 = renodx::effects::ApplyFilmGrain(
-        color_bt2020, uv, CUSTOM_RANDOM, CUSTOM_FILM_GRAIN * 0.03f,
-        1.f, false, renodx::color::BT2020_TO_XYZ_MAT);
-  }
   // PsychoV has produced linear display color. Only encode for composition;
   // no additional SDR display response is applied.
   return GhostEncodeIntermediate(color_bt2020 * RENODX_DIFFUSE_WHITE_NITS);

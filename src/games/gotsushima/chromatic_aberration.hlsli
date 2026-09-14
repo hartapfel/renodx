@@ -3,40 +3,38 @@
 
 #include "./lilium_rcas.hlsli"
 
-// UE5-style scene fringe: independently threshold each screen-position axis,
-// shift red/green samples inward, and retain the blue sample. The sampling
-// pattern is visible in Hellblade 2's 0x189339AE and Oblivion Remastered's
-// 0x99B126EC. Wavelength-based dispersion uses red/green/blue at 611/549/464 nm.
-// Ghost's existing distortion is retained as the base sampling coordinate.
-float3 GhostApplySceneLensEffects(
-    float3 center, float2 uv, float2 screen_uv,
-    Texture2D<float4> scene, SamplerState scene_sampler) {
-  center = GhostApplyRCAS(center, uv, scene, scene_sampler);
-  if (CUSTOM_CA_ENABLED == 0.f || CUSTOM_CA_INTENSITY <= 0.f) return center;
+// Evaluate the sharpened image at each bilinear tap. Sharpening after the
+// interpolation would not be equivalent to Sharpening -> CA at subpixel offsets.
+float3 GhostSampleFringe(Texture2D<float4> scene, float2 uv, uint2 size) {
+  const float2 position = clamp(uv * float2(size) - 0.5f, 0.f.xx, float2(size - 1u));
+  const int2 low = int2(floor(position));
+  const int2 high = min(low + 1, int2(size) - 1);
+  const float2 weight = frac(position);
+  return renodx::color::bt709::from::BT2020(lerp(
+      lerp(GhostLoadSharpenedScene(scene, low, size),
+           GhostLoadSharpenedScene(scene, int2(high.x, low.y), size), weight.x),
+      lerp(GhostLoadSharpenedScene(scene, int2(low.x, high.y), size),
+           GhostLoadSharpenedScene(scene, high, size), weight.x),
+      weight.y));
+}
 
+// Linear BT.2020 in/out, before film grain and composition encoding.
+float3 GhostApplyChromaticAberration(float3 center, Texture2D<float4> scene, float2 uv, uint2 size) {
+  if (CUSTOM_CA_ENABLED == 0.f || CUSTOM_CA_INTENSITY <= 0.f) return center;
   const float start = clamp(CUSTOM_CA_START_OFFSET, 0.f, 1.f);
   if (start >= 1.f) return center;
-  const float2 screen_position = screen_uv * 2.f - 1.f;
+  const float2 screen_position = uv * 2.f - 1.f;
+  // UE5's axis-wise start offset and 611/549/464 nm dispersion pattern.
   const float2 fringe = sign(screen_position)
                         * saturate(abs(screen_position) - start) / (1.f - start);
   if (all(fringe == 0.f)) return center;
-
-  uint width, height;
-  scene.GetDimensions(width, height);
-  const float2 half_texel = 0.5f / float2(width, height);
-  // Percent intensity, dispersion coefficient, and screen-position -> UV.
   const float2 offset = fringe * (0.5f * 0.01f * 0.007f * CUSTOM_CA_INTENSITY);
-  const float2 red_uv = clamp(uv - offset * (611.f - 464.f), half_texel, 1.f - half_texel);
-  const float2 green_uv = clamp(uv - offset * (549.f - 464.f), half_texel, 1.f - half_texel);
-
-  // Sharpen the same source neighborhood for every channel, then select the
-  // displaced channels. Mixing a sharpened center with unsharpened neighbors
-  // would make enabling fringe also change the channel-wise sharpening.
-  const float3 red = GhostApplyRCAS(
-      scene.SampleLevel(scene_sampler, red_uv, 0.f).rgb, red_uv, scene, scene_sampler);
-  const float3 green = GhostApplyRCAS(
-      scene.SampleLevel(scene_sampler, green_uv, 0.f).rgb, green_uv, scene, scene_sampler);
-  return float3(red.r, green.g, center.b);
+  const float3 base = renodx::color::bt709::from::BT2020(center);
+  const float red = GhostSampleFringe(scene, uv - offset * 147.f, size).r;
+  const float green = GhostSampleFringe(scene, uv - offset * 85.f, size).g;
+  // Preserve the undisplaced blue channel and avoid a matrix roundtrip of the
+  // whole center. Disperse BT.709 channels, not BT.2020 transport components.
+  return center + renodx::color::bt2020::from::BT709(float3(red - base.r, green - base.g, 0.f));
 }
 
-#endif  // SRC_GAMES_GOTSUSHIMA_CHROMATIC_ABERRATION_HLSLI_
+#endif

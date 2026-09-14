@@ -39,10 +39,13 @@ struct ShaderInjectData {
   float chromatic_aberration_start_offset;
   float color_filter;
   float bloom_intensity;
+  // Per-output draw state, not a user setting. Set only when the HUD pass
+  // did not consume the scene's post-upscale effects.
+  float post_effects_output_fallback;
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 112);
+static_assert(sizeof(ShaderInjectData) == 116);
 #endif
 
 #ifndef __cplusplus
