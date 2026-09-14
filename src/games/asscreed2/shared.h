@@ -1,7 +1,7 @@
 #ifndef SRC_GAMES_ASSCREED2_SHARED_H_
 #define SRC_GAMES_ASSCREED2_SHARED_H_
 
-// Retain the injection layout; legacy output/decoding slots are fixed by the addon.
+// Retain the injection layout; output/decoding ignore the legacy setting slots.
 struct ShaderInjectData {
   float output_mode;
   float paper_white_nits;
@@ -49,7 +49,8 @@ cbuffer shader_injection : register(b13) {
 #define RENODX_GRAPHICS_WHITE_NITS shader_injection.graphics_white_nits
 #define RENODX_SWAP_CHAIN_SCALING_NITS shader_injection.paper_white_nits
 #define RENODX_GAMMA_CORRECTION renodx::draw::GAMMA_CORRECTION_NONE
-#define RENODX_SWAP_CHAIN_DECODING renodx::draw::ENCODING_GAMMA_2_2
+// Vanilla/Off displays the native sRGB signal in HDR10; PsychoV uses gamma 2.2.
+#define RENODX_SWAP_CHAIN_DECODING (shader_injection.tone_map_type == 0.f ? renodx::draw::ENCODING_SRGB : renodx::draw::ENCODING_GAMMA_2_2)
 #define RENODX_SWAP_CHAIN_OUTPUT_PRESET renodx::draw::SWAP_CHAIN_OUTPUT_PRESET_HDR10
 
 #define RENODX_TONE_MAP_TYPE shader_injection.tone_map_type

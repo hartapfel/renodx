@@ -23,14 +23,15 @@ flowchart TD
   F --> G[Postprocessing and optional Eagle Vision]
   G --> H[HUD color scaling and native alpha blending]
   H --> I[Native final copy into FP16 swapchain clone]
-  I --> J[Gamma 2.2 decode and HDR10 PQ output]
+  I --> J[Mode-dependent decode and HDR10 PQ output]
   J --> K[Restore dgVoodoo graphics state]
   V[Native video decode and scale] --> I
 ```
 
 The internal color/composition representation remains encoded BT.709-shaped
-floating point. Gamma 2.2 is the final user-selected decoding convention for
-scene/LUT, HUD, Eagle Vision and proxy input. Signed BT.709 channels can represent
+floating point. PsychoV uses gamma 2.2 for scene/LUT, HUD, Eagle Vision and proxy
+input. Vanilla/Preset Off keeps the native LUT path and decodes the composed
+buffer as sRGB for an SDR comparison in HDR10. Signed BT.709 channels can represent
 valid colors in the selected BT.2020 target; they are not automatically errors.
 The public swapchain is RGB10A2 with HDR10/ST2084 color space. Output is fixed to
 HDR10 and the removed Output Mode/Input Encoding settings cannot override it.
@@ -44,7 +45,7 @@ inverse-tonemap applied to the finished SDR scene and HUD.
 | File / shader | Responsibility |
 |---|---|
 | [addon.cpp](addon.cpp) | Resource-clone rules, replacement selection, actual DX11 blend-state inspection, presentation-state restoration, controls, HDR10 color space and automatic peak detection |
-| [shared.h](shared.h) | 112-byte injection layout, version marker 30, fixed gamma 2.2/HDR10 shader configuration |
+| [shared.h](shared.h) | 112-byte injection layout, version marker 30, mode-dependent sRGB/gamma 2.2 decoding and fixed HDR10 output |
 | [common.hlsli](common.hlsli) | Native-LUT range bridge, calibrated anchors, PsychoV input/output grading, working-range shoulder and Color Filter |
 | [psychov30.hlsli](psychov30.hlsli) | Ghost of Tsushima's local `test30.hlsl` implementation with the AC2 shadow-scalar correction |
 | [0x61888319.ps_5_0.hlsl](0x61888319.ps_5_0.hlsl) | Scene/LUT replacement; marks the end of pre-LUT bloom work |
@@ -236,7 +237,7 @@ preparation pass instead of replacing each object's material shader.
 **Invocation selection is as important as the curve.** `0x8FA72580` is reused
 after the LUT for postprocessing. `scene_tonemapped` resets at the upgraded
 swapchain's Present, and `0x61888319.on_draw` marks it true. The bloom replacement
-is allowed only before that marker, in PsychoV mode on D3D11. Later depth-of-field
+is allowed only before that marker on D3D11, in both PsychoV and Vanilla/Off. Later depth-of-field
 and Eagle Vision filtering must not receive the bloom-input shoulder.
 
 A final-combination live experiment was inconclusive: DevKit reported a file
@@ -398,9 +399,25 @@ default is indistinguishable from that default, as in the reference mods.
 
 Peak Reset/Reset All use the detected default. `OnPresetOff` retains its explicit
 1000-nit assignment while selecting Vanilla; it does not restore SDR transport.
-FP16 resources and gamma-2.2/HDR10 output remain, so Preset Off is not a claim of
+FP16 resources and HDR10 output remain, so Preset Off is not a claim of
 pixel-exact unmodified SDR. The automatic-peak Release build compiled and matched
 the installed addon; a measured per-monitor runtime peak was not recorded.
+
+The subsequent Vanilla comparison correction selects sRGB decoding when
+`ToneMapType == 0`, including Preset Off; PsychoV retains gamma 2.2. Both the
+C++ replacement selector and bloom shader keep protection enabled in Vanilla,
+because selecting Vanilla does not undo FP16 resource upgrades. The native
+hardware-sampled LUT, unscaled native UI and Eagle Vision saturation remain
+the Vanilla paths. HDR10 transport and reference-white scaling remain active.
+Legacy output/decoding settings cannot override this mode selection.
+
+An x86 WARP fixture verified 256 bloom/ramp inputs each in PsychoV, Vanilla and
+invalid-injection modes. The 799-valued bloom impulse gives the same 0.124922
+pre-filter contribution in both valid modes; invalid injection preserves native
+behavior. CPU sRGB/gamma references and PQ-decoded HDR10 output matched within
+tolerance for every ramp input. The Release build passed, and the user confirmed
+controlled bloom and the expected SDR-style shadows in Vanilla/Off, with PsychoV
+unchanged.
 
 ## 9. Capture and build practices that mattered
 
@@ -492,6 +509,7 @@ the scratch files.
 | `final-controls-20260914/` | Shadow sweep, gamma-2.2 LUT/HUD tests, footer/source audit and preceding build |
 | `auto-peak-20260914/` | Exact Ghost callback comparison, Release build and installed-artifact hash |
 | `sun-ui-20260914/` | Sun-facing capture, sprite readbacks, source/addon backup and real-DX11 callback regression test |
+| `vanilla-20260914/` | Vanilla bloom/sRGB comparison correction, source/addon backups, WARP ramp/bloom tests and Release build |
 
 For video comparisons, `capture-1789390024870183700` is the cropped reference and
 `capture-1789390316745211600` is the full-coverage result. `playback-debug-retry.txt`

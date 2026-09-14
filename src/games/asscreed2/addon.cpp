@@ -108,7 +108,7 @@ renodx::utils::settings::Settings settings = {
         .can_reset = false,
         .label = "Tone Mapper",
         .section = "Tone Mapping",
-        .tooltip = "Vanilla retains the original LUT path. PsychoV-30 maps the preserved scene range with custom grading.",
+        .tooltip = "Vanilla retains the original LUT with sRGB decoding in HDR10. PsychoV-30 uses gamma 2.2 and custom grading. Both retain bloom protection.",
         .labels = {"Vanilla", "PsychoV-30"},
     },
     new renodx::utils::settings::Setting{
@@ -503,7 +503,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
           return true;
         };
         custom_shaders.at(0x8FA72580u).on_replace = [](reshade::api::command_list* cmd_list) {
-          return !scene_tonemapped && IsPsychoV()
+          return !scene_tonemapped
                  && cmd_list->get_device()->get_api() == reshade::api::device_api::d3d11;
         };
         for (const auto hash : {0x0DA2DE91u, 0x12BA0F50u, 0x2EAA46EBu}) {

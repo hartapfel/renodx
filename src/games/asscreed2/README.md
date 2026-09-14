@@ -9,8 +9,9 @@ playback/startup crashes, and a Brotherhood/Revelations handoff. The
 [pipeline evidence](PIPELINE.md) is chronological and includes superseded builds.
 
 The mod uses an FP16 swapchain clone with RGB10A2 HDR10/PQ presentation.
-Output is fixed to HDR10; scene, LUT, HUD and final-buffer input decoding use
-gamma 2.2. There are no display-output or input-encoding settings. PsychoV-30
+Output is fixed to HDR10. PsychoV uses gamma 2.2 for scene, LUT, HUD and
+final-buffer decoding; Vanilla/Preset Off uses sRGB to display the native SDR
+signal in HDR10. There are no display-output or input-encoding settings. PsychoV-30
 uses the HDR display's detected peak and independent 203-nit game/HUD reference
 whites. Peak detection follows Ghost of Tsushima: the first successful swapchain
 query sets the reset value within 400–4000 nits, and updates the current value
@@ -72,7 +73,8 @@ maxima follow `2 - 1/x`, preserving RGB ratios and native alpha. This retains
 above-white bloom input while preventing extreme glow-mask gains from
 spreading through all five bloom levels. The separate scene color remains
 unchanged. A per-frame LUT-draw marker excludes this shader's later use for
-depth of field. Vanilla bypasses the correction. This selection is based on
+depth of field. Vanilla/Preset Off retains the same bloom protection because
+the FP16 upgrades remain active. This selection is based on
 the captured normal-gameplay pass order; other rendering modes need testing.
 
 Eagle Vision's `0x5574B6B8.ps_5_0` combines the tonemapped scene with two
@@ -144,7 +146,8 @@ are registered. They are addon-owned shaders, not captured game hashes.
    Check that resetting Peak Brightness selects the detected display peak,
    and that a manually adjusted peak survives restarting the game.
 4. Inspect the FP16 proxy and RGB10A2 swapchain. Confirm HDR10 color space
-   and gamma 2.2 input decoding. Check gameplay, menus, video,
+   and input decoding (PsychoV: gamma 2.2; Vanilla/Off: sRGB). Compare glowing
+   objects in both modes to verify bloom protection. Check gameplay, menus, video,
    alt-tab, and resizing. Gameplay, Eagle Vision and the captured startup video
    have been verified; other video variants and recreation cases need validation.
 5. Compare Vanilla/PsychoV-30 in a stable scene, then vary peak, exposure,

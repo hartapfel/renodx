@@ -444,3 +444,22 @@ Capture, previews, source/addon backups and fixture logs are saved under
 installed linked addon (`audit.json`). After restarting, the user confirmed the
 requested 80/500-nit UI sweep with the sun visible and pause-menu check worked
 correctly. Sun/flare brightness is now independent of the UI slider.
+
+## Vanilla/Preset Off comparison correction
+
+The user observed blown-out bloom and gamma 2.2 decoding in Vanilla/Off.
+Both were caused by explicit mode choices: the bloom selector and HLSL bypassed
+Vanilla, while the decoding macro was fixed to gamma 2.2. FP16 upgrades remain
+active in Vanilla, so the bloom protection is now retained in both tone-map
+modes. The existing pre-LUT draw guard still excludes later DoF/Eagle filters.
+
+`ToneMapType == 0` now selects sRGB decoding for the native composed signal in
+HDR10; PsychoV retains gamma 2.2. Preset Off already selects type 0. Native LUT,
+UI and Eagle Vision fallback paths remain, with fixed HDR10 output. This provides
+the requested SDR comparison without changing the swapchain or adding settings.
+
+The x86 WARP bloom/transfer fixture passed all three modes across 256 inputs,
+including independent CPU transfer references and PQ-decoded output checks.
+The Release addon built successfully. Source/addon backups and test/build logs
+are under `tmp/asscreed2/vanilla-20260914/`. The user confirmed the in-game
+comparison: Vanilla/Off bloom and shadows look correct, and PsychoV is unchanged.
