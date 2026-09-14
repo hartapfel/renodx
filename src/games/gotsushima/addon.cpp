@@ -386,10 +386,10 @@ renodx::utils::settings::Settings settings = {
         .format = "%.2f",
         .is_enabled = []() { return IsPsychoV() && shader_injection.chromatic_aberration_enabled != 0.f; },
     },
-    new renodx::utils::settings::Setting{
+/*     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Recommended",
-        .section = "Presets",
+        .section = "Options",
         .group = "button-line-1",
         .tooltip = "Recommended settings for balanced, more natural contrast and shadow detail.",
         .tint = 0xFF5F5F,
@@ -415,7 +415,7 @@ renodx::utils::settings::Settings settings = {
         new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Enhanced native look",
-        .section = "Presets",
+        .section = "Options",
         .group = "button-line-1",
         .tooltip = "Tries to emulate the native HDR look through adding contrast to the tonemapper while retaining some shadow detail.",
         .is_enabled = []() { return IsPsychoV(); },
@@ -437,11 +437,11 @@ renodx::utils::settings::Settings settings = {
               {"ColorGradeHighlights", 40.f},
           });
         },
-    },
+    }, */
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Reset All",
-        .section = "Presets",
+        .section = "Options",
         .group = "button-line-2",
         .is_enabled = []() { return shader_injection.tone_map_type != GHOST_TONE_MAP_SDR_REFERENCE; },
         .on_change = []() { renodx::utils::settings::ResetSettings(); },
