@@ -50,6 +50,7 @@ shaders decompiled with the register-preserving mode of HlslDecompiler at
 `D:\Downloads\HlslDecompiler-master\HlslDecompiler-master`. The AST simplifier
 was not used. The initial AC2 port replaces the six matching pixel shaders below;
 Brotherhood adds two variants described in its section below.
+The shared video shader is covered in the Video AutoHDR section at the end.
 
 | Native SM3 hash | DX11 reference hash | Native behavior / binding |
 |---|---|---|
@@ -694,3 +695,229 @@ The earlier Brotherhood build and its game-folder links are recorded separately
 in `brotherhood/release-build.json`. The highlight-fit Release build, matching
 GPU-tested shader instruction streams and all three game-folder links are
 recorded in `highlights/release-build.json`.
+
+## Native presentation pacing and synchronization — 2026-09-16
+
+`native_presentation.hpp` makes the DX11 HDR proxy the presentation owner for
+successfully submitted frames. A per-thread, single-use token suppresses the
+following native device Present, PresentEx or swapchain Present. ReShade still
+executes its normal wrapper/events. Failed or skipped proxy frames fall through
+to the original native method; suppressed calls check native cooperative state.
+Tokens clear at frame boundaries. Hooks replace individual Present slots because
+D3D9 uses additional private vtable entries beyond its public COM interface.
+Device slots are restored on host swapchain destruction as well as device teardown,
+since Reset can replace their dispatch entries. Shared slot ownership is tracked.
+
+The shared proxy utility adds an opt-in tearing policy and a post-Present result
+callback; defaults preserve other mods' behavior. Ezio disables forced tearing.
+The game captures native `create_swapchain` VSync requests by window and assigns
+that interval to its DX11 proxy's creation descriptor. ReShade then applies that
+interval at presentation. This avoids relying on native presentation parameters
+after driver/overlay changes and keeps temporary helper windows separate.
+
+The two existing device-proxy wait-idle options are enabled for this mod. The
+DX9 producer must finish writing the shared texture before the DX11 consumer
+copies it; that copy must finish before the producer reuses the shared storage.
+These DX9 shared resources have no keyed mutex. Merely submitting commands did
+not establish that ownership transfer: an alternating-color test observed 20
+stale images in 240 frames. Both waits reduce that result to zero stale images,
+with no readback failures.
+
+Verification artifacts are in `tmp/asscreedeziotrilogy/pacing/`:
+
+- `brotherhood-baseline.csv`: stable original addon, RTSS cap 60, about 30 HDR
+  DXGI presents/sec and 30 discarded native DX9 presents/sec. Forced tearing
+  was enabled and DXGI synchronization interval was zero.
+- `brotherhood-latest-rtss60.csv`: final synchronized Release, capped relaunch,
+  479 HDR frames at 60.0085 FPS, no native DX9 presents, no dropped frames,
+  median 16.6667 ms and p99 16.6889 ms. The user subsequently confirmed smooth
+  motion and described the result as working perfectly.
+- `fixed/frame-identity-synced.txt`: 240 alternating frames, zero stale images.
+- `fixed/pacing-synced.txt`: all three native Present APIs, four resolution/MSAA
+  cycles, interval 0/1 forwarding, single presentation and injected-failure
+  native fallback/recovery pass.
+- `fixed/reset-synchronized.txt` and `fixed/reset-synchronized-devkit.txt`:
+  12 resolution/MSAA cycles each, helper-device creation on another thread,
+  identical gray HDR readbacks and updated red readbacks, with/without DevKit.
+
+Limits: an earlier in-game reset capture still showed 30 HDR FPS, including a
+capture before the final capped relaunch. The last requested reset was followed
+by a game crash/restart that the user attributed to another cause, so no clean
+post-reset frame-time capture completed. Automated reset tests pass and the
+user confirms smooth motion, but repeat the capped in-game reset measurement
+before claiming comprehensive reset/driver-limiter coverage. The isolated RTSS
+fixture also differs from the game: it limits the original native path while
+failing to limit the candidate's proxy. It is useful for handoff/entry-point
+checks, not proof of every external limiter's interception behavior. NVIDIA's
+separate FPS limiter and AC2/Revelations pacing still need explicit runtime checks.
+
+The linked x86 Release artifact verified for pacing, before Video AutoHDR, was
+`build32/Release/renodx-asscreedeziotrilogy.addon32`, SHA-256
+`094F39572FF262DB3E44890BB8B4297DB3691994A131B432ADDF7D6441DCE898`.
+Only the task-specific temporary RTSS fixture profile was created and removed.
+Game/global RTSS profiles and NVIDIA settings were not modified by the addon.
+
+## Video AutoHDR — 2026-09-16
+
+The user identified native video shader `0x947F8B85`. The AC2, Brotherhood and
+Revelations dumps are byte-identical (252 bytes, SHA-256
+`6A7974F0A97B2AE89B2354FC7939CD0B6D0F28A356CAF0EB248AC3C2AB264A53`). Its
+register-preserving HlslDecompiler baseline compiles to exactly the original
+instruction DWORDs after comment removal: sample `s0` at `v0.xy`, write sample
+RGB, write `c0.w` alpha. Texture alpha is unused. The only original constant is
+`c0`; injection at `c50`–`c56` is safe.
+
+`Video → Video AutoHDR` uses the shared BT.2446A inverse also used by
+`asscreed3original`, adapted to the trilogy's output domain. It defaults to
+BT2446A, is enabled with PsychoV, and is available in both settings modes for
+all three games. Off/Vanilla bypass the conversion; Preset Off selects Off and
+Reset All restores BT2446A. The setting uses the former padding float at `c56.z`,
+so the injection remains 112 bytes. No resources or video-observation caches are
+added.
+
+The sampled SDR video is decoded with gamma 2.4 for the BT.1886 reference expected
+by BT.2446A. The inverse target is `Peak Brightness * 203 / Game Brightness`;
+its result is normalized to `Peak Brightness / Game Brightness`. This lets Game
+Brightness adjust the curve while retaining the display endpoint. The selected
+BT.709/BT.2020 gamut is respected; signed BT.709 coordinates can carry BT.2020
+colors. The shader removes the existing display shoulder, then writes gamma-2.2
+FP16 for native composition. The unchanged DX11 proxy reapplies that shoulder
+once and calls `SwapChainPass` for HDR10. The original fade alpha remains `c0.w`,
+with the existing native blend guard applied after shader selection. As with
+other gamma-space native draws, visual fade behavior still needs game testing.
+
+Verification:
+
+- FXC SM3 build: 160 instruction slots, one texture sample. The embedded shader
+  matches the GPU-tested instruction stream; scene/HUD/proxy streams are unchanged.
+- 216 native DX9 configurations cover Off/On, Vanilla/PsychoV, 400/1000/4000-nit
+  peaks, 80/203/500-nit Game Brightness, both gamut targets and alpha 0/0.25/1.
+  Their 497,664 pixels are passed through FP16 quantization and the actual DX11
+  HDR10 shader. All outputs are finite and peak-bounded; Off/Vanilla RGB and alpha
+  are exact. Gray ramps are monotonic. Maximum white-endpoint error is 0.47 nit;
+  maximum deviation from an independent scalar BT.2446A reference is 1.09 nits
+  at the tested peaks. Game Brightness changes only exhibit sub-nit endpoint
+  rounding, with no substantial brightness reversal.
+- An isolated x86 fixture loads the Release addon and installed ReShade without
+  DevKit, submits the original hash into the cloned backbuffer and reads HDR10.
+  At Peak 1000/Game 203, white reads PQ code 769/1023 (about 1000 nits), compared
+  with 594/1023 for the preceding addon. Vertex-buffer playback passes two
+  resolution/MSAA reset cycles with helper-device creation and updated colors.
+- A synthetic `DrawPrimitiveUP` version crashes inside ReShade on its first
+  post-reset draw with both the preceding pacing addon and the video addon.
+  That fixture limitation predates this change; it is not a successful UP/reset
+  verification. No shared runtime changes were made for video.
+
+Evidence and fixtures: `tmp/asscreedeziotrilogy/video/`. Build target:
+`asscreedeziotrilogy`, preset `clang-x86-release`. In-game video/fade/subtitle
+checks remain pending across the trilogy; verify Off/BT2446A, Vanilla, Preset
+Off and return to gameplay. The shader identity alone does not prove every
+video's resource path, particularly letterboxed playback at other aspect ratios.
+The user subsequently confirmed flawless video playback.
+
+## Brotherhood cutscene material variants — 2026-09-16
+
+A 566-draw capture of the vault cutscene exposed more final material-lighting
+clamps; the user identified Ezio's armor/face as the affected area. The render
+target for the inspected material is 3840x2160, 8x MSAA, RGBA16F. This is a shader
+ceiling, not an SDR render-target format. The earlier matcher assumed lighting
+in `rN.xyz` followed immediately by a fog calculation in `rN.w`.
+
+Examples of the missing layouts:
+
+- `0xCAF7D4D0`, `0xCFFCA65D`, `0x377A2FE6`: completed lighting occupies `r0.yzw`,
+  while fog uses `r0.x` before RGB is written to the output.
+- `0x0AFC541E`, `0xFF81F1B0`: the shader computes fog before completing lighting;
+  only the final interpolation follows the color clamp.
+- `0x557C83EA`, `0x712A66C5`: an interpolated vertex value supplies fog strength.
+
+`HasDistanceFogLightingTail` now follows the three clamped lanes into
+`fog_weight * (c16.rgb - lighting) + lighting`, permitting a separate scalar
+fog register, earlier fog arithmetic and interpolated fog. It verifies the
+material's subsequent `z/w` output to MRT1, rejects coefficient/color/delta
+aliasing, and rejects shader-defined literals at the game's fog registers.
+RGB lane packing is derived from the destination write mask and checked at both
+reads in the fog interpolation. Only the final color saturation is removed;
+a MAX with an existing zero keeps the black floor in those same lanes. No
+extra constants or temporary registers are used. Volume fog retains its former
+checks, depth-faded particles retain their authored clamp, and Vanilla still
+selects the original shader through the existing native runtime policy.
+
+All 60 pixel shaders captured in this frame decompiled successfully. The five
+selected GPU baselines required one syntax repair each: HlslDecompiler emitted
+a `float3` containing three copies of an already replicated `.yyy` vector;
+the repair uses that vector directly. FXC `/O3 /WX` builds those baselines, and
+their outputs match the original shaders exactly in the tested lighting, fog
+and opacity cases. The shipping correction patches the original bytecode, so
+it does not depend on recompiling these decompilations.
+
+Validation:
+
+- 19 previously missed variants account for 143 captured draws. Across all
+  current dumps, 151 additional Brotherhood variants match; no previous matches
+  are lost, and AC2/Revelations classification is unchanged.
+- Five real material shaders pass 7,560 native GPU component checks for original,
+  baseline and patched RGB, fog interpolation, alpha and MRT depth. Above-one
+  lighting is exercised for each shader. Twenty near-match mutations are rejected.
+- All 1,623 dumped pixel shaders, 3,225 bounded variants and 435 lighting variants
+  create successfully. Existing volume-fog/blend tests pass 1,254 checks; the
+  windtrail test passes 6,912 checks with unchanged baseline output.
+- Brotherhood closed before the live baseline/replacement comparison. No live
+  replacement or path change was applied. The Release addon was rebuilt for the
+  next launch; visual confirmation of the cutscene remains pending.
+
+Evidence: `tmp/asscreedeziotrilogy/brotherhood/cutscene-20260916/`. Build target:
+`asscreedeziotrilogy`, preset `clang-x86-release`. Check the affected armor and
+face in PsychoV/Vanilla, including fog, transparent edges and the return to
+gameplay. The new matcher is shared across scenes, without new hash entries.
+
+### Brotherhood building lighting: independent fog packing — 2026-09-16
+
+The next captured outdoor frame contains 2,492 draws and 53 pixel shaders.
+The user identified the window surrounds and curved structure on the right as
+the remaining flat-looking surfaces. Three material variants in this frame
+contain additional compiler allocations of the same final lighting clamp:
+
+- `0xBA9071B6` (46 draws): lighting occupies `r0.xyw`; fog delta occupies
+  `r1.yzw`, with the fog coefficient in `r1.x`.
+- `0x4017670D` (one draw): lighting occupies `r0.yzw`; fog delta occupies
+  `r1.yzw`, and fog distance is read from `r2.x` into `r1.x`.
+- `0x010297B9` (five draws, window/cubemap material): lighting occupies
+  `r0.xyz`, while fog distance is read from `r1.w` into `r0.w`.
+
+`HasDistanceFogLightingTail` now derives both lighting and delta lane mappings
+from their write masks, verifies c16 RGB and both lighting/delta reads in order,
+and rejects any fog coefficient overlapping the written delta lanes. The first
+fog instruction may read distance from a different plain temporary/input lane;
+that lane must not depend on the clamped lighting. Fog constants, all fog
+arithmetic, the secondary depth output, authored particle exclusions and
+Vanilla selection retain their prior checks and behavior.
+
+Validation:
+
+- All 53 captured shaders decompile. The three selected baselines need only
+  the previously documented replicated-vector constructor repair; FXC `/O3
+  /WX` compiles them. Native GPU output matches the originals exactly across
+  the tested light, fog and alpha values.
+- 4,536 component checks pass for the original, baseline and patched shaders,
+  with above-one lighting exercised in every shader. Twelve deliberately
+  broken near-matches are rejected.
+- Across the same dump corpus, 47 additional Brotherhood shaders match; no
+  old matches are lost and AC2/Revelations matching is unchanged. All 1,639
+  original shaders, 3,257 bounded variants and 486 lighting variants create.
+- Existing cutscene (7,560), volume-fog/blend (1,254) and windtrail (6,912)
+  GPU checks pass, including their existing rejection tests.
+- The pre-LUT and LUT resources are RGBA16F. Live readbacks are finite, but
+  capture changing live contents, not a frozen before/after comparison.
+  DevKit reported all three live shaders active; a subsequent 30-material
+  diagnostic-color test did not reach the visible material draws. Consequently
+  no visual success or live baseline equivalence is claimed from that attempt.
+  Temporary shaders were unloaded and the original empty live path restored.
+- The Release target rebuilt successfully. On relaunch, the runtime logged
+  `lighting=1, bound=none` for all three identified hashes. A subsequent street
+  scene has finite pre-LUT and graded RGBA16F readbacks (no NaN/Inf). The user
+  confirmed the windows and right-hand structure are corrected after restart.
+
+Evidence: `tmp/asscreedeziotrilogy/brotherhood/building-20260916/`. Release SHA256:
+`A0949CE2659ADEDC0EB281EF6453FD3AC14166F77D41A4A6BF993F280601B9C6`.
+No additional hash-addressed shipping shaders are needed for these variants.

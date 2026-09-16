@@ -8,9 +8,10 @@
   "summary": "Native DX9 HDR for Assassin's Creed Ezio Trilogy, with PsychoV-30, bloom and blend-mask fixes, independent HUD brightness and DX11 HDR10 presentation.",
   "notes": [
     "Requires 32-bit ReShade with addon support loaded as d3d9.dll. Uses RenoDX's device proxy for HDR10 presentation.",
-    "Eight native SM3 pixel shaders cover the shared scene/bloom/Eagle Vision paths, HUD variants and Brotherhood's white-gradient overlay. Broader gameplay, graphics-setting and device-reset validation remains.",
+    "Nine native SM3 pixel shaders cover the shared scene/bloom/Eagle Vision paths, HUD variants, video playback and Brotherhood's white-gradient overlay. Broader gameplay, graphics-setting and device-reset validation remains.",
     "The native alpha/multiplicative-mask guards, Brotherhood shader ports and pre-fog material-lighting correction have been confirmed in gameplay.",
     "Brotherhood's Effects section includes White Gradient Intensity: 0 disables the overlay (default), 100 restores its original strength.",
+    "Video AutoHDR defaults to BT2446A for the shared prerendered-video shader. Off and Vanilla preserve the original video colors; Preset Off disables the effect.",
     "PsychoV rolls the complete HDR composition toward Peak Brightness while retaining Game Brightness as reference white. Vanilla restores the SDR range before the LUT and at presentation.",
     "Revelations support is experimental. Its volume-fog material-lighting correction passes native GPU checks; broader gameplay validation remains."
   ],

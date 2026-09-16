@@ -23,6 +23,7 @@
 #include "../../utils/settings.hpp"
 #include "../../utils/windowing.hpp"
 #include "./native_alpha.hpp"
+#include "./native_presentation.hpp"
 #include "./shared.h"
 
 namespace {
@@ -53,6 +54,7 @@ ShaderInjectData shader_injection = {
     .color_filter = 1.f,
     .injection_version = 30.f,
     .white_gradient_intensity = 0.f,
+    .video_auto_hdr = 1.f,
 };
 
 bool is_brotherhood = false;
@@ -360,6 +362,17 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return is_brotherhood; },
     },
     new renodx::utils::settings::Setting{
+        .key = "FxVideoAutoHDR",
+        .binding = &shader_injection.video_auto_hdr,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Video AutoHDR",
+        .section = "Video",
+        .tooltip = "Expands prerendered SDR video to HDR using BT.2446 Method A. Uses Game and Peak Brightness; Vanilla keeps the original video colors.",
+        .labels = {"Off", "BT2446A"},
+        .is_enabled = []() { return IsPsychoV(); },
+    },
+    new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Reset All",
         .section = "Options",
@@ -457,6 +470,7 @@ void OnPresetOff() {
       {"ColorGradeFlare", 0.f},
       {"ColorGradeFilter", 100.f},
       {"WhiteGradientIntensity", 100.f},
+      {"FxVideoAutoHDR", 0.f},
   });
 }
 
@@ -601,7 +615,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
         renodx::mods::shader::expected_constant_buffer_space = 50;
         renodx::mods::shader::expected_constant_buffer_index = 13;
         renodx::mods::shader::allow_multiple_push_constants = true;
-        // c50-c56 are unused by all eight audited native pixel shaders.
+        // c50-c56 are unused by all nine audited native pixel shaders.
         renodx::mods::shader::constant_buffer_offset = 50 * 4;
 
         renodx::mods::swapchain::expected_constant_buffer_index = 13;
@@ -665,6 +679,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
       break;
   }
 
+  ac2::native_presentation::Use(fdw_reason);
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
   renodx::mods::swapchain::Use(fdw_reason, &shader_injection);
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);

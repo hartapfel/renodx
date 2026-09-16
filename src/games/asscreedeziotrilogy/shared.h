@@ -29,7 +29,7 @@ struct ShaderInjectData {
   float ui_premultiplied;
   float injection_version;
   float white_gradient_intensity;
-  float padding_1;
+  float video_auto_hdr;
   float padding_2;
 };
 
@@ -80,6 +80,7 @@ cbuffer shader_injection : register(b13) {
 #define CUSTOM_UI_PREMULTIPLIED  shader_injection[5].w
 #define CUSTOM_INJECTION_VERSION shader_injection[6].x
 #define CUSTOM_WHITE_GRADIENT_INTENSITY shader_injection[6].y
+#define CUSTOM_VIDEO_AUTO_HDR shader_injection[6].z
 #else
 #define RENODX_PEAK_WHITE_NITS          shader_injection.peak_white_nits
 #define RENODX_DIFFUSE_WHITE_NITS       shader_injection.paper_white_nits
@@ -112,6 +113,7 @@ cbuffer shader_injection : register(b13) {
 #define CUSTOM_UI_PREMULTIPLIED  shader_injection.ui_premultiplied
 #define CUSTOM_INJECTION_VERSION shader_injection.injection_version
 #define CUSTOM_WHITE_GRADIENT_INTENSITY shader_injection.white_gradient_intensity
+#define CUSTOM_VIDEO_AUTO_HDR shader_injection.video_auto_hdr
 #endif
 
 #include "../../shaders/renodx.hlsl"

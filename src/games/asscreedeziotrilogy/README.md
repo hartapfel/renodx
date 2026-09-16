@@ -18,13 +18,17 @@ calls `renodx::draw::SwapChainPass` for output conversion.
   modes. The default, **0**, bypasses the overlay; **100** restores its original
   strength while retaining HDR range in PsychoV mode. Intermediate values blend
   the scene with the effect. Reset All restores 0; Preset Off restores 100.
+- **Video → Video AutoHDR** defaults to **BT2446A** in all three games. It expands
+  prerendered SDR video to the selected Peak Brightness, with Game Brightness
+  controlling the curve. Off and Vanilla preserve the original shader colors;
+  Preset Off disables it and Reset All restores it. Video alpha is unchanged.
 - The same 112-byte injection layout as the existing mods. DX9 uses seven
   packed `float4` constants at `c50`–`c56`; the DX11 output shader uses `b13`.
-  All eight original shaders were checked for conflicts with those registers.
+  All nine original shaders were checked for conflicts with those registers.
   `injection_version` is 30; Vanilla uses sRGB and PsychoV uses gamma 2.2.
-- Eight native pixel-shader replacements: the HDR LUT bridge/PsychoV-30, bloom
+- Nine native pixel-shader replacements: the HDR LUT bridge/PsychoV-30, bloom
   protection before downsampling, Eagle Vision composition, four HUD variants
-  and Brotherhood's post-LUT white-gradient overlay.
+  Brotherhood's post-LUT white-gradient overlay, and shared video playback.
   Native DX9 blend-state checks preserve masks, multiplication, premultiplication
   and pre-LUT additive sun/flare draws. Bloom protection also stays on in Vanilla.
 - PsychoV keeps ordinary white at Game Brightness and rolls HDR highlights toward
@@ -61,7 +65,7 @@ cmake --build --preset clang-x86-release --target devkit mcp_bridge
 ```
 
 Output: `build32/Release/renodx-asscreedeziotrilogy.addon32`.
-The eight native hashes and two addon-owned DX11 presentation shaders should appear
+The nine native hashes and two addon-owned DX11 presentation shaders should appear
 in `build32/asscreedeziotrilogy.include/embed/shaders.h`.
 Use compatible Release builds of the game addon and DevKit. Close the game
 before rebuilding an addon it has loaded.
@@ -109,6 +113,10 @@ of matching behavior in Brotherhood or Revelations.
   volume-fog composition by their instruction sequence and register dataflow,
   retains the black floor, and leaves fog, shadow, opacity and depth calculations intact.
   Vanilla keeps the original material clamp.
+  Brotherhood's cutscene variants are also covered when lighting uses Y/Z/W
+  channels or fog is computed earlier, in another register, or by the vertex
+  shader. The matcher follows RGB into the final fog blend and checks the
+  material depth output; it does not depend on a list of shader hashes.
   Depth-faded particles keep their authored RGB clamp: removing it turned
   Revelations' white windtrails blue. Detection follows reconstructed scene depth
   into bounded opacity, so matching effect variants are protected without a hash
@@ -210,6 +218,11 @@ Microsoft documents the top-level block-alignment requirement in
 
 ## Remaining runtime checks
 
+- Play prerendered videos in each game, compare Video AutoHDR Off/BT2446A, and
+  check fades, subtitles, letterboxing, return to gameplay, Vanilla and Preset Off.
+- Recheck RTSS/NVIDIA caps and VSync across graphics resets, alt-tab and longer
+  sessions in all three games. The capped Brotherhood relaunch is measured at
+  60 actual HDR FPS; the final in-game reset has user confirmation only.
 - Extend the confirmed Brotherhood graphics-change check to AC2/Revelations,
   more resolution/anti-aliasing combinations, and alt-tab with/without DevKit.
 - Check scene/bloom/HUD upgrades at ultrawide resolutions and after resolution
@@ -265,3 +278,71 @@ Microsoft documents the top-level block-alignment requirement in
   gameplay. The runtime log records two settings resets and subsequent rendering
   without the prior helper-triggered proxy reconfiguration. Broader game/setting
   coverage and long-session stability still need the manual checks above.
+
+## Frame pacing and shared-texture handoff — 2026-09-16
+
+- The HDR proxy now owns successful frame presentation. The native DX9 Present
+  is skipped only after the proxy succeeds; failed/skipped proxy frames retain
+  native presentation and device-loss handling. ReShade's events remain active.
+- The proxy inherits the game's requested VSync interval, captured before native
+  driver/overlay changes, and no longer forces tearing. Native presentation
+  hooks are restored before swapchain resets and device destruction.
+- DX9 finishes writing the shared texture before DX11 reads it, and DX11 finishes
+  its copy before DX9 can reuse it. An alternating-color GPU test caught 20 stale
+  images in 240 frames before synchronization and zero afterward.
+- The x86 Release build passes all three DX9 Present entry points, failed-proxy
+  fallback, and 12 resolution/MSAA/helper-device reset cycles both with and
+  without DevKit. HDR reference readbacks remain correct.
+- Live Brotherhood traces showed the original 60-FPS cap producing 30 HDR frames
+  plus discarded DX9 presents. The final capped relaunch measures 60.01 HDR FPS,
+  no native DX9 presents and no dropped frames (479 frames, 16.689-ms p99 interval).
+  The user confirmed smooth motion with in-game VSync on and off. See
+  IMPLEMENTATION.md for capture limits and remaining reset/limiter coverage.
+
+## Video AutoHDR verification — 2026-09-16
+
+- `0x947F8B85` is byte-identical in all three game dumps. Its decompiled baseline
+  reproduces every original instruction DWORD; RGB sampling and fade alpha are
+  preserved in the replacement.
+- 216 native DX9 configurations (497,664 pixels) pass through FP16 transport and
+  the actual DX11 HDR10 shader: finite output, exact Off/Vanilla RGB and alpha,
+  monotonic gray ramps, and white within 0.5 nit of the selected peak. Scene,
+  HUD and presentation shader instruction streams remain unchanged.
+- The rebuilt Release addon activates the video replacement with the installed
+  ReShade runtime in an isolated vertex-buffer playback test. HDR10 readbacks
+  pass two resolution/MSAA resets with helper-device creation. In-game video
+  playback and fades still need the visual checks above; see IMPLEMENTATION.md
+  for the synthetic UP-draw reset limitation.
+- The user subsequently confirmed that video playback works flawlessly.
+
+## Brotherhood cutscene lighting — 2026-09-16
+
+- The captured vault cutscene contains 19 additional material variants in 143
+  draws with final lighting clamps missed by the former register-specific rule.
+  The extended matcher covers 151 additional variants in the Brotherhood dump,
+  retains every previous match, and leaves AC2/Revelations matching unchanged.
+- Five selected decompiled baselines match their originals exactly in native
+  GPU checks. All 7,560 lighting/fog/alpha/depth checks and 20 rejection cases
+  pass, along with the existing blend, volume-fog and windtrail regression tests.
+  All 1,623 dumped pixel shaders and 435 lighting variants create on native DX9.
+- Rebuilt target `asscreedeziotrilogy` with `clang-x86-release`. Reopen the vault
+  cutscene and compare Ezio's armor/face in PsychoV and Vanilla. The game closed
+  before live shader comparison, so the visual result still needs confirmation.
+
+## Brotherhood building lighting — 2026-09-16
+
+- The distance-fog matcher also follows independently packed fog RGB and a
+  separate source register for fog distance. This covers 47 more Brotherhood
+  variants, including three shaders used in 52 draws in the captured building
+  scene. All previous matches remain; AC2/Revelations coverage is unchanged.
+- Three decompiled baselines match native GPU output exactly in the tested
+  cases. All 4,536 lighting/fog/alpha/depth checks and 12 rejection cases pass,
+  together with the existing cutscene, volume-fog, blend and windtrail tests.
+- Build `asscreedeziotrilogy` with `clang-x86-release`, restart Brotherhood,
+  and check the window surrounds and curved structure on the right in PsychoV
+  and Vanilla. DevKit reported the temporary shaders loaded, but diagnostic
+  colors did not reach the material draws; that live test is inconclusive.
+- The rebuilt Release addon activates all three new native fixes after restart
+  (`lighting=1` in the runtime log). Scene and graded FP16 readbacks contain no
+  NaN/Inf values. The user confirmed the windows and right-hand structure are
+  corrected after restarting with this build.
