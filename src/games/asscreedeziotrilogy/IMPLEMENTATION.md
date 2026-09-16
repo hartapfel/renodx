@@ -5,6 +5,44 @@ This port keeps native D3D9 rendering and uses RenoDX's DX11 device proxy only f
 HDR10 presentation. All three games have native mappings; their validation
 coverage and remaining runtime checks are recorded below.
 
+## Graphics-reset and presentation lifetime
+
+Brotherhood's September 16 log shows a successful native `Reset`, followed by
+creation/destruction of a 232x29 `Kiero` helper device on a different thread.
+`mods::swapchain::OnInitDevice` previously published proxy settings for every
+device. The helper's DX9 shader set is empty, so it overwrote the DX11 output
+shaders and marked the proxy dirty. The next frame recreated presentation with
+that empty shader set. An isolated test with the previous Release binary
+reproduced failure on the first reset/helper cycle, including a DX11
+`DXGI_ERROR_DEVICE_HUNG` removal reason.
+
+The correction is in the shared presentation infrastructure used by this addon:
+
+- `swapchain_v2.hpp` publishes settings only for `IsProxyDevice(device)`.
+  Proxy swapchains do not enter the host swapchain/window bookkeeping; releasing
+  them no longer removes the host window hook or leaves a stale flip-chain entry.
+- `device_proxy.hpp` clears context state and flushes after releasing the old flip
+  swapchain, balances `GetSurfaceLevel` references with scoped ownership, and
+  returns before publishing a failed native copy.
+- `resource_upgrade.hpp` preserves multisampled DX9 surfaces when cloning.
+  DX9 cannot create multisampled textures. The shared handoff texture remains
+  single-sample and the existing `StretchRect` performs the resolve.
+
+Validation uses the actual x86 addon and ReShade DLL in an isolated directory,
+without the game. The fixture changes resolution, resets, creates/destroys a
+`Kiero` device on a worker thread, and reads back the DX11 HDR10 output. Twelve
+resolution cycles and twelve alternating non-MSAA/4x-MSAA cycles pass, including
+updated red frames between reference-gray checks. The twelve-cycle MSAA sequence
+also passes with the installed Release DevKit enabled. No device removal, failed
+clone/copy or stale flip-swapchain warning appears in the fixed run. The user
+subsequently confirmed flawless recovery during Brotherhood graphics changes.
+The game log records two settings resets, helper-device recreation, and continued
+native rendering without the prior helper-triggered proxy reconfiguration.
+This is a short regression check, not a long-session or all-games stability proof.
+Evidence: `tmp/asscreedeziotrilogy/reset/` (fixture source, prior/fixed binaries,
+logs and readback results). Build with `clang-x86-release`, target
+`asscreedeziotrilogy`; no shaders or controls changed for this correction.
+
 ## Shader mapping and decompilation proof
 
 The native dump contains 393 `ps_3_0` and 206 `vs_3_0` shaders. All 393 pixel

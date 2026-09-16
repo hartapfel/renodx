@@ -41,7 +41,7 @@ calls `renodx::draw::SwapChainPass` for output conversion.
   resources use direct DX9 format upgrades; the dgVoodoo typeless/integer-view
   workaround does not transfer to this path.
 
-The native format rules still need broader scene, MSAA and reset validation.
+The native format rules still need broader in-game scene, MSAA and reset validation.
 Game and UI Brightness are separate for supported HUD color draws. Preset Off
 selects the vanilla LUT/UI/Eagle Vision behavior and sRGB decoding, while FP16
 resources, bloom protection and HDR10 transport remain enabled.
@@ -210,6 +210,8 @@ Microsoft documents the top-level block-alignment requirement in
 
 ## Remaining runtime checks
 
+- Extend the confirmed Brotherhood graphics-change check to AC2/Revelations,
+  more resolution/anti-aliasing combinations, and alt-tab with/without DevKit.
 - Check scene/bloom/HUD upgrades at ultrawide resolutions and after resolution
   changes; confirm matching render targets remain FP16 and unrelated masks do not.
 - Check the new highlight fit in Animus lighting at 1000-nit Peak Brightness:
@@ -242,3 +244,24 @@ Microsoft documents the top-level block-alignment requirement in
 - HUD white at 80/203/500 nits remains within 0.26 nits of its requested value
   (or display peak), with unchanged shader alpha. In-game transparent blending
   and the latest highlight fit still require the runtime checks above.
+
+## Graphics-reset stability — 2026-09-16
+
+- Brotherhood creates a temporary `Kiero` DX9 device after a graphics reset.
+  The shared swapchain module now accepts presentation shader settings only
+  from the DX11 proxy device, so helper devices cannot replace them with an
+  empty shader set. Proxy teardown also preserves the host's window hook and
+  flushes deferred DX11 swapchain destruction before recreation.
+- The native presentation copy releases its temporary surface references every
+  frame and skips failed copies. MSAA backbuffer clones remain DX9 surfaces,
+  then resolve to a single-sample shared texture for HDR presentation.
+- An isolated x86 test with the actual Release addon and installed ReShade
+  reproduced the old failure on the first reset/helper-device cycle. The fixed
+  addon passed 12 resolution-reset cycles and another 12 cycles alternating
+  single-sample/4x MSAA, with helper-device creation on a second thread. HDR10
+  readbacks stayed identical for the reference gray and updated for red frames.
+  The 12-cycle MSAA sequence also passed with Release DevKit enabled.
+  The user then confirmed Brotherhood's graphics changes recover flawlessly in
+  gameplay. The runtime log records two settings resets and subsequent rendering
+  without the prior helper-triggered proxy reconfiguration. Broader game/setting
+  coverage and long-session stability still need the manual checks above.

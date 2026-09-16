@@ -456,7 +456,10 @@ static void OnInitDevice(reshade::api::device* device) {
   data->expected_constant_buffer_index = expected_constant_buffer_index;
   data->expected_constant_buffer_space = expected_constant_buffer_space;
 
-  if (utils::device_proxy::UseProxyRequested()) {
+  // Only the presentation device owns these shaders. Games and overlays can
+  // create temporary DX9 devices after a reset; their shader set must not
+  // replace the live DX11 proxy's settings.
+  if (utils::device_proxy::UseProxyRequested() && utils::device_proxy::IsProxyDevice(device)) {
     renodx::utils::draw::SwapchainProxyPass proxy_settings;
     proxy_settings.vertex_shader = data->swap_chain_proxy_vertex_shader;
     proxy_settings.pixel_shader = data->swap_chain_proxy_pixel_shader;
@@ -806,6 +809,12 @@ static void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
 
   HWND hwnd = static_cast<HWND>(swapchain->get_hwnd());
 
+  if (utils::device_proxy::IsProxyDevice(device)) {
+    // The proxy owns its swapchain lifecycle, including the host window.
+    // Do not add it to the native swapchain/window bookkeeping below.
+    return;
+  }
+
   const auto& swapchain_desc_optional = upgraded_swapchain_desc.has_value() ? upgraded_swapchain_desc : original_swapchain_desc;
 
   if (!resize && hwnd != nullptr && utils::swapchain::IsDXGI(swapchain)
@@ -813,12 +822,6 @@ static void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
       && (swapchain_desc_optional->present_mode == static_cast<uint32_t>(DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL)
           || swapchain_desc_optional->present_mode == static_cast<uint32_t>(DXGI_SWAP_EFFECT_FLIP_DISCARD))) {
     flip_swapchains_by_window[hwnd].insert(swapchain);
-  }
-
-  if (utils::device_proxy::UseProxyRequested() && device == utils::device_proxy::proxy_device_reshade) {
-    // Don't modify proxy device swapchains
-    reshade::log::message(reshade::log::level::info, "mods::swapchain::OnInitSwapchain(Abort for proxy device swapchain.)");
-    return;
   }
 
   auto* data = renodx::utils::data::Get<DeviceData>(device);
@@ -935,6 +938,10 @@ static void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
 }
 
 static void OnDestroySwapchain(reshade::api::swapchain* swapchain, bool resize) {
+  // Destroying a proxy swapchain must not unhook the host's window procedure
+  // or mark a native swapchain resize as pending.
+  if (utils::device_proxy::IsProxyDevice(swapchain->get_device())) return;
+
   if (resize) {
     // Next CreateSwapchain/InitSwapchain will be from resize (not new swapchain)
     local_swapchain_resize = true;
