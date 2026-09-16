@@ -921,3 +921,32 @@ Validation:
 Evidence: `tmp/asscreedeziotrilogy/brotherhood/building-20260916/`. Release SHA256:
 `A0949CE2659ADEDC0EB281EF6453FD3AC14166F77D41A4A6BF993F280601B9C6`.
 No additional hash-addressed shipping shaders are needed for these variants.
+
+## LUT encoding correction on the GitHub baseline — 2026-09-16
+
+Restored this mod from `hartapfel/renodx` main at
+`85f887d89a3a96f91808b9a54fe67bbe4c262220`, then applied only the requested
+LUT encoding correction. The original LUT-first PsychoV pipeline and controls
+are retained; the local LUT Contrast/color-transfer experiments are removed.
+
+`AC2SampleLUTLinear` encodes bounded linear lookup values to sRGB, samples the
+native LUT, decodes its sRGB output, then applies
+`renodx::color::correct::GammaSafe(graded_linear, false, 2.2f)` once to emulate
+the SDR display EOTF. The HDR bridge and direct gray-anchor measurement share
+this helper. Scene transport, Vanilla, HUD/video and presentation remain unchanged.
+With no intervening processing, sRGB decode plus this emulation is algebraically
+equivalent to decoding the sampled code values with gamma 2.2.
+
+Verification: `tmp/asscreedeziotrilogy/restore-github/`. The native 2,962-slot
+scene shader creates successfully. Seven synthetic LUTs and 420 configurations
+per sweep cover both gamut targets, multiple peak/Game Brightness values and
+auto/manual compression. The isolated LUT boundary agrees with an independent
+sRGB/power-2.2 reference within `1e-6` linear RGB. Color Filter 0/50/100 passes
+native DX9 and actual DX11 HDR10 presentation checks with finite output, zero
+scene alpha and peak rounding below 0.05 PQ10 code steps. Vanilla matches the
+GitHub-era baseline exactly in the tested cases. In-game visual checks remain
+pending. Build target: `asscreedeziotrilogy`, preset `clang-x86-release`.
+The Release build succeeded; its embedded scene instructions match the GPU-tested
+shader, all other shader instructions are unchanged, and all three game links
+resolve to the verified addon, SHA-256
+`198AFE002D3AC8DA8D39C8858F6E72DA7DFA92A274B95B807DBF80E6F81E8A9E`.

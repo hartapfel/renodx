@@ -14,6 +14,8 @@ calls `renodx::draw::SwapChainPass` for output conversion.
 - Native addon/settings/shader/swapchain lifecycle with the AC2/Brotherhood
   control set: Vanilla/PsychoV-30, detected peak brightness, game/UI brightness,
   hue shift, color grading, PsychoV parameters, Reset All and Preset Off.
+- The HDR LUT bridge uses sRGB input/output followed by gamma-2.2 SDR EOTF
+  emulation. The same conversion is used for the LUT-calibrated gray anchor.
 - Brotherhood alone shows **Effects → White Gradient Intensity** in both settings
   modes. The default, **0**, bypasses the overlay; **100** restores its original
   strength while retaining HDR range in PsychoV mode. Intermediate values blend

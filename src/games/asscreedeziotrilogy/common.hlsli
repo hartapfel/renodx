@@ -172,6 +172,15 @@ float3 AC2SampleLUT(float3 encoded, sampler3D lut,
   return result;
 }
 
+float3 AC2SampleLUTLinear(float3 linear_color, sampler3D lut,
+                         float3 coordinate_scale, float3 coordinate_offset) {
+  // Interpret the native LUT as sRGB input/output, then emulate the SDR
+  // display's gamma-2.2 EOTF once, before reconstructing the HDR grade.
+  const float3 graded_linear = renodx::color::srgb::Decode(
+      AC2SampleLUT(renodx::color::srgb::Encode(linear_color), lut, coordinate_scale, coordinate_offset));
+  return renodx::color::correct::GammaSafe(graded_linear, false, 2.2f);
+}
+
 float3 AC2GradeHDR(float3 linear_bt709, sampler3D lut,
                    float3 coordinate_scale, float3 coordinate_offset) {
   // A reversible gamut fit plus max-channel N2 creates a bounded, hue-preserving
@@ -181,10 +190,7 @@ float3 AC2GradeHDR(float3 linear_bt709, sampler3D lut,
       linear_bt709, adaptive_lms, 1.f);
   float3 compressed = renodx::color::gamut::GamutCompressBT709AdaptiveD65(linear_bt709, adaptive_lms, gamut_scale);
   const float range_scale = renodx::tonemap::neutwo::ComputeMaxChannelScale(compressed);
-  float3 encoded = renodx::draw::EncodeColor(max(compressed * range_scale, 0.f.xxx), RENODX_SWAP_CHAIN_DECODING);
-  float3 graded = renodx::draw::DecodeColor(
-      AC2SampleLUT(encoded, lut, coordinate_scale, coordinate_offset),
-      RENODX_SWAP_CHAIN_DECODING);
+  float3 graded = AC2SampleLUTLinear(max(compressed * range_scale, 0.f.xxx), lut, coordinate_scale, coordinate_offset);
   return renodx::color::gamut::GamutDecompressBT709AdaptiveD65(
       graded / max(range_scale, 1e-6f), adaptive_lms, gamut_scale);
 }
@@ -227,10 +233,8 @@ float3 AC2ToneMapScene(float3 encoded_scene, sampler3D lut,
                                      0.18f.xxx, lut, coordinate_scale, coordinate_offset)),
                                  1e-5f)
                              * RENODX_PSYCHOV_ADAPTATION_ANCHOR / 0.18f;
-  calibration.output_anchor = max(renodx::color::y::from::BT709(renodx::draw::DecodeColor(AC2SampleLUT(
-                                                                                              renodx::draw::EncodeColor(0.18f.xxx, RENODX_SWAP_CHAIN_DECODING),
-                                                                                              lut, coordinate_scale, coordinate_offset),
-                                                                                          RENODX_SWAP_CHAIN_DECODING)),
+  calibration.output_anchor = max(renodx::color::y::from::BT709(AC2SampleLUTLinear(
+                                     0.18f.xxx, lut, coordinate_scale, coordinate_offset)),
                                   1e-5f)
                               * RENODX_PSYCHOV_BACKGROUND_ANCHOR / 0.18f;
   // Keep the observer anchor inside its working volume, independently of
