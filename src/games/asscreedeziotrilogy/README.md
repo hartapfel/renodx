@@ -1,12 +1,13 @@
 # Assassin's Creed Ezio Trilogy — native DX9
 
-Native DX9 HDR mod for **Assassin's Creed II and Brotherhood**. Revelations is a
-future target. Build target: `asscreedeziotrilogy`.
+Native DX9 HDR mod for **Assassin's Creed II, Brotherhood and Revelations**.
+Revelations coverage is experimental. Build target: `asscreedeziotrilogy`.
 
 The game renders through native DX9. RenoDX's device proxy shares its FP16
 backbuffer with a separate DX11 swapchain for RGB10A2 HDR10/PQ presentation.
-The addon-owned DX11 pixel shader calls `renodx::draw::SwapChainPass` for output
-conversion. Scene tone mapping runs in the native SM3 scene/LUT shader.
+Scene tone mapping runs in the native SM3 scene/LUT shader. The addon-owned DX11
+pixel shader fits the complete HDR composition smoothly to Peak Brightness, then
+calls `renodx::draw::SwapChainPass` for output conversion.
 
 ## Implemented
 
@@ -26,10 +27,16 @@ conversion. Scene tone mapping runs in the native SM3 scene/LUT shader.
   and Brotherhood's post-LUT white-gradient overlay.
   Native DX9 blend-state checks preserve masks, multiplication, premultiplication
   and pre-LUT additive sun/flare draws. Bloom protection also stays on in Vanilla.
+- PsychoV keeps ordinary white at Game Brightness and rolls HDR highlights toward
+  Peak Brightness, including effects added after the LUT. Its working response
+  stays independent of Game Brightness to avoid brightness-setting reversals.
+  Vanilla restores the SDR range before the LUT and at presentation.
 - FP16 presentation cloning and candidate scene/bloom/postprocess/HUD upgrades
   from native `b8g8r8a8_unorm` / `b8g8r8x8_unorm` to `r16g16b16a16_float`.
-  These retain the existing 16:9 aspect filter and 0.1 tolerance for rounded bloom
-  levels, require render-target usage and exclude depth/stencil and UAV usage.
+  These match the current backbuffer's aspect ratio, with 0.1 tolerance for
+  rounded bloom levels, require render-target usage and exclude depth/stencil
+  and UAV usage. The shared upgrade code refreshes the reference on swapchain
+  initialization and resize, including ultrawide resolutions.
   Sample-only textures and the 3D LUT are outside these rules. Intermediate
   resources use direct DX9 format upgrades; the dgVoodoo typeless/integer-view
   workaround does not transfer to this path.
@@ -59,8 +66,9 @@ in `build32/asscreedeziotrilogy.include/embed/shaders.h`.
 Use compatible Release builds of the game addon and DevKit. Close the game
 before rebuilding an addon it has loaded.
 
-The injection folder contains `AssassinsCreedIIGame.exe` (AC2, Steam app 33230)
-or `ACBSP.exe` (Brotherhood, Steam app 48190). Resolve its local path before deployment.
+The injection folder contains `AssassinsCreedIIGame.exe` (AC2, Steam app 33230),
+`ACBSP.exe` (Brotherhood, Steam app 48190), or `ACRSP.exe` (Revelations, Steam app
+201870). Resolve its local path before deployment.
 Place/link 32-bit addon-enabled ReShade as `d3d9.dll`, the new `.addon32`, and
 the compatible `renodx-devkit.addon32` there. An existing dgVoodoo `d3d9.dll`,
 wrapper-era ReShade loader or older Ezio addon is a deployment conflict: preserve
@@ -97,9 +105,14 @@ of matching behavior in Brotherhood or Revelations.
   frame when the scene multiplier exceeds one. Destination HDR and shader alpha
   are preserved. Selection uses native blend state, including unseen shader hashes.
 - In PsychoV mode, native material variants can preserve lighting above one before
-  fog. The bytecode patch requires the exact lighting/fog sequence, retains its
-  black floor, and leaves fog, shadow, opacity and depth calculations intact.
+  fog. The bytecode patch recognizes Brotherhood's distance fog and Revelations'
+  volume-fog composition by their instruction sequence and register dataflow,
+  retains the black floor, and leaves fog, shadow, opacity and depth calculations intact.
   Vanilla keeps the original material clamp.
+  Depth-faded particles keep their authored RGB clamp: removing it turned
+  Revelations' white windtrails blue. Detection follows reconstructed scene depth
+  into bounded opacity, so matching effect variants are protected without a hash
+  list. Transparent surface materials still receive HDR lighting.
   A separate audit of all 456 dumped AC2 pixel shaders found no matching final
   material-lighting clamp; the examined AC2 material paths already preserve the
   lighting sum before fog. No additional AC2 material patch was needed.
@@ -176,8 +189,34 @@ Microsoft documents the top-level block-alignment requirement in
 - The user confirmed the rebuilt material-lighting correction works perfectly
   in gameplay. A post-restart resource readback was not completed.
 
+## Revelations verification — 2026-09-16
+
+- The 4,168-draw capture contains 1,157 material draws across 35 variants with
+  a completed-lighting clamp before distance/volume fog. Scene targets are FP16;
+  the clamp is an explicit native shader instruction.
+- Independently disassembled all 439 dumped pixel shaders. The SM3 decompiler
+  produced 437 baselines; two unrelated shaders failed. The selected material's
+  repaired baseline matches native GPU lighting/fog checks with volume fog on/off.
+- Extended the general material matcher to cover all 113 matching Revelations
+  variants in this dump. It changes only the completed-lighting ceiling, keeps
+  the black floor and composes with the existing alpha/blend guards.
+- All 1,495 dumped pixel shaders across the three games, 2,970 applicable blend
+  variants and 251 lighting variants create on native DX9. The Revelations suite
+  passes 1,254 GPU checks; the Brotherhood regression suite still passes 582.
+- Restart logs confirm the affected material uses the lighting fix, including
+  draws that also require alpha protection. A subsequent gameplay readback
+  reaches RGB 1.97 before the LUT with no NaN/Inf. This is not a controlled
+  before/after comparison; visual confirmation remains a manual check.
+
 ## Remaining runtime checks
 
+- Check scene/bloom/HUD upgrades at ultrawide resolutions and after resolution
+  changes; confirm matching render targets remain FP16 and unrelated masks do not.
+- Check the new highlight fit in Animus lighting at 1000-nit Peak Brightness:
+  compare Vanilla/PsychoV, then raise Game Brightness from 203 to 500. Verify
+  smooth highlights, SDR-bounded Vanilla, Eagle Vision and transparent HUD edges.
+- Compare Revelations' affected scene in PsychoV and Vanilla, including fog,
+  material highlights, transparent objects and shadows.
 - Check the Brotherhood-only Effects slider at 0/50/100, Reset All and Preset Off.
 - Vary Brotherhood UI Brightness through 80/203/500 nits, including the minimap's
   transformed mask, and compare Vanilla/PsychoV in the white-gradient scene.
@@ -187,3 +226,19 @@ Microsoft documents the top-level block-alignment requirement in
   scenes and graphics settings, including sun/flare and glowing street objects.
 - Check the control extremes, Preset Off, Eagle Vision, and operation without
   DevKit. Broader scene coverage and long-session stability remain manual checks.
+
+## Highlight-fit verification — 2026-09-16
+
+- The user reports that the updated highlight fit is almost perfect. A subsequent
+  blue windtrail report was isolated to the pre-LUT particle/material path, not
+  the final highlight shoulder; see the particle-clamp notes in IMPLEMENTATION.md.
+- The actual native scene shader, FP16 transport and DX11 HDR10 proxy were tested
+  together across 180 configurations (414,720 pixels), then repeated with a late
+  additive effect. All outputs were finite, with no early peak plateaus in the
+  tested lighting range. Extreme-tail FP16/PQ rounding remains below one 10-bit
+  PQ code step; this is not proof of strict monotonicity for every colored ramp.
+- The Vanilla LUT sweep matches the original native shader exactly. A separate
+  proxy fixture passes 432 component checks, including the final SDR clamp.
+- HUD white at 80/203/500 nits remains within 0.26 nits of its requested value
+  (or display peak), with unchanged shader alpha. In-game transparent blending
+  and the latest highlight fit still require the runtime checks above.
