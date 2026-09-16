@@ -352,9 +352,15 @@ inline reshade::api::resource CloneResource(
     new_desc.heap = reshade::api::memory_heap::gpu_only;
   }
 
-  // New: Force Texture2D if surface
+  // DX9 multisampled render targets must stay surfaces: the API cannot create
+  // multisampled textures or shader-resource views of those render targets.
   if (new_desc.type == reshade::api::resource_type::surface) {
-    new_desc.type = reshade::api::resource_type::texture_2d;
+    if (resource_info->device->get_api() == reshade::api::device_api::d3d9
+        && new_desc.texture.samples > 1) {
+      new_desc.usage = renodx::utils::bitwise::UnsetFlag(new_desc.usage, reshade::api::resource_usage::shader_resource);
+    } else {
+      new_desc.type = reshade::api::resource_type::texture_2d;
+    }
   }
 
 #ifdef DEBUG_LEVEL_1

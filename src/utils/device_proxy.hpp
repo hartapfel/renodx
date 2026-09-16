@@ -12,6 +12,7 @@
 #include <dxgi1_6.h>
 #include <windef.h>
 #include <windows.h>
+#include <wrl/client.h>
 
 #include <atomic>
 #include <cassert>
@@ -763,6 +764,11 @@ static ProxySharedResourcePair GetProxySharedResourcePair(
   if (new_desc.type == reshade::api::resource_type::surface) {
     new_desc.type = reshade::api::resource_type::texture_2d;
   }
+  if (source_resource_info.device->get_api() == reshade::api::device_api::d3d9) {
+    // StretchRect resolves the host's MSAA surface into this shared texture.
+    // DX9 shared textures are single-sample even when the backbuffer is not.
+    new_desc.texture.samples = 1;
+  }
 
   // Override original flags
   new_desc.flags = reshade::api::resource_flags::shared;
@@ -1100,6 +1106,12 @@ static void ReleaseProxySwapChain() {
   proxy_swap_chain->Release();
   proxy_swap_chain = nullptr;
   proxy_swapchain_reshade = nullptr;
+  // D3D11 defers destruction. Release context-held views and flush before a
+  // replacement flip swapchain is created for this same HWND.
+  if (proxy_device_context != nullptr) {
+    proxy_device_context->ClearState();
+    proxy_device_context->Flush();
+  }
 }
 
 static void ResetProxyRuntimeStateAfterTeardown() {
@@ -1672,8 +1684,8 @@ static void OnPresent(
     auto* native = reinterpret_cast<IDirect3DDevice9*>(device->get_native());
     auto* src_res = reinterpret_cast<IDirect3DResource9*>(swapchain_clone.handle);
     auto* dst_res = reinterpret_cast<IDirect3DResource9*>(shared_pair.host_shared_resource.handle);
-    IDirect3DSurface9* src_surface;
-    IDirect3DSurface9* dst_surface;
+    Microsoft::WRL::ComPtr<IDirect3DSurface9> src_surface;
+    Microsoft::WRL::ComPtr<IDirect3DSurface9> dst_surface;
 
     switch (src_res->GetType()) {
       case D3DRTYPE_SURFACE:
@@ -1681,11 +1693,11 @@ static void OnPresent(
         break;
       case D3DRTYPE_TEXTURE: {
         auto* tex = static_cast<IDirect3DTexture9*>(src_res);
-        tex->GetSurfaceLevel(0, &src_surface);
+        if (FAILED(tex->GetSurfaceLevel(0, &src_surface))) return;
         break;
       }
       default:
-        assert(false);
+        return;
     }
 
     switch (dst_res->GetType()) {
@@ -1694,14 +1706,14 @@ static void OnPresent(
         break;
       case D3DRTYPE_TEXTURE: {
         auto* tex = static_cast<IDirect3DTexture9*>(dst_res);
-        tex->GetSurfaceLevel(0, &dst_surface);
+        if (FAILED(tex->GetSurfaceLevel(0, &dst_surface))) return;
         break;
       }
       default:
-        assert(false);
+        return;
     }
 
-    const HRESULT copy_hr = native->StretchRect(src_surface, nullptr, dst_surface, nullptr, D3DTEXF_NONE);
+    const HRESULT copy_hr = native->StretchRect(src_surface.Get(), nullptr, dst_surface.Get(), nullptr, D3DTEXF_NONE);
     if (FAILED(copy_hr)) {
       std::stringstream s;
       s << "utils::device_proxy::OnPresent(copy handoff->host_shared StretchRect failed: hr=0x";
@@ -1710,8 +1722,8 @@ static void OnPresent(
       s << ", dst=" << PRINT_PTR(shared_pair.host_shared_resource.handle);
       s << ")";
       reshade::log::message(reshade::log::level::error, s.str().c_str());
+      return;
     }
-    assert(SUCCEEDED(copy_hr));
   } else {
     queue->get_immediate_command_list()->copy_resource(swapchain_clone, shared_pair.host_shared_resource);
   }
