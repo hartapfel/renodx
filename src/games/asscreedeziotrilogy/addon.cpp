@@ -273,18 +273,6 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
-        .key = "WhiteGradientIntensity",
-        .binding = &shader_injection.white_gradient_intensity,
-        .default_value = 0.f,
-        .label = "White Gradient Intensity",
-        .section = "Effects",
-        .tooltip = "Strength of Brotherhood's white gradient overlay. 0 turns it off; 100 retains the original intensity.",
-        .min = 0.f,
-        .max = 100.f,
-        .parse = [](float value) { return value * 0.01f; },
-        .is_visible = []() { return is_brotherhood; },
-    },
-    new renodx::utils::settings::Setting{
         .key = "PsychoVConeResponseExponent",
         .binding = &shader_injection.psychov_cone_response_exponent,
         .default_value = 1.0f,
@@ -360,6 +348,18 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return IsPsychoV() && settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "WhiteGradientIntensity",
+        .binding = &shader_injection.white_gradient_intensity,
+        .default_value = 0.f,
+        .label = "White Gradient Intensity",
+        .section = "Effects",
+        .tooltip = "Strength of Brotherhood's white gradient overlay. 0 turns it off; 100 retains the original intensity.",
+        .min = 0.f,
+        .max = 100.f,
+        .parse = [](float value) { return value * 0.01f; },
+        .is_visible = []() { return is_brotherhood; },
+    },
+    new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Reset All",
         .section = "Options",
@@ -378,7 +378,7 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Assassin's Creed II and Brotherhood are supported. Revelations is planned.",
+        .label = "Assassin's Creed II, Brotherhood and Revelations are supported.",
         .section = "Instructions",
     },
     new renodx::utils::settings::Setting{
@@ -577,7 +577,7 @@ bool OnCopyTextureRegion(
 }  // namespace
 
 extern "C" __declspec(dllexport) constexpr const char* NAME = "RenoDX for Assassin's Creed Ezio Trilogy";
-extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "Native DX9 HDR for Assassin's Creed II and Brotherhood";
+extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "Native DX9 HDR for Assassin's Creed Ezio Trilogy";
 
 BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
   switch (fdw_reason) {
@@ -628,9 +628,9 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
              }},
         };
 
-        // Port the AC2/Brotherhood 16:9 scene/bloom/postprocess/HUD family to
-        // native D3D9 A8R8G8B8/X8R8G8B8 formats. Rounded bloom levels require
-        // the same tolerance. Validate these candidates in the native capture.
+        // Match scene/bloom/postprocess/HUD targets to the current backbuffer's
+        // aspect ratio, including ultrawide resolutions. Rounded bloom levels
+        // retain the existing tolerance.
         // DX9 uses direct upgrades for these RTs; dgVoodoo's typeless integer
         // views and their cloning workaround do not apply here.
         for (const auto format : {
@@ -640,7 +640,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
           renodx::mods::swapchain::resource_upgrade_infos.push_back({
               .old_format = format,
               .new_format = reshade::api::format::r16g16b16a16_float,
-              .aspect_ratio = 16.f / 9.f,
+              .aspect_ratio = renodx::mods::swapchain::SwapChainUpgradeTarget::BACK_BUFFER,
               .aspect_ratio_tolerance = 0.1f,
               .usage_include = reshade::api::resource_usage::render_target,
               .usage_exclude = reshade::api::resource_usage::depth_stencil | reshade::api::resource_usage::unordered_access,

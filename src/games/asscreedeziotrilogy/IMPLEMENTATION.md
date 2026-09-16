@@ -2,7 +2,7 @@
 
 Behavior reference: [the AC2 DX11 implementation guide](../asscreed2/IMPLEMENTATION.md).
 This port keeps native D3D9 rendering and uses RenoDX's DX11 device proxy only for
-HDR10 presentation. AC2 and Brotherhood have native mappings; their validation
+HDR10 presentation. All three games have native mappings; their validation
 coverage and remaining runtime checks are recorded below.
 
 ## Shader mapping and decompilation proof
@@ -39,9 +39,10 @@ native `COLOR`/`TEXCOORD` declarations and alpha calculations remain intact.
 
 - **Scene:** reversible Adaptive D65 gamut fit and max-channel N2 LUT-domain
   compression, native grade, range/gamut reconstruction, measured gray anchors,
-  PsychoV-30 and user grading. Automatic compression retains the 4000-nit working
-  range followed by the display shoulder. Manual compression, Color Filter,
-  shadow correction, anchor ceiling and scalar contrast follow the DX11 source.
+  PsychoV-30 and user grading. Auto and manual compression use a working range
+  independent of Game Brightness. A soft upper gamut boundary and the final
+  presentation shoulder preserve highlight variation; see the September 16
+  highlight-fit section below. Color Filter operates in that working range.
 - **LUT precision:** SM3 has no `Texture3D.Load`. Eight `tex3Dlod` calls fetch the
   16³ LUT's vertex texels at `(index + 0.5) / 16`, LOD 0, followed by the same
   explicit trilinear interpolation. These binary-exact texel centers avoid
@@ -56,16 +57,18 @@ native `COLOR`/`TEXCOORD` declarations and alpha calculations remain intact.
   clears it. DX11 proxy presents do not disturb it. The common downsampler is
   replaced only before the LUT, preserving later DOF/Eagle Vision filtering.
 - **Eagle Vision:** preserve `2*x-1`, effect weights, black floor and alpha 1;
-  replace only the final RGB ceiling with the reference display-headroom shoulder.
-  The already-tonemapped scene is not tone-mapped a second time. Vanilla retains
-  the original saturation.
+  retain HDR composition for the proxy's final shoulder. The scene is not run
+  through PsychoV a second time. Vanilla retains the original saturation.
 - **HUD:** inspect actual D3D9 `COLORWRITEENABLE`, `ALPHABLENDENABLE`, `SRCBLEND`,
   `DESTBLEND` and `BLENDOP`. Exclude alpha-only/no-color, multiplicative, and
   pre-LUT additive `ONE + ONE` draws. Eligible draws decode, scale by
-  `UIWhite / GameWhite`, and re-encode; premultiplied alpha is handled explicitly.
+  `UIWhite / GameWhite`, compensate for the final display shoulder, and re-encode;
+  premultiplied alpha is handled explicitly.
   The HUD shaders' original alpha values are preserved.
 - **Output:** version 30 enables the port. PsychoV composes in gamma 2.2;
-  Vanilla/Off uses sRGB. `SwapChainPass` still owns HDR10 output encoding.
+  Vanilla/Off uses sRGB and restores the original SDR range before LUT lookup
+  and at final presentation. The proxy fits the complete PsychoV composition
+  before `SwapChainPass`, which still owns HDR10 output encoding.
   Preset Off keeps FP16 resources, bloom protection and HDR10 transport.
 
 `psychov30.hlsli` is the AC2 reference copy, including its corrected shadow scalar.
@@ -78,6 +81,83 @@ The BC sub-block texture padding, deferred borderless resize, native backbuffer
 copy redirection and presentation-state restoration remain enabled. No video
 shader was replaced. The earlier shared cache/alignment fixes remain prerequisites
 for compatible DevKit and addon builds; this shader port changes no shared utility.
+
+## Highlight fit and Vanilla range — 2026-09-16
+
+FP16 removes the implicit UNORM clamp both before the LUT and after later
+effects. The native Vanilla LUT path was already bounded, but later additions
+could still reach HDR values. Vanilla now saturates the encoded scene before
+the original LUT transform and saturates the final encoded composition before
+sRGB decoding. Material lighting retains its existing Vanilla clamp policy.
+Bloom protection remains enabled, so Preset Off is not a bit-exact recreation
+of every original intermediate UNORM rounding operation.
+
+Previously, Game Brightness changed PsychoV's working gamut volume as well as
+the final physical brightness. That could change its hue/gamut projection enough
+to dim highlights when the slider rose. Individual projected channels could also
+reach the working ceiling early, and late effects encountered `SwapChainPass`'s
+hard peak clamp. The new path separates these operations:
+
+1. Both compression modes use `W = max(4000 / 203, PeakBrightness / 80)`.
+   The 80-nit term covers the minimum supported Game Brightness. Game Brightness
+   no longer changes this response. The PsychoV implementation itself is unchanged.
+2. Above 80% of the remaining upper-gamut chroma headroom, a rational shoulder
+   softens the projected channel ceiling while preserving luminance. The peak
+   channel can keep rising as the highlight approaches white. The selected
+   BT.709/BT.2020 gamut is used consistently. Color Filter and calibration-anchor
+   limits use the same working volume.
+3. `presentation.hlsli` expands the finite working response into the native
+   gamma-2.2 FP16 composition buffer. Later additions, Eagle Vision, filtering
+   and HUD draws operate there. The HUD compensates for the presentation shoulder
+   before encoding; its original alpha and premultiplication policy remain intact.
+4. The DX11 proxy decodes the complete composition. It repairs negative BT.2020
+   gamut-boundary error in linear light, then applies one smooth display fit.
+   Passing linear BT.2020 to `SwapChainPass` avoids repeating gamma-domain gamut
+   compression, which amplified tiny FP16 errors in signed BT.709 colors.
+
+For `P = PeakBrightness / GameBrightness`, the knee is `k = min(1, P / 2)`.
+Above it, the proxy maps maximum channel `x` to
+`k + (x-k) * (P-k) / (P-k + x-k)`, scaling RGB uniformly. Values below the knee
+are unchanged. For the scene alone, expansion from W followed by this fit is
+equivalent to the anchored finite-range curve
+`k + (x-k) / (1 + (x-k) * (1/(P-k) - 1/(W-k)))`.
+It has unit slope at the knee and maps the working endpoint to the display peak.
+The expansion denominator has a finite `1e-4` floor for safe FP16 transport.
+At normal settings, ordinary white stays at Game Brightness; HDR highlights
+approach Peak Brightness. If Game Brightness approaches or exceeds the display
+peak, the lower knee necessarily compresses that reference white too.
+
+Evidence in `tmp/asscreedeziotrilogy/highlights/`:
+
+- `sweep.cpp` renders the actual SM3 shader on D3D9 across nine neutral/colored/
+  signed rays from `2^-16` to `2^20`, three synthetic 16-cubed LUTs, peaks
+  400/1000/4000, Game Brightness 80/150/203/300/500, Auto/manual compression and
+  both gamut modes: 180 configurations, 414,720 pixels.
+- `proxy-test.cpp` rounds those results to FP16, then runs the actual DX11
+  proxy. A second pass adds an encoded 0.5 effect before FP16 transport.
+  All outputs remain finite; maximum encoded transport magnitude is 385.995.
+  Neither pass has an early hard peak plateau in the tested source range up to
+  256. The physical BT.2020 endpoint excess from GPU/PQ numerical error is at
+  most 0.012/0.071/0.319 nits for the three tested peaks.
+- The previous response had 119 sampled Game Brightness reversals, up to
+  7.11 nits. The revised response before transport has none above 0.05 nits.
+  FP16/PQ transport still produces small extreme-tail differences (below one
+  10-bit PQ code step). This does not establish strict monotonicity for every
+  colored input ramp: PsychoV's hue/gamut response can still change luminance
+  along such ramps independently of the Game Brightness setting.
+- 432 separate proxy component checks pass against independent gamma/sRGB,
+  shoulder and PQ equations, including Vanilla and invalid injection; maximum
+  PQ-code error is `6.303e-6`.
+- The Vanilla scene sweep and original native bytecode produce identical output
+  bytes with the game's normal LUT transform, across the tested rays and LUTs.
+- Three additional HUD sweeps verify white settings 80/203/500 through the same
+  FP16/proxy path. Maximum white error is 0.259 nits; shader alpha stays exactly
+  0.75. Transparent blending over different backgrounds remains a runtime check.
+
+These are synthetic GPU checks, not an in-game visual comparison. Restart and
+check Animus lighting, Vanilla/Preset Off, Game Brightness 203 through 500,
+Eagle Vision, HUD edges and nondefault creative controls. Historical DX11
+equivalence results below describe the initial port, before this revised fit.
 
 ## Validation — 2026-09-15
 
@@ -144,7 +224,7 @@ The user loaded gameplay and reported that it looks very good. DevKit captured
 
 Broader daylight/interior/fire scenes, sun/flare isolation, menus, video, device
 resets, graphics settings and operation without DevKit still need manual coverage.
-Brotherhood's additional evidence follows below. Revelations remains unmapped.
+Brotherhood and Revelations evidence follows below.
 
 ## Brotherhood variants — 2026-09-16
 
@@ -409,6 +489,123 @@ The user confirmed the restarted material-lighting correction works perfectly
 in gameplay. A post-restart resource readback was not completed. Other material
 families without this exact fog sequence may still have separate color ceilings.
 
+### Revelations material lighting and volume fog — 2026-09-16
+
+The native Revelations capture contains 4,168 draws. Of these, 1,157 material
+draws use 35 variants with an explicit saturated lighting sum immediately before
+fog. Representative `0x9E111D58` appears in 366 draws, including draw 2848 into
+a 3840x2160 FP16 target with 8x MSAA. `0xD3A9EC63` appears in another 237 draws.
+The scene/LUT shader is the already supported `0x48DCE479`; its input is FP16
+and the LUT is 16-cubed BGRA8. A live pre-LUT readback is finite but has RGB
+maxima `(1.0390625, 0.9765625, 0.9609375)`. This readback is current resource
+content, not a frozen image of a particular draw or a per-material range test.
+
+All 439 dumped pixel shaders were independently disassembled with FXC. The SM3
+decompiler produced HLSL for 437; `0x12F30F2D` and `0xAAEB9005` failed and are
+outside the matched material family. In `0x9E111D58`, a malformed nine-component
+`float3` constructor was repaired to `g_WorldLightmapUVParameters.yyy`, as proven
+by the original instruction swizzle. The baseline compiles with `/O3 /WX` and
+passes native GPU comparisons against the original for the tested lighting and
+fog configurations. Other decompilations are analysis evidence, not replacements.
+
+Revelations retains the completed-lighting `mad_sat`, but its fog differs from
+Brotherhood: boolean `b3` controls volume fog, `s7` supplies two packed fog samples,
+and `c200` holds the distance-fog color/opacity. The final composition is
+`(1 - opacity) * lighting + fog`, with saturated opacity. Some material variants
+pack the final RGB into different temporary lanes or use a different arithmetic
+opcode for the lighting ceiling.
+
+`HasVolumeFogLightingTail` recognizes this family by its branches, sampler,
+constants and register dataflow. It proves that the clamped material RGB is not
+read or overwritten during fog construction, and that all three channels feed
+the final fog composition with the computed `1 - opacity` weight. The matcher
+requires a shader-defined literal one for that weight. It rejects other control
+flow, relative addressing and unexpected RGB use rather than unclamping a broad
+set of saturation instructions.
+
+As with Brotherhood, the patch edits the original bytecode: remove only the
+lighting saturation, then add `max(lighting, 0)` using an existing literal zero.
+The material's constants, samples, fog opacity, shadow math, alpha and depth
+outputs remain intact. No postprocess constants are injected into materials;
+`c52` remains available for sunlight. The existing PsychoV/FP16 draw policy and
+cache apply unchanged. Vanilla uses the original material shader.
+
+Evidence in `tmp/asscreedeziotrilogy/revelations/`:
+
+- `frame.json`, `material-matches.json` and `material-draw.json` identify the
+  affected draws. `raw/`, `asm/` and `decompile-manifest.json` retain decompilation
+  and independent assembly. `material-baseline.hlsl` is the repaired baseline.
+- The matcher covers all 113 matching Revelations variants in the dump. The
+  combined three-game scan creates 1,495 originals, 2,970 applicable blend
+  variants and 251 lighting variants on native DX9, including 138 from Brotherhood.
+- The actual original, recompiled baseline and patched `0x9E111D58` render at
+  seven light levels, three distance-fog weights and with volume fog on/off.
+  RGB matches independent lighting/fog equations within `1e-5`; alpha and the
+  secondary depth output also pass. These 1,008 component checks plus 246 blend
+  checks give 1,254 passes with zero failures. The separate Brotherhood material
+  regression suite still passes all 582 checks with the extended matcher.
+- `material-patched.asm` independently disassembles the edited original shader.
+
+After a Release rebuild/restart, logs confirm `lighting=1` for `0x9E111D58` and
+`0xD3A9EC63`, including `0x9E111D58` draws with the alpha guard. A subsequent
+3,062-draw gameplay capture uses `0x9E111D58` in 219 draws. Its live pre-LUT
+resource reaches RGB `(1.76171875, 1.794921875, 1.9697265625)` with all 8,294,400
+pixels finite and no NaN/Inf. See `restart-gameplay-lut.json`,
+`restart-pre-lut.exr`, `restart-pre-lut-stats.json` and `restart-reshade.log`.
+This is a different capture from the original and is not a controlled visual
+before/after comparison. Visual confirmation, other material families and
+shaders absent from the dump remain outside this validation.
+
+### Depth-faded wind/smoke color — Revelations, 2026-09-16
+
+The affected 824-draw frame contains blue windtrails near Ezio and the translucent
+figure on the cliff platform. They are already blue in the finite FP16 input to
+LUT draw 775. Switching to Vanilla restores white in that input and the user
+confirmed the visible change. These are live readbacks of animated effects, not
+pixel-aligned before/after snapshots.
+
+Soft-particle shader `0xF7FE7888` appears in draws 740 and 752 and receives the
+general lighting correction with SRCALPHA/INVSRCALPHA blending. Its layered,
+vertex-tinted color is added to ambient/world-lightmap lighting, saturated, then
+fogged. It reconstructs scene depth from s8/c0, bounds a depth-intersection fade,
+and multiplies that into opacity. Removing its RGB saturation exposes an authored
+effect color beyond the original range; preserving only alpha does not preserve
+the wind's original white appearance.
+
+`HasDepthFadedOpacity` follows the sampled-depth, projection-offset, reciprocal,
+depth-difference and saturated-fade dependency through temporary channels into
+COLOR0 alpha. `UnclampMaterialLighting` leaves the original color instructions
+intact for that effect family. The existing alpha guard remains active. This
+does not exclude all transparency or all depth readers, and uses no shader hash
+list. The current dumps identify six such previously expanded variants in
+Revelations; Brotherhood's existing matches remain unchanged.
+
+Evidence in `tmp/asscreedeziotrilogy/windtrails/`:
+
+- The original F7FE7888 bytecode is independently disassembled with FXC and
+  decompiled with HlslDecompiler. Its malformed nine-component c88.y constructor
+  is repaired using the original swizzle. The baseline compiles with `/O3 /WX`.
+  Its instruction allocation differs, so equivalence is established for the
+  rendered cases rather than claimed byte-identical.
+- 6,912 native GPU component checks compare original, decompiled, previously
+  unclamped and corrected variants across colored lighting, depth fades,
+  opacity, distance fog and the volume-fog branch. Original and baseline agree
+  exactly in these cases. The corrected RGB matches the original while COLOR0
+  alpha is bounded; the secondary output remains unchanged. Four near-match
+  mutations reject missing depth sampling, projection, bounded fade or alpha use.
+- All 1,621 current dumped pixel shaders, 3,221 applicable blend variants and
+  284 remaining lighting variants create successfully on native DX9. The
+  Revelations suite passes 1,254 checks and Brotherhood passes 582, including
+  material HDR, fog, alpha, secondary outputs and prior blend regressions.
+- The `clang-x86-release` addon builds successfully, and all three game-folder
+  links match its SHA-256 (`release-build.json`). Restart logs show F7FE7888 and
+  E07A26BE using `lighting=0, bound=alpha` while surface shaders retain lighting
+  expansion. F7FE7888 appears in three draws in the new 587-draw capture. Both
+  pre/post-LUT readbacks have all 8,294,400 pixels finite. The camera has moved;
+  this is not an aligned visual comparison. The user subsequently reported that
+  the correction is working very well so far.
+  The final highlight/LUT/UI shaders are unchanged.
+
 ### AC2 material-clamp audit — 2026-09-16
 
 Independently disassembled all 456 native AC2 pixel shaders in the current dump
@@ -452,8 +649,10 @@ Workspace evidence: `tmp/asscreedeziotrilogy/shader-audit/`:
 
 Scratch files and original binaries are not required to build the mod. Keep
 `.cso` files out of the source/live directory so they cannot shadow editable HLSL.
-Build `asscreedeziotrilogy` with `clang-x86-release` while both games are closed. The game
+Build `asscreedeziotrilogy` with `clang-x86-release` while all three games are closed. The game
 folder's addon symlink points to `build32/Release/renodx-asscreedeziotrilogy.addon32`.
 The earlier AC2 overlay-description build is recorded in `final-build.json`.
-The latest Brotherhood build and both game-folder links are recorded separately
-in `brotherhood/release-build.json`.
+The earlier Brotherhood build and its game-folder links are recorded separately
+in `brotherhood/release-build.json`. The highlight-fit Release build, matching
+GPU-tested shader instruction streams and all three game-folder links are
+recorded in `highlights/release-build.json`.

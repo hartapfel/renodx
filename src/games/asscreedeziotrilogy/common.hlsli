@@ -2,10 +2,12 @@
 #define SRC_GAMES_ASSCREEDEZIOTRILOGY_COMMON_HLSLI_
 
 #include "./psychov30.hlsli"
-#include "./shared.h"
+#include "./presentation.hlsli"
 
-float AC2DisplayPeak() {
-  return RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f);
+float AC2WorkingPeak() {
+  // 80 nits is the lowest Game Brightness setting. Keeping enough working
+  // headroom for that value avoids expanding a bounded response at high peaks.
+  return max(4000.f / 203.f, RENODX_PEAK_WHITE_NITS / 80.f);
 }
 
 float3 AC2ApplyPsychoVInputExtensions(float3 color_bt709) {
@@ -100,15 +102,10 @@ struct AC2SDRCalibration {
 
 float3 AC2ToneMapPsychoV30(float3 color_bt709, AC2SDRCalibration calibration) {
   color_bt709 = AC2ApplyPsychoVInputExtensions(color_bt709);
-  const float display_peak = AC2DisplayPeak();
-  // Auto retains a wider HDR response before fitting it to the display.
-  // At 1000 nits, direct target-volume projection can pin fire channels to
-  // the peak before their luminance gradient has been resolved. The 4000-nit
-  // reference was checked against the affected fire scene. Manual compression
-  // remains a direct PsychoV response at the selected display peak.
-  const float working_peak = RENODX_PSYCHOV_COMPRESSION == 0.f
-                                 ? max(display_peak, 4000.f / max(RENODX_DIFFUSE_WHITE_NITS, 1.f))
-                                 : display_peak;
+  // Keep the observer response independent of Game Brightness. Changing its
+  // peak changes hue/gamut projection and can make highlights dim as brightness
+  // rises. Fit this fixed response to the selected physical display afterwards.
+  const float working_peak = AC2WorkingPeak();
   float3 mapped_bt709 = renodx::tonemap::psychov::psychotm_test30(
       color_bt709,
       working_peak,
@@ -133,18 +130,20 @@ float3 AC2ToneMapPsychoV30(float3 color_bt709, AC2SDRCalibration calibration) {
       1.f,
       RENODX_PSYCHOV_COMPRESSION);
 
-  if (working_peak > display_peak) {
-    const float max_channel = renodx::math::Max(renodx::color::bt2020::from::BT709(mapped_bt709));
-    const float anchor = min(1.f, display_peak * 0.5f);
-    if (max_channel > anchor) {
-      // Anchored finite-range Reinhard: identity and unit slope at the knee,
-      // strictly increasing through the HDR range, working_peak -> display_peak.
-      // Uniform linear RGB scaling preserves chromaticity, including signed
-      // BT.709 representations of valid BT.2020 colors. No per-channel clip.
-      const float distance = max_channel - anchor;
-      const float shoulder = anchor + distance / (1.f + distance * (rcp(display_peak - anchor) - rcp(working_peak - anchor)));
-      mapped_bt709 *= shoulder / max_channel;
-    }
+  const float max_channel = renodx::math::Max(RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE == 0.f
+                                          ? mapped_bt709
+                                          : renodx::color::bt2020::from::BT709(mapped_bt709));
+  const float luminance = renodx::color::y::from::BT709(mapped_bt709);
+  const float headroom = max(working_peak - luminance, 0.f);
+  const float chroma_peak = max_channel - luminance;
+  if (chroma_peak > 0.8f * headroom) {
+    // Soften the upper gamut boundary instead of carrying PsychoV's projected
+    // peak channel onto the display ceiling. Luminance remains intact; even a
+    // channel on the gamut boundary keeps rising as the highlight approaches
+    // white. The neutral/LUT-white limit still maps to the selected peak.
+    const float excess = chroma_peak - 0.8f * headroom;
+    const float fitted_chroma = 0.8f * headroom + excess * (0.2f * headroom / (0.2f * headroom + excess));
+    mapped_bt709 = luminance + (mapped_bt709 - luminance) * (fitted_chroma / chroma_peak);
   }
   return AC2ApplyPsychoVOutputExtensions(color_bt709, mapped_bt709);
 }
@@ -200,12 +199,12 @@ float3 AC2ApplyColorFilter(float3 filtered, float3 unfiltered) {
   float3 neutral_target = RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE == 0.f
                               ? unfiltered
                               : renodx::color::bt2020::from::BT709(unfiltered);
-  const float luminance = clamp(renodx::color::y::from::BT709(filtered), 0.f, AC2DisplayPeak());
+  const float luminance = clamp(renodx::color::y::from::BT709(filtered), 0.f, AC2WorkingPeak());
   const float unfiltered_luminance = renodx::color::y::from::BT709(unfiltered);
   neutral_target = unfiltered_luminance > 1e-6f ? neutral_target * (luminance / unfiltered_luminance) : luminance.xxx;
   float3 chroma = lerp(neutral_target, graded_target, saturate(CUSTOM_COLOR_FILTER)) - luminance;
   const float3 limits = renodx::math::Select(chroma > 0.f,
-                                             (AC2DisplayPeak() - luminance) / max(chroma, 1e-6f.xxx),
+                                             (AC2WorkingPeak() - luminance) / max(chroma, 1e-6f.xxx),
                                              luminance / max(-chroma, 1e-6f.xxx));
   chroma *= saturate(renodx::math::Min(limits));
   return RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE == 0.f
@@ -234,9 +233,9 @@ float3 AC2ToneMapScene(float3 encoded_scene, sampler3D lut,
                                                                                           RENODX_SWAP_CHAIN_DECODING)),
                                   1e-5f)
                               * RENODX_PSYCHOV_BACKGROUND_ANCHOR / 0.18f;
-  // The requested anchor must stay below the display peak, including the
-  // legal combination of 400-nit peak / 500-nit reference white.
-  calibration.output_anchor = min(calibration.output_anchor, AC2DisplayPeak() * 0.95f);
+  // Keep the observer anchor inside its working volume, independently of
+  // Game Brightness; the subsequent shoulder handles the physical display.
+  calibration.output_anchor = min(calibration.output_anchor, AC2WorkingPeak() * 0.95f);
   calibration.contrast = 1.f;
   float3 mapped = AC2ToneMapPsychoV30(graded, calibration);
   if (CUSTOM_COLOR_FILTER != 1.f) {
@@ -244,7 +243,9 @@ float3 AC2ToneMapScene(float3 encoded_scene, sampler3D lut,
   }
   // Preserve the game's encoded BT.709 composition domain, including signed
   // BT.709 representations of PsychoV's BT.2020 colors. The proxy encodes PQ.
-  return renodx::draw::EncodeColor(mapped, RENODX_SWAP_CHAIN_DECODING);
+  // Expand directly from the fixed working volume. A display-fit/undo pair
+  // would cancel algebraically but lose precision near the peak on SM3/FP16.
+  return renodx::draw::EncodeColor(AC2ExpandForPresentation(mapped, AC2WorkingPeak()), RENODX_SWAP_CHAIN_DECODING);
 }
 
 #endif  // SRC_GAMES_ASSCREEDEZIOTRILOGY_COMMON_HLSLI_

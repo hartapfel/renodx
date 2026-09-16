@@ -5,13 +5,14 @@
   "variant": "Native DX9",
   "maintainers": ["hartapfel"],
   "status": "experimental",
-  "summary": "Native DX9 HDR for Assassin's Creed II and Brotherhood, with PsychoV-30, bloom and blend-mask fixes, independent HUD brightness and DX11 HDR10 presentation.",
+  "summary": "Native DX9 HDR for Assassin's Creed Ezio Trilogy, with PsychoV-30, bloom and blend-mask fixes, independent HUD brightness and DX11 HDR10 presentation.",
   "notes": [
     "Requires 32-bit ReShade with addon support loaded as d3d9.dll. Uses RenoDX's device proxy for HDR10 presentation.",
     "Eight native SM3 pixel shaders cover the shared scene/bloom/Eagle Vision paths, HUD variants and Brotherhood's white-gradient overlay. Broader gameplay, graphics-setting and device-reset validation remains.",
     "The native alpha/multiplicative-mask guards, Brotherhood shader ports and pre-fog material-lighting correction have been confirmed in gameplay.",
     "Brotherhood's Effects section includes White Gradient Intensity: 0 disables the overlay (default), 100 restores its original strength.",
-    "Revelations is a future target."
+    "PsychoV rolls the complete HDR composition toward Peak Brightness while retaining Game Brightness as reference white. Vanilla restores the SDR range before the LUT and at presentation.",
+    "Revelations support is experimental. Its volume-fog material-lighting correction passes native GPU checks; broader gameplay validation remains."
   ],
   "games": [
     {
@@ -37,6 +38,20 @@
         "steam_appid": 48190,
         "game_exe": "ACBSP.exe",
         "process_name": "ACBSP.exe",
+        "api": "d3d9",
+        "architecture": ["x86"],
+        "reshade_preferred_name": "d3d9.dll"
+      }
+    },
+    {
+      "id": "asscreedrevelations",
+      "title": "Assassin's Creed Revelations",
+      "status": "experimental",
+      "variant": "Native DX9",
+      "deploy": {
+        "steam_appid": 201870,
+        "game_exe": "ACRSP.exe",
+        "process_name": "ACRSP.exe",
         "api": "d3d9",
         "architecture": ["x86"],
         "reshade_preferred_name": "d3d9.dll"
