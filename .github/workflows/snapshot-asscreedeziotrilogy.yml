@@ -1,0 +1,97 @@
+name: Ezio Trilogy snapshot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: snapshot-asscreedeziotrilogy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: true
+
+      - name: Set up shader tools
+        shell: pwsh
+        run: .\scripts\setup-dev-env.ps1 -Update -Tools dxc,slang,glslang
+
+      - name: Set up Clang
+        uses: egor-tensin/setup-clang@v1
+        with:
+          version: latest
+          platform: x86
+
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_x86
+
+      - name: Configure
+        run: cmake --preset clang-x86
+
+      - name: Build Ezio Trilogy (Release, x86)
+        run: cmake --build --preset clang-x86-release --target asscreedeziotrilogy
+
+      - name: Prepare snapshot
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path snapshot | Out-Null
+          Copy-Item -LiteralPath build32/Release/renodx-asscreedeziotrilogy.addon32 -Destination snapshot/
+          $checksum = (Get-FileHash -Algorithm SHA256 -LiteralPath snapshot/renodx-asscreedeziotrilogy.addon32).Hash.ToLowerInvariant()
+          "$checksum  renodx-asscreedeziotrilogy.addon32" | Set-Content -Encoding utf8 snapshot/SHA256SUMS.txt
+          @{
+            repository = $env:GITHUB_REPOSITORY
+            commit = $env:GITHUB_SHA
+            configuration = 'Release'
+            target = 'asscreedeziotrilogy'
+            architecture = 'x86'
+            sha256 = $checksum
+            run = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          } | ConvertTo-Json | Set-Content -Encoding utf8 snapshot/build.json
+
+      - name: Save snapshot with this workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: asscreedeziotrilogy-release-${{ github.sha }}
+          path: snapshot/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: asscreedeziotrilogy-release-${{ github.sha }}
+          path: snapshot
+
+      - name: Publish stable snapshot download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=asscreedeziotrilogy-snapshot
+          printf 'Native DX9 addon for Assassin\x27s Creed II, Brotherhood and Revelations.\n\nBuilt from %s.\nBuild: https://github.com/%s/actions/runs/%s\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > notes.md
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title 'Ezio Trilogy Snapshot' --prerelease --notes-file notes.md
+          else
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          fi
+          gh release upload "$tag" snapshot/* --clobber
+          gh release edit "$tag" --title 'Ezio Trilogy Snapshot' --prerelease --notes-file notes.md
