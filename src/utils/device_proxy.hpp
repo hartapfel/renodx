@@ -54,6 +54,9 @@ static reshade::api::color_space target_color_space = reshade::api::color_space:
 static reshade::api::format target_intermediate_format = reshade::api::format::unknown;
 static bool device_proxy_wait_idle_source = false;
 static bool device_proxy_wait_idle_destination = false;
+// Opt-in presentation policy for hosts whose native Present is replaced.
+static bool allow_tearing = true;
+static void (*on_proxy_present)(reshade::api::swapchain*, HRESULT) = nullptr;
 static reshade::api::resource last_device_proxy_shared_resource = {0u};
 
 static thread_local bool is_creating_proxy_device = false;
@@ -520,8 +523,8 @@ static ID3D11Device* GetDeviceProxy(const reshade::api::resource_desc& host_reso
     }
   }
 
-  sc_desc.Flags = tearing_supported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
-  proxy_present_flags = tearing_supported ? DXGI_PRESENT_ALLOW_TEARING : 0u;
+  sc_desc.Flags = tearing_supported && allow_tearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
+  proxy_present_flags = tearing_supported && allow_tearing ? DXGI_PRESENT_ALLOW_TEARING : 0u;
 
   is_creating_proxy_swapchain = true;
   shared.data->is_creating_proxy_swapchain = true;
@@ -1770,6 +1773,7 @@ static void OnPresent(
   }
 
   const HRESULT present_hr = proxy_swap_chain->Present(0, present_flags);
+  if (on_proxy_present != nullptr) on_proxy_present(swapchain, present_hr);
   if (FAILED(present_hr)) {
     if (present_hr == DXGI_ERROR_INVALID_CALL) {
       const uint32_t streak = proxy_invalid_call_streak.fetch_add(1) + 1;
