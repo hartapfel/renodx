@@ -40,19 +40,20 @@ Function Original(void* object, size_t slot) {
   return reinterpret_cast<Function>(hooks.at(*reinterpret_cast<void***>(object) + slot).original);
 }
 
-inline bool Install(void* object, size_t index, void* replacement) {
+inline bool Install(void* object, size_t index, void* replacement, void* owner = nullptr) {
   const std::lock_guard lock(mutex);
+  if (!owner) owner = object;
   auto** address = *reinterpret_cast<void***>(object) + index;
   auto& hook = hooks[address];
   if (hook.installed) {
-    hook.owners.insert(object);
+    hook.owners.insert(owner);
     return true;
   }
   DWORD protection;
   if (!VirtualProtect(address, sizeof(void*), PAGE_READWRITE, &protection)) return false;
   hook.original = *address;
   hook.replacement = replacement;
-  hook.owners.insert(object);
+  hook.owners.insert(owner);
   hook.installed = true;
   InterlockedExchangePointer(reinterpret_cast<void* volatile*>(address), replacement);
   DWORD ignored;

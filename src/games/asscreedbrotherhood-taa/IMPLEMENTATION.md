@@ -2021,3 +2021,65 @@ frame, then keeps the worker/history stable; all returned pixels are finite.
 It also verifies the requested-preset log, worker-failure latching, retry on a
 new selection and clean DX9 device reset. These checks validate the requested
 NGX hints and lifecycle, not whether a driver override honors a particular model.
+
+## 34. Standalone exclusive-fullscreen startup
+
+The first standalone live launch exposed a gap in the earlier windowed fixture:
+ReShade 6.8's ordinary `IDirect3D9::CreateDevice` upgrade to DX9Ex invokes
+`CreateDeviceEx` with a null `D3DDISPLAYMODEEX`, even when the game requests
+exclusive fullscreen. Native DX9Ex rejects this with `D3DERR_INVALIDCALL`.
+Brotherhood repeatedly retries device creation and exits before AA can render.
+The Ezio HDR presentation proxy had masked this by requesting windowed DX9.
+
+`native_device.hpp` installs a game-local compatibility hook from `create_device`,
+after addon loading and before the shared DX9Ex upgrade enters the runtime.
+It uses the existing `native_draw` vtable hook/owner tracking and keeps a DX9Ex
+factory alive until the hook is removed. Only a missing fullscreen descriptor
+is filled from the already-requested presentation parameters. Existing valid
+descriptors, windowed calls and unsupported adapter-group requests pass through.
+There is no forced borderless/windowed mode, format upgrade, Present interception
+or VSync change. The hook is enabled only when the optional helper requests
+DX9Ex. Registration, hook removal and factory release are paired on detach.
+
+The `fullscreen-startup` fixture uses the same ReShade binary as the game and
+only the TAA addon. The released build reproduces the exact `INVALIDCALL`;
+the correction passes exclusive startup, native `Reset` to windowed and back,
+device/addon unload and recreation, with both VSync On and immediate presentation
+at 3840x2160/240 Hz. It verifies actual swapchain parameters and unchanged SDR
+format. This extends the previous windowed startup/AA-input tests.
+The existing SDR and HDR scene fixtures also pass with this hook, including
+active DLAA, MSAA 8x -> 4x -> Off -> 8x, immediate fullscreen draws, ResetEx and
+both HDR/TAA addon load orders.
+
+API contract: [IDirect3D9Ex::CreateDeviceEx](https://learn.microsoft.com/en-us/windows/win32/api/d3d9/nf-d3d9-idirect3d9ex-createdeviceex).
+
+### Overlay texture locking after successful device creation
+
+The next live startup confirmed successful fullscreen device creation, then
+crashed separately while RTSS locked its overlay texture. The dump showed a
+null trampoline call in ReShade's `IDirect3DSurface9_LockRect`, reached through
+`IDirect3DTexture9_LockRect`. ReShade shares a texture-vtable hook across native
+textures, but calls its surface hook directly; a texture created through the
+unwrapped device can expose a surface vtable it has never hooked. Merely
+registering a texture-map callback and mixing a tracked system-memory texture
+with a native default-pool texture reproduces the crash without RTSS itself.
+
+The game-local `native_device` compatibility path replaces texture LockRect and
+UnlockRect after ReShade's `init_resource` setup. It obtains the mip surface and
+calls its virtual LockRect/UnlockRect instead of assuming a surface trampoline
+exists. Native surfaces use their native methods; hooked surfaces still deliver
+ReShade mapping callbacks and pointer/stride substitutions. HRESULTs are
+preserved. No ReShade binary, RTSS setting or presentation code is changed.
+Hooks are installed once per runtime texture vtable and owned by the compatibility
+module, independent of the first texture's lifetime. They retain no textures,
+so default-pool allocations do not obstruct Reset, and are restored on detach.
+
+The `native-textures` regression first reproduces the same missing-trampoline
+failure with the previous build. The corrected build passes raw/tracked texture
+and surface locking, dynamic DISCARD uploads, written-byte readback, exact map
+and unmap callback counts, expected invalid locks and repeated device resets.
+The earlier fullscreen-only test did not exercise this path. The subsequent
+live standalone launch on 2026-09-18 loaded TAA and DevKit with the HDR addon
+disabled, activated both compatibility hooks and reached active native-resolution
+DLAA. The log records active DLAA again later in the session and a clean exit.
+This verifies the observed startup failure; it is not exhaustive gameplay testing.
