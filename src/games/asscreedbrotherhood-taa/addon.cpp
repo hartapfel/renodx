@@ -12,6 +12,7 @@
 #include "../../utils/settings.hpp"
 #include "../../utils/device_upgrade.hpp"
 #include "./native_taa.hpp"
+#include "./native_device.hpp"
 
 namespace {
 renodx::utils::settings::Settings settings = {
@@ -232,6 +233,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     renodx::utils::settings::use_presets = false;
   }
   renodx::utils::settings::Use(reason, &settings);
+  acbrotherhood::native_device::Use(reason);
   renodx::utils::device_upgrade::Use(reason);
   acbrotherhood::taa::Use(reason);
   if (reason == DLL_PROCESS_DETACH) reshade::unregister_addon(module);

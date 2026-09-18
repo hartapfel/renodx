@@ -162,6 +162,13 @@ creation; the HDR addon already requests this. Standalone TAA without the helper
 does not request this change. The helper creates no window or swapchain and
 does not present frames. Keep its **64-bit** NVIDIA DLL inside the helper folder.
 
+For standalone exclusive fullscreen, the addon supplies the missing
+fullscreen display-mode descriptor in ReShade's DX9-to-DX9Ex creation path;
+resolution, refresh rate, SDR backbuffer format and VSync remain as requested
+by the game. Texture-lock compatibility also handles overlay textures created
+outside ReShade's resource tracking, avoiding a null-hook startup crash observed
+with RTSS. Both corrections are included in the TAA addon without requiring HDR.
+
 Object Motion's capture optimizations are shared with TAA. DLAA does not remove
 that CPU cost; the helper adds GPU work and synchronization. It is not a promised
 performance improvement. Resource dimensions are capped at 8,388,608 pixels.
