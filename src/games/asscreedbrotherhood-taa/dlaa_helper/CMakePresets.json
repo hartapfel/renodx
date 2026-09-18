@@ -1,0 +1,15 @@
+{
+  "version": 6,
+  "configurePresets": [{
+    "name": "clang-x64",
+    "generator": "Ninja Multi-Config",
+    "binaryDir": "${sourceDir}/../../../../build64-brotherhood-dlaa",
+    "cacheVariables": {
+      "CMAKE_CXX_COMPILER": "clang-cl.exe",
+      "CMAKE_CXX_COMPILER_TARGET": "x86_64-pc-windows-msvc",
+      "CMAKE_CONFIGURATION_TYPES": "Release",
+      "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+    }
+  }],
+  "buildPresets": [{"name": "clang-x64-release", "configurePreset": "clang-x64", "configuration": "Release"}]
+}

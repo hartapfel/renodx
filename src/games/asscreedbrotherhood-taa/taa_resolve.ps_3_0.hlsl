@@ -26,15 +26,6 @@ ResolveOutput StoreHistory(float3 color, float depth, float sample_count) {
   return output;
 }
 
-float CurrentMotionDepth(float native_depth, float motion_depth) {
-  // Replay tests native depth for opaque coverage and dominant-alpha hair.
-  // Later passes can supply visible surfaces absent from the earlier R32 MRT.
-  // Keep R32 precision when it agrees; otherwise use the visible replay depth.
-  if (motion_depth == 0.f || abs(abs(motion_depth) - (1.f - native_depth)) <= max(2.e-6f, (1.f - native_depth) * 0.005f))
-    return native_depth;
-  return saturate(1.f - abs(motion_depth));
-}
-
 // Repeated bilinear history resampling erases detail during subpixel motion.
 // Separable Catmull-Rom reconstructs the 4x4 footprint with nine bilinear taps:
 // combine the positive middle weights on each axis. The variance box below

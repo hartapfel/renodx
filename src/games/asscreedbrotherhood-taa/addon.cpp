@@ -10,6 +10,7 @@
 #include "../../utils/date.hpp"
 #include "../../utils/platform.hpp"
 #include "../../utils/settings.hpp"
+#include "../../utils/device_upgrade.hpp"
 #include "./native_taa.hpp"
 
 namespace {
@@ -20,7 +21,7 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Start with TAA On and Object Motion for smoother edges and animated objects. Both are enabled by default.",
+        .label = "Start with Anti-Aliasing set to TAA and Object Motion for smoother edges and animated objects. Both are selected by default.",
         .section = "How to Use",
     },
     new renodx::utils::settings::Setting{
@@ -34,14 +35,66 @@ renodx::utils::settings::Settings settings = {
         .section = "How to Use",
     },
     new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::TEXT,
+        .label = "For DLAA, install the optional renodx-asscreedbrotherhood-dlaa helper folder beside this addon, restart the game, turn native MSAA Off and select DLAA. Requires an NVIDIA RTX GPU. Check DLAA Status below; unsupported configurations use TAA.",
+        .section = "How to Use",
+    },
+    new renodx::utils::settings::Setting{
         .key = "TAAEnabled",
         .binding = &acbrotherhood::taa::enabled,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .label = "TAA",
+        .label = "Anti-Aliasing",
         .section = "TAA",
-        .tooltip = "Smooth edges using jittered samples and information from previous frames. With in-game MSAA, use a smaller synchronized jitter pattern and motion-responsive history after the native resolve. Works with native SDR or the separate Ezio Trilogy HDR addon. Off also disables debug views.",
-        .labels = {"Off", "On"},
+        .tooltip = "TAA supports native MSAA. DLAA uses NVIDIA's native-resolution reconstruction instead of TAA and requires an RTX GPU, the x64 helper and MSAA Off. If unavailable, TAA runs automatically; see DLAA Status. Both support standalone SDR and the Ezio Trilogy HDR addon. Off also disables debug views.",
+        .labels = {"Off", "TAA", "DLAA"},
+    },
+    // Keep the persisted integer in the settings framework; draw it as a combo.
+    new renodx::utils::settings::Setting{
+        .key = "DLAAPreset",
+        .binding = &acbrotherhood::dlaa::render_preset,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .labels = {"DLL Default", "F (Legacy)", "J", "K", "L", "M"},
+        .parse = [](float value) {
+          return value >= 0.f && value < float(acbrotherhood::dlaa::kRenderPresets.size())
+                     ? float(acbrotherhood::dlaa::kRenderPresets[unsigned(value)]) : 0.f;
+        },
+        .is_visible = [] { return false; },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
+        .label = "DLSS Preset",
+        .section = "TAA",
+        .tooltip = "DLL Default leaves the runtime's preset choice unchanged. Other options request a specific preset; support depends on the installed DLL, and NVIDIA driver overrides may take precedence. Changing presets restarts DLAA and clears its history; TAA runs during startup.",
+        .on_draw = [] {
+          auto* setting = renodx::utils::settings::FindSetting("DLAAPreset");
+          int selection = std::clamp(setting->value_as_int, 0, int(setting->labels.size()) - 1);
+          if (!ImGui::Combo("DLSS Preset", &selection, [](void* data, int index) {
+                return static_cast<renodx::utils::settings::Setting*>(data)->labels[index].c_str();
+              }, setting, int(setting->labels.size()))) return false;
+          renodx::utils::settings::UpdateSetting("DLAAPreset", float(selection));
+          return true;
+        },
+        .is_visible = [] { return acbrotherhood::taa::enabled == 2.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
+        .label = "DLAA Status",
+        .section = "TAA",
+        .on_draw = [] {
+          const auto status = acbrotherhood::dlaa::status.load();
+          const bool colored = status == acbrotherhood::dlaa::Status::active || status == acbrotherhood::dlaa::Status::failed;
+          if (colored) ImGui::PushStyleColor(ImGuiCol_Text, status == acbrotherhood::dlaa::Status::active
+                                                             ? ImVec4(0.35f, 0.85f, 0.4f, 1.f)
+                                                             : ImVec4(1.f, 0.35f, 0.35f, 1.f));
+          ImGui::TextWrapped("%s", acbrotherhood::dlaa::StatusText());
+          if (status == acbrotherhood::dlaa::Status::failed)
+            ImGui::Text("Stage %u, error 0x%08X", acbrotherhood::dlaa::error_stage.load(), acbrotherhood::dlaa::error_code.load());
+          if (colored) ImGui::PopStyleColor();
+          return false;
+        },
+        .is_visible = [] { return acbrotherhood::taa::enabled == 2.f; },
     },
     new renodx::utils::settings::Setting{
         .key = "TAAMotionSource",
@@ -60,7 +113,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .label = "Lilium RCAS",
         .section = "Sharpening",
-        .tooltip = "Sharpens the resolved TAA image before color grading and the HUD. 0 disables sharpening; 100 is full strength. Uses luminance-based sharpening with noise suppression. Debug views remain unsharpened.",
+        .tooltip = "Sharpens the resolved TAA or DLAA image before color grading and the HUD. 0 disables sharpening; 100 is full strength. Uses luminance-based sharpening with noise suppression. Debug views remain unsharpened.",
         .max = 100.f,
         .is_enabled = [] { return acbrotherhood::taa::enabled != 0.f && acbrotherhood::taa::debug_view == 0.f; },
         .parse = [](float value) { return value * 0.01f; },
@@ -72,7 +125,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .label = "Debug View",
         .section = "Debug",
-        .tooltip = "Depth: native scene depth. Motion Vectors: the combined history-sampling motion selected by TAA; gray = still, red/green = horizontal/vertical motion, magenta = no valid reprojection. The view follows your selected motion source and keeps TAA running. History Confidence: red = reset, yellow = low, cyan = medium, green = high. History Rejection: blue = depth mismatch, magenta = color clipping, red = other reset, green = accepted. Colors pass through the game's color grade.",
+        .tooltip = "Depth: native scene depth. Motion Vectors: motion used by the active AA method; gray = still, red/green = horizontal/vertical motion, magenta = invalid. DLAA shows its raw undilated vectors; TAA shows its history-sampling motion. Depth and History views temporarily use TAA. History Confidence: red = reset, yellow = low, cyan = medium, green = high. History Rejection: blue = depth mismatch, magenta = color clipping, red = other reset, green = accepted. Colors pass through the game's color grade.",
         .labels = {"Off", "Depth", "Motion Vectors", "History Confidence", "History Rejection"},
         .is_enabled = [] { return acbrotherhood::taa::enabled != 0.f; },
     },
@@ -101,16 +154,6 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
         .label = "Supports Brotherhood's native DirectX 9 renderer with 32-bit ReShade and addon support. Use alone for SDR, or alongside the current Ezio Trilogy HDR addon for HDR.",
-        .section = "Important Information",
-    },
-    new renodx::utils::settings::Setting{
-        .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Install only one Brotherhood TAA addon. Replace older acbrotherhood-taa files and Ezio builds with embedded TAA. Close the game before updating addon files.",
-        .section = "Important Information",
-    },
-    new renodx::utils::settings::Setting{
-        .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Some water, transparency and animated surfaces can still show temporal artifacts. When reporting an issue, include the build below, MSAA level, motion setting and a screenshot of the affected scene.",
         .section = "Important Information",
     },
     new renodx::utils::settings::Setting{
@@ -154,7 +197,7 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "TAA mod by Hartapfel. RenoDX framework by ShortFuse. RCAS by AMD, with Lilium's luminance adaptation.",
+        .label = "TAA/DLAA mod by Hartapfel. RenoDX framework by ShortFuse. Optional DLAA by NVIDIA.",
         .section = "About",
     },
     new renodx::utils::settings::Setting{
@@ -171,15 +214,25 @@ renodx::utils::settings::Settings settings = {
 }
 
 extern "C" __declspec(dllexport) constexpr const char* NAME = "Assassin's Creed Brotherhood TAA";
-extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "Temporal anti-aliasing with camera and object motion; supports native MSAA, standalone SDR and RenoDX HDR";
+extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "TAA and optional NVIDIA DLAA with camera/object motion and Lilium RCAS; standalone SDR and RenoDX HDR";
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
   if (reason == DLL_PROCESS_ATTACH) {
     if (!reshade::register_addon(module)) return FALSE;
+    acbrotherhood::dlaa::addon_module = module;
+    // DX9Ex enables GPU sharing; it does not enable HDR or change formats.
+    // The HDR addon already requests this through the same shared utility.
+    // Standalone TAA keeps ordinary DX9 unless the optional helper is installed.
+    std::wstring path(32768, L'\0');
+    if (GetModuleFileNameW(module, path.data(), DWORD(path.size()))) {
+      renodx::utils::device_upgrade::use_dx9ex_upgrade = GetFileAttributesW(
+          (std::filesystem::path(path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dlaa" / L"renodx-asscreedbrotherhood-dlaa.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
+    }
     renodx::utils::settings::global_name = "asscreedbrotherhood-taa";
     renodx::utils::settings::use_presets = false;
   }
   renodx::utils::settings::Use(reason, &settings);
+  renodx::utils::device_upgrade::Use(reason);
   acbrotherhood::taa::Use(reason);
   if (reason == DLL_PROCESS_DETACH) reshade::unregister_addon(module);
   return TRUE;
