@@ -301,6 +301,44 @@ Microsoft documents the top-level block-alignment requirement in
   The user confirmed smooth motion with in-game VSync on and off. See
   IMPLEMENTATION.md for capture limits and remaining reset/limiter coverage.
 
+### Native Present dispatch refresh — 2026-09-18
+
+Brotherhood could resume native DX9 presentation after changing MSAA. The
+runtime restored the original native `Present` dispatch entry after suppression
+had been installed; the addon's `installed` flag remained true. An overlay then
+reported 200+ FPS while PresentMon measured about 105 HDR frames/second plus
+105 native presentations/second, nearly all discarded. TAA, object replay and
+jitter remained active. The apparent doubling was not doubled rendered output.
+
+The HDR addon now verifies the actual dispatch entry on each successful proxy
+frame and re-arms suppression when the known original entry returns. An
+unfamiliar replacement is left alone to avoid creating recursive overlay hook
+chains. This changes neither the game's requested VSync interval nor the
+producer/consumer waits required for shared-texture ownership. The TAA addon
+still has no FPS limit or presentation hook.
+
+The Release regression forcibly refreshes each of the three native Present
+entries after rendering has resumed, across four resolution/MSAA resets.
+The old build emits 18 extra native presents in the first 24-frame test; the
+corrected build emits zero extras in all twelve cases. Intervals 0/1 are
+preserved, HDR reference pixels remain correct, and deliberately failed proxy
+presentation still executes one native fallback.
+
+Live post-rebuild verification confirms the repair after a real Brotherhood
+graphics reset: the log records re-arming a refreshed dispatch entry. A 15-second
+trace contains 2,275 HDR frames, zero native DX9 presents and zero dropped
+frames, with TAA/jitter/object motion active. The user confirmed the behavior
+is fixed. This capture averages 151.88 FPS with MSAA Off; it is not a controlled
+performance comparison against the earlier 4x/8x captures. Neither addon
+implements an FPS limiter; the game currently requests interval zero. Driver
+G-Sync/limiter activation is not independently proven by this trace.
+
+Release SHA-256:
+`68240FEAAFF50F80A0A462A8CEEE30B46F8AC3EC8117294A60858BA70B27C61C`.
+Scratch evidence: `tmp/asscreedeziotrilogy/pacing/dispatch-refresh/`,
+`brotherhood-msaa-{reset-live,reset-transition,high-live}.csv` and
+`brotherhood-dispatch-fixed-live.csv` in its parent.
+
 ## Video AutoHDR verification — 2026-09-16
 
 - `0x947F8B85` is byte-identical in all three game dumps. Its decompiled baseline
@@ -330,6 +368,17 @@ Microsoft documents the top-level block-alignment requirement in
 - Rebuilt target `asscreedeziotrilogy` with `clang-x86-release`. Reopen the vault
   cutscene and compare Ezio's armor/face in PsychoV and Vanilla. The game closed
   before live shader comparison, so the visual result still needs confirmation.
+
+## Optional Brotherhood TAA addon
+
+TAA has moved to [asscreedbrotherhood-taa](../asscreedbrotherhood-taa/README.md). This HDR
+addon contains no TAA settings, jitter or motion capture. Install the separate
+`renodx-asscreedbrotherhood-taa.addon32` beside the updated Ezio Trilogy addon to use
+both. Native MSAA is optional and can be combined with TAA. The TAA addon also
+supports standalone native SDR.
+Do not pair it with an older experimental Ezio build that still embeds TAA.
+See the [implementation guide](../asscreedbrotherhood-taa/IMPLEMENTATION.md) for the
+complete pipeline, motion-vector work, verification and remaining limitations.
 
 ## Brotherhood building lighting — 2026-09-16
 

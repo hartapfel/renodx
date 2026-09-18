@@ -72,8 +72,14 @@ inline bool Install(void* object, size_t index, void* replacement) {
   auto& hook = hooks[address];
   if (hook.installed) {
     hook.owners.insert(object);
-    return true;
+    if (*address == hook.replacement) return true;
+    // The runtime can restore a native dispatch entry after Reset, even after
+    // the first successful proxy frame reinstalled us. Verify the actual slot
+    // on every proxy frame, not just our bookkeeping. Only re-arm a known
+    // original: wrapping an unfamiliar overlay hook could recurse through us.
+    if (*address != hook.original) return false;
   }
+  const bool rearmed = hook.installed;
   DWORD protection;
   if (!VirtualProtect(address, sizeof(void*), PAGE_READWRITE, &protection)) return false;
   hook.original = *address;
@@ -84,7 +90,9 @@ inline bool Install(void* object, size_t index, void* replacement) {
   DWORD ignored;
   VirtualProtect(address, sizeof(void*), protection, &ignored);
   if (index == 17) {
-    reshade::log::message(reshade::log::level::info, "Ezio: successful HDR proxy frames suppress the duplicate native DX9 Present.");
+    reshade::log::message(reshade::log::level::info, rearmed
+        ? "Ezio: restored native Present suppression after a dispatch-table refresh."
+        : "Ezio: successful HDR proxy frames suppress the duplicate native DX9 Present.");
   }
   return true;
 }
