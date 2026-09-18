@@ -6,6 +6,15 @@
 #ifndef AC2_TAA_REPROJECTION_HLSLI
 #define AC2_TAA_REPROJECTION_HLSLI
 
+float CurrentMotionDepth(float native_depth, float motion_depth) {
+  // Replay tests native depth for opaque coverage and dominant-alpha hair.
+  // Later passes can supply visible surfaces absent from the earlier R32 MRT.
+  // Keep R32 precision when it agrees; otherwise use the visible replay depth.
+  if (motion_depth == 0.f || abs(abs(motion_depth) - (1.f - native_depth)) <= max(2.e-6f, (1.f - native_depth) * 0.005f))
+    return native_depth;
+  return saturate(1.f - abs(motion_depth));
+}
+
 float4 sky_clip_rows[4] : register(c6);
 
 // Native MRT1 contains D3D clip z/w, not linear view distance. The DOF

@@ -15,6 +15,7 @@
 #include "./taa_camera.hpp"
 #include "./taa_jitter.hpp"
 #include "./taa_resolve.hpp"
+#include "./dlaa.hpp"
 #include "./taa_motion.hpp"
 #include "./native_draw.hpp"
 #include "./taa_performance.hpp"
@@ -56,6 +57,8 @@ struct __declspec(uuid("524af7c1-6944-46ca-875e-2acb70ec8f32")) DeviceData {
   };
   std::unordered_map<IDirect3DVertexShader9*, ProjectionShader> projection_shaders;
   ResolveResources resolve;
+  std::unique_ptr<acbrotherhood::dlaa::State> dlaa;
+  unsigned active_backend = 1;
   Matrix original_projection = {};
   std::array<float, 2> jitter = {}, previous_jitter = {};
   unsigned active_mode = 0;
@@ -867,7 +870,31 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
       if (capture_inputs) dump_resolve = 0.f;
       Matrix sky_reprojection = data->current_to_previous_clip;
       SkyReprojection(data->previous_camera, data->camera, &sky_reprojection);
-      if (!Resolve(native, &data->resolve, scene_texture.Get(), data->depth.Get(), data->current_to_previous_clip,
+      bool resolved = false;
+      const auto previous_dlaa_status = acbrotherhood::dlaa::status.load();
+      if (data->active_backend == 2) {
+        if (data->scene_samples != D3DMULTISAMPLE_NONE || data->active_mode != 1
+            || (confidence_preview != 0.f && confidence_preview != 3.f)) {
+          data->dlaa.reset();
+          acbrotherhood::dlaa::status = data->scene_samples != D3DMULTISAMPLE_NONE
+                                          ? acbrotherhood::dlaa::Status::msaa : acbrotherhood::dlaa::Status::diagnostic;
+        } else {
+          resolved = acbrotherhood::dlaa::Resolve(native, &data->dlaa, scene_texture.Get(), data->depth.Get(),
+                        data->object_motion.ready ? data->object_motion.resources.texture.Get() : nullptr,
+                        data->current_to_previous_clip, sky_reprojection, data->width, data->height,
+                        data->jitter, data->frame, continuous, confidence_preview == 3.f, rcas_strength);
+          // Release native TAA history once DLAA takes over. Recreate it only
+          // if the helper fails or the selected mode needs the TAA fallback.
+          if (resolved) data->resolve = {};
+        }
+      }
+      if (previous_dlaa_status != acbrotherhood::dlaa::status.load()) {
+        std::ostringstream message;
+        message << "Brotherhood DLAA: " << acbrotherhood::dlaa::StatusText()
+                << " stage=" << acbrotherhood::dlaa::error_stage << " error=0x" << std::hex << acbrotherhood::dlaa::error_code;
+        reshade::log::message(reshade::log::level::info, message.str().c_str());
+      }
+      if (!resolved && !Resolve(native, &data->resolve, scene_texture.Get(), data->depth.Get(), data->current_to_previous_clip,
                  data->width, data->height, data->jitter, data->previous_jitter,
                  data->active_mode == 1 ? continuous : pair_valid, data->active_mode,
                  data->object_motion.ready ? data->object_motion.resources.texture.Get() : nullptr,
@@ -952,6 +979,7 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
                         : debug_view == 3.f ? 1.f : debug_view == 4.f ? 2.f : 0.f;
   if (capture_enabled == 0.f) data->performance = {};
   RestoreScene(reinterpret_cast<IDirect3DDevice9*>(swapchain->get_device()->get_native()), &data->resolve);
+  if (data->dlaa) data->dlaa->RestoreScene(reinterpret_cast<IDirect3DDevice9*>(swapchain->get_device()->get_native()));
   data->previous_valid = (capture_enabled != 0.f || mode != 0.f) && data->scene_seen && data->current_valid;
   data->previous_camera = data->camera;
   data->previous_width = data->width;
@@ -979,11 +1007,14 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
   data->scene_seen = data->current_valid = data->conflicting_cameras = false;
   data->previous_jitter = data->jitter_draws != 0 ? data->jitter : std::array<float, 2>{};
   data->jitter_draws = data->unsupported_draws = 0;
-  if (data->active_mode != unsigned(mode)) {
+  if (data->active_mode != unsigned(mode) || data->active_backend != unsigned(enabled)) {
     data->resolve = {};
+    data->dlaa.reset();
+    acbrotherhood::dlaa::status = acbrotherhood::dlaa::Status::idle;
     data->object_motion = {};
     data->previous_valid = false;
     data->active_mode = unsigned(mode);
+    data->active_backend = unsigned(enabled);
   }
   if (!UseObjectMotion()) data->object_motion = {};
   ++data->frame;
@@ -999,6 +1030,7 @@ inline void OnSceneDrawn(reshade::api::command_list* cmd_list) {
   if (cmd_list->get_device()->get_api() != reshade::api::device_api::d3d9) return;
   if (auto* data = renodx::utils::data::Get<DeviceData>(cmd_list->get_device())) {
     RestoreScene(reinterpret_cast<IDirect3DDevice9*>(cmd_list->get_native()), &data->resolve);
+    if (data->dlaa) data->dlaa->RestoreScene(reinterpret_cast<IDirect3DDevice9*>(cmd_list->get_native()));
   }
   if (auto* up = renodx::utils::data::Get<DeviceData>(cmd_list->get_device()); up && up->up_vertices) {
     auto* native = reinterpret_cast<IDirect3DDevice9*>(cmd_list->get_native());

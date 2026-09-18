@@ -1726,3 +1726,298 @@ scene output; the existing color/depth jitter checks also pass. Evidence:
 The game-folder symlink targets the rebuilt Release addon. SHA-256:
 `1034EC8508838AFD08F37C58F0825EDC3F6575930CD4D3543E7D47185D36410C`.
 Visual sharpening strength and scene-specific ringing remain an in-game check.
+
+## 32. DLAA feasibility investigation (2026-09-18)
+
+**Initial feasibility result; implementation follows in section 33.** At this
+stage the released TAA addon and settings were unchanged. The local AC3 Remastered and Unity
+`dlss.hpp` implementations provide examples of direct NGX D3D11 integration;
+their in-process approach cannot be copied unchanged into Brotherhood.
+
+### API and process architecture
+
+Brotherhood and this addon are x86/DX9. Inspecting the installed SDK's PE/COFF
+headers identifies both `nvngx_dlss.dll` builds and the NGX static libraries as
+AMD64 (`0x8664`), versus the addon's x86 (`0x14c`). Even the libraries directly
+under `vs2012` are AMD64. NVIDIA's current [SDK distribution](https://github.com/NVIDIA/DLSS/tree/main/lib/Windows_x86_64)
+and [integration guide](https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS.md)
+provide the D3D11 route; there is no NGX DX9 entry point. An in-process DX11
+device does not change the game's CPU architecture, so the existing HDR proxy
+cannot load the x64 feature DLL for us.
+
+The viable candidate is a separate x64 executable using direct NGX and D3D11:
+
+```text
+x86 DX9 addon: capture scene, depth, camera and object poses; apply jitter
+  -> GPU preparation and shared input textures
+x64 DX11 helper on the same adapter: DLAA at native input/output resolution
+  -> shared result texture
+x86 DX9 addon: restore scene transport -> optional RCAS -> LUT -> HUD
+```
+
+The helper processes images and does not present frames or own the game window.
+NVIDIA's [Remix bridge](https://github.com/NVIDIAGameWorks/dxvk-remix/blob/main/bridge/README.md)
+is a precedent for separating a 32-bit client from a 64-bit renderer, though
+replacing the whole game renderer is not necessary for this proposed route.
+
+### Isolated proof on the local GPU
+
+Scratch source/build/logs are in
+`tmp/asscreedeziotrilogy/taa/dlaa-feasibility/` (`probe.cpp`, `build.ps1`,
+`probe.log`, `helper.log`). Both executables were compiled with Clang Release
+optimization without modifying CMake, SDK files or the installed addons.
+
+- A hidden x86 DX9Ex process creates two RGBA16F shared textures. Its x64
+  D3D11 child selects the identical adapter by LUID and opens both handles.
+- 120 frames make the DX9 -> DX11 -> DX9 round trip bit-exactly, including
+  negative RGB, values above one, changing frame markers and alpha. Image
+  transport stays on the GPU; CPU readback is used only to assert test output.
+  GPU event queries establish completion before the process handoffs.
+- The x64 helper initializes NGX successfully (`0x1`) and reports
+  `SuperSampling_Available=1`. Creating a 1280x720 -> 1280x720 DLAA feature
+  succeeds, and evaluating eight synthetic linear-HDR frames succeeds.
+- Synthetic output center RGB is `0.500488, 1, 3.99414`, against input
+  `0.5, 1, 4`. This proves execution and HDR range, not moving-scene quality.
+
+Texture transport and DLAA evaluation are separate parts of this probe. It
+does not yet run Brotherhood's captured images through DLAA, test resets or
+measure real-resolution performance. Shared transport is tested at 64x32;
+DLAA evaluation is tested at 1280x720. No 4K cost can be inferred from this.
+
+### Inputs to reuse and adapt
+
+- Reuse the pre-LUT scene hook, verified camera matrices, projection jitter,
+  object/cloth/skinning capture, static-draw omission and reset detection.
+  DLAA replaces temporal accumulation; it must consume the current jittered
+  scene rather than an already accumulated TAA image.
+- Produce a dense raw two-channel motion texture, combining object motion
+  with camera/sky reprojection. The debug image is color-coded and unusable
+  as input. Preserve current-to-previous direction, remove jitter from the
+  vectors and supply it separately in pixel units. Direct NGX MV scaling
+  differs from Streamline's normalized constants; audit against the chosen API.
+- Carry ordinary clip z/w depth with its R32 precision, including late visible
+  surfaces. Do not treat signed complementary depth/validity in the current
+  object texture as NGX depth. Invalid poses need a deliberate fallback and
+  disocclusion policy; magenta diagnostic colors are not a data contract.
+- Decode the current scene into the chosen linear HDR working representation,
+  handle exposure explicitly and restore the original transport before the
+  native/HDR LUT. Keep UI, tone mapping and presentation in their existing paths.
+
+[Microsoft's DX9/DX11 sharing restrictions](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11device-opensharedresource)
+include single-sample, single-mip textures and a limited format set. RGBA16F
+is proven here; portable R32 depth transfer still needs a precision-preserving
+packing/conversion path or separately validated interop. Simply reducing scene
+depth to half precision would reintroduce the distant-edge failures documented
+earlier. Resolve native MSAA before sharing.
+
+### Suggested implementation sequence
+
+1. Add a game-local helper/protocol prototype with a versioned frame ID,
+   adapter identity, dimensions, shared handles, completion signaling and
+   bounded failure handling. A stale or failed worker must not stall gameplay.
+2. Export the real combined vectors/depth and scene at the current insertion
+   point. Validate them independently of DLAA and avoid CPU image transfers.
+3. Start with native-resolution DLAA and MSAA Off, then verify image quality,
+   camera cuts, focus changes and graphics resets. Keep the existing TAA/MSAA
+   path available. Free/replace shared resources only after both consumers finish.
+4. Measure synchronization, GPU time and memory at gameplay resolutions before
+   deciding whether it is suitable for release. Object capture remains CPU work;
+   DLAA does not remove its cost, and cross-process waits could increase it.
+5. Expose Off / TAA / DLAA with capability detection and an explicit TAA fallback.
+   Packaging would require the x86 addon, an x64 helper and NVIDIA's runtime.
+   Build/CI changes and redistribution details remain separate implementation work.
+
+## 33. Optional DLAA backend (2026-09-18)
+
+### Integration and file map
+
+The persistent `TAAEnabled` key retains `0=Off` and `1=TAA`; `2=DLAA` adds the
+new backend without reinterpreting existing presets. TAA/Object Motion remain
+the defaults. The existing pre-LUT `OnScene` hook selects exactly one successful
+resolve. DLAA consumes the current jittered scene, never TAA history. Once DLAA
+becomes active, the custom TAA history/count textures are freed. Failure,
+startup, native MSAA or a TAA-specific diagnostic uses the existing resolver.
+
+| File | Responsibility |
+| --- | --- |
+| `dlaa.hpp` | DX9 working resources, frame export/import, bounded IPC, fallback and state restoration |
+| `dlaa_protocol.hpp` | Fixed-width x86/x64 packet, frame ID, lifecycle/error states |
+| `dlaa_handles.hpp` | Move-only kernel-handle ownership; excludes legacy GPU handles |
+| `dlaa_inputs.ps_3_0.hlsl` | Current linear color, combined raw motion/mask and R32 depth export |
+| `dlaa_output.ps_3_0.hlsl` | Restore signed color/transport, or preview actual NGX vectors |
+| `dlaa_helper/main.cpp` | Hidden x64 same-adapter D3D11/NGX worker; no presentation |
+| `dlaa_helper/prepare.hlsl` | Nonnegative color, RG16 motion and R8 responsive-mask conversion |
+| `dlaa_helper/CMakeLists.txt`, presets, `build.ps1` | Isolated Clang x64 Release target and runtime/license packaging |
+
+No global CMake/CI or SDK files change. Build the normal x86 addon target and
+the game-local helper separately. The helper and the existing SDK's Release
+`nvngx_dlss.dll`/license belong in `renodx-asscreedbrotherhood-dlaa/` beside the
+addon. Never put this 64-bit DLL in the x86 game's DLL search directory.
+
+### API capability and textures
+
+Ordinary DX9 cannot create/open the required shared resources in the local
+driver probes. DX9Ex succeeds. The Ezio HDR addon already requests ReShade's
+DX9Ex device upgrade. When the optional helper executable is installed, the
+standalone addon requests the same capability through the existing cross-addon
+`utils::device_upgrade` module. Installing the helper therefore requires a game
+restart. With no helper, standalone TAA preserves its previous device-creation
+behavior. This enables resource sharing, not HDR formats or presentation.
+
+The addon obtains the DX9Ex adapter LUID. The helper enumerates DXGI adapters
+and requires that exact LUID and NVIDIA vendor, then checks NGX feature
+availability. No implicit selection of a different GPU is allowed.
+
+Four single-mip, single-sample render-target textures are created by DX9Ex and
+opened on the helper's D3D11 device. Their shared handles are legacy GPU handles,
+not kernel handles to close. The driver probes verified RGBA16F, RG16F and
+R32F sharing on this machine. R32F sharing is capability checked, not assumed
+portable: failure returns to TAA rather than quantizing distant depth.
+
+| Shared resource | Format | Meaning |
+| --- | --- | --- |
+| Color | RGBA16F | Current signed linear scene; later reused for returned display conversion |
+| Motion/mask | RGBA16F | Unjittered previous-current normalized UV, responsive mask, validity |
+| Depth | R32F | Current ordinary D3D clip z/w, near 0 / far 1 |
+| Output | RGBA16F | Completed linear DLAA; later reusable as RCAS display scratch |
+
+Shared storage costs 28 bytes/pixel, 221.5 MiB at 3840x2160. The pixel budget is
+8,388,608; the helper also rejects dimensions above 8192. The x64 process owns
+additional RGBA16F color/output, RG16F motion, R8 mask and NVIDIA model/history
+memory. TAA may temporarily coexist during asynchronous startup. No game
+resource description is changed.
+
+### Exact signal contract
+
+1. Export the jittered current scene at pixel centers. Preserve the original
+   sRGB sampler state. Gamma-encoded transport uses sign-preserving power 2.2;
+   an 8-bit source already decoded by native sRGB sampling stays linear.
+2. `CurrentMotionDepth`, shared with TAA in `taa_reprojection.hlsli`, keeps the
+   native R32 sample when replay depth agrees. Late visible surfaces contribute
+   their signed complementary object-depth value converted back to clip z/w.
+3. Valid object vectors are already unjittered `previousUV-currentUV`. Otherwise
+   reconstruct camera motion using the existing double-precision CPU camera
+   matrix product and sky rotation/FOV path. Add back the current jitter offset
+   removed by `AC2ReprojectCamera`, yielding raw unjittered vectors. Do not pass
+   TAA's selected/dilated history-sampling vectors or debug colors to NGX.
+4. Unknown poses use camera motion plus a white bias-current-color mask. Root
+   motion estimates also set that mask. Invalid/unbounded reprojection becomes
+   zero motion plus a white mask. The helper sanitizes nonfinite color/motion.
+5. On the GPU, convert RGBA16F motion/mask into the NGX-supported RG16F vector
+   texture and R8 mask. Clamp linear NGX input color to nonnegative values.
+6. Create a native-resolution DLAA feature with HDR, AutoExposure and MVLowRes
+   flags. MVLowRes denotes undilated render-resolution vectors, even when input
+   and output dimensions are equal. MVJittered/DepthInverted are unset. Scale
+   normalized UV vectors by render width/height. Supply pixel jitter (right/down
+   positive) separately, pre-exposure/exposure scale 1 and measured frame time.
+7. Reconstruct the original signed color contract by adding the current negative
+   residual at `outputUV + currentJitter/size`; the residual itself is not
+   temporally reconstructed by NVIDIA. Re-encode sign-preserving power 1/2.2
+   only for encoded transport. Preserve current scene alpha and disable a second
+   sRGB decode at the LUT sampler, exactly as in the custom TAA integration.
+8. Optional Lilium RCAS processes this completed result before the LUT and HUD.
+   Neither sharpening nor debug colors enter NGX history. All subsequent game
+   grading, effects, HUD and HDR presentation remain in their existing paths.
+
+### Synchronization, reset and fallback
+
+The x86 addon starts the x64 helper hidden and suspended, passes only mapping,
+request/reply events and a parent synchronization handle through an explicit
+`STARTUPINFOEX` handle allowlist, assigns it to a kill-on-close job, then resumes
+it. No globally named IPC or unrelated inheritable game handles are used.
+
+Startup is polled without blocking frames (30-second deadline), with TAA used
+meanwhile. For each DLAA frame, a DX9 event query must complete all producer
+draws before the request event publishes the packet. The helper prepares/evaluates
+the image, copies output, completes a D3D11 event query, then publishes the exact
+completed frame ID. Only then may DX9 read the result or reuse input storage.
+There are no CPU image readbacks in production. This serialized GPU handoff
+adds synchronization cost; it is not a performance claim.
+
+GPU query deadlines are two seconds; first evaluation allows five seconds and
+subsequent evaluations 250 ms. A timeout/worker exit/NGX failure terminates only
+the addon's child, frees its private resources and latches TAA fallback instead
+of restarting the helper every frame. The UI and ReShade log show status and
+stage/error. Switching to TAA and back explicitly retries. A reset/size/backend
+change destroys the helper and all default-pool references before recreation.
+Frame gaps, cuts, camera validation failure and source encoding changes reset
+NGX history. Requests and results are never overlapped or allowed to reuse an
+in-flight image.
+
+Every private draw restores native RTs, DSV, viewport and a full state block,
+including failure exits. Only completed output replaces LUT sampler 0; its
+original texture and sRGB flag are restored after the LUT draw. No worker
+swapchain, Present call, VSync override or frame limiter is introduced.
+
+### Debugging and current limits
+
+Motion Vectors with active DLAA displays the same dense undilated vector texture
+used by NGX. It continues evaluating DLAA underneath. Depth and custom History
+Confidence/Rejection explicitly run the TAA diagnostics; they are not NVIDIA
+internal history views. Status makes this fallback visible.
+
+DLAA currently requires MSAA Off. MSAA levels continue to use the validated
+custom TAA/MSAA path with its synchronized half-footprint jitter. The object
+capture, batched animation upload, matching, static-draw omission and all CPU
+optimizations are unchanged. Water, transparency, unknown poses and imperfect
+animation matches retain their existing input limitations. DLAA cannot invent
+correct object motion when those inputs are missing.
+
+The initial integration test exposed a large stack allocation in `DllMain`
+on a driver's small-stack thread; module-path storage now uses the heap.
+Repeated color checks also identified NVIDIA's enabled global DLSS indicator:
+its black diagnostic text was present in NGX output. The indicator was left
+unchanged. Tests exclude only its bottom text area from constant-color checks;
+motion/depth/finite checks still cover every pixel. Do not mistake this overlay
+for invalid scene color.
+
+Validation uses native DX9 GPU fixtures in
+`tmp/asscreedeziotrilogy/taa/dlaa-feasibility/`, plus ReShade scene/reset fixtures
+in `dlaa-integration/` and `dlaa-standalone/`. The 1280x720 and 640x360 tests cover
+signed HDR, SDR encoded/decoded inputs, exact R32 depth, known object/camera
+vectors and masks, restored state, RCAS, preview, missing-helper/worker-exit
+fallback and reset cleanup. The final production-shader run also passes
+3840x2160 signed HDR, totaling 11,750,400 pixel checks across all seven cases.
+The ReShade fixture creates ordinary DX9, confirms
+the upgrade to DX9Ex, executes real scene shaders, reaches active DLAA and passes
+8x -> 4x -> Off -> 8x with HDR (both addon load orders) and native SDR.
+
+Live Brotherhood validation then confirmed DX9Ex, MSAA Off and active DLAA at
+3840x2160 alongside the HDR addon. The user reported that it works and looks
+good. DevKit's current post-LUT FP16 readback contains 8,294,400 finite pixels,
+zero NaN/Inf and zero all-RGB-zero pixels; 382,410 pixels exceed 1 in at least
+one RGB channel. This is a live resource readback, not a frozen historical draw.
+The captured alpha is zero, so PNG previews need their alpha ignored to inspect
+RGB. Longer gameplay, additional scenes and performance comparisons remain
+useful; this one scene is not exhaustive quality validation.
+
+### DLSS preset selection and status
+
+`DLAAPreset` stores dropdown indices 0-5 for DLL Default / F / J / K / L / M.
+The settings parser maps them to NGX values 0 / 6 / 10 / 11 / 12 / 13; invalid
+indices use 0. A hidden integer setting retains the normal config/reset path,
+while a custom ImGui combo supplies the dropdown UI. The default is always 0.
+
+Protocol 2 appends the requested NGX preset to the fixed-width packet (112 bytes
+on both x86 and x64). The helper validates the protocol and preset before using
+resources. For nonzero selections only, it sets
+`NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA` before feature creation.
+Default leaves that parameter untouched; it does not hardcode a current model
+or invoke optimal-settings helpers to choose one. Logs describe the requested
+hint, since the runtime or a driver override can choose differently.
+
+The client snapshots the preset when creating its state and destroys that state
+when the selection changes. A fresh helper, NGX parameter block and feature
+ensure both old history and old hints are discarded, including explicit-preset
+to Default transitions. This also permits retrying a failed preset by selecting
+another; startup continues to use TAA. No scene, motion or sharpening shaders
+change. Status text is green only while DLAA is active and red on failed startup
+or evaluation; starting and deliberate fallback states retain neutral text.
+
+The focused `dlaa-feasibility/preset-test.cpp` GPU fixture passes the sequence
+Default -> F -> J -> K -> L -> M -> Default through the production client and
+Release helper. Each change creates a new worker, resets the first evaluated
+frame, then keeps the worker/history stable; all returned pixels are finite.
+It also verifies the requested-preset log, worker-failure latching, retry on a
+new selection and clean DX9 device reset. These checks validate the requested
+NGX hints and lifecycle, not whether a driver override honors a particular model.

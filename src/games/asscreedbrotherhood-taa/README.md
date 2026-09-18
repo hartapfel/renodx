@@ -31,7 +31,8 @@ remains experimental.
 
 | Section | Control | Options | Default |
 | --- | --- | --- | --- |
-| TAA | TAA | Off / On | On |
+| TAA | Anti-Aliasing | Off / TAA / DLAA | TAA |
+| TAA | DLSS Preset (DLAA only) | DLL Default / F (Legacy) / J / K / L / M | DLL Default |
 | TAA | Motion Vectors | Camera Motion / Object Motion | Object Motion |
 | Sharpening | Lilium RCAS | 0-100 (0 = Off) | 0 |
 | Debug | Debug View | Off / Depth / Motion Vectors / History Confidence / History Rejection | Off |
@@ -121,10 +122,62 @@ The motion preview passes through the game's LUT and, when installed, RenoDX
 grading, so neutral gray can be tinted. Magenta can still identify a captured
 animated surface without a trusted previous pose.
 
+### Optional NVIDIA DLAA
+
+DLAA replaces the custom temporal resolve at native resolution. It reuses the
+same scene hook, jitter, camera and object motion capture. It is experimental;
+TAA remains the default. **Requires an NVIDIA RTX GPU and native MSAA Off.**
+With MSAA enabled, the selection falls back to the existing TAA/MSAA path.
+
+Install this directory beside `renodx-asscreedbrotherhood-taa.addon32`:
+
+```text
+renodx-asscreedbrotherhood-dlaa/
+  renodx-asscreedbrotherhood-dlaa.exe
+  nvngx_dlss.dll
+  NVIDIA-DLSS-LICENSE.txt
+```
+
+Restart after installing the helper, then select **Anti-Aliasing → DLAA**.
+**DLAA Status** must say **DLAA active at native resolution**. Startup runs
+asynchronously with TAA temporarily active. Missing files, unsupported hardware,
+sharing errors or a stopped helper return to TAA with a visible reason/error.
+Active status is green; initialization/runtime failure status is red. Startup
+and deliberate TAA fallbacks (MSAA or diagnostic views) retain neutral text.
+Switch to TAA and back to DLAA to retry. The helper log is
+`renodx-asscreedbrotherhood-dlaa/renodx-dlaa-helper.log`.
+
+**DLSS Preset** is a dropdown shown when DLAA is selected. **DLL Default**
+leaves the preset hint unset, so the installed runtime chooses its own default.
+Other options request F (legacy), J, K, L or M; availability depends on the DLL,
+and NVIDIA driver overrides may take precedence. Changing the selection restarts
+DLAA with fresh history and temporarily uses TAA. The selection is remembered
+as `DLAAPreset`; fresh installs and settings reset use DLL Default. Update both
+the addon and helper together, since their versioned protocol must match.
+
+The optional helper is a hidden x64 process because Brotherhood is x86 and
+NVIDIA's runtime is x64. GPU images cross through shared textures, without CPU
+image readback. Installing the helper requests DX9Ex through ReShade at device
+creation; the HDR addon already requests this. Standalone TAA without the helper
+does not request this change. The helper creates no window or swapchain and
+does not present frames. Keep its **64-bit** NVIDIA DLL inside the helper folder.
+
+Object Motion's capture optimizations are shared with TAA. DLAA does not remove
+that CPU cost; the helper adds GPU work and synchronization. It is not a promised
+performance improvement. Resource dimensions are capped at 8,388,608 pixels.
+DX9 shared working textures cost 28 bytes per pixel (about 221.5 MiB at 4K),
+plus object capture; the x64 helper owns its additional working/model memory.
+TAA history is released once DLAA starts successfully.
+
+RCAS runs after either AA method, before the LUT/HUD, without sharpening history.
+The Motion Vectors view displays the dense raw vectors sent to DLAA while it is
+active. Depth and History Confidence/Rejection temporarily use the custom TAA
+diagnostics; they do not expose NVIDIA's internal history decisions.
+
 ## Scope
 
 This addon does not upgrade game resources, unclamp lighting, replace the LUT,
-tone map, enable HDR, create a DX11 proxy, or change presentation/VSync. Its
+tone map, enable HDR, create a presentation proxy, or change presentation/VSync. Its
 floating-point textures are private temporal working buffers. Native SDR scene
 formats and sampling are preserved; with RenoDX it consumes the existing FP16
 scene before the HDR LUT replacement.
@@ -156,6 +209,60 @@ The new folder is discovered through `addon.cpp`; no global build or CI changes
 are required. Shader headers are generated under
 `build32/asscreedbrotherhood-taa.include/embed/`. No GitHub snapshot/download URL is
 established by this extraction; publishing is a separate step.
+
+Build the optional helper separately using its game-local Release preset:
+
+```powershell
+& src/games/asscreedbrotherhood-taa/dlaa_helper/build.ps1
+```
+
+Output: `build64-brotherhood-dlaa/Release/`. Distribute the executable, NVIDIA
+runtime and license together in the directory shown above. The ordinary addon
+target remains x86; no global presets or CI workflows are changed. The helper
+uses the repository's existing `external/DLSS` SDK.
+
+## Packaging a release
+
+Build the x86 addon and x64 helper in Release, then copy these four files;
+do not archive the entire build or game directory:
+
+| Build output | Destination inside the release ZIP |
+| --- | --- |
+| `build32/Release/renodx-asscreedbrotherhood-taa.addon32` | `renodx-asscreedbrotherhood-taa.addon32` |
+| `build64-brotherhood-dlaa/Release/renodx-asscreedbrotherhood-dlaa.exe` | `renodx-asscreedbrotherhood-dlaa/renodx-asscreedbrotherhood-dlaa.exe` |
+| `build64-brotherhood-dlaa/Release/nvngx_dlss.dll` | `renodx-asscreedbrotherhood-dlaa/nvngx_dlss.dll` |
+| `build64-brotherhood-dlaa/Release/NVIDIA-DLSS-LICENSE.txt` | `renodx-asscreedbrotherhood-dlaa/NVIDIA-DLSS-LICENSE.txt` |
+
+Include installation instructions, the repository MIT license, the mod and RCAS
+copyright/license notices, and the source commit/build identification. Copy real
+file contents into a clean staging directory; development symlinks and junctions
+are not release files. Zip the **contents** of that directory so extracting into
+the game folder produces this layout directly:
+
+```text
+ACBSP.exe                                      (already installed)
+renodx-asscreedbrotherhood-taa.addon32
+renodx-asscreedbrotherhood-dlaa/
+  renodx-asscreedbrotherhood-dlaa.exe
+  nvngx_dlss.dll
+  NVIDIA-DLSS-LICENSE.txt
+```
+
+Installation instructions should tell users to close the game, install 32-bit
+ReShade with addon support for DirectX 9, and extract beside `ACBSP.exe`. An
+existing working ReShade installation can be kept. TAA and Object Motion start
+enabled; sharpening starts Off. DLAA additionally requires an RTX GPU, native
+MSAA Off and a restart after installing the helper. Select DLAA in the addon
+panel and check for green active status; DLL Default is the default preset.
+
+A TAA-only download can omit the helper directory. For HDR, users install the
+current Ezio Trilogy addon separately. Replace older TAA addon files instead of
+leaving duplicate renamed addons installed. For DLAA updates, replace the addon
+and helper together. Keep the x64 NVIDIA DLL inside its helper directory.
+
+Exclude game files, ReShade loader/configuration, DevKit, captures, shader dumps,
+logs, PDB/LIB/OBJ files and private settings from the mod ZIP. The compiled addon
+already embeds its shaders; users do not need HLSL files or the SDK/build tools.
 
 ## Verification
 
@@ -189,6 +296,12 @@ In-game verification after installing the pair:
    and that the chosen strength survives a graphics reset.
 
 ## Developer documentation
+
+For DLAA testing, set MSAA Off and verify the active status before comparing
+stationary roofs, thin geometry, crowd/cloth motion, water and bright HDR colors.
+Check Off/TAA/DLAA transitions, RCAS, cuts/loading, focus changes and graphics
+resets. Repeat in standalone SDR. NVIDIA feature execution and synthetic GPU
+checks alone do not establish moving-scene image quality or performance.
 
 - [IMPLEMENTATION.md](./IMPLEMENTATION.md): current design, formulas, file map,
   shader contracts, motion capture, matching, lifecycle, tests and a porting guide.
