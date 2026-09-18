@@ -13,44 +13,47 @@
 #include "../../utils/device_upgrade.hpp"
 #include "./native_taa.hpp"
 #include "./native_device.hpp"
+#include "./presentation.hpp"
+#include "./standalone_present.hpp"
 
 namespace {
+// All choices use the same persisted settings path and native combo behavior.
+bool DrawChoice(const char* key, const char* label, int forced = -1, unsigned maximum = UINT32_MAX) {
+  auto* setting = renodx::utils::settings::FindSetting(key);
+  const int selected = forced >= 0 ? forced : std::clamp(setting->value_as_int, 0, int(setting->labels.size()) - 1);
+  bool changed = false;
+  ImGui::BeginDisabled(forced >= 0);
+  if (ImGui::BeginCombo(label, setting->labels[selected].c_str())) {
+    for (int index = 0; index < int(setting->labels.size()); ++index) {
+      ImGui::BeginDisabled(unsigned(index) > maximum);
+      if (ImGui::Selectable(setting->labels[index].c_str(), index == selected)) {
+        renodx::utils::settings::UpdateSetting(key, float(index));
+        changed = true;
+      }
+      if (index == selected) ImGui::SetItemDefaultFocus();
+      ImGui::EndDisabled();
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::EndDisabled();
+  return changed;
+}
 renodx::utils::settings::Settings settings = {
-    new renodx::utils::settings::Setting{
-        .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Assassin's Creed Brotherhood - Temporal Anti-Aliasing",
-    },
-    new renodx::utils::settings::Setting{
-        .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Start with Anti-Aliasing set to TAA and Object Motion for smoother edges and animated objects. Both are selected by default.",
-        .section = "How to Use",
-    },
-    new renodx::utils::settings::Setting{
-        .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Choose Camera Motion for lower CPU cost; moving characters and clothing may leave more trails. Keep Debug View Off for normal gameplay.",
-        .section = "How to Use",
-    },
-    new renodx::utils::settings::Setting{
-        .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Native MSAA is optional and can be combined with TAA for additional edge coverage. Higher MSAA levels use more GPU time and memory.",
-        .section = "How to Use",
-    },
-    new renodx::utils::settings::Setting{
-        .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "For DLAA, install the optional renodx-asscreedbrotherhood-dlaa helper folder beside this addon, restart the game, turn native MSAA Off and select DLAA. Requires an NVIDIA RTX GPU. Check DLAA Status below; unsupported configurations use TAA.",
-        .section = "How to Use",
-    },
     new renodx::utils::settings::Setting{
         .key = "TAAEnabled",
         .binding = &acbrotherhood::taa::enabled,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .label = "Anti-Aliasing",
-        .section = "TAA",
-        .tooltip = "TAA supports native MSAA. DLAA uses NVIDIA's native-resolution reconstruction instead of TAA and requires an RTX GPU, the x64 helper and MSAA Off. If unavailable, TAA runs automatically; see DLAA Status. Both support standalone SDR and the Ezio Trilogy HDR addon. Off also disables debug views.",
         .labels = {"Off", "TAA", "DLAA"},
+        .is_visible = [] { return false; },
     },
-    // Keep the persisted integer in the settings framework; draw it as a combo.
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
+        .label = "Anti-Aliasing",
+        .section = "Anti-Aliasing",
+        .tooltip = "TAA supports native MSAA. DLAA requires an NVIDIA RTX GPU, the DLAA helper and MSAA Off; TAA is the fallback. Object motion is automatic for both methods. Off disables temporal AA and frame-generation inputs.",
+        .on_draw = [] { return DrawChoice("TAAEnabled", "Anti-Aliasing"); },
+    },
     new renodx::utils::settings::Setting{
         .key = "DLAAPreset",
         .binding = &acbrotherhood::dlaa::render_preset,
@@ -66,23 +69,15 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
         .label = "DLSS Preset",
-        .section = "TAA",
-        .tooltip = "DLL Default leaves the runtime's preset choice unchanged. Other options request a specific preset; support depends on the installed DLL, and NVIDIA driver overrides may take precedence. Changing presets restarts DLAA and clears its history; TAA runs during startup.",
-        .on_draw = [] {
-          auto* setting = renodx::utils::settings::FindSetting("DLAAPreset");
-          int selection = std::clamp(setting->value_as_int, 0, int(setting->labels.size()) - 1);
-          if (!ImGui::Combo("DLSS Preset", &selection, [](void* data, int index) {
-                return static_cast<renodx::utils::settings::Setting*>(data)->labels[index].c_str();
-              }, setting, int(setting->labels.size()))) return false;
-          renodx::utils::settings::UpdateSetting("DLAAPreset", float(selection));
-          return true;
-        },
+        .section = "Anti-Aliasing",
+        .tooltip = "DLL Default lets NVIDIA's runtime choose. Other presets depend on the installed DLL and driver overrides. Changing presets restarts DLAA and clears its history.",
+        .on_draw = [] { return DrawChoice("DLAAPreset", "DLSS Preset"); },
         .is_visible = [] { return acbrotherhood::taa::enabled == 2.f; },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
         .label = "DLAA Status",
-        .section = "TAA",
+        .section = "Anti-Aliasing",
         .on_draw = [] {
           const auto status = acbrotherhood::dlaa::status.load();
           const bool colored = status == acbrotherhood::dlaa::Status::active || status == acbrotherhood::dlaa::Status::failed;
@@ -98,15 +93,122 @@ renodx::utils::settings::Settings settings = {
         .is_visible = [] { return acbrotherhood::taa::enabled == 2.f; },
     },
     new renodx::utils::settings::Setting{
-        .key = "TAAMotionSource",
-        .binding = &acbrotherhood::taa::object_motion_enabled,
+        .key = "DLSSFrameGeneration",
+        .binding = &acbrotherhood::frame_generation::generation_enabled,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .labels = {"Off", "2x", "3x", "4x", "5x", "6x"},
+        .is_visible = [] { return false; },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
+        .label = "DLSS Frame Generation",
+        .section = "Frame Generation",
+        .tooltip = "The multiplier includes the rendered frame: 3x adds two generated frames. Supports standalone SDR and RenoDX HDR10. Requires TAA/DLAA, Debug Off, supported RTX hardware and the DX12 helper/runtime. Reflex is locked to On. The ReShade overlay may stay open; ReShade shader effects must be Off.",
+        .on_draw = [] {
+          const auto maximum = acbrotherhood::frame_generation::generation_max.load();
+          return DrawChoice("DLSSFrameGeneration", "Frame Generation", -1, maximum ? maximum : UINT32_MAX);
+        },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
+        .label = "Frame Generation Status",
+        .section = "Frame Generation",
+        .on_draw = [] {
+          using namespace acbrotherhood::frame_generation;
+          const auto state = generation_status.load();
+          if (!RequestedFrames()) ImGui::TextDisabled("Off - rendered frames only.");
+          else if (state == Status::active)
+            ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.4f, 1.f), "Active | %ux confirmed", presented_count.load());
+          else if (state == Status::multiplier_unsupported)
+            ImGui::TextColored(ImVec4(1.f, 0.35f, 0.35f, 1.f), "Requested %ux is unavailable; maximum %ux.", RequestedFrames() + 1, generation_max.load() + 1);
+          else if (state == Status::failed || state == Status::unsupported)
+            ImGui::TextColored(ImVec4(1.f, 0.35f, 0.35f, 1.f), "Unavailable (0x%08X) | rendering original frames", generation_error.load());
+          else {
+            const char* message = "Waiting for valid gameplay frames.";
+            if (state == Status::effects) message = "Paused: turn ReShade shader effects Off. The overlay can stay open.";
+            else if (state == Status::inputs) message = "Waiting for scene, depth and motion inputs. Keep TAA/DLAA On and Debug View Off.";
+            else if (state == Status::camera) message = "Waiting for a valid camera.";
+            else if (state == Status::inactive) message = "Paused while the game is in the background.";
+            else if (state == Status::resizing) message = "Resuming after a graphics change.";
+            else if (state == Status::vsync) message = "Paused: the current runtime/sync interval cannot preserve VSync.";
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.8f, 0.3f, 1.f));
+            ImGui::TextWrapped("%s", message); ImGui::PopStyleColor();
+          }
+          return false;
+        },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "ReflexMode",
+        .binding = &acbrotherhood::presentation::reflex_mode,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .label = "Motion Vectors",
-        .section = "TAA",
-        .tooltip = "Object Motion combines camera reprojection for verified static scenery with object vectors for supported characters, clothing, wind animation and other moving surfaces. Camera Motion uses camera movement only: faster, but moving objects can leave trails.",
-        .labels = {"Camera Motion", "Object Motion"},
-        .is_enabled = [] { return acbrotherhood::taa::enabled != 0.f; },
+        .labels = {"Off", "On", "On + Boost"},
+        .is_visible = [] { return false; },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
+        .label = "NVIDIA Reflex",
+        .section = "Reflex and Frame Pacing",
+        .tooltip = "On reduces render latency; On + Boost also keeps GPU clocks elevated. Frame Generation locks Reflex to On. Your previous choice returns when FG is Off. The cap works independently of low-latency mode.",
+        .on_draw = [] {
+          const bool locked = acbrotherhood::frame_generation::RequestedFrames() != 0;
+          const bool changed = DrawChoice("ReflexMode", "NVIDIA Reflex", locked ? 1 : -1);
+          if (locked) ImGui::TextDisabled("Required by Frame Generation.");
+          return changed;
+        },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "ReflexRenderFPS",
+        .binding = &acbrotherhood::presentation::render_fps,
+        .default_value = 0.f,
+        .label = "Reflex Framerate cap (Before FG)",
+        .section = "Reflex and Frame Pacing",
+        .tooltip = "Ctrl-click to enter an exact value. 0 removes the manual cap. With G-Sync and VSync enabled, Reflex keeps output below the display refresh rate automatically. 60 with 3x FG targets 180 output FPS, subject to performance and display limits. Avoid stacking RTSS or NVIDIA FPS limiters.",
+        .max = 500.f,
+        .format = "%.0f FPS",
+        .parse = [](float value) { return std::round(value); },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
+        .label = "Performance",
+        .section = "Reflex and Frame Pacing",
+        .on_draw = [] {
+          using namespace acbrotherhood::presentation;
+          FrameMetrics snapshot;
+          PacingState pacing;
+          {
+            const std::lock_guard lock(mutex);
+            snapshot = frame_metrics; pacing = pacing_state;
+          }
+          const auto metrics = snapshot.Summarize();
+          if (snapshot.Fresh(FrameTimeSeconds())) {
+            if (ImGui::BeginTable("FrameRates", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings)) {
+              ImGui::TableNextColumn(); ImGui::TextDisabled("Before FG");
+              ImGui::TextColored(ImVec4(0.45f, 0.8f, 1.f, 1.f), "%.1f FPS", metrics.rendered_fps);
+              ImGui::TableNextColumn(); ImGui::TextDisabled("After FG");
+              ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.65f, 1.f), "%.1f FPS", metrics.output_fps);
+              ImGui::EndTable();
+            }
+            ImGui::TextDisabled("Rendered frametime (ms) | last %u frames", snapshot.count);
+            ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.45f, 0.8f, 1.f, 1.f));
+            ImGui::PlotLines("##RenderedFrametime", &snapshot.history[0].milliseconds, int(snapshot.count),
+                snapshot.count == FrameMetrics::capacity ? int(snapshot.next) : 0, nullptr, 0.f,
+                std::max(20.f, metrics.maximum_ms * 1.15f), ImVec2(-1.f, 95.f), sizeof(FrameMetrics::Sample));
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Real rendered-frame intervals, not interpolated display timing.\nFPS averages the last second. After FG counts frames confirmed by the runtime, not the selected multiplier or monitor scanout.");
+            ImGui::Text("Average %.2f ms  |  P95 %.2f ms", metrics.average_ms, metrics.p95_ms);
+          } else ImGui::TextDisabled("Waiting for frame timing...");
+          if (status.load() == Status::active) {
+            if (!pacing.available)
+              ImGui::TextColored(ImVec4(1.f, 0.35f, 0.35f, 1.f), "Reflex limiter unavailable (0x%08X).", pacing.error);
+            else if (pacing.interval_us) ImGui::TextDisabled("Reflex cap: %.1f rendered FPS", 1000000.0 / pacing.interval_us);
+            else ImGui::TextDisabled("No manual Reflex cap.");
+            if (pacing.available && pacing.driver_interval_us > ReflexInterval(pacing.interval_us, pacing.driver_multiplier))
+              ImGui::TextDisabled("Automatic VRR ceiling: %.1f displayed FPS", 1000000.0 / pacing.driver_interval_us);
+          }
+          return false;
+        },
     },
     new renodx::utils::settings::Setting{
         .key = "RCASSharpening",
@@ -153,9 +255,34 @@ renodx::utils::settings::Settings settings = {
         .is_visible = [] { return false; },
     },
     new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
+        .label = "Output Status",
+        .section = "Setup and Information",
+        .on_draw = [] {
+          using namespace acbrotherhood::presentation;
+          if (status.load() == Status::active) ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.4f, 1.f), "DX12 output active | VSync follows game / driver");
+          else if (status.load() == Status::failed) {
+            ImGui::TextColored(ImVec4(1.f, 0.35f, 0.35f, 1.f), "Native output fallback | DX12 error %u: 0x%08X", error_stage.load(), error_code.load());
+            if (error_code == ERROR_REVISION_MISMATCH) ImGui::TextWrapped("Update the addon and DX12 helper together.");
+            if (ImGui::Button("Retry DX12 Output")) retry_requested = true;
+          } else ImGui::TextWrapped("DX12 starts automatically with the installed DX12 helper, in standalone SDR or with the Ezio Trilogy HDR addon. Without the helper, AA uses native output.");
+          return false;
+        },
+    },
+    new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Supports Brotherhood's native DirectX 9 renderer with 32-bit ReShade and addon support. Use alone for SDR, or alongside the current Ezio Trilogy HDR addon for HDR.",
-        .section = "Important Information",
+        .label = "TAA supports native MSAA. DLAA requires an RTX GPU, the DLAA helper and MSAA Off. Motion vectors are configured automatically. Keep Debug View Off for normal play.",
+        .section = "Setup and Information",
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::TEXT,
+        .label = "Frame Generation supports standalone SDR and RenoDX HDR10 with the DX12 helper and Streamline. Input capture is automatic. ReShade shader effects must be Off; the overlay can remain open.",
+        .section = "Setup and Information",
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::TEXT,
+        .label = "VSync follows the game and its NVIDIA driver profile. With G-SYNC, VSync and Reflex On, output is automatically limited below the monitor refresh rate, even at cap 0. Fullscreen-only G-SYNC requires a fullscreen-sized window. Use one FPS limiter at a time.",
+        .section = "Setup and Information",
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
@@ -198,12 +325,12 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "TAA/DLAA mod by Hartapfel. RenoDX framework by ShortFuse. Optional DLAA by NVIDIA.",
+        .label = "TAA/DLAA mod by Hartapfel. RenoDX framework by ShortFuse. DLAA, DLSS Frame Generation and Reflex by NVIDIA.",
         .section = "About",
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Experimental | Native DirectX 9 | 32-bit",
+        .label = "TAA / DLAA / DLSS Frame Generation | Brotherhood | 32-bit addon",
         .section = "About",
     },
     new renodx::utils::settings::Setting{
@@ -217,23 +344,27 @@ renodx::utils::settings::Settings settings = {
 extern "C" __declspec(dllexport) constexpr const char* NAME = "Assassin's Creed Brotherhood TAA";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "TAA and optional NVIDIA DLAA with camera/object motion and Lilium RCAS; standalone SDR and RenoDX HDR";
 
-BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
+BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
   if (reason == DLL_PROCESS_ATTACH) {
     if (!reshade::register_addon(module)) return FALSE;
     acbrotherhood::dlaa::addon_module = module;
+    acbrotherhood::presentation::addon_module = module;
     // DX9Ex enables GPU sharing; it does not enable HDR or change formats.
     // The HDR addon already requests this through the same shared utility.
     // Standalone TAA keeps ordinary DX9 unless the optional helper is installed.
     std::wstring path(32768, L'\0');
     if (GetModuleFileNameW(module, path.data(), DWORD(path.size()))) {
       renodx::utils::device_upgrade::use_dx9ex_upgrade = GetFileAttributesW(
-          (std::filesystem::path(path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dlaa" / L"renodx-asscreedbrotherhood-dlaa.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
+          (std::filesystem::path(path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dlaa" / L"renodx-asscreedbrotherhood-dlaa.exe").c_str()) != INVALID_FILE_ATTRIBUTES
+          || GetFileAttributesW((std::filesystem::path(path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dx12" / L"renodx-asscreedbrotherhood-dx12.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
     }
     renodx::utils::settings::global_name = "asscreedbrotherhood-taa";
     renodx::utils::settings::use_presets = false;
   }
   renodx::utils::settings::Use(reason, &settings);
   acbrotherhood::native_device::Use(reason);
+  acbrotherhood::presentation::standalone::Use(reason, reserved != nullptr);
+  acbrotherhood::presentation::Use(reason);
   renodx::utils::device_upgrade::Use(reason);
   acbrotherhood::taa::Use(reason);
   if (reason == DLL_PROCESS_DETACH) reshade::unregister_addon(module);

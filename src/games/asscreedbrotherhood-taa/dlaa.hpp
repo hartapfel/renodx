@@ -14,6 +14,7 @@
 #include <embed/shaders.h>
 #include "./dlaa_protocol.hpp"
 #include "./dlaa_handles.hpp"
+#include "./helper_process.hpp"
 #include "./taa_camera.hpp"
 
 namespace acbrotherhood::dlaa {
@@ -26,7 +27,7 @@ inline std::atomic<uint32_t> error_code = 0, error_stage = 0;
 inline const char* StatusText() {
   switch (status.load()) {
     case Status::starting: return "DLAA is starting; using TAA temporarily.";
-    case Status::active: return "DLAA active at native resolution.";
+    case Status::active: return "DLAA active at native resolution (DX12).";
     case Status::msaa: return "Using TAA: turn native MSAA Off to use DLAA.";
     case Status::diagnostic: return "Using TAA for this diagnostic view.";
     case Status::failed: return "Using TAA: DLAA could not start or stopped. Check the helper installation, NVIDIA RTX driver and helper log. Select TAA, then DLAA to retry.";
@@ -169,39 +170,9 @@ struct State {
     std::memcpy(mapped, quad, sizeof(quad));
     Check(vertices->Unlock(), Stage::device);
 
-    job = Handle(CreateJobObjectW(nullptr, nullptr));
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    if (!job.value || !SetInformationJobObject(job.value, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
-      throw Failure{Stage::protocol, GetLastError()};
     const HANDLE inherited[] = {mapping.value, request.value, reply.value, parent.value};
-    SIZE_T attribute_size = 0;
-    InitializeProcThreadAttributeList(nullptr, 1, 0, &attribute_size);
-    std::vector<unsigned char> attributes(attribute_size);
-    STARTUPINFOEXW startup{};
-    startup.StartupInfo.cb = sizeof(startup);
-    startup.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
-    if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &attribute_size))
-      throw Failure{Stage::protocol, GetLastError()};
-    const bool updated = UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-                                                   const_cast<HANDLE*>(inherited), sizeof(inherited), nullptr, nullptr);
-    std::wstring command = L"\"" + executable.wstring() + L"\"";
-    for (auto handle : inherited) command += L" " + std::to_wstring(uintptr_t(handle));
-    PROCESS_INFORMATION child{};
-    const bool created = updated && CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE,
-                        CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT,
-                        nullptr, directory.c_str(), &startup.StartupInfo, &child);
-    const auto launch_error = GetLastError();
-    DeleteProcThreadAttributeList(startup.lpAttributeList);
-    if (!created) throw Failure{Stage::protocol, launch_error};
-    process = Handle(child.hProcess);
-    Handle thread(child.hThread);
-    if (!AssignProcessToJobObject(job.value, process.value)) {
-      const auto code = GetLastError();
-      TerminateProcess(process.value, code);  // Our still-suspended child only.
-      throw Failure{Stage::protocol, code};
-    }
-    if (ResumeThread(thread.value) == DWORD(-1)) throw Failure{Stage::protocol, GetLastError()};
+    const DWORD launch_error = helper::Launch(executable, inherited, &job, &process);
+    if (launch_error) throw Failure{Stage::protocol, launch_error};
     started = GetTickCount64();
     status = Status::starting; error_code = 0; error_stage = 0;
   }
@@ -219,6 +190,7 @@ struct State {
         if (result != WAIT_OBJECT_0) throw Failure{Stage::protocol, result};
         MemoryBarrier();
         if (packet->state != WorkerState::ready) throw Failure{packet->stage, packet->error};
+        if (packet->backend != 12) throw Failure{Stage::protocol, ERROR_REVISION_MISMATCH};
         ready = true;
       }
       D3DSURFACE_DESC desc{};

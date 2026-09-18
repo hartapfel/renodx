@@ -2083,3 +2083,1027 @@ live standalone launch on 2026-09-18 loaded TAA and DevKit with the HDR addon
 disabled, activated both compatibility hooks and reached active native-resolution
 DLAA. The log records active DLAA again later in the session and a clean exit.
 This verifies the observed startup failure; it is not exhaustive gameplay testing.
+
+## 35. Optional x64 DX12 presentation prototype
+
+The first frame-generation milestone adds **presentation only**. The game and
+AA remain native DX9, the existing Ezio addon performs its HDR/postprocessing
+and DX11 output conversion, and a new x64 helper displays the finished image
+through DX12. The shipped frame-generation libraries are not integrated yet.
+`DX12Output` defaults to 0, and missing helpers never enable it automatically.
+Standalone DX9 presentation is not connected; this integration currently needs
+the Ezio HDR addon's DX11 output. No shared utility, global preset, CI or vendored
+dependency is changed.
+
+### Capture and presentation ownership
+
+`presentation.hpp` tracks DX11 swapchains whose HWND belongs to the game process.
+It intercepts their native Present/Present1 methods using the existing vtable
+hook ownership mechanism. Capturing at the native boundary includes the proxy
+output shader, ReShade effects and overlay, which execute after the public
+ReShade `present` event. The source backbuffer is copied without retaining it
+across a call, so ResizeBuffers can release its references normally.
+
+One successful helper acknowledgement replaces one native DX11 Present; the
+existing HDR addon then suppresses duplicate DX9 presentation as before. TEST
+presents pass through. Failure tears down the child output before calling the
+original DX11 method for the current frame. A failed session is latched until
+Off/On or swapchain recreation, avoiding repeated startup stalls.
+
+An HWND can own only one flip-model swapchain. The helper therefore creates a
+disabled, nonactivating child canvas, matched to the game HWND's DPI-awareness
+context and client size, and owns a separate DX12 flip-discard swapchain there.
+The game keeps keyboard/mouse focus. The client services synchronous sent
+window messages while waiting on IPC; without this, child creation can deadlock
+when the producer is also the window thread. Queued game input is left alone.
+Session/client ownership survives reentrant swapchain destruction during these
+sent messages; teardown restores hooks and closes the worker's job.
+
+### GPU transport and synchronization
+
+`presentation_client.hpp` creates one DX11 legacy shared texture in the source
+format and a shared DX11 fence. It copies the completed backbuffer, signals the
+frame ID on that fence and flushes submission. `presentation_protocol.hpp` is a
+versioned, pointer-free x86/x64 packet (104 bytes in v1; 392 bytes in v2 with
+auxiliary frame inputs). Mapping, request/reply events,
+parent process and the NT source-fence handle use an explicit inheritance list.
+The legacy texture handle is a driver token, not a CloseHandle-owned NT handle.
+
+The helper imports the source into a DX11 device on the same adapter LUID.
+It creates a DX12 shared simultaneous-access texture and opens its NT handle
+on DX11. The worker's DX11 context waits for the source fence, copies to that
+texture, then signals an internal shared fence's odd value. The DX12 queue
+waits for it, transitions/copies the image into the current backbuffer, restores
+resource states and signals the even value. Present and GPU completion precede
+the acknowledgement; only then may the producer overwrite its shared texture.
+One frame is in flight, with bounded startup/frame waits. There is no production
+CPU pixel readback; the GPU fixture alone requests readback checksums.
+
+The helper accepts RGBA8/BGRA8 SDR, RGB10A2 HDR10/PQ and RGBA16F scRGB, using the
+source color space unchanged. It copies rather than re-tonemaps or re-encodes.
+The native Present sync interval and supported tearing/restart flags are passed
+through. Driver-per-executable policy and actual G-Sync/limiter behavior are
+separate live-validation requirements. Resolution/format/color-space changes
+and graphics resets rebuild the transport and output session. Unexpected parent
+exit kills the helper through its job, and helper failure restores native output.
+
+`helper_process.hpp` shares restricted child launch/job ownership with DLAA;
+the DLAA packet, GPU path and display ownership remain unchanged.
+
+### Build, verification and next milestones
+
+Build `asscreedbrotherhood-taa` with its established x86 Release preset and
+`presentation_helper/build.ps1` with the game-local x64 Release preset. The helper
+output is `build64-brotherhood-dx12/Release/renodx-asscreedbrotherhood-dx12.exe`.
+Install it in the matching directory beside the addon, separately from DLAA.
+
+The x86 `test-dx12-present` fixture passes exact-pixel checks across all four
+formats, changing dimensions, VSync/immediate requests, cross-process child
+ownership/cleanup and worker-failure detection. It also passes native DX9 shared
+texture -> DX11 -> x64 DX12 pixel equivalence. D3D12 debug-layer errors fail the
+validation when the debug layer is available. The HDR/DLAA scene fixture reaches
+active DX12 output through 8x -> 4x -> Off -> 8x and native ResetEx in both addon
+load orders. Terminating the fixture's own worker restores DX11 output, and the
+next reset recreates DX12 output. The default-off standalone and HDR fixtures
+still pass with DLAA active. A 40-frame 3840x2160 HDR10 transport run also passes
+without validation readback; its timing includes Present/IPC and is not an
+in-game overhead measurement.
+
+Live Brotherhood verification on 2026-09-18 reached 3840x2160 HDR10 output.
+The user confirmed the image, input and ReShade overlay worked, followed by
+successful Off/On switching and an MSAA change. A 12-second PresentMon capture
+recorded 1,342 DX12-helper presents, zero dropped frames and no native game DX9
+or DX11 presents. Mean presentation/display intervals were both 8.936 ms
+(about 112 FPS), with sync interval 1 and Hardware Composed: Independent Flip.
+After the toggle/reset check, another capture recorded 823 helper presents,
+zero dropped frames and no native game presents, still at sync interval 1.
+Mean presentation interval was 9.683 ms (about 103 FPS). These are different
+live samples, not a controlled performance comparison. They establish single
+presentation ownership before and after the tested change; they do not prove
+every driver-profile limit, G-Sync behavior or a performance improvement.
+Captures and summaries are in `tmp/asscreedbrotherhood-taa/dx12-live*.csv/json`.
+
+Next: measure overhead against DX11 in a fixed scene, extend validation to focus,
+menus, fullscreen changes and helper failure in-game, then export aligned depth/motion,
+camera constants and **postprocessed HUD-less color** with UI alpha/color.
+The existing DLAA input is earlier than the finished output and cannot simply
+serve as frame generation's HUD-less image. Only after that should Streamline
+DLSS-G/Reflex and generated-frame scheduling be added. Additional buffering and
+fence-based pipelining must retain the measured presentation and reset behavior.
+
+## 36. Frame-generation input transport (no interpolation yet)
+
+`FGInputCapture` is an additional developer opt-in, default Off. It requires
+DX12 output, TAA/DLAA with Debug Off, and the updated HDR addon. It does not load
+Streamline or generate frames. The purpose is to validate the inputs and their
+lifetimes before adding interpolation/pacing.
+
+### Capture points and color contract
+
+The live Brotherhood snapshot on 2026-09-18 contained 2,577 draws. LUT draw
+2538 (`0x48DCE479`) was followed by white-gradient/downsample/postprocess passes;
+draw 2543 (`PS 0xC9F2C59B`, `VS 0x3E4AE466`) copied the finished scene to the
+FP16 swapchain clone. HUD draws began at 2544 and continued through the end.
+The original final pixel shader is a plain `texld oC0, v0, s0`. This proves why
+the earlier DLAA input cannot substitute for the postprocessed HUD-less image.
+
+`OnFinalScene` runs after that verified composite and copies its output with a
+point-sampled native DX9 shader, before the HUD. It checks full viewport size,
+FP16 format, matching dimensions and single-sample output. It deliberately does
+not guess alternate final-composite hashes. Missing variants produce no HUD-less
+flag. Copying through a shader works inside BeginScene; using StretchRect there
+would violate the native DX9 contract. `SavedDraw` restores the entire DX9 state,
+including separately saved render targets, depth surface and viewport.
+
+The raw capture is still in the HDR addon's working color domain. `fg_encode.hpp`
+opens its shared texture on the native DX11 device and encodes it to HDR10 with
+`fg_hudless.ps_5_0.hlsl`, which includes the actual Ezio presentation shader.
+Its compiled bytecode matches the HDR addon's output shader exactly. The optional
+read-only `RenodxEzioReadOutputParameters` ABI returns that frame's 28 injection
+floats, with version/size checks. There is no duplicate color math or separate
+brightness setting. A private DX11 context-state object isolates the encoding
+draw and restores all stages/bindings afterward. An old/missing HDR addon leaves
+depth/motion available but does not claim correctly encoded HUD-less color.
+The context-state creation flags must match the source device's single-threaded
+flag. The HDR proxy uses a single-threaded DX11 device; omitting the matching
+flag produces `E_INVALIDARG` even though the same code works on an ordinary
+multithreaded test device.
+
+### Motion, depth and frame identity
+
+`taa_dense_motion.hlsli` holds the existing DLAA camera/object selection math.
+DLAA continues to use it on its jittered input grid. `fg_inputs.ps_3_0.hlsl`
+samples matching native depth and motion at `outputUV + jitter / size` and emits
+them on the unjittered output grid. XY is previous-minus-current UV, including
+camera and object motion but excluding jitter. Z marks estimated/invalid poses;
+W marks valid vectors. R32F depth preserves native D3D z/w, near 0 and far/sky 1.
+Depth is point sampled, not averaged across silhouettes or temporally filtered.
+MSAA uses the same verified single-sample depth prepass as TAA.
+
+`fg_protocol.hpp` defines a 272-byte, pointer-free input record with a unique
+native capture ID, resource generation, dimensions, window identity, three
+shared handles, validity/reset flags, timing, actual jitter and unjittered
+current/previous camera and clip-reprojection matrices. Matrices retain the
+game's column-vector convention; the Streamline adapter in section 38 transposes
+for its row-vector convention and derives/validates the remaining camera fields.
+Frame intervals use QueryPerformanceCounter rather than coarse system ticks.
+Camera discontinuities use the existing TAA continuity tests. A capture ID is
+consumed once; an unchanged old capture is never resent during menus/loading.
+Reset releases the capture with the rest of the DX9 device data.
+
+The DX9 event query completes the exported writes before the presenter can
+read them. The final HDR encoding shares the presenter's DX11 source fence.
+The x64 worker imports motion/depth and encoded color, copies them into its own
+DX12 shared resources, and acknowledges them under the same frame/fence protocol
+as final color. It rejects duplicate IDs, wrong dimensions/window, unsupported
+flags and mismatched textures; missing inputs preserve ordinary presentation.
+Generation IDs protect against reused driver handles after reset. Resources
+remain stable through the Present acknowledgement. Normal operation performs
+no CPU pixel readback. At 4K the three native capture textures add about 158 MiB,
+the encoded DX11 image 32 MiB, and the helper's DX12 inputs 127 MiB; these are
+additional allocations, so capture remains opt-in during development.
+
+### Diagnostics and remaining work
+
+The status reports which inputs the DX12 worker actually accepted, not just
+which textures were allocated in DX9. `Save Captured Inputs` performs a one-shot
+readback to `renodx-dev/fg-capture/<pid>-<frame>/`: packed RGBA16F motion, R32F
+depth, raw working-color RGBA16F HUD-less scene and a manifest with matrices and
+conventions. A `complete` marker is required before analyzing a capture. This
+explicit diagnostic stalls; it is never part of the ordinary timing path.
+
+The GPU fixture passes at 64x32 and 96x32: stationary jitter cancellation,
+camera/object selection, reset validity, exact signed/>1 FP16 scene capture,
+R32 precision, DX9/DX11 state restoration, exact DX12 checksums, stale/missing
+and wrong-size input rejection, positive high-resolution frame intervals,
+one-shot readback, and unchanged base output. Both single-threaded and ordinary
+DX11 source devices pass. The real ReShade fixture receives all three inputs
+(`accepted=7`, native `captured=3`, `encodeError=0`) in both addon load orders
+through 8x -> 4x -> Off -> 8x and ResetEx. Worker termination still restores
+ordinary output; the next reset recreates the worker and complete inputs.
+Standalone SDR TAA/DLAA also passes with DX12/capture disabled, including DLAA
+activation during the MSAA-Off phase.
+
+Live Brotherhood validation on 2026-09-18 used DLAA at 3840x2160. The user
+confirmed the output looked correct, and both logs reported all three inputs
+accepted with no encoding error. Two complete one-shot captures were inspected:
+
+- Stationary camera, animated horse/rider and nearby characters (`7944-1616`):
+  all depth/motion/color values finite, normalized depth 0.957828..0.994903,
+  valid vectors across the image and no uncertain-pose flags in this frame.
+  Static scenery had zero motion while the horse/rider had independent vectors.
+  Motion magnitude reached about 12.34 pixels in the sampled grid.
+- Moving camera on the rooftops (`7944-9251`): all values finite, depth
+  0.954600..1, 5.86% sky pixels and valid vectors throughout. Comparing every
+  fourth pixel with double-precision camera reprojection, 93.52% of non-sky
+  samples were within 0.1 pixel (median error 0.00357 pixel). This includes
+  independently moving meshes, which should differ from camera-only vectors;
+  it is not a per-object correctness score. For sky samples, the rotation-only
+  calculation matched within 0.01494 pixel maximum. Median motion magnitude
+  was about 12.21 pixels, proving this was a moving-camera capture.
+
+Scene/depth silhouettes were visually aligned in both captures. Game HUD and
+ReShade overlay were absent from the captured scene; HDR working values above
+one and small negative channels survived. NVIDIA's enabled DLSS diagnostic
+indicator was still visible at the lower left: it is baked into the earlier
+DLAA result, so a clean frame-generation evaluation must disable that external
+indicator. These two frames establish live input transport and sampled
+alignment, not scene-wide motion correctness, generated-frame quality or pacing.
+Inspection results are under `tmp/asscreedbrotherhood-taa/fg-live-inspection`
+and `fg-live-camera`; raw captures remain in the game's `renodx-dev/fg-capture`.
+
+This stage established the inputs. Section 38 adds Streamline, camera conversion,
+Reflex scheduling and explicit gates for later ReShade effects/overlay. Game UI
+alpha/color remains unimplemented; do not advertise full UI recomposition.
+See NVIDIA's
+[DLSS-G input requirements](https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS_G.md#51-required-and-optional-resources)
+for postprocessed color, dense motion, depth and UI semantics.
+
+## 37. DX12 startup handoff and intermittent foreign-frame investigation
+
+The user reported brief images resembling another window every few seconds
+when starting Brotherhood with DX12 already enabled. Disabling input capture
+did not remove the flashes; disabling DX12 did. Enabling DX12 during gameplay
+also avoided the issue. A 20-second PresentMon trace contained 2,398 helper
+presentations and no native game presentations, so that sample did not show
+the earlier duplicate-Present bug. This narrowed the investigation to startup
+display ownership/composition rather than frame-generation input capture.
+
+`Session::native_ready` now gates takeover until the underlying DX11 swapchain
+returns `S_OK` from a real presentation with a visible, non-minimized parent.
+TEST, occluded and failed calls do not prime it. Both Present entry points
+record the result; reset creates a fresh session. The initial native frame is
+the sole presentation for that frame, and later successful helper frames still
+suppress native output. This gives launch-enabled DX12 the same prerequisite
+as enabling it after normal output is already running.
+
+The helper also waits for the first backbuffer copy before showing its child
+canvas. It no longer calls `SetWindowPos(HWND_TOP)` every frame: resize is
+conditional on changed client dimensions and preserves z-order and focus.
+The normal per-frame texture/fence protocol is unchanged. Validation readback
+now checks the actual DX12 backbuffer after the copy, rather than the intermediate
+input texture, so checksum tests cover the final GPU copy as well.
+
+The previous Release fails the added hidden-parent startup regression at frame
+zero: a helper child already exists before any visible native presentation.
+The regression also requires a first visible native frame before the helper
+appears. The corrected Release passes that startup sequence, 8x -> 4x -> Off ->
+8x, native ResetEx and worker-failure fallback in both addon load orders. All
+three frame-generation inputs recover after reset. The standalone transport
+fixture passes actual-backbuffer pixel checks in RGBA8/BGRA8 SDR, HDR10 and
+scRGB at changing dimensions, including 360 changing HDR10 frames, first-frame
+visibility, native DX9 shared input and worker teardown. With the matching
+protocol-3 pair installed, a fresh launch with DX12 enabled reached gameplay
+and the user reported that the startup flicker appeared resolved. The log
+confirms native priming followed by active DX12 output without failure. This
+is one successful live retest of an intermittent compositor symptom.
+
+The first attempted gameplay retest during the next development stage loaded
+the protocol-2 addon alongside an already rebuilt protocol-3 helper. ReShade
+logged stage 1 / error 13 and correctly fell back to DX11. This was an installation
+mismatch, not evidence for or against the startup flicker correction. Protocol
+incompatibility now logs received/expected versions and returns
+`ERROR_REVISION_MISMATCH`; update the linked addon/helper as a pair while closed.
+
+## 38. Experimental Streamline DLSS-G, UI gates and Reflex (2026-09-18)
+
+### Scope and dependencies
+
+This is an opt-in first integration, with one interpolated frame per real frame.
+`DLSSFrameGeneration=0` remains the default. It requires the HDR addon's HDR10
+DX11 output, the DX12 presenter, valid TAA/DLAA inputs and Debug Off. Standalone
+SDR frame generation is not implemented. A user request enables input capture
+automatically, independently of the developer `FGInputCapture` toggle.
+
+`presentation_helper/streamline.hpp` dynamically loads the official signed
+Streamline interposer in the x64 helper only. It uses the existing 2.8.0 headers
+and matching production runtime: sl.interposer, sl.common, sl.dlss_g, sl.reflex,
+sl.pcl and nvngx_dlssg. No SDK DLL is injected into the DX9 game or DLAA helper.
+The game-local installer checks the SDK version and NVIDIA signatures and
+preserves the Streamline, DLSS and Reflex licenses. Official SDK archive SHA256:
+`313669F8CF886F823EA0518A50712EFA5E2E8623689ED2A6BD0D9353E475BC47`.
+Vendor headers/submodules, global CMake and CI are unchanged.
+
+Initialize before graphics calls; the helper delay-loads system graphics DLLs.
+Use the interposer's factory/device exports, DXGI factory proxy and frame-based
+resource tags. Request DLSS-G, Reflex and PCL, check adapter support using the
+actual source LUID, and retain the existing mod's own project GUID/custom-engine
+identity. Do not borrow another game's application ID. NVIDIA's production
+runtime currently warns about an unregistered application ID while allowing the
+custom-project initialization; a public release should resolve that with NVIDIA
+and review the runtime licenses. This is not a claim of NVIDIA certification.
+
+Missing runtime or unsupported hardware preserves original-frame DX12 output.
+Changing the FG user toggle recreates the helper/swapchain so Off unloads the
+interposer and its overhead. Worker/protocol/GPU failures use the existing DX11
+fallback. Shutdown happens while swapchain, tagged resources and device remain
+alive; retained proxy interfaces are released before unloading the DLL.
+
+### Camera and resources
+
+`fg_camera.hpp` factors the verified centered-perspective VP in double precision.
+Normalize rows 0/1 to obtain right/up, row 3 to obtain forward; their lengths give
+the projection X/Y scales. Require finite, mutually orthogonal axes, unit forward,
+matching aspect, a depth row proportional to row 3 and valid near/far planes.
+For `row2 = A * row3 + (0,0,0,B)`, near is `-B/A` and far is `-B/(A-1)`.
+Camera position comes from inverse(VP)'s third column divided by its W. Vertical
+FOV is `2*atan(1/yScale)`. Reject unsupported/singular/asymmetric projections.
+
+Transpose the projection, its inverse, clip-to-previous and its inverse for
+Streamline's row-vector matrices. Use UV motion scale (1,1), camera motion
+included, ordinary depth, 2D unjittered vectors, no dilation and no orthographic
+projection. Capture already resampled depth/motion onto the final unjittered
+pixel grid, so **SDK jitterOffset is zero**; the native raster jitter remains in
+the capture manifest for diagnostics. Applying it again would misalign inputs.
+Reset on native discontinuity and on the first resumed frame after any pause.
+
+For each matching frame token/viewport, tag depth R32F, dense motion RGBA16F and
+the encoded HDR10 HUD-less image with `eValidUntilPresent`, full extents and
+actual COMMON resource state. The final backbuffer is intercepted by Streamline.
+Missing/paused frames clear tags and set mode Off; no stale native capture may
+be reused. `slDLSSGGetState` checks runtime status and actual presentation count.
+Green active status requires observed interpolated presentations, not merely
+successful DLL loading or allocated inputs.
+
+### HUD and ReShade
+
+The existing verified postprocess composite supplies the scene before game HUD,
+encoded through the same HDR output function/settings as final color. Tagging
+that scene gives DLSS-G its supported HUD-less path. There is no invented
+final-minus-scene alpha estimate. A separate game UI RGBA/alpha texture and full
+UI recomposition are still future work, with HUD artifacts requiring live checks.
+
+Observe `reshade_open_overlay`, `destroy_effect_runtime` and
+`reshade_render_technique` for both native/proxy runtimes. Opening any overlay
+pauses interpolation; any actually rendered technique also pauses it because
+the earlier HUD-less image does not include those arbitrary effects. The native
+DX9 `finish_present` clears the per-frame effect flag after final presentation.
+Do not disable or alter user ReShade effects automatically. Overlay/effects still
+appear on original frames. Closing the overlay or disabling effects resumes with
+a reset. Likewise pause when the game root window is not foreground, while
+minimized, and across helper child-size changes. The disabled child keeps native
+game focus/input; focus is never stolen by production code.
+
+### Reflex and cross-process timing
+
+Protocol 3 is a fixed 416-byte packet, preserving the original header and 272-byte
+input record. It adds generation request/pause flags, status/error, presentation
+count and Reflex status. Two bounded control requests carry real frame boundaries:
+
+1. At the game's DX9 `finish_present`, send `begin_frame` for N+1. The helper
+   obtains that frame token, calls `slReflexSleep`, marks SimulationStart and
+   acknowledges before the game starts its next tick.
+2. Hook the application's ReShade DX9 wrapper `BeginScene` (slot 41), alongside
+   the existing reset-safe draw hooks. Only the first call after the above
+   boundary sends `render_begin`: SimulationEnd then RenderSubmitStart for N+1.
+   Subsequent BeginScene calls cost one pending-flag check; addon-internal scenes
+   on the native device do not create extra markers.
+3. Use the same token for constants, tags, RenderSubmitEnd and PresentStart/End
+   around the DX12 submission/presentation. An unmeasured bootstrap frame does
+   not interpolate. Do not fabricate back-to-back simulation markers and claim
+   engine integration; no engine input-sampling hook or Reflex latency measurement
+   is provided. Present-return to first BeginScene is an explicit approximation.
+
+Reflex Low Latency is enabled with FG, boost Off and frameLimitUs=0. Existing
+driver/VSync/RTSS settings are untouched. Waiting services only sent Win32
+messages as in the original helper client; map iterators/references must not
+survive a reentrant wait that could destroy the swapchain. Session/client shared
+ownership protects those waits. The same frame cannot be started/marked twice.
+
+### Shared input lifetime
+
+The helper's DX11 bridge writes FG inputs on a **non-presenting queue**. The old
+pre-Present completion fence is insufficient once NVIDIA reads inputs after
+Present. The internal shared fence now allocates four values per frame:
+
+- `4*N-3`: DX11 source/input copies ready for the DX12 queue.
+- `4*N-2`: base image copy complete; used before first showing the child.
+- After Present, query DLSS-G's `inputsProcessingCompletionFence` and value on
+  the present thread and enqueue a wait on the DX12 queue.
+- `4*N`: signal after that wait, wait on CPU, then acknowledge the packet.
+  Only now may the game produce the next frame and the bridge overwrite inputs.
+
+The acknowledgement also protects the command allocator, source image and
+resource destruction across resets. Failed lifetime queries terminate the helper
+instead of allowing unsafe reuse. There is still one frame in flight and no
+production CPU pixel readback. Performance/pipelining is a later task.
+
+### Validation and remaining live checks
+
+The captured-rooftop camera regression in `presentation_helper/tests/camera.cpp`
+checks near/far, aspect, camera center, SDK transpose/inverses and rejection of
+NaN, shear, mismatched aspect, singular reprojection and invalid depth planes.
+The isolated 1280x720 moving-checkerboard test uses matching motion/depth and
+HDR10 color, real cross-process timing commands and DX12 debug-layer validation.
+It confirms actual SDK presentation count 2 while active, count 1 during overlay,
+effects and missing-input pauses, and successful reset/resume. Native parent
+focus remains unchanged. A background fixture initially returned only original
+frames; a newer SDK's diagnostic identified window focus, and foreground testing
+then confirmed 2x with the pinned 2.8 production runtime. No window-focus workaround
+or new SDK dependency was needed in the addon.
+
+Ordinary transport checks still cover SDR/HDR/scRGB exact pixels, changing sizes,
+first visibility, native DX9 shared input and worker failure. The matching
+protocol-3 Release addon/helper pair passes both real-ReShade load orders,
+8x/4x/Off MSAA transitions, ResetEx, and worker-failure fallback/recovery.
+The integration fixture runs with generation Off and input capture On; it proves
+transport/reset behavior, not live game Reflex timing or interpolation quality.
+The first live 3840x2160 HDR10 run confirms Reflex initialization, all three
+accepted inputs (`accepted=7`), and DLSS-G status Active with two presentations
+per rendered frame. That status also requires the game's present-return and
+BeginScene timing commands; the late bootstrap path cannot activate generation.
+The user reported correct gameplay after initialization and successful recovery
+from Alt-Tab, DX12 Off/On, and changing/restoring the game resolution with
+generation still enabled. Resolution resets recreate the native swapchain and
+helper; the live log confirms native priming, `accepted=7`, and two presentations
+again afterward. Logs show overlay,
+effects, background and missing-input pauses returning to active generation.
+A 20-second PresentMon trace records hardware-composed independent flip, VSync
+requested and no dropped presentations. It is not a controlled performance or
+latency comparison. Scratch evidence is under
+`tmp/asscreedbrotherhood-taa/fg-live-20260918` and `fg-gameplay-first.csv`.
+
+Broader gameplay checks remain necessary for HUD interpolation, transparent
+objects, camera cuts, reset recovery and display pacing across configurations.
+No input-to-photon latency improvement has been measured. Synthetic GPU success
+and this short live session are not comprehensive gameplay-quality validation.
+
+## 39. DX12 DLAA and 2x–6x frame generation (2026-09-18)
+
+### Processing and presentation are separate
+
+The old DLAA helper evaluated NGX on DX11 without presenting. The presenter
+already owned the only final presentation when DX12 output was enabled.
+DLAA preparation and NGX create/evaluate/release now use DX12 too. The two
+x64 helpers remain separate processes/devices; this change does not merge them
+into one queue or remove all bridge copies. DX11 only transports DX9 legacy
+shared textures and supplies the HDR addon's existing output.
+
+```text
+DX9 scene + native jitter + dense motion + R32 depth
+ -> DX11 legacy sharing bridge -> DX12 preparation -> DX12 NGX DLAA
+ -> completed shared result -> DX9 output reconstruction -> RCAS -> LUT/HUD
+ -> HDR output -> DX12 presenter -> DLSS-G/Reflex -> display
+```
+
+Moving DLAA to final presentation would give it already graded color/HUD instead
+of its validated scene inputs. Keeping its pre-LUT insertion also preserves
+standalone SDR, signed-color reconstruction, native alpha, user preset defaults
+and debug fallback behavior. TAA remains the fallback if DLAA fails.
+
+### DLAA resources and synchronization
+
+`dlaa_helper/main.cpp` reuses the presenter's `ImportedImage` transport for four
+private legacy resources. The DX11 bridge performs copies only; the existing
+8x8 preparation compute shader runs through a DX12 PSO with two SRVs and three
+UAVs. It prepares positive linear FP16 color, RG16F motion and R8 responsiveness.
+NGX uses native-resolution DLAA, HDR/auto-exposure/undilated-motion flags, the
+unchanged jitter signs, pixel-scaled vectors, R32 near=0/far=1 depth and the same
+reset conditions. DLL Default still omits the NGX preset hint.
+
+Inputs transition COMMON -> NON_PIXEL_SHADER_RESOURCE. Preparation UAVs
+transition to shader reads before evaluation; NGX output is UAV, then COPY_SOURCE
+for the return copy. Shared images return to COMMON for cross-API access.
+The next command-list reset occurs only after the preceding frame completes.
+One shared DX11/DX12 fence serializes:
+
+1. DX11 input copies and signal; DX12 queue waits.
+2. DX12 prepare/evaluate/output copy and signal; DX11 queue waits.
+3. DX11 copy into the game's output and signal; the helper waits on an event
+   before publishing completion. There is no production CPU image readback.
+
+Feature creation is submitted and completed before reporting Ready. Cleanup
+waits for submitted work before releasing NGX/resources. This adds four DX12
+bridge images (28 bytes/pixel, about 221.5 MiB at 4K) in the x64 helper; native
+x86 image allocation is unchanged. No performance improvement is assumed.
+DLAA protocol 3 uses the previous 112-byte packet's padding for a backend
+acknowledgement; the addon checks `backend=12` before declaring DLAA active.
+
+### Multi-frame generation and UI
+
+The persisted `DLSSFrameGeneration` setting remains 0=Off and 1=2x, extending
+indices 2..5 to 3x..6x. The dropdown lives in the Frame Generation section.
+The value sent to `numFramesToGenerate` is **multiplier minus one**. Query
+`DLSSGState::numFramesToGenerateMax` before enabling interpolation. Unsupported
+selections render original frames with an explicit status; they are never
+silently represented as a successful lower multiplier. Once support is known,
+the dropdown disables unavailable choices. Capability discovery uses the first
+ordinary presentation; no guessed maximum enables a mode.
+
+Presenter protocol 4 is 424 bytes, with supported maximum/configured generated
+counts in its acknowledgement. Changing 2x..6x keeps the presenter alive and
+resets interpolation; toggling Off still destroys/recreates the helper without
+Streamline. Temporary overlay/effect/input/focus pauses retain model resources,
+clear tags and present originals. Final shutdown releases those resources.
+The source/input-consumption fences from section 38 still protect all generated
+frames. The log records requested, configured, actual and maximum counts.
+The panel keeps the last confirmed gameplay count visible while the overlay
+pauses interpolation; it is cleared on selecting a new mode. A multiplier is
+not a claim of proportional measured FPS, simulation rate or latency reduction.
+
+### Pinned SDK and validation
+
+The game-local presenter CMake fetches the official Streamline **2.14.1** archive
+with SHA-256 `92c4d954631a1710da86ca3fa8d5034f2b9503838c95fc4ae977ae149319781b`.
+`SOURCE_SUBDIR include` imports headers without running the SDK's deployment
+CMake. `build.ps1 -StreamlineSdkDirectory <absolute path>` can reuse an unpacked
+copy. The signed production-runtime installer checks the same version. No
+repository-wide presets, vendored SDK or external submodule changes are needed.
+Keep the addon, DLAA helper, presenter and presenter runtime matched.
+
+On the local RTX 5090, the 600-frame GPU test confirms exact 2, 3, 4, 5, 6, then
+2 presentations per application frame across six phases, with 74–75 confirmed
+frames per phase and 120 overlay/effect pauses. It also pauses for missing inputs.
+The sequence passes with SyncInterval 0 and 1. The runtime reports maximum 6x
+and VSync support with host SDK 2.14.1. Existing NVIDIA App overrides load some
+2.14.0 plugins; these settings are left untouched, and support comes from the
+loaded runtime rather than the installed DLL filename alone.
+
+DX12 DLAA passes 11,750,400 pixel checks over 1280x720, 640x360 and 3840x2160:
+SDR/sRGB/HDR transport, signed-color/alpha reconstruction, R32 depth, vectors,
+state restoration, RCAS/preview, helper-exit/missing-helper fallback and reset.
+Ordinary presentation still passes exact SDR/HDR10/scRGB transport, resizing,
+child ownership, native DX9 sharing and worker teardown. The optional Windows
+DX12 debug layer is unavailable (`DXGI_ERROR_SDK_COMPONENT_MISSING`), so these
+are pixel/API/fence tests, not a successful debug-layer validation run.
+Scratch logs: `tmp/asscreedbrotherhood-taa/dlaa-dx12-gpu-tests.log`,
+`mfg-modes-tests.log`, `mfg-modes-vsync-tests.log`, `mfg-transport-tests.log`.
+Both real-ReShade addon load orders also pass startup, 8x -> 4x -> Off -> 8x
+MSAA, ResetEx and helper-failure fallback with protocol 4. These fixtures select
+DLAA (falling back to TAA for MSAA) and input capture with generation Off; actual generation/reset behavior is a
+separate live check. The captured-camera regression passes against 2.14.1
+headers (`brotherhood-fg-camera-test`, Release with assertions enabled).
+Live visual and reset checks of this new combined version remain required.
+
+## 40. Reflex controls, a base-frame limiter and display headroom
+
+### User contract and timing boundary
+
+`ReflexMode` persists Off / On / On + Boost (default On). `ReflexRenderFPS`
+is a rendered-frame cap, before interpolation; zero means no manual cap.
+`ReflexDisplayFPS` supplies an optional lower display ceiling; zero selects
+the current monitor refresh minus 3 FPS. `DX12VSync` selects Follow Game / On /
+Off, default On. All apply only to the DX12 output path. No driver profile or
+external limiter is edited, and the normal DX11 output path is unchanged.
+
+Reflex/PCL load independently of DLSS-G, so the limiter also works with FG Off.
+Low-latency mode Off still calls Reflex Sleep and supplies the cap. FG requests
+at least On without rewriting the saved setting. Off/On FG transitions recreate
+the helper with the appropriate feature set; caps/modes/multipliers otherwise
+change in place. Failures show the limiter as unavailable, never as an active
+cap. Missing Streamline still allows ordinary DX12 presentation.
+
+The existing `finish_present` hook on the native DX9 game now sends timing with
+DX12 enabled even without FG. It waits for Reflex in the helper before returning
+to the next game tick. `begin_frame` applies mode/cap before `slReflexSleep`, then
+marks SimulationStart. The first native BeginScene sends SimulationEnd and
+RenderSubmitStart. The helper supplies render-end/present markers at the final
+DX12 boundary, including when FG is Off or paused. Mode changes always retain
+the limiter value; there is no additional busy wait, timer loop or native Present.
+The input sampling boundary remains inferred from the game's present return,
+not an engine-owned simulation callback; input-to-photon latency is unmeasured.
+
+### Conversion verified on the driver
+
+The initial GPU experiment proved that the driver's Reflex limiter includes
+generated frames. Passing 16,667 us unchanged with 3x generated only 20 rendered
+frames/sec; with 6x it divided the base rate again. Do **not** equate the raw
+`frameLimitUs` field with a simulation cap in this integration.
+
+`presentation_pacing.hpp` computes a minimum base-frame interval:
+
+```text
+ceiling = min(manual display ceiling if nonzero, detected refresh - 3)
+multiplier = max(supported selected multiplier, last confirmed actual multiplier)
+base interval = max(1 / manual rendered cap if nonzero, multiplier / ceiling)
+driver frameLimitUs = ceil(base interval in microseconds / confirmed actual multiplier)
+```
+
+All rates use integers (FPS settings, millihertz/milli-FPS telemetry), with
+64-bit intermediates and upward rounding of minimum intervals. Fractional
+refresh is preserved. An unavailable refresh does not invent a monitor rate;
+the explicit display/base caps still work and the UI requests a manual ceiling.
+Unsupported selected FG falls back to a 1x ceiling. A larger confirmed driver
+multiplier also reduces the base cap, so an override cannot bypass the ceiling.
+
+The driver conversion uses the last completed Present's
+`numFramesActuallyPresented`, clamped to 1..6, rather than the UI selection.
+An overlay/effect/missing-input pause returns to 1x and therefore to the full
+base interval. Resuming FG restores the division. The selected multiplier still
+constrains display headroom during a temporary pause to avoid a simulation-rate
+jump when opening the overlay. Mode changes may have a conservative transition
+frame; fixed-rate measurements exclude transitions and startup.
+
+Mode/interval are cached so `slReflexSetOptions` is called only when either
+changes. Display changes are checked on the frame-boundary request and final
+Present; `DisplayTiming` caches the monitor query for a second, invalidating on
+monitor changes. It matches the HWND's GDI display name to the active
+`QueryDisplayConfig` path and uses its rational refresh rate. Path-count races
+retry, clone paths use the lowest refresh, and `EnumDisplaySettings` is the
+fallback. No per-frame display enumeration is performed.
+
+### VSync, VRR and lifecycle
+
+VSync On requests interval 1 at the actual DX12 swapchain and removes the
+tearing flag. Follow Game preserves its interval, including 2..4 when presenting
+originals. FG only starts with a supported interval and the runtime's
+`bIsVsyncSupportAvailable` confirmation; otherwise it pauses and preserves the
+original synchronized output. Driver settings retain their precedence.
+
+G-SYNC cannot be enabled or proven through this control. A per-game NVIDIA
+profile for `ACBSP.exe` does not automatically describe the separate presenter;
+the UI/README explain configuring `renodx-asscreedbrotherhood-dx12.exe` and the
+appropriate windowed/fullscreen G-SYNC mode. The explicit display ceiling lets
+the user express a lower limit such as 225. Avoid stacking a second RTSS/driver
+limiter. A 180 FPS output on fixed 240 Hz necessarily has uneven scanout
+intervals; the rendered-frame pacing test is not proof of active VRR.
+
+Protocol **5**, `Packet` **480 bytes**, carries four settings plus applied
+mode, base/driver intervals, capability/error, detected refresh, ceiling,
+selected/confirmed multipliers and requested sync interval. Settings are
+validated at startup and each request. Addon UI status is mutex-protected and
+cleared on reset/failure/disable. Settings reapply to newly created sessions.
+Timing/present IPC deadlines include both the old and new base intervals for
+unusually low caps. Allow up to a 6x transition while the driver finishes its
+old schedule, plus the existing 2-second failure allowance. Compute the deadline
+before handing the packet to the helper. Existing source and NVIDIA
+input-consumption fences remain required; pacing does not weaken ownership.
+
+### Validation and limits (RTX 5090, 240 Hz display)
+
+- Persistent `brotherhood-reflex-pacing-test` tests 60 x 3, 225 / 6, fractional
+  refresh, lower ceilings, mode/interval passthrough, FG pauses, unsupported
+  multipliers and driver overrides. Build Release with assertions enabled.
+- The 1,350-frame GPU fixture exercises Reflex Off, On and Boost, manual and
+  automatic limits, 2x/3x/6x, VSync Off/On/Follow, and unsupported interval 2.
+  All six active phases confirm the exact multiplier in 120 frames each.
+  It verifies 120 overlay/effect pauses plus missing-input pauses and recovery.
+- Representative base measurements: 60 -> 59.995 FPS at 3x; 45 -> 44.996 FPS
+  at 3x; 60 with 225 ceiling at 6x -> 37.495 FPS; 60 with 120 ceiling at 3x
+  -> 39.997 FPS. Reflex Off/FG Off holds 60; Boost/FG Off holds 80. Steady-state
+  median base intervals are 16.668, 22.224, 26.670 and 25.002 ms respectively.
+- Additional 4x/5x phases measure 56.243/44.958 base FPS at a 225 ceiling,
+  with the exact presentation counts and pause recovery. An extreme 1 FPS
+  display ceiling at 6x verifies long Reflex waits and recovery to 225 without
+  an IPC timeout. The driver may finish one old interval after raising the cap.
+- PresentMon records synchronized independent-flip output, including stable
+  180 and 225 FPS segments. Four dropped frames occurred over the full startup/
+  transition trace; no blanket zero-drop or uniform-VRR claim is made. The
+  trace shows fixed 240 Hz scanout quantization, not confirmation of G-SYNC.
+- Ordinary transport passes exact SDR/HDR10/scRGB pixels, resizing, child HWND
+  ownership, native DX9 shared textures and worker-failure cleanup. Gameplay
+  quality, input latency and the user's actual G-SYNC configuration remain live
+  checks. The optional D3D12 debug layer is still unavailable on this host.
+- Both real-ReShade addon load orders pass hidden startup, 8x -> 4x -> Off ->
+  8x MSAA, ResetEx, scene/jitter comparisons and injected helper-failure fallback
+  with Reflex On, a 60 base cap and 225 display ceiling. These fixtures have FG
+  Off; gameplay resets with generation enabled remain a separate live check.
+
+Scratch evidence: `tmp/asscreedbrotherhood-taa/reflex-pacing-first.log` (the
+incorrect unconverted limit), `reflex-pacing-final.log`, `reflex-presentmon.csv`
+and `reflex-transport-tests.log`. `test-reflex.cpp` in that directory records
+QPC frame-start intervals and asserts a 3.5% rate tolerance after warmup.
+`reflex-extra-final.log` covers 4x/5x and the low-cap transition regression;
+`reflex-integration-hdr-first.log` and `reflex-integration-taa-first.log` record
+the reset/load-order checks.
+API references: [Reflex guide](https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.1/docs/ProgrammingGuideReflex.md)
+and [DLSS-G VSync guide](https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.1/docs/ProgrammingGuideDLSS_G.md#220-vsync-with-frame-generation).
+
+## 41. Release-oriented controls and live frame pacing (2026-09-18)
+
+This section supersedes the menu, display-ceiling and overlay-pause policy in
+sections 35–40. AA and reconstruction algorithms are unchanged.
+
+- Menu order: Anti-Aliasing, Frame Generation, Reflex and Frame Pacing,
+  Sharpening, Debug, Setup and Information, Links, About. AA, DLSS preset,
+  FG multiplier and Reflex use dropdowns. DLSS preset is visible only for DLAA.
+- Object-motion selection is removed from persisted settings; the existing
+  optimized automatic object/static-camera classification always runs.
+- DX12 starts automatically when the HDR output bridge and presenter are present.
+  There is no DX12 toggle. Native-first startup handoff, graphics-reset recovery
+  and failure fallback remain. Retry DX12 Output is available after failure.
+  Standalone AA still uses native output; this is not a new standalone wrapper.
+- FG input capture is automatic only while FG is selected. Developer export
+  internals remain available in code, with no release-menu capture toggle.
+- Reflex is forced exactly On both in the disabled UI dropdown and in the packet
+  while FG is selected. The stored Off/On/Boost preference is not overwritten,
+  and returns when FG is disabled. The sole limiter is Reflex Framerate cap
+  (Before FG). Zero means no manual limit; there is no hidden display ceiling.
+- The source Present sync interval passes through unchanged. Driver overrides
+  still apply; this code neither configures nor detects G-SYNC. App profiles need
+  to include the presenter executable. The confirmed-count Reflex interval
+  conversion from section 40 remains essential, including during FG pauses.
+- The overlay-open gate is removed. FG uses the existing HUD-less input plus
+  final output containing HUD/overlay; no separate UI alpha layer is added.
+  ReShade shader effects, invalid inputs, inactive window, resizing and unsupported
+  VSync combinations still pause FG. Overlay appearance in gameplay needs live
+  visual review; a successful generated-frame count alone is not visual proof.
+
+### Telemetry and protocol
+
+`frame_metrics.hpp` stores 240 completed-render intervals in a fixed ring under
+presentation's existing mutex. No image readback, GPU waits or allocations are
+added per frame. QPC timestamps are taken after successful output completion.
+The overlay copies the ring under the lock and computes statistics after unlocking.
+Before-FG FPS = sample count / elapsed seconds; after-FG FPS = summed confirmed
+runtime presentations / the same duration. Samples cover up to roughly one second
+(or the ring capacity at very high FPS). The plot shows rendered-frame intervals,
+with average and P95 summaries, not individual generated-frame scanout timing.
+Non-FG output counts one successful presentation; occlusion counts zero. Native
+fallback samples are only recorded while DX12 output is inactive. Invalid/long
+intervals and session restarts reset the ring; stale readings are hidden.
+
+Presentation protocol **6**, packet **464 bytes**, removes display/VSync fields.
+Update addon and presenter together. Removed legacy configuration keys are
+ignored rather than rewritten: DX12Output, TAAMotionSource, ReflexDisplayFPS,
+DX12VSync and FGInputCapture. AA/preset/FG/Reflex/base-cap/RCAS choices remain.
+
+### Verification
+
+- Clang syntax checks and linked Release addon/helper builds passed.
+- Reflex policy tests cover forced On, restoring Boost with FG Off, unchanged
+  source synchronization, no automatic ceiling, and confirmed-count interval
+  conversion. Telemetry tests cover 60 rendered / 180 confirmed FPS, irregular
+  intervals, missing outputs, wraparound, stale samples and reset behavior.
+- Isolated actual DLSS-G GPU test passed 2x–6x and return to 2x: 509 active frames,
+  including all 60 overlay-flag frames with synthetic UI in final color only.
+  All 60 ReShade-effects pauses worked; missing inputs paused and resumed.
+  The fixture required a Windows message pump to establish foreground correctly;
+  earlier background runs correctly paused and are not FG success evidence.
+- Both actual ReShade addon load orders passed native-first startup, 8x -> 4x ->
+  Off -> 8x MSAA, ResetEx, scene/jitter equivalence and injected helper-exit
+  fallback. The reversed-order fixture additionally set removed legacy options
+  to conflicting values, including DX12Output=0; automatic DX12 still started.
+- Game-specific menu appearance and overlay interpolation remain a live user
+  check; these tests do not establish physical scanout timing or G-SYNC state.
+
+
+## 42. FG resource audit, UI opacity and native-grid jitter (2026-09-18)
+
+A synchronized live readback of the actual encoded HUD-less and final shared
+images showed exact RGB equality throughout the scene, including Ezio and walls;
+only HUD pixels differed. Earlier sequential live reads differed on animation
+and foliage and were discarded as cross-frame evidence. The native source is
+3840x2160 FP16 with finite signed HDR values. The final helper receives RGB10A2
+PQ/BT.2020, matching final output. NVIDIA's Streamline 2.14.1 guide requires the
+same color space/postprocessing for HUD-less and final color; FP16/scRGB is not
+the supported final-output path. Do not convert only HUD-less to linear FP16.
+
+### Depth, motion and jitter
+
+The previous exporter point-sampled at UV + raster jitter but reported zero
+jitter to Streamline. Point sampling does not actually remove fractional-pixel
+jitter at surface boundaries. Export now uses the native raster grid, matching
+DLAA's depth/motion preparation, and supplies actual pixel jitter separately in
+`sl::Constants::jitterOffset`. Motion vector values remain previous-minus-current
+normalized UV with jitter excluded, and camera matrices remain unjittered.
+`motionVectorsJittered` and `motionVectorsDilated` are explicitly false.
+Depth remains R32F D3D z/w, near zero/far one. Both inputs use the same visible
+surface depth selection, including late object replay. Non-finite jitter rejects
+the frame instead of reaching the SDK. This corrects the input contract; it is
+not proof that all moving-surface artifacts disappear.
+
+### Actual HUD opacity
+
+After the verified final scene copy, clear a private DX9 R32F transmittance
+texture to one. For known game HUD pixel shaders (7258C5E9, 5E3A6B72, FB5A6594,
+AFDE4E3D) with standard source-alpha/premultiplied source-over blending, replay
+the draw into this target using source ZERO, destination INVSRCALPHA and ADD.
+Its red channel becomes product(1 - source alpha), preserving transparent holes
+and overlapping opacity. Original UI shader alpha, textures, geometry, viewport,
+scissor and alpha test are retained. Full state restoration leaves original RGB,
+alpha, render targets and shader bindings untouched. No UI draws are replayed
+until HUD-less capture succeeds, or while FG is Off.
+
+Unknown shaders/blends, active depth/stencil, unsupported instancing, or capture
+failures invalidate the optional mask for the frame. Do not infer opacity from
+final-minus-HUD-less color. A DX11 MRT pass runs the existing HDR output function
+for scene color and writes saturate(1 - transmittance) to a separate R32F texture.
+The mask is exported as `kBufferTypeUIAlpha`; UI recomposition is enabled only
+when that exact frame's mask was imported. The mask is zero outside HUD.
+ReShade's open overlay disables only this optional mask, not FG: its own UI is
+not in the game mask, so that path retains HUD-less inference. Arbitrary ReShade
+shader effects still pause FG as before.
+
+### Resource ownership and limits
+
+Presentation protocol 7: Inputs 280 bytes, Packet 480 bytes; update addon/helper
+together. Optional input bit 8 is UI alpha; required bits 1/2/4 remain unchanged.
+DX12 imports motion RGBA16F, depth R32F, encoded HUD-less RGB10A2 and optional UI
+R32F at full output resolution. Each resource is tagged in actual COMMON state
+with eValidUntilPresent. Producer-copy fences precede DX12 use; the Streamline
+input-consumption fence precedes acknowledgement and producer reuse. Capture
+completion now includes the later UI draws. No production CPU image readback.
+At 4K the extra DX9 mask, DX11 encoded mask and DX12 shared bridge each consume
+about 31.6 MiB of GPU surface storage; UI replay adds draw/state overhead only
+while FG is selected. Standalone AA/HDR upgrade rules are unchanged.
+
+### Validation
+
+Release builds passed. Camera tests verify actual jitter propagation and reject
+NaN jitter. DX9 GPU tests verify zero-alpha coverage, overlapping alpha 0.75,
+exact untouched original RGB, and render-target/blend restoration. Full transport
+tests cover native depth/motion, signed FP16 scene copying, encoded zero HUD
+alpha, DX12 checksums, state restoration, resize and stale-frame rejection. The
+MRT encoder matches the unchanged HDR output shader pixel-for-pixel. Actual
+DLSS-G GPU tests accepted the optional R32F mask, recomposition and mask/no-mask
+transitions across 2x�6x; missing-input/effects pauses and overlay-active generation
+also passed. ReShade reset/fallback tests passed. Gameplay improvement and actual
+HUD coverage still require live confirmation; input validation is not a visual
+quality guarantee.
+
+### HUD-input isolation test result (2026-09-19)
+
+A temporary Final Image Only mode omitted HUD-less color and UI alpha while
+keeping depth, motion and pacing unchanged. Actual GPU tests passed 2x-6x,
+including switching input modes. The user confirmed that this did not improve
+the building artifacts, so the option and its helper bypass were removed.
+HUD-less input is required again. Artifacts worsen with distance on decorative
+building bands. A stationary live capture contained finite vectors with no
+invalid/uncertain pixels and continuous wall depth; moving-frame correspondence
+still needs verification. The optional UI-alpha coverage rejection is a separate
+unresolved issue.
+
+The subsequent moving capture at 3840x2160 contained no invalid motion pixels.
+Across the visible decorative-band crop, exported FP16 motion agreed with CPU
+camera reprojection (using the same captured R32 depth and camera constants)
+within 0.015 output pixels. Depth ranged approximately 0.9952-0.9972 rather than
+being clamped to 1. This validates export arithmetic, not correspondence with
+the temporally resolved final color or DLSS-G's optical flow. Do not treat this
+as proof that frame-generation input alignment is correct.
+
+## 43. Standalone SDR frame generation and automatic VRR pacing (2026-09-19)
+
+This supersedes the HDR-only presentation and no-automatic-ceiling limitations
+in sections 40-42. It does not resolve the separate decorative-building motion
+artifact investigation above.
+
+### Native SDR presentation ownership
+
+`standalone_present.hpp` selects its route once at swapchain creation, after
+addons have loaded. It requires the installed DX12 presenter and declines when
+any loaded module exports `RenodxEzioReadOutputParameters`. Detection uses the
+HDR bridge export, not addon filename or load order. With HDR installed, the
+existing DX11 path calls the same `presentation::PresentFrame` implementation.
+
+Standalone creation requests DX9Ex and windowed presentation for the helper's
+child flip-model window; it preserves the game's requested sync interval and
+does not upgrade any game render target. Native device Present/PresentEx and
+swapchain Present dispatch hooks run after ReShade finishes its scene and
+overlay. They copy/resolve the completed X8R8G8B8/A8R8G8B8 backbuffer to a private
+shared A8R8G8B8 texture. A DX9 event query completes before a matching-adapter
+DX11 bridge opens the source. The common DX12 client submits BGRA8/sRGB output.
+Existing source/consumer fences and acknowledgement prevent reuse while FG
+still reads the frame. There is no CPU image transfer or SDR-to-HDR conversion.
+
+Only a successful helper presentation suppresses native Present. Hidden startup
+first permits a successful visible native frame, avoiding the earlier wrong-
+window flicker. A helper failure destroys the child and resumes native output.
+Reset destroys the client before releasing shared GPU resources and reselects
+the new backbuffer. Known original dispatch slots are rearmed after driver
+resets; unfamiliar hooks are not overwritten. A missing helper retains native
+TAA presentation. Graphics resets and Retry DX12 Output can start a new session.
+
+The first live standalone launch exposed a missing fullscreen-window step:
+forcing `Windowed=TRUE` skips DX9's normal expansion of Brotherhood's tiny startup
+HWND. Merely creating a valid 4K backbuffer and child swapchain leaves audio with
+an unusable window. Preserve the original fullscreen request, queue borderless
+sizing at initialization/reset, and call the existing windowing utility once the
+game is visible and foreground. Size to the actual monitor under per-monitor
+DPI awareness before allowing the DX12 handoff. Clear the pending flag before
+resizing because window messages can reset the device. Genuine windowed requests
+retain their window size. A new regression starts with a 1x1 fullscreen HWND and
+shrinks it again before ResetEx; both recover to exact monitor bounds.
+
+On normal swapchain destruction/unload, resources are released explicitly.
+At `ExitProcess` (`DllMain` detach with non-null reserved), remaining output
+owners are abandoned to process cleanup: releasing DX9 shared resources under
+the loader lock can wait forever for driver workers Windows already terminated.
+This path is used only during process termination; Windows reclaims allocations
+and closes job handles, terminating the helper. The exit regression must check
+actual process completion, not just the fixture's final PASS message.
+
+### SDR scene and UI inputs
+
+The native standalone final scene can be the swapchain backbuffer, which is a
+surface without an `IDirect3DTexture9` container. `CaptureHudless` copies it to a
+private matching-format render-target texture outside BeginScene, then restores
+the scene boundary before running the existing capture pass. Private FP16 stores
+the original SDR code values; it does not imply a linear-light conversion.
+
+`fg_sdr.ps_5_0.hlsl` copies those values to BGRA8 and converts the existing R32F
+HUD transmittance to opacity in a separate MRT. The final and HUD-less color now
+share format, color space and postprocessing without the HDR addon. With HDR,
+`fg_hudless.ps_5_0.hlsl` still uses the existing HDR output function. The helper
+accepts native BGRA8/RGBA8 SDR or RGB10A2 HDR10 for FG; ordinary scRGB presentation
+remains supported but scRGB frame generation remains unsupported. Protocol 7,
+optional UI-alpha rules, depth/motion conventions and input lifetimes are
+unchanged. Unknown HUD draws can still reject the optional mask.
+
+### Effective driver policy and Reflex limit
+
+The separate presentation process must honor the game's effective driver
+preferences. `presentation_helper/display_policy.hpp` reads the parent game's
+executable name, resolves its NVIDIA DRS application profile (falling back to
+the base profile), and reads VSync and VRR settings. It does not modify profiles.
+Forced VSync On/Off controls the helper Present interval; other settings retain
+the game's source interval. VRR also requires the actual window's monitor to
+report VRR capability. Fullscreen-only G-SYNC additionally requires a monitor-
+covering client rectangle; per-monitor DPI awareness keeps this test correct.
+
+With VRR permitted, VSync active and Reflex On, apply an automatic displayed-
+frame interval of `ceil(1,000,000 / refresh_hz) + 300` microseconds. The 0.3 ms
+headroom is an explicit integration policy, not a driver-reported 225 FPS value.
+At 240 Hz it produces about 223.86 FPS. Take the larger of this interval and the
+user's base interval divided by the previously confirmed FG presentation count.
+Do not divide the automatic interval by the FG multiplier again. This preserves
+60-before-FG / 180-after-FG at 3x, while cap 0 still respects VRR headroom. If
+VSync/VRR/Reflex is disabled, no automatic headroom is imposed. Runtime FG pauses
+continue to use confirmed, not selected, multipliers for the manual cap.
+
+Read the driver/display state once at startup and then on a background worker
+every five seconds. Per-frame Apply copies only a small mutex-protected snapshot.
+DRS polling on the render thread caused measurable periodic stalls and was
+removed. The driver can report VRR Requested=0 for the child/background helper
+even when the display reports InVRRMode=1. The game's profile supplies the user's
+request; the monitor query supplies capability. This does not prove physical
+VRR scanout or input-to-photon latency. No separate sleep limiter is introduced.
+
+### Verification
+
+- Release addon and presenter compile with Clang. Persistent pacing regressions
+  cover 240/144 Hz, 2x/3x/6x, manual cap precedence, forced VSync Off, follow-game
+  VSync Off, VRR unavailable and Reflex Off, without changing driver settings.
+- Actual SDR DLSS-G GPU execution passes 2x-6x, with 509 active frames including
+  60 overlay-active frames; missing inputs and ReShade effects pause and resume.
+- Foreground Reflex GPU test on this RTX 5090 / 240 Hz display measures 223.86-
+  223.89 output FPS with cap 0 at 2x/3x/6x. At 3x, manual 60 measures 59.996
+  rendered FPS, and manual 45 measures 44.996. All 1,019 active frames complete
+  without a feature failure. These are throughput measurements.
+- Native SDR non-texture backbuffer capture preserves every tested BGRA8 pixel
+  exactly through HUD-less capture, encoding and DX12 import; EndScene still
+  succeeds afterward. HDR MRT output still matches the original output shader
+  pixel-for-pixel. Depth/motion, state restoration, resize and stale rejection
+  tests also pass.
+- Real ReShade integration passes standalone SDR and both HDR addon load orders:
+  native-first startup, 8x -> 4x -> Off -> 8x MSAA, ResetEx, scene/jitter
+  equivalence, injected helper-exit fallback and actual clean process exit.
+  These reset fixtures use FG Off; they do not replace gameplay FG tests.
+- Live standalone SDR at 3840x2160 confirms 3x FG with the HDR addon disabled:
+  a 60 base cap measures 59.93 rendered FPS (about 179.8 output); cap 0 measures
+  73.96 rendered FPS (about 221.9 output), below the automatic 223.86 ceiling.
+  The helper reports native BGRA8/sRGB, accepted scene/depth/motion, three
+  confirmed presentations, VSync On from the driver despite source interval 0,
+  VRR enabled and no FG error. The optional alpha mask is accepted only on
+  covered UI frames, as designed. Focus/reset and HDR gameplay checks follow.
+
+Live HDR10 also confirms the same 3x route: 60.01 rendered / about 180 output FPS,
+with accepted inputs, three confirmed presentations and no reported FG error.
+The user reports normal output and the expected automatic ceiling after Alt-Tab.
+The subsequent sampled interval had the manual cap restored to 60, so the numeric
+HDR measurement above is for that cap. Native reset logs show HDR ownership and
+suppression of duplicate native DX9 presentation. Standalone resolution changes
+also resume FG with the automatic 4467-us output interval still active.
+
+## 44. Restore static geometry motion for frame generation (2026-09-19)
+
+The user requested fuller object-motion coverage to test the remaining distant
+decorative-building artifacts. The previous optimization recorded static draws
+but omitted their GPU motion replay when matching poses, unchanged buffers and
+native depth established that camera reprojection should suffice. In one live
+frame this omitted 619 of 876 captured draws. This is a separate investigation
+from the standalone and pacing corrections in section 43.
+
+`RenderObjectMotion` now accepts `replay_static`. The native resolve enables it
+while FG is selected and DX12 output is available, including for the motion
+preview. It suppresses only the `camera_only` draw-omission decision. Supported
+rigid geometry, building LODs, cutouts, characters, cloth and vegetation use the
+same verified original-position replay as before, including opacity, clipping,
+depth/stencil and viewport rules. Per-pixel geometry motion and complementary
+depth feed the existing dense-motion exporter; uncovered pixels and sky retain
+camera fallback. Missing/ambiguous history remains marked rather than invented.
+
+No extra replay pass, velocity target or palette allocation is added. Existing
+shader/declaration caches, redundant-state suppression, batched bone atlas,
+immutable partial-upload snapshots and bounded geometry storage remain. More
+draws enter the replay, so CPU/GPU cost can increase. FG Off returns immediately
+to static-camera omission without discarding captured pose history. No new
+motion-source setting is exposed in the release UI.
+
+GPU regression covers the same stationary mesh with a moving camera under both
+native depth and MSAA-prepass visibility: full replay produces the expected
+horizontal motion and actual complementary depth; AA-only mode omits the draw;
+repeated policy changes preserve both results. Existing static/moving/buffer-
+mutation/late-geometry/camera-cut gates, sky rotation and out-of-frustum vector
+checks also pass.
+
+Live HDR10 gameplay with DLAA and 3x FG confirms `fgGeometryMotion=1` and
+`cameraOnlyDraws=0`. A sampled frame replays all 695 captured draws (529 rigid,
+166 skinned, no unmatched history) with `motionReady=1` and `shaderParses=0`.
+The helper accepts scene/depth/motion and reports three presentations with no
+FG error; cap 0 retains the 4467-us automatic interval. The packet timing sample
+was taken while frame progression had stopped, so it provides no live FPS
+measurement for this build. The user reports no improvement in the decorative-
+building artifacts, but requested retaining the expanded geometry path. It
+remains enabled for FG; the static-camera optimization still applies with FG Off.
+This experiment does not resolve the building artifact.

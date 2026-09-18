@@ -1,4 +1,7 @@
 $ErrorActionPreference = 'Stop'
+if (Get-Process ACBSP,renodx-asscreedbrotherhood-dlaa -ErrorAction SilentlyContinue) {
+  throw 'Close Brotherhood and its DLAA helper before rebuilding linked outputs.'
+}
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
 $visualStudio = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (!$visualStudio) { throw 'Visual Studio C++ build tools are required.' }

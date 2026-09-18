@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cwchar>
+#include <cstring>
 #include <sstream>
 
 #include <deps/imgui/imgui.h>
@@ -25,6 +26,7 @@
 #include "./native_alpha.hpp"
 #include "./native_presentation.hpp"
 #include "./shared.h"
+#include "./output_bridge.hpp"
 
 namespace {
 
@@ -592,6 +594,13 @@ bool OnCopyTextureRegion(
 
 extern "C" __declspec(dllexport) constexpr const char* NAME = "RenoDX for Assassin's Creed Ezio Trilogy";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "Native DX9 HDR for Assassin's Creed Ezio Trilogy";
+
+extern "C" __declspec(dllexport) bool __cdecl RenodxEzioReadOutputParameters(ac2::output_bridge::Parameters* parameters) {
+  if (!parameters || parameters->version != 1 || parameters->size != sizeof(*parameters)) return false;
+  static_assert(sizeof(parameters->injection) == sizeof(shader_injection));
+  std::memcpy(parameters->injection, &shader_injection, sizeof(shader_injection));
+  return true;
+}
 
 BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
   switch (fdw_reason) {
