@@ -59,7 +59,7 @@ renodx::utils::settings::Settings settings = {
         .binding = &acbrotherhood::dlaa::render_preset,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 0.f,
-        .labels = {"DLL Default", "F (Legacy)", "J", "K", "L", "M"},
+        .labels = {"Default", "F (Legacy)", "J", "K", "L", "M"},
         .parse = [](float value) {
           return value >= 0.f && value < float(acbrotherhood::dlaa::kRenderPresets.size())
                      ? float(acbrotherhood::dlaa::kRenderPresets[unsigned(value)]) : 0.f;
@@ -70,7 +70,7 @@ renodx::utils::settings::Settings settings = {
         .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
         .label = "DLSS Preset",
         .section = "Anti-Aliasing",
-        .tooltip = "DLL Default lets NVIDIA's runtime choose. Other presets depend on the installed DLL and driver overrides. Changing presets restarts DLAA and clears its history.",
+        .tooltip = "Default lets NVIDIA's runtime choose. Other presets depend on the installed DLL and driver overrides. Changing presets restarts DLAA and clears its history.",
         .on_draw = [] { return DrawChoice("DLAAPreset", "DLSS Preset"); },
         .is_visible = [] { return acbrotherhood::taa::enabled == 2.f; },
     },
@@ -104,7 +104,7 @@ renodx::utils::settings::Settings settings = {
         .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
         .label = "DLSS Frame Generation",
         .section = "Frame Generation",
-        .tooltip = "The multiplier includes the rendered frame: 3x adds two generated frames. Supports standalone SDR and RenoDX HDR10. Requires TAA/DLAA, Debug Off, supported RTX hardware and the DX12 helper/runtime. Reflex is locked to On. The ReShade overlay may stay open; ReShade shader effects must be Off.",
+        .tooltip = "The multiplier includes the rendered frame: 3x adds two generated frames.",
         .on_draw = [] {
           const auto maximum = acbrotherhood::frame_generation::generation_max.load();
           return DrawChoice("DLSSFrameGeneration", "Frame Generation", -1, maximum ? maximum : UINT32_MAX);
@@ -150,7 +150,7 @@ renodx::utils::settings::Settings settings = {
         .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
         .label = "NVIDIA Reflex",
         .section = "Reflex and Frame Pacing",
-        .tooltip = "On reduces render latency; On + Boost also keeps GPU clocks elevated. Frame Generation locks Reflex to On. Your previous choice returns when FG is Off. The cap works independently of low-latency mode.",
+        .tooltip = "On reduces render latency; On + Boost also keeps GPU clocks elevated.",
         .on_draw = [] {
           const bool locked = acbrotherhood::frame_generation::RequestedFrames() != 0;
           const bool changed = DrawChoice("ReflexMode", "NVIDIA Reflex", locked ? 1 : -1);
@@ -164,7 +164,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .label = "Reflex Framerate cap (Before FG)",
         .section = "Reflex and Frame Pacing",
-        .tooltip = "Ctrl-click to enter an exact value. 0 removes the manual cap. With G-Sync and VSync enabled, Reflex keeps output below the display refresh rate automatically. 60 with 3x FG targets 180 output FPS, subject to performance and display limits. Avoid stacking RTSS or NVIDIA FPS limiters.",
+        .tooltip = "Ctrl-click to enter an exact value. 0 removes the manual cap. Reflex keeps output below the display refresh rate automatically. Recommended is a framerate cap of 60 to avoid in-engine bugs.",
         .max = 500.f,
         .format = "%.0f FPS",
         .parse = [](float value) { return std::round(value); },
@@ -216,7 +216,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .label = "Lilium RCAS",
         .section = "Sharpening",
-        .tooltip = "Sharpens the resolved TAA or DLAA image before color grading and the HUD. 0 disables sharpening; 100 is full strength. Uses luminance-based sharpening with noise suppression. Debug views remain unsharpened.",
+        .tooltip = "Uses luminance-based sharpening with noise suppression.",
         .max = 100.f,
         .is_enabled = [] { return acbrotherhood::taa::enabled != 0.f && acbrotherhood::taa::debug_view == 0.f; },
         .parse = [](float value) { return value * 0.01f; },
@@ -271,17 +271,12 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "TAA supports native MSAA. DLAA requires an RTX GPU, the DLAA helper and MSAA Off. Motion vectors are configured automatically. Keep Debug View Off for normal play.",
+        .label = "TAA supports native MSAA. DLAA requires an RTX GPU, the DLAA helper and MSAA Off.",
         .section = "Setup and Information",
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Frame Generation supports standalone SDR and RenoDX HDR10 with the DX12 helper and Streamline. Input capture is automatic. ReShade shader effects must be Off; the overlay can remain open.",
-        .section = "Setup and Information",
-    },
-    new renodx::utils::settings::Setting{
-        .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "VSync follows the game and its NVIDIA driver profile. With G-SYNC, VSync and Reflex On, output is automatically limited below the monitor refresh rate, even at cap 0. Fullscreen-only G-SYNC requires a fullscreen-sized window. Use one FPS limiter at a time.",
+        .label = "Frame Generation works with TAA or DLAA. RTX Graphics card required.",
         .section = "Setup and Information",
     },
     new renodx::utils::settings::Setting{
