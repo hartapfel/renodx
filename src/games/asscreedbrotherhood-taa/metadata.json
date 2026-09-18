@@ -3,22 +3,27 @@
   "id": "asscreedbrotherhood-taa",
   "title": "Assassin's Creed Brotherhood",
   "variant": "Native DX9 TAA / optional DLAA",
-  "maintainers": ["hartapfel"],
+  "maintainers": [
+    "hartapfel"
+  ],
   "status": "experimental",
   "summary": "Standalone temporal anti-aliasing with camera and animation motion, optional NVIDIA DLAA and Lilium RCAS. Compatible with the separate Ezio Trilogy HDR addon.",
   "notes": [
     "Requires 32-bit ReShade with addon support. Native MSAA is optional. TAA and Object Motion default to On; debug views default to Off.",
-    "Adds no game resource format upgrades, HDR, tone mapping, presentation proxy or lighting fixes. Floating-point textures are private AA working buffers.",
+    "Adds no game resource format upgrades, HDR, tone mapping or lighting fixes. With the matching helper installed, DX12 presentation starts automatically for standalone SDR and with the separate Ezio Trilogy HDR addon.",
     "Optional DLAA requires an RTX GPU, MSAA Off and the separate x64 helper directory. Installing that helper requests DX9Ex for GPU sharing at startup. TAA is the default and automatic fallback.",
     "When using RenoDX HDR, install the Ezio Trilogy build with embedded TAA removed. Do not run two TAA implementations together.",
-    "Brotherhood only. Water, particles, ambiguous moving instances and some material paths remain unsupported."
+    "Brotherhood only. Water, particles, ambiguous moving instances and some material paths remain unsupported.",
+    "Optional DLSS Frame Generation supports standalone SDR and HDR10 with the DX12 helper and supported NVIDIA hardware/runtime. Reflex is locked On with FG. The menu exposes a pre-FG cap and measured frame-rate telemetry; automatic VRR headroom applies when the driver profile enables G-Sync and VSync, including with the manual cap at zero."
   ],
   "deploy": {
     "steam_appid": 48190,
     "game_exe": "ACBSP.exe",
     "process_name": "ACBSP.exe",
     "api": "d3d9",
-    "architecture": ["x86"],
+    "architecture": [
+      "x86"
+    ],
     "reshade_preferred_name": "d3d9.dll"
   }
 }

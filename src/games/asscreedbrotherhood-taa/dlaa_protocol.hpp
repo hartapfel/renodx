@@ -5,7 +5,7 @@
 #include <cstdint>
 
 namespace acbrotherhood::dlaa {
-constexpr uint32_t kProtocol = 2;
+constexpr uint32_t kProtocol = 3;
 constexpr uint32_t kMagic = 0x41414C44;
 // NGX render-preset values: DLL default (no hint), F, J, K, L, M.
 constexpr std::array<uint32_t, 6> kRenderPresets = {0, 6, 10, 11, 12, 13};
@@ -33,6 +33,7 @@ struct alignas(8) Packet {
   Stage stage = Stage::none;
   uint32_t error = 0;
   uint32_t render_preset = 0;
+  uint32_t backend = 0; // Helper acknowledgement: D3D12 = 12.
 };
 static_assert(sizeof(Frame) == 24 && sizeof(Packet) == 112);
 static_assert(offsetof(Packet, frame) == 56 && offsetof(Packet, state) == 92);

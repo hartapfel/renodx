@@ -1,6 +1,7 @@
+param([string]$StreamlineSdkDirectory)
 $ErrorActionPreference = 'Stop'
-if (Get-Process ACBSP,renodx-asscreedbrotherhood-dlaa -ErrorAction SilentlyContinue) {
-  throw 'Close Brotherhood and its DLAA helper before rebuilding linked outputs.'
+if (Get-Process ACBSP,renodx-asscreedbrotherhood-dx12 -ErrorAction SilentlyContinue) {
+  throw 'Close Brotherhood and its DX12 helper before rebuilding linked outputs.'
 }
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
 $visualStudio = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
@@ -14,8 +15,12 @@ foreach ($line in (& cmd.exe /d /c $devCommand)) {
 $env:PATH = (Join-Path $visualStudio 'VC/Tools/Llvm/x64/bin') + ';' + $env:PATH
 Push-Location $PSScriptRoot
 try {
-  cmake --preset clang-x64
-  if ($LASTEXITCODE -ne 0) { throw 'DLAA helper configuration failed.' }
+  $sdkOptions = @()
+  if ($StreamlineSdkDirectory) {
+    $sdkOptions += '-DFETCHCONTENT_SOURCE_DIR_STREAMLINE_SDK=' + (Resolve-Path -LiteralPath $StreamlineSdkDirectory).Path
+  }
+  cmake --preset clang-x64 @sdkOptions
+  if ($LASTEXITCODE -ne 0) { throw 'DX12 presenter configuration failed.' }
   cmake --build --preset clang-x64-release
-  if ($LASTEXITCODE -ne 0) { throw 'DLAA helper build failed.' }
+  if ($LASTEXITCODE -ne 0) { throw 'DX12 presenter build failed.' }
 } finally { Pop-Location }

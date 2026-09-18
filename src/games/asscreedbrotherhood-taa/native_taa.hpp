@@ -16,6 +16,7 @@
 #include "./taa_jitter.hpp"
 #include "./taa_resolve.hpp"
 #include "./dlaa.hpp"
+#include "./fg_capture.hpp"
 #include "./taa_motion.hpp"
 #include "./native_draw.hpp"
 #include "./taa_performance.hpp"
@@ -58,6 +59,7 @@ struct __declspec(uuid("524af7c1-6944-46ca-875e-2acb70ec8f32")) DeviceData {
   std::unordered_map<IDirect3DVertexShader9*, ProjectionShader> projection_shaders;
   ResolveResources resolve;
   std::unique_ptr<acbrotherhood::dlaa::State> dlaa;
+  std::shared_ptr<acbrotherhood::frame_generation::Capture> fg_capture;
   unsigned active_backend = 1;
   Matrix original_projection = {};
   std::array<float, 2> jitter = {}, previous_jitter = {};
@@ -804,6 +806,7 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
     return;
   }
   // A second scene pass is ambiguous; never reuse a first pass's camera.
+  if (data->fg_capture) data->fg_capture->inputs.flags = 0;
   if (data->scene_seen) {
     data->current_valid = false;
     return;
@@ -861,7 +864,8 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
       Performance::CpuScope timer(capture_enabled != 0.f ? &data->performance.cpu_ticks[Performance::MOTION] : nullptr);
       RenderObjectMotion(native, &data->object_motion, data->main_depth_surface.Get(),
                          data->width, data->height, data->jitter, continuous,
-                         data->scene_samples != D3DMULTISAMPLE_NONE ? data->depth.Get() : nullptr);
+                         data->scene_samples != D3DMULTISAMPLE_NONE ? data->depth.Get() : nullptr,
+                         frame_generation::NeedsInputs() && frame_generation::output_enabled);
     }
     if (capture_enabled != 0.f) data->performance.EndMotionGpu();
     {
@@ -870,6 +874,20 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
       if (capture_inputs) dump_resolve = 0.f;
       Matrix sky_reprojection = data->current_to_previous_clip;
       SkyReprojection(data->previous_camera, data->camera, &sky_reprojection);
+      if (frame_generation::NeedsInputs() && frame_generation::output_enabled && data->active_mode == 1
+          && confidence_preview == 0.f) {
+        try {
+          if (!data->fg_capture || data->fg_capture->inputs.width != data->width || data->fg_capture->inputs.height != data->height)
+            data->fg_capture = std::make_shared<frame_generation::Capture>();
+          data->fg_capture->Prepare(native, data->depth.Get(), data->object_motion.ready ? data->object_motion.resources.texture.Get() : nullptr,
+              data->width, data->height, data->camera, data->previous_camera, data->current_to_previous_clip,
+              sky_reprojection, data->jitter, continuous);
+          const std::lock_guard lock(frame_generation::capture_mutex);
+          frame_generation::current = data->fg_capture;
+        } catch (...) {
+          data->fg_capture.reset(); frame_generation::error = E_OUTOFMEMORY;
+        }
+      } else data->fg_capture.reset();
       bool resolved = false;
       const auto previous_dlaa_status = acbrotherhood::dlaa::status.load();
       if (data->active_backend == 2) {
@@ -923,6 +941,7 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
             << " historyPair=" << continuous << " objectDraws=" << data->object_motion.current.size()
             << " rootMotion=" << data->object_motion.root_motion_draws
             << " cameraOnlyDraws=" << data->object_motion.camera_only_draws
+            << " fgGeometryMotion=" << (frame_generation::NeedsInputs() && frame_generation::output_enabled)
             << " rigidMotion=" << data->object_motion.matched_rigid << " skinMotion=" << data->object_motion.matched_skin
             << " unmatchedMotion=" << data->object_motion.unmatched << " motionReady=" << data->object_motion.ready << " motionStages=";
     for (unsigned count : data->object_motion.capture_stages) message << count << ',';
@@ -1052,6 +1071,57 @@ inline constexpr auto OnLut = []<typename Context>(Context& context) -> renodx::
   return {.post_callback = [](Context& context, const void*) { OnSceneDrawn(context.cmd_list); }};
 };
 
+// Verified Brotherhood final composite. It writes the completed postprocessed
+// scene to the swapchain clone; the following draws are HUD. Unsupported final
+// pass variants deliberately leave the HUD-less flag unset.
+inline constexpr auto OnFinalScene = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context> {
+  if (!frame_generation::NeedsInputs() || !frame_generation::output_enabled
+      || context.cmd_list->get_device()->get_api() != reshade::api::device_api::d3d9
+      || renodx::utils::shader::GetCurrentPixelShaderHash(renodx::utils::command_action::GetShaderState(&context)) != 0xC9F2C59Bu) return {};
+  return {.post_callback = [](Context& context, const void*) {
+    if (auto* data = renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device()); data && data->fg_capture)
+      data->fg_capture->CaptureHudless(reinterpret_cast<IDirect3DDevice9*>(context.cmd_list->get_native()));
+  }};
+};
+
+// Replay only UI after the verified final composite into a private scalar
+// transmittance target. Keep shader alpha, clipping, texture sampling and geometry.
+// Unknown blend/geometry cases disable the optional mask for that frame.
+inline constexpr auto CaptureUiAlpha = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context>
+  requires (std::is_same_v<typename Context::ArgumentType, renodx::utils::command_action::DrawArguments>
+         || std::is_same_v<typename Context::ArgumentType, renodx::utils::command_action::DrawIndexedArguments>) {
+  if (!frame_generation::NeedsInputs() || !frame_generation::output_enabled
+      || context.cmd_list->get_device()->get_api() != reshade::api::device_api::d3d9) return {};
+  auto* data = renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device());
+  if (!data || !data->fg_capture || !data->fg_capture->ui_valid) return {};
+  auto* capture = data->fg_capture.get();
+  auto* native = reinterpret_cast<IDirect3DDevice9*>(context.cmd_list->get_native());
+  Microsoft::WRL::ComPtr<IDirect3DSurface9> target;
+  if (FAILED(native->GetRenderTarget(0, &target)) || target != capture->scene_target) return {};
+  const auto hash = renodx::utils::shader::GetCurrentPixelShaderHash(renodx::utils::command_action::GetShaderState(&context));
+  DWORD blend=0, source=0, destination=0, operation=0, writes=0, depth=0, stencil=0;
+  native->GetRenderState(D3DRS_ALPHABLENDENABLE, &blend);
+  native->GetRenderState(D3DRS_SRCBLEND, &source); native->GetRenderState(D3DRS_DESTBLEND, &destination);
+  native->GetRenderState(D3DRS_BLENDOP, &operation); native->GetRenderState(D3DRS_COLORWRITEENABLE, &writes);
+  native->GetRenderState(D3DRS_ZENABLE, &depth); native->GetRenderState(D3DRS_STENCILENABLE, &stencil);
+  if (!(writes & 7)) return {};
+  if ((hash != 0x7258C5E9u && hash != 0x5E3A6B72u && hash != 0xFB5A6594u && hash != 0xAFDE4E3Du)
+      || !blend || (source != D3DBLEND_SRCALPHA && source != D3DBLEND_ONE)
+      || destination != D3DBLEND_INVSRCALPHA || operation != D3DBLENDOP_ADD
+      || depth || stencil || context.arguments.instance_count != 1 || context.arguments.first_instance) {
+    capture->ui_valid = false; return {};
+  }
+  return {.post_callback = [](Context& context, const void* pointer) {
+    auto* capture = const_cast<frame_generation::Capture*>(static_cast<const frame_generation::Capture*>(pointer));
+    auto* native = reinterpret_cast<IDirect3DDevice9*>(context.cmd_list->get_native());
+    capture->AccumulateUi(native, [&] {
+      if constexpr (std::is_same_v<typename Context::ArgumentType, renodx::utils::command_action::DrawArguments>)
+        context.cmd_list->draw(context.arguments.vertex_count, 1, context.arguments.first_vertex, 0);
+      else context.cmd_list->draw_indexed(context.arguments.index_count, 1, context.arguments.first_index, context.arguments.vertex_offset, 0);
+    });
+  }, .post_data = capture};
+};
+
 inline void Use(DWORD reason) {
   if (reason == DLL_PROCESS_ATTACH) {
     renodx::utils::shader::Use(reason);
@@ -1066,12 +1136,14 @@ inline void Use(DWORD reason) {
     reshade::register_event<reshade::addon_event::unmap_buffer_region>(OnUnmapGeometry);
     reshade::register_event<reshade::addon_event::destroy_resource>(OnDestroyGeometry);
     reshade::register_event<reshade::addon_event::clear_depth_stencil_view>(OnClearDepth);
+    renodx::utils::command_action::Register(CaptureUiAlpha, {.command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
     renodx::utils::command_action::Register(ApplyJitter, {.command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
     renodx::utils::command_action::Register(CaptureCamera, {
         .shader_hash = 0x4B000956u,
         .command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
     renodx::utils::command_action::Register(CaptureMsaaDepth, {.shader_hash = 0x65A612BEu, .command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
     renodx::utils::command_action::Register(OnLut, {.shader_hash = 0x9CB80815u, .command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
+    renodx::utils::command_action::Register(OnFinalScene, {.shader_hash = 0x3E4AE466u, .command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
     for (const auto& shader : MOTION_SHADERS) {
       renodx::utils::command_action::Register(CaptureObjectMotion, {.shader_hash = shader.hash, .command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
     }
@@ -1088,7 +1160,9 @@ inline void Use(DWORD reason) {
     reshade::unregister_event<reshade::addon_event::unmap_buffer_region>(OnUnmapGeometry);
     reshade::unregister_event<reshade::addon_event::destroy_resource>(OnDestroyGeometry);
     reshade::unregister_event<reshade::addon_event::clear_depth_stencil_view>(OnClearDepth);
+    renodx::utils::command_action::Unregister(CaptureUiAlpha);
     renodx::utils::command_action::Unregister(OnLut);
+    renodx::utils::command_action::Unregister(OnFinalScene);
     renodx::utils::command_action::Unregister(CaptureObjectMotion);
     renodx::utils::command_action::Unregister(CaptureCamera);
     renodx::utils::command_action::Unregister(CaptureMsaaDepth);

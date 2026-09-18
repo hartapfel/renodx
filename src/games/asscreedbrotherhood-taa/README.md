@@ -22,28 +22,31 @@ The two current addons work in either load order. DevKit is optional.
 
 In the ReShade addon settings, open **Assassin's Creed Brotherhood TAA**:
 
-The panel starts with a quick-start guide covering the default settings,
-motion-quality/performance choice and optional native MSAA. The footer contains
-compatibility and update instructions, reporting guidance, RenoDX/HDR Den
-Discord links, GitHub, Hartapfel/ShortFuse Ko-Fi links, credits and the build
-timestamp. Include that timestamp when reporting an issue. The current addon
-remains experimental.
+The menu puts gameplay controls first, followed by sharpening, diagnostics,
+setup notes, support links and the build timestamp. Include the timestamp when
+reporting an issue.
 
-| Section | Control | Options | Default |
-| --- | --- | --- | --- |
-| TAA | Anti-Aliasing | Off / TAA / DLAA | TAA |
-| TAA | DLSS Preset (DLAA only) | DLL Default / F (Legacy) / J / K / L / M | DLL Default |
-| TAA | Motion Vectors | Camera Motion / Object Motion | Object Motion |
-| Sharpening | Lilium RCAS | 0-100 (0 = Off) | 0 |
-| Debug | Debug View | Off / Depth / Motion Vectors / History Confidence / History Rejection | Off |
+| Section | Control | Default |
+| --- | --- | --- |
+| Anti-Aliasing | Off / TAA / DLAA dropdown | TAA |
+| Anti-Aliasing | DLSS Preset (DLAA only) | DLL Default |
+| Frame Generation | Off / 2x / 3x / 4x / 5x / 6x dropdown | Off |
+| Reflex and Frame Pacing | NVIDIA Reflex dropdown | On; locked On with FG |
+| Reflex and Frame Pacing | Reflex Framerate cap (Before FG) | 0 (no manual cap) |
+| Reflex and Frame Pacing | Before/after FG FPS and rendered-frametime graph | Live |
+| Sharpening | Lilium RCAS, 0–100 | 0 |
+| Debug | Off / Depth / Motion Vectors / History Confidence / History Rejection | Off |
 
-Object Motion includes camera movement and supported object/animation movement.
-Camera Motion costs less CPU time but can leave trails on moving objects.
+Object motion is automatic; static surfaces use camera reprojection where valid.
+There is no motion-source selector. DX12 output starts automatically with the
+installed presenter, with or without the HDR addon. Input capture for FG is
+automatic and has no toggle.
+
 TAA Off disables accumulation, jitter and debug rendering. The selected debug
 view is remembered for the next time TAA is enabled. Depth does not accumulate
 history. Motion Vectors, History Confidence and History Rejection keep normal
 TAA running underneath. **Motion Vectors** is the only motion preview and follows
-the selected motion source. It shows the combined vectors selected by the real
+the active AA method. It shows the combined vectors selected by the real
 resolve: object vectors where required, otherwise camera reprojection from depth.
 Neutral gray means still, red/green channels encode horizontal/vertical movement,
 and magenta marks invalid reprojection. Intentional jitter is removed from the
@@ -53,11 +56,19 @@ rejected there. The extra display pass runs only while a diagnostic is selected.
 
 Static buildings with reliable depth can use camera motion. Object vectors are
 needed for independent movement and deformation; they also supply depth for
-some late materials. Replay now omits confirmed unchanged rigid draws that
+some late materials. With Frame Generation Off, replay omits confirmed unchanged rigid draws that
 write native scene depth. New/ambiguous instances, changed transforms or buffers,
 deformation, and late materials retain replay. Capture and classification still
 cost CPU time; this is not a claim that all static-scene overhead is eliminated.
 Sky uses camera rotation/FOV without translation parallax or finite-depth checks.
+
+With Frame Generation selected, all supported captured geometry is replayed,
+including static buildings. FG receives the geometry's vectors and depth wherever
+replay is valid; camera reprojection remains the fallback for uncovered pixels
+and sky. Existing upload batching and shader/state caches remain enabled. This
+increases replay work. The live comparison showed no improvement in the known
+distant-building FG artifacts; expanded coverage is retained, but those artifacts
+remain unresolved.
 
 The resolve retains cubic history sampling and motion-responsive weighting.
 If a character part briefly loses its previous pose, other directly tracked
@@ -70,7 +81,7 @@ Ambiguous matches and newly visible whole characters still reset history.
 **Sharpening -> Lilium RCAS** adds optional luminance-based sharpening with
 noise suppression to the completed TAA image. The 0-100 slider defaults to 0
 (Off); 100 is full strength. It runs before the native/HDR LUT and HUD, works
-with either motion source and optional MSAA, and leaves debug views unsharpened.
+with automatic motion and optional MSAA, and leaves debug views unsharpened.
 The sharpened image is never fed back into TAA history. At nonzero strength it
 adds one five-tap GPU pass using an existing scratch texture; it allocates no
 additional full-resolution buffer. Later game effects such as depth of field
@@ -158,11 +169,25 @@ the addon and helper together, since their versioned protocol must match.
 The optional helper is a hidden x64 process because Brotherhood is x86 and
 NVIDIA's runtime is x64. GPU images cross through shared textures, without CPU
 image readback. Installing the helper requests DX9Ex through ReShade at device
-creation; the HDR addon already requests this. Standalone TAA without the helper
-does not request this change. The helper creates no window or swapchain and
+creation; the HDR addon and DX12 presenter also request this. Standalone TAA
+without either helper does not request this change. The DLAA helper creates no window or swapchain and
 does not present frames. Keep its **64-bit** NVIDIA DLL inside the helper folder.
 
-For standalone exclusive fullscreen, the addon supplies the missing
+DLAA preparation and NVIDIA reconstruction now run on **DX12**. A DX11 device
+only bridges the game's legacy DX9 shared textures; it does not evaluate DLAA
+or present. The DLAA helper and DX12 presenter remain separate processes, with
+one final presentation path. The order is:
+
+```text
+DX9 scene/depth/motion -> DX12 DLAA -> DX9 RCAS/color grade/HUD
+  -> native SDR or RenoDX HDR output -> DX12 frame generation and presentation
+```
+
+Both effects use DX12 while retaining their correct insertion points. Moving
+DLAA to the final backbuffer would filter the HUD and change the color pipeline.
+Update the addon and DLAA helper together (DLAA protocol 3).
+
+Without the DX12 presenter, standalone exclusive fullscreen supplies the missing
 fullscreen display-mode descriptor in ReShade's DX9-to-DX9Ex creation path;
 resolution, refresh rate, SDR backbuffer format and VSync remain as requested
 by the game. Texture-lock compatibility also handles overlay textures created
@@ -184,7 +209,8 @@ diagnostics; they do not expose NVIDIA's internal history decisions.
 ## Scope
 
 This addon does not upgrade game resources, unclamp lighting, replace the LUT,
-tone map, enable HDR, create a presentation proxy, or change presentation/VSync. Its
+tone map or enable HDR. DX12 replaces presentation automatically when its helper
+is installed, including standalone SDR. Without that helper, AA retains native output. Its
 floating-point textures are private temporal working buffers. Native SDR scene
 formats and sampling are preserved; with RenoDX it consumes the existing FP16
 scene before the HDR LUT replacement.
@@ -196,6 +222,151 @@ At 4K, temporal surfaces use about **158 MiB**, or **221 MiB with object motion*
 and **253 MiB with object motion plus native MSAA**,
 plus bounded geometry storage, an animation atlas of up to 4 MiB and other
 bookkeeping. This matters in a 32-bit game.
+
+## Automatic DX12 output
+
+The matching 64-bit presenter enables DX12 output automatically:
+
+- **Standalone SDR:** the addon copies the completed native DX9 backbuffer,
+  including HUD and ReShade overlay, through a private shared BGRA8 texture.
+  Game render targets and SDR pixel values stay unchanged.
+- **With Ezio Trilogy HDR:** the existing DX11 HDR output feeds the same DX12
+  presenter. The standalone path stays inactive in either addon load order.
+
+The game retains DX9 rendering and its input window. Standalone DX12 presentation
+uses windowed/borderless output because the child swapchain cannot share display
+ownership with an exclusive-fullscreen DX9 swapchain. This is an output bridge,
+not a replacement for the game's renderer.
+
+Build the helper with `presentation_helper/build.ps1`. Its game-local CMake
+fetches the pinned official Streamline 2.14.1 SDK; pass
+`-StreamlineSdkDirectory <absolute-unpacked-sdk-path>` to reuse an existing SDK.
+The repository's vendored Streamline is unchanged. Put
+`build64-brotherhood-dx12/Release/renodx-asscreedbrotherhood-dx12.exe` inside a folder
+named `renodx-asscreedbrotherhood-dx12` beside the addon. It uses Windows' DX11/DX12
+runtime and needs no NVIDIA SDK DLLs for ordinary presentation. The DLAA helper
+remains separate.
+
+Check Output Status under Setup and Information. A disabled
+child window displays DX12 output while the game retains its input window.
+The presenter copies the existing SDR, scRGB or HDR10 pixels and color space;
+it applies no tone mapping. The effective VSync request follows the game and
+the game's NVIDIA driver profile; see Reflex and frame pacing below. The initial
+3840x2160 HDR10 gameplay check passed picture/input/ReShade overlay, Off/On and
+an MSAA change. Before/after timing captures showed only helper presentations,
+zero dropped frames and sync interval 1; they do not establish limiter or
+performance equivalence to DX11.
+
+Successful helper presentation suppresses that frame's native DX9 or DX11 Present.
+When DX12 is enabled at launch, the addon first allows a successful visible
+native presentation before transferring output ownership. The helper stays
+hidden until its first image has completed on the GPU, and updates its child
+window size only when the parent's client size changes.
+Missing helper, unsupported output, timeout or helper exit closes the child
+and restores native output. Use Retry DX12 Output to retry; graphics resets recreate the
+session. Logs are in the helper folder's `renodx-dx12-present.log` and ReShade.log.
+The prototype adds GPU copies and a synchronous completion acknowledgement;
+it is not expected to improve performance by itself.
+
+Frame-generation depth, motion and HUD-less inputs are captured automatically
+when FG is selected. Developer input-dump details remain in implementation
+section 36; those controls are no longer exposed in the release menu.
+Update the addon and presenter together (presentation protocol 7).
+
+### Experimental DLSS Frame Generation and Reflex
+
+**Frame Generation -> DLSS Frame Generation** offers **Off, 2x, 3x, 4x, 5x, 6x**
+and defaults to **Off**. The multiplier includes the real frame: 2x generates one,
+6x generates five. It queries the runtime's supported maximum, disables unsupported
+choices, and reports a persisted unsupported selection without silently downgrading.
+Status reports observed presentations. The ReShade overlay can stay open while FG runs.
+Modes switch without restarting the helper. FG locks Reflex to On;
+frame pacing is controlled in the section below. Required: automatic DX12 output,
+native SDR or RenoDX HDR10 output, TAA/DLAA On, Debug Off, supported NVIDIA RTX hardware,
+hardware-accelerated GPU scheduling and the optional runtime below. The input
+capture needed by FG runs automatically; no capture toggle is required.
+
+Download and unpack NVIDIA's official
+[Streamline 2.14.1 SDK](https://github.com/NVIDIA-RTX/Streamline/releases/tag/v2.14.1).
+Use `presentation_helper/install-streamline.ps1 -SdkDirectory <unpacked-sdk>`
+while the game is closed. It checks the SDK version and production DLL signatures
+and copies the runtime and licenses into the helper's `streamline` subdirectory.
+Distribute the whole subdirectory with the DX12 helper; do not put these x64 DLLs
+beside the 32-bit game executable. The stable TAA/DLAA ZIP remains unchanged.
+
+The HUD-less scene uses the same encoding as final color: unchanged SDR code
+values without the HDR addon, or the existing HDR10 conversion with it. Supported game
+HUD draws also supply a separate R32F opacity mask for DLSS-G UI recomposition.
+The mask accumulates shader alpha on the GPU, independently of game RGB. Unknown
+UI shaders/blends or depth/stencil cases fall back to HUD-less inference.
+The ReShade overlay remains supported with FG running, but currently uses the
+HUD-less inference path because the explicit mask covers only game HUD. It pauses
+FG while any ReShade technique renders, when
+the game is in the background, or when matching scene/camera inputs are missing.
+Original frames continue to display. Keep the overlay open to inspect the live performance panel;
+status is green only after the SDK confirms interpolated presentations. Temporary
+pauses retain model resources to reduce reactivation stalls; Off releases them.
+ReShade effects are left untouched; disable them explicitly if testing FG.
+
+Reflex waits at the native present-return boundary before the next game tick.
+The first native BeginScene marks the approximate simulation/render boundary;
+this is a retrofit, not an engine-level input or simulation instrumentation.
+No measured input-to-photon latency claim is made. The helper retains shared
+inputs until NVIDIA's consumption fence completes before allowing reuse.
+
+The original isolated GPU test confirms 2x presentations, pause/resume and valid
+camera constants. Initial 4K HDR10 gameplay also confirms
+2x generation with Reflex, successful startup, and recovery from Alt-Tab,
+DX12 Off/On and a resolution change/restore. The startup flicker was not observed
+in that retest. Higher multipliers and DX12 DLAA require their own validation;
+see implementation section 39. Broader HUD, motion, reset and frame-pacing
+validation is still needed before a public release.
+Missing runtime/support preserves original-frame presentation; a worker failure
+falls back to native output. Replace the addon and helper together. A protocol mismatch
+now reports an explicit version error instead of a generic DX12 failure.
+
+### Reflex and frame pacing
+
+Reflex requires DX12 output and the signed Streamline runtime, and works with
+FG Off. The dropdown offers Off, On and On + Boost. Selecting FG locks it to
+exactly On; disabling FG restores the saved preference.
+
+**Reflex Framerate cap (Before FG)** limits rendered game frames. A cap of 60
+with 3x FG targets 180 output FPS, subject to performance and synchronization.
+Ctrl-click to enter an exact value; 0 removes the manual cap. The helper converts
+the base interval using the runtime's confirmed presentation count, so paused
+FG does not divide the rendered frame rate. There is no second sleep limiter.
+
+There is no user display-ceiling or VSync setting in the addon. The presenter
+reads the **game's** effective NVIDIA profile without changing it. Forced driver
+VSync On/Off takes precedence; otherwise it follows the game's request.
+
+When that profile allows G-SYNC, the actual display supports VRR, VSync is active
+and Reflex is On, the helper automatically reserves 0.3 ms below the monitor's
+refresh interval. On 240 Hz this targets about **224 FPS after FG**, including
+when the manual cap is 0. The same Reflex limiter applies both limits; whichever
+is lower wins. For example, 60 with 3x FG remains about 180 output FPS, while an
+uncapped 3x mode targets about 74.6 rendered / 223.9 output FPS on 240 Hz.
+The panel shows the automatic ceiling when it is the limiting setting.
+
+Fullscreen-only G-SYNC requires the game window to cover the monitor; windowed
+G-SYNC can also use the automatic limit. Driver/display checks run in the
+background every five seconds, so they do not stall rendering. The addon does
+not enable G-SYNC or change driver settings. This reproduces the expected Reflex
+headroom for the separate presenter; a working limit alone does not prove that
+the monitor has entered VRR mode. Avoid stacking it with RTSS/NVIDIA FPS caps.
+
+The performance panel shows rendered-frame intervals and average/P95 frametime.
+Before FG FPS counts completed game frames over elapsed time. After FG FPS sums
+runtime-confirmed presentations over that same interval; it does not multiply
+by the selected mode. These are throughput measurements, not measured monitor
+scanout or generated-frame timing. Stale samples disappear after a pause; the
+history clears on output restart. Native fallback and FG Off show equal rates.
+
+Replace the addon and presenter together: presentation protocol 7 removes the
+old display/VSync settings. Old `DX12Output`, `TAAMotionSource`, `ReflexDisplayFPS`,
+`DX12VSync` and `FGInputCapture` configuration entries are ignored. Existing AA,
+preset, FG, Reflex, cap and sharpening preferences remain intact.
 
 ## Build and files
 
@@ -267,6 +438,12 @@ current Ezio Trilogy addon separately. Replace older TAA addon files instead of
 leaving duplicate renamed addons installed. For DLAA updates, replace the addon
 and helper together. Keep the x64 NVIDIA DLL inside its helper directory.
 
+For a build that includes frame generation, also package the matching
+`renodx-asscreedbrotherhood-dx12/renodx-asscreedbrotherhood-dx12.exe` and its
+complete signed `streamline/` runtime and licenses, installed by the script in
+the Frame Generation section. This additional directory enables standalone SDR
+and HDR presentation. Do not include logs, test executables or the SDK itself.
+
 Exclude game files, ReShade loader/configuration, DevKit, captures, shader dumps,
 logs, PDB/LIB/OBJ files and private settings from the mod ZIP. The compiled addon
 already embeds its shaders; users do not need HLSL files or the SDK/build tools.
@@ -301,6 +478,12 @@ In-game verification after installing the pair:
    scene detail while stationary and moving, bright highlights and dark areas;
    the HUD should remain unchanged. Check that debug views bypass sharpening
    and that the chosen strength survives a graphics reset.
+7. With the presenter/runtime installed, test standalone SDR and HDR10 with
+   2x/3x FG, Debug Off and no ReShade shader effects. Check active status and
+   before/after FPS. On a 240 Hz G-SYNC/VSync display, cap 0 should stay near
+   224 output FPS when performance permits. Cap 60 with 3x should stay near 180.
+   Repeat after Alt-Tab, a graphics reset and a fresh launch; verify HUD, overlay,
+   input and normal process exit.
 
 ## Developer documentation
 

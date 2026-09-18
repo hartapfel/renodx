@@ -14,7 +14,7 @@ target_compile_features(renodx-asscreedbrotherhood-dlaa PRIVATE cxx_std_20)
 target_compile_definitions(renodx-asscreedbrotherhood-dlaa PRIVATE NOMINMAX)
 target_include_directories(renodx-asscreedbrotherhood-dlaa PRIVATE "${RENODX_ROOT}/external/DLSS/include" "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(renodx-asscreedbrotherhood-dlaa PRIVATE
-  "${RENODX_ROOT}/external/DLSS/lib/Windows_x86_64/x64/nvsdk_ngx_s.lib" d3d11 dxgi advapi32)
+  "${RENODX_ROOT}/external/DLSS/lib/Windows_x86_64/x64/nvsdk_ngx_s.lib" d3d11 d3d12 dxgi advapi32)
 set_target_properties(renodx-asscreedbrotherhood-dlaa PROPERTIES MSVC_RUNTIME_LIBRARY MultiThreaded)
 add_custom_command(TARGET renodx-asscreedbrotherhood-dlaa POST_BUILD
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${RENODX_ROOT}/external/DLSS/lib/Windows_x86_64/rel/nvngx_dlss.dll" "$<TARGET_FILE_DIR:renodx-asscreedbrotherhood-dlaa>/nvngx_dlss.dll"

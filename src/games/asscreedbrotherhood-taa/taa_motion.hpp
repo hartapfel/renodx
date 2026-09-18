@@ -696,7 +696,7 @@ inline const MotionState::PixelShader& GetMotionPixelShader(MotionState* state, 
 
 inline bool RenderObjectMotion(IDirect3DDevice9* native, MotionState* state, IDirect3DSurface9* depth,
                                UINT width, UINT height, const std::array<float, 2>& jitter, bool pair_valid,
-                               IDirect3DTexture9* msaa_scene_depth = nullptr) {
+                               IDirect3DTexture9* msaa_scene_depth = nullptr, bool replay_static = false) {
   state->ready = false;
   state->matched_rigid = state->matched_skin = state->unmatched = 0;
   state->camera_only_draws = 0;
@@ -753,7 +753,9 @@ inline bool RenderObjectMotion(IDirect3DDevice9* native, MotionState* state, IDi
       for (unsigned row = 0; row < 3; ++row)
         if (std::abs(draw.world.m[row][3] - previous.world.m[row][3]) > 16.f) state->matches[i] = -1;
     }
-    state->current[i].camera_only = state->matches[i] >= 0 && draw.camera_static_candidate
+    // FG can request the actual geometry's vectors/complementary depth even
+    // for static scenery. Keep batching/caches; only disable draw omission.
+    state->current[i].camera_only = !replay_static && state->matches[i] >= 0 && draw.camera_static_candidate
         && state->previous[state->matches[i]].camera_static_candidate
         && SameMotionWorld(draw, state->previous[state->matches[i]])
         && draw.buffer_writes == state->previous[state->matches[i]].buffer_writes;

@@ -14,9 +14,8 @@
 #include <unordered_set>
 
 namespace acbrotherhood::native_draw {
-// Capture native indexed ranges and provide reset-safe immediate uploads.
-// Calls still pass through ReShade's regular draw/shader callbacks. Never hook
-// Present or alter the game's render resources or swapchains.
+// Native dispatch hooks shared by geometry capture and presentation. Draw calls
+// still pass through ReShade's regular draw/shader callbacks.
 struct Hook {
   void* original = nullptr;
   void* replacement = nullptr;
@@ -34,6 +33,7 @@ struct ImmediateBuffers {
 };
 inline std::unordered_map<IDirect3DDevice9*, std::shared_ptr<ImmediateBuffers>> immediate_buffers;
 inline thread_local unsigned immediate_draw_depth = 0;
+inline void (*on_begin_scene)(IDirect3DDevice9*) = nullptr;
 template <typename Function>
 Function Original(void* object, size_t slot) {
   const std::lock_guard lock(mutex);
@@ -47,7 +47,10 @@ inline bool Install(void* object, size_t index, void* replacement, void* owner =
   auto& hook = hooks[address];
   if (hook.installed) {
     hook.owners.insert(owner);
-    return true;
+    if (*address == hook.replacement) return true;
+    // Reset can restore driver dispatch slots. Re-arm only a known original;
+    // chaining an unfamiliar overlay hook here could recurse through us.
+    if (*address != hook.original) return false;
   }
   DWORD protection;
   if (!VirtualProtect(address, sizeof(void*), PAGE_READWRITE, &protection)) return false;
@@ -154,6 +157,11 @@ inline HRESULT STDMETHODCALLTYPE DrawIndexedPrimitiveUP(IDirect3DDevice9* wrappe
   return DrawImmediate(wrapper, topology, minimum, count, primitives, indices, format, vertices, stride);
 }
 
+inline HRESULT STDMETHODCALLTYPE BeginScene(IDirect3DDevice9* wrapper) {
+  if (on_begin_scene) on_begin_scene(wrapper);
+  return Original<decltype(&BeginScene)>(wrapper, 41)(wrapper);
+}
+
 inline bool InstallImmediate(IDirect3DDevice9* wrapper, IDirect3DDevice9* native) {
   {
     const std::lock_guard lock(mutex);
@@ -161,7 +169,8 @@ inline bool InstallImmediate(IDirect3DDevice9* wrapper, IDirect3DDevice9* native
     if (!buffers) buffers = std::make_shared<ImmediateBuffers>();
     buffers->native = native;
   }
-  return Install(wrapper, 83, reinterpret_cast<void*>(&DrawPrimitiveUP))
+  return Install(wrapper, 41, reinterpret_cast<void*>(&BeginScene))
+         && Install(wrapper, 83, reinterpret_cast<void*>(&DrawPrimitiveUP))
          && Install(wrapper, 84, reinterpret_cast<void*>(&DrawIndexedPrimitiveUP));
 }
 
