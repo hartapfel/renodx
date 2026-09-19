@@ -3220,3 +3220,33 @@ frames after adding explicit foreground acquisition to the test harness; the
 initial background-window run correctly paused FG. The final motion-policy
 change has synthetic GPU coverage; the preceding unified-helper gameplay check
 is recorded in section 45.
+
+## 47. Input for overlays on the helper's child window (2026-09-19)
+
+OptiScaler 0.9.4-final (7534ad0), loaded as `d3d12.dll` in the helper directory,
+successfully intercepts DLAA and the output swapchain but cannot receive normal
+input on the disabled child canvas. Its `UpdateManualInput` compares the exact
+foreground HWND with the swapchain HWND, so `ManualInputPolling=true` cannot fix
+this arrangement: the game parent stays foreground.
+
+`presentation_helper/overlay_input.hpp` mirrors input into an installed child
+window subclass immediately before Present. The normal helper takes only a
+window-procedure check; keyboard polling starts only for a subclass while the
+game's root window is foreground and not minimized. The bridge sends keyboard
+press/release and mouse position/button messages on the helper thread, with
+modifier state. It sends focus-loss/leave events on Alt-Tab and suppresses keys
+already held when focus or a subclass appears. It never activates/enables the
+child, hooks the game or reads background-application keys. Polling can miss a
+press entirely between frames; wheel and text-composition messages are not
+mirrored. Game input is not blocked by the helper overlay, so pause the game for
+menu interaction. OptiScaler must use its normal WndProc mode (manual polling Off).
+
+The optional `brotherhood-overlay-input-test` uses deterministic snapshots and
+hidden windows, without desktop input injection. It verifies subclass gating,
+key transitions, held-key suppression, mouse coordinates, focus loss, unchanged
+native focus, and return to the no-subclass path. The Release helper and this
+regression pass. With OptiScaler loaded, the unified DX12 validation fixture also
+passes 297 DLAA evaluations and 198 active 3x FG frames across SDR/HDR and resets.
+The live log reaches OptiScaler's menu-opening branch after Insert, while the
+presenter continues reporting active 3x FG without an error. The user confirms
+that the OptiScaler overlay now works correctly in gameplay.
