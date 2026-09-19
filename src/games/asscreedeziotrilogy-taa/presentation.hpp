@@ -21,7 +21,6 @@ inline std::atomic<Status> status = Status::waiting;
 inline std::atomic<uint32_t> error_stage = 0, error_code = 0;
 inline std::atomic<bool> render_marker_pending = false;
 inline bool effects_rendered = false;
-inline std::unordered_set<reshade::api::effect_runtime*> open_overlays;
 struct Session {
   reshade::api::swapchain* api = nullptr;
   std::shared_ptr<Client> client;
@@ -82,7 +81,7 @@ inline bool PresentFrame(const std::shared_ptr<Session>& session, ID3D11Device* 
       status = Status::waiting;
       const auto client = session->client;  // Keep alive across sent window messages.
       client->Start(device, desc, window, color_space,
-          std::filesystem::path(path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dx12" / L"renodx-asscreedbrotherhood-dx12.exe",
+          std::filesystem::path(path.c_str()).parent_path() / L"renodx-asscreedeziotrilogy-dx12" / L"renodx-asscreedeziotrilogy-dx12.exe",
           false, frame_generation::RequestedFrames(), RequestedPacing());
       if (session->retired) return false;
       active_client = client;
@@ -99,11 +98,7 @@ inline bool PresentFrame(const std::shared_ptr<Session>& session, ID3D11Device* 
     }
     if (capture && (capture->inputs.width != desc.Width || capture->inputs.height != desc.Height
                     || !capture->Acquire(window))) capture.reset();
-    frame_generation::Inputs inputs = capture ? capture->inputs : frame_generation::Inputs{};
-    // Our alpha currently covers game UI. While ReShade draws its own overlay,
-    // keep FG active using HUD-less inference instead of tagging a partial mask.
-    if (!open_overlays.empty()) inputs.flags &= ~frame_generation::ui_alpha;
-    *result = client->Present(backbuffer, sync, flags, capture ? &inputs : nullptr,
+    *result = client->Present(backbuffer, sync, flags, capture ? &capture->inputs : nullptr,
         effects_rendered ? frame_generation::effects_rendered : 0u);
     frame_generation::generation_status = client->packet->generation_status;
     frame_generation::generation_error = client->packet->generation_error;
@@ -289,27 +284,14 @@ inline void OnTechnique(reshade::api::effect_runtime*, reshade::api::effect_tech
   const std::lock_guard lock(mutex);
   effects_rendered = true;
 }
-inline bool OnOverlay(reshade::api::effect_runtime* runtime, bool open, reshade::api::input_source) {
-  const std::lock_guard lock(mutex);
-  if (open) open_overlays.insert(runtime); else open_overlays.erase(runtime);
-  return false;
-}
-inline void OnDestroyRuntime(reshade::api::effect_runtime* runtime) {
-  const std::lock_guard lock(mutex); open_overlays.erase(runtime);
-}
 inline void Use(DWORD reason) {
   if (reason == DLL_PROCESS_ATTACH) {
-    reshade::register_event<reshade::addon_event::reshade_open_overlay>(OnOverlay);
-    reshade::register_event<reshade::addon_event::destroy_effect_runtime>(OnDestroyRuntime);
     native_draw::on_begin_scene = OnRenderBegin;
     reshade::register_event<reshade::addon_event::finish_present>(OnFinishPresent);
     reshade::register_event<reshade::addon_event::reshade_render_technique>(OnTechnique);
     reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
     reshade::register_event<reshade::addon_event::destroy_swapchain>(OnDestroySwapchain);
   } else if (reason == DLL_PROCESS_DETACH) {
-    reshade::unregister_event<reshade::addon_event::reshade_open_overlay>(OnOverlay);
-    reshade::unregister_event<reshade::addon_event::destroy_effect_runtime>(OnDestroyRuntime);
-    open_overlays.clear();
     native_draw::on_begin_scene = nullptr;
     reshade::unregister_event<reshade::addon_event::finish_present>(OnFinishPresent);
     reshade::unregister_event<reshade::addon_event::reshade_render_technique>(OnTechnique);

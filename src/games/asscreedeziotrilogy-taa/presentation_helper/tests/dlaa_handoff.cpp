@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
       Check(device->CreateTexture2D(&read_desc, nullptr, &readback), Stage::copy);
       Client client;
       client.Start(device.Get(), desc, window, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709,
-                   std::filesystem::absolute(argc > 1 ? argv[1] : "build64-brotherhood-dx12/Release/renodx-asscreedbrotherhood-dx12.exe"), validation);
+                   std::filesystem::absolute(argc > 1 ? argv[1] : "build64-eziotrilogy-dx12/Release/renodx-asscreedeziotrilogy-dx12.exe"), validation);
       aa.adapter_low = client.packet->adapter_low; aa.adapter_high = client.packet->adapter_high;
       const float vp[] = {1, 0, 0, 0, 0, float(width) / height, 0, 0, 0, 0, 1.0001f, -.10001f, 0, 0, 1, 0};
       std::copy(vp, vp + 16, aa.current_camera);

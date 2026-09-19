@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
         *handles[i] = uintptr_t(handle);
       }
       Client client;
-      client.Start(device.Get(), desc, window, round == 1 ? DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, std::filesystem::absolute("build64-brotherhood-dx12/Release/renodx-asscreedbrotherhood-dx12.exe"), argc > 1, round == 0 ? 0 : 2, {1, 60});
+      client.Start(device.Get(), desc, window, round == 1 ? DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, std::filesystem::absolute("build64-eziotrilogy-dx12/Release/renodx-asscreedeziotrilogy-dx12.exe"), argc > 1, round == 0 ? 0 : 2, {1, 60});
       aa.adapter_low = client.packet->adapter_low;
       aa.adapter_high = client.packet->adapter_high;
       float vp[] = {1, 0, 0, 0, 0, float(width) / height, 0, 0, 0, 0, 1.0001f, -.10001f, 0, 0, 1, 0};
@@ -147,6 +147,9 @@ int main(int argc, char** argv) {
         fg.reset = f == 1;
         fg.delta_ms = 16.667f;
         Check(client.Present(final_color.Get(), 0, 0, &fg), Stage::present);
+        // Every valid frame retains the same three inputs; there is no optional
+        // UI-alpha mode that can appear/disappear as HUD draws change.
+        assert(client.packet->accepted_inputs == 7);
         if (client.packet->generation_status == acbrotherhood::frame_generation::Status::active) {
           assert(client.packet->generated_present_count == 3);
           ++total_fg;

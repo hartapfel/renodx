@@ -1,4 +1,4 @@
-# Assassin's Creed Brotherhood — native DX9 TAA
+# Assassin's Creed Ezio Trilogy — native DX9 TAA
 
 Experimental temporal anti-aliasing, extracted from `asscreedeziotrilogy` into
 its own optional **32-bit addon**. It includes camera jitter/reprojection,
@@ -7,21 +7,28 @@ motion paths. **TAA and Object Motion are enabled by default**; debug views are 
 
 ## Install
 
-Use 32-bit ReShade with addon support in the directory containing `ACBSP.exe`.
+Use 32-bit ReShade with addon support beside the game's executable:
+`AssassinsCreedIIGame.exe` (AC II), `ACBSP.exe` (Brotherhood), or `ACRSP.exe`
+(Revelations).
 Keep an existing working ReShade installation. Native MSAA is optional.
 
-| Configuration | Addon files beside `ACBSP.exe` |
+| Configuration | Addon files beside the game executable |
 | --- | --- |
-| RenoDX HDR + TAA | Updated `renodx-asscreedeziotrilogy.addon32` and `renodx-asscreedbrotherhood-taa.addon32` |
-| Native SDR + TAA | `renodx-asscreedbrotherhood-taa.addon32` only |
-| DLAA / Frame Generation / Reflex, with either configuration | Also install the matching `renodx-asscreedbrotherhood-dx12` helper folder; see the runtime installation below |
+| RenoDX HDR + TAA | Updated `renodx-asscreedeziotrilogy.addon32` and `renodx-asscreedeziotrilogy-taa.addon32` |
+| Native SDR + TAA | `renodx-asscreedeziotrilogy-taa.addon32` only |
+| DLAA / Frame Generation / Reflex, with either configuration | Also install the matching `renodx-asscreedeziotrilogy-dx12` helper folder; see the runtime installation below |
 
 Close the game before replacing either file. The matching Ezio Trilogy build
 has embedded TAA removed. **Do not combine this addon with an older experimental
 Ezio build that still contains TAA.** Both would jitter and resolve the same frame.
 The two current addons work in either load order. DevKit is optional.
 
-In the ReShade addon settings, open **Assassin's Creed Brotherhood TAA**:
+When upgrading from the Brotherhood-named release, remove
+`renodx-asscreedbrotherhood-taa.addon32` and replace its helper folder with
+`renodx-asscreedeziotrilogy-dx12`. Do not load both addon filenames. The legacy
+settings storage key is retained so existing preferences survive the rename.
+
+In the ReShade addon settings, open **Assassin's Creed Ezio Trilogy TAA**:
 
 The menu puts gameplay controls first, followed by sharpening, diagnostics,
 setup notes, support links and the build timestamp. Include the timestamp when
@@ -117,7 +124,7 @@ Native MSAA itself adds GPU and memory cost; the
 hybrid path does not allocate another multisampled color or velocity buffer.
 
 Settings are independent of HDR and stored in
-`[asscreedbrotherhood-taa-preset1]`. The rename starts fresh settings; old
+`[asscreedeziotrilogy-taa-preset1]`. The rename starts fresh settings; old
 `[acbrotherhood-taa-preset1]` entries are not loaded. Replace the old
 `renodx-acbrotherhood-taa.addon32` file rather than installing both names.
 The simplified debug slider uses `TAADebugViewV2` and starts at Off, avoiding
@@ -141,8 +148,8 @@ With MSAA enabled, the selection falls back to the existing TAA/MSAA path.
 Install the **unified DX12 helper** beside the addon:
 
 ```text
-renodx-asscreedbrotherhood-dx12/
-  renodx-asscreedbrotherhood-dx12.exe
+renodx-asscreedeziotrilogy-dx12/
+  renodx-asscreedeziotrilogy-dx12.exe
   streamline/
     sl.interposer.dll
     sl.common.dll
@@ -215,7 +222,10 @@ floating-point textures are private temporal working buffers. Native SDR scene
 formats and sampling are preserved; with RenoDX it consumes the existing FP16
 scene before the HDR LUT replacement.
 
-Only Brotherhood is supported. Water, some transparency and ambiguous animated
+The user reports working gameplay in AC II, Brotherhood and Revelations.
+The engine projection hook remains restricted to the audited Brotherhood
+executable; other builds retain the validated draw-level jitter fallback.
+Cross-game and cutscene coverage remains experimental. Water, some transparency and ambiguous animated
 instances remain incomplete; occasional magenta flashes and temporal artifacts
 remain. See the limitations in [IMPLEMENTATION.md](./IMPLEMENTATION.md).
 At 4K, temporal surfaces use about **158 MiB**, or **221 MiB with object motion**,
@@ -242,8 +252,8 @@ Build the helper with `presentation_helper/build.ps1`. Its game-local CMake
 fetches the pinned official Streamline 2.14.1 SDK; pass
 `-StreamlineSdkDirectory <absolute-unpacked-sdk-path>` to reuse an existing SDK.
 The repository's vendored Streamline is unchanged. Put
-`build64-brotherhood-dx12/Release/renodx-asscreedbrotherhood-dx12.exe` inside a folder
-named `renodx-asscreedbrotherhood-dx12` beside the addon. It uses Windows' DX11/DX12
+`build64-eziotrilogy-dx12/Release/renodx-asscreedeziotrilogy-dx12.exe` inside a folder
+named `renodx-asscreedeziotrilogy-dx12` beside the addon. It uses Windows' DX11/DX12
 runtime and needs no NVIDIA SDK DLLs for ordinary presentation. DLAA, FG and
 Reflex use the signed Streamline runtime in this same helper directory.
 
@@ -373,29 +383,29 @@ preset, FG, Reflex, cap and sharpening preferences remain intact.
 From the repository's configured Clang x86 build environment:
 
 ```powershell
-cmake --build --preset clang-x86-release --target asscreedbrotherhood-taa asscreedeziotrilogy
+cmake --build --preset clang-x86-release --target asscreedeziotrilogy-taa asscreedeziotrilogy
 ```
 
 The independently distributable files are:
 
 ```text
-build32/Release/renodx-asscreedbrotherhood-taa.addon32
+build32/Release/renodx-asscreedeziotrilogy-taa.addon32
 build32/Release/renodx-asscreedeziotrilogy.addon32
 ```
 
 The new folder is discovered through `addon.cpp`; no global build or CI changes
 are required. Shader headers are generated under
-`build32/asscreedbrotherhood-taa.include/embed/`. No GitHub snapshot/download URL is
+`build32/asscreedeziotrilogy-taa.include/embed/`. No GitHub snapshot/download URL is
 established by this extraction; publishing is a separate step.
 
 Build the unified helper separately using its game-local Release preset:
 
 ```powershell
-& src/games/asscreedbrotherhood-taa/presentation_helper/build.ps1 -StreamlineSdkDirectory <Streamline-2.14.1-SDK>
-& src/games/asscreedbrotherhood-taa/presentation_helper/install-streamline.ps1 -SdkDirectory <Streamline-2.14.1-SDK>
+& src/games/asscreedeziotrilogy-taa/presentation_helper/build.ps1 -StreamlineSdkDirectory <Streamline-2.14.1-SDK>
+& src/games/asscreedeziotrilogy-taa/presentation_helper/install-streamline.ps1 -SdkDirectory <Streamline-2.14.1-SDK>
 ```
 
-Output: `build64-brotherhood-dx12/Release/`. The helper build no longer links
+Output: `build64-eziotrilogy-dx12/Release/`. The helper build no longer links
 the separate repository DLSS SDK; Streamline owns DLAA and FG together. Its
 installer checks NVIDIA production signatures and copies the matching eight
 runtime DLLs and licenses. Version 2.14.1 includes DLSS/DLSS-G 310.9.1.
@@ -420,9 +430,9 @@ Build the addon and unified helper in Release. Stage real file contents:
 
 | Build output | Destination inside the ZIP |
 | --- | --- |
-| `build32/Release/renodx-asscreedbrotherhood-taa.addon32` | ZIP root |
-| `build64-brotherhood-dx12/Release/renodx-asscreedbrotherhood-dx12.exe` | `renodx-asscreedbrotherhood-dx12/` |
-| The eight DLLs and three license files installed under `build64-brotherhood-dx12/Release/streamline/` | `renodx-asscreedbrotherhood-dx12/streamline/` |
+| `build32/Release/renodx-asscreedeziotrilogy-taa.addon32` | ZIP root |
+| `build64-eziotrilogy-dx12/Release/renodx-asscreedeziotrilogy-dx12.exe` | `renodx-asscreedeziotrilogy-dx12/` |
+| The eight DLLs and three license files installed under `build64-eziotrilogy-dx12/Release/streamline/` | `renodx-asscreedeziotrilogy-dx12/streamline/` |
 
 Include installation instructions, MIT and RCAS notices, source/build identity,
 and checksums. Do not archive the build directory: exclude logs, PDB/LIB/OBJ,
@@ -430,12 +440,16 @@ test executables, captures, SDK files, ReShade and personal configuration.
 Do not package the obsolete DLAA executable or its old helper directory.
 
 Users close the game, install 32-bit ReShade with full addon support for DirectX
-9, and extract beside `ACBSP.exe`. Keep an existing working ReShade installation.
+9, and extract beside the game executable. Keep an existing working ReShade installation.
 Replace addon and unified helper together; remove duplicate renamed addons.
 The old `renodx-asscreedbrotherhood-dlaa` folder may be removed after updating.
 TAA defaults On; sharpening and Debug default Off. DLAA requires RTX and MSAA
 Off; FG requires supported NVIDIA hardware/runtime, TAA or DLAA and Debug Off.
 ReShade shader effects pause FG; the settings overlay can remain open.
+FG uses depth, motion and the HUD-less scene together with the final image.
+It does not capture or tag a separate UI-alpha mask, so changing HUD elements
+or opening the overlay cannot switch UI-recomposition modes. Presentation
+protocol 10 requires updating the addon and unified helper together.
 
 The current Ezio Trilogy HDR addon is optional and distributed separately.
 A TAA-only package may omit the helper, leaving native output and no DLAA/FG.

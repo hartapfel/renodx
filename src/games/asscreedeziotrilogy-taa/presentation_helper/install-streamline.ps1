@@ -1,9 +1,9 @@
 param(
   [Parameter(Mandatory = $true)][string]$SdkDirectory,
-  [string]$DestinationDirectory = (Join-Path $PSScriptRoot '../../../../build64-brotherhood-dx12/Release/streamline')
+  [string]$DestinationDirectory = (Join-Path $PSScriptRoot '../../../../build64-eziotrilogy-dx12/Release/streamline')
 )
 $ErrorActionPreference = 'Stop'
-if (Get-Process ACBSP,renodx-asscreedbrotherhood-dx12 -ErrorAction SilentlyContinue) {
+if (Get-Process ACBSP,renodx-asscreedeziotrilogy-dx12 -ErrorAction SilentlyContinue) {
   throw 'Close Brotherhood and its DX12 helper before updating the runtime.'
 }
 $sdkPath = (Resolve-Path -LiteralPath $SdkDirectory).Path

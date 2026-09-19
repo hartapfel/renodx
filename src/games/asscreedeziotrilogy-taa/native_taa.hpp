@@ -1225,44 +1225,6 @@ inline constexpr auto OnFinalScene = []<typename Context>(Context& context) -> r
   }};
 };
 
-// Replay only UI after the verified final composite into a private scalar
-// transmittance target. Keep shader alpha, clipping, texture sampling and geometry.
-// Unknown blend/geometry cases disable the optional mask for that frame.
-inline constexpr auto CaptureUiAlpha = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context>
-  requires (std::is_same_v<typename Context::ArgumentType, renodx::utils::command_action::DrawArguments>
-         || std::is_same_v<typename Context::ArgumentType, renodx::utils::command_action::DrawIndexedArguments>) {
-  if (!frame_generation::NeedsInputs() || !frame_generation::output_enabled
-      || context.cmd_list->get_device()->get_api() != reshade::api::device_api::d3d9) return {};
-  auto* data = renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device());
-  if (!data || !data->fg_capture || !data->fg_capture->ui_valid) return {};
-  auto* capture = data->fg_capture.get();
-  auto* native = reinterpret_cast<IDirect3DDevice9*>(context.cmd_list->get_native());
-  Microsoft::WRL::ComPtr<IDirect3DSurface9> target;
-  if (FAILED(native->GetRenderTarget(0, &target)) || target != capture->scene_target) return {};
-  const auto hash = renodx::utils::shader::GetCurrentPixelShaderHash(renodx::utils::command_action::GetShaderState(&context));
-  DWORD blend=0, source=0, destination=0, operation=0, writes=0, depth=0, stencil=0;
-  native->GetRenderState(D3DRS_ALPHABLENDENABLE, &blend);
-  native->GetRenderState(D3DRS_SRCBLEND, &source); native->GetRenderState(D3DRS_DESTBLEND, &destination);
-  native->GetRenderState(D3DRS_BLENDOP, &operation); native->GetRenderState(D3DRS_COLORWRITEENABLE, &writes);
-  native->GetRenderState(D3DRS_ZENABLE, &depth); native->GetRenderState(D3DRS_STENCILENABLE, &stencil);
-  if (!(writes & 7)) return {};
-  if ((hash != 0x7258C5E9u && hash != 0x5E3A6B72u && hash != 0xFB5A6594u && hash != 0xAFDE4E3Du)
-      || !blend || (source != D3DBLEND_SRCALPHA && source != D3DBLEND_ONE)
-      || destination != D3DBLEND_INVSRCALPHA || operation != D3DBLENDOP_ADD
-      || depth || stencil || context.arguments.instance_count != 1 || context.arguments.first_instance) {
-    capture->ui_valid = false; return {};
-  }
-  return {.post_callback = [](Context& context, const void* pointer) {
-    auto* capture = const_cast<frame_generation::Capture*>(static_cast<const frame_generation::Capture*>(pointer));
-    auto* native = reinterpret_cast<IDirect3DDevice9*>(context.cmd_list->get_native());
-    capture->AccumulateUi(native, [&] {
-      if constexpr (std::is_same_v<typename Context::ArgumentType, renodx::utils::command_action::DrawArguments>)
-        context.cmd_list->draw(context.arguments.vertex_count, 1, context.arguments.first_vertex, 0);
-      else context.cmd_list->draw_indexed(context.arguments.index_count, 1, context.arguments.first_index, context.arguments.vertex_offset, 0);
-    });
-  }, .post_data = capture};
-};
-
 inline void Use(DWORD reason) {
   if (reason == DLL_PROCESS_ATTACH) {
     renodx::utils::shader::Use(reason);
@@ -1277,7 +1239,6 @@ inline void Use(DWORD reason) {
     reshade::register_event<reshade::addon_event::unmap_buffer_region>(OnUnmapGeometry);
     reshade::register_event<reshade::addon_event::destroy_resource>(OnDestroyGeometry);
     reshade::register_event<reshade::addon_event::clear_depth_stencil_view>(OnClearDepth);
-    renodx::utils::command_action::Register(CaptureUiAlpha, {.command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
     renodx::utils::command_action::Register(ApplyJitter, {.command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
     renodx::utils::command_action::Register(CaptureCamera, {
         .command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
@@ -1300,7 +1261,6 @@ inline void Use(DWORD reason) {
     reshade::unregister_event<reshade::addon_event::unmap_buffer_region>(OnUnmapGeometry);
     reshade::unregister_event<reshade::addon_event::destroy_resource>(OnDestroyGeometry);
     reshade::unregister_event<reshade::addon_event::clear_depth_stencil_view>(OnClearDepth);
-    renodx::utils::command_action::Unregister(CaptureUiAlpha);
     renodx::utils::command_action::Unregister(OnLut);
     renodx::utils::command_action::Unregister(OnFinalScene);
     renodx::utils::command_action::Unregister(CaptureObjectMotion);

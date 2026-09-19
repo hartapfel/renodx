@@ -30,7 +30,7 @@ inline bool Select() {
   std::wstring path(32768, L'\0');
   if (!GetModuleFileNameW(addon_module, path.data(), DWORD(path.size()))
       || !std::filesystem::exists(std::filesystem::path(path.c_str()).parent_path()
-          / L"renodx-asscreedbrotherhood-dx12" / L"renodx-asscreedbrotherhood-dx12.exe")) return false;
+          / L"renodx-asscreedeziotrilogy-dx12" / L"renodx-asscreedeziotrilogy-dx12.exe")) return false;
   dlaa::Handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId()));
   if (snapshot.value == INVALID_HANDLE_VALUE) { snapshot.value = nullptr; return false; }
   MODULEENTRY32W entry{sizeof(entry)};

@@ -333,7 +333,7 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "TAA / DLAA / DLSS Frame Generation | Brotherhood | 32-bit addon",
+        .label = "TAA / DLAA / DLSS Frame Generation | Ezio Trilogy | 32-bit addon",
         .section = "About",
     },
     new renodx::utils::settings::Setting{
@@ -344,7 +344,7 @@ renodx::utils::settings::Settings settings = {
 };
 }
 
-extern "C" __declspec(dllexport) constexpr const char* NAME = "Assassin's Creed Brotherhood TAA";
+extern "C" __declspec(dllexport) constexpr const char* NAME = "Assassin's Creed Ezio Trilogy TAA";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "TAA and optional NVIDIA DLAA with camera/object motion and Lilium RCAS; standalone SDR and RenoDX HDR";
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
@@ -358,8 +358,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
     std::wstring path(32768, L'\0');
     if (GetModuleFileNameW(module, path.data(), DWORD(path.size()))) {
       renodx::utils::device_upgrade::use_dx9ex_upgrade = GetFileAttributesW(
-          (std::filesystem::path(path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dx12" / L"renodx-asscreedbrotherhood-dx12.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
+          (std::filesystem::path(path.c_str()).parent_path() / L"renodx-asscreedeziotrilogy-dx12" / L"renodx-asscreedeziotrilogy-dx12.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
     }
+    // Keep the legacy storage key so existing AA, FG and cap preferences survive the rename.
     renodx::utils::settings::global_name = "asscreedbrotherhood-taa";
     renodx::utils::settings::use_presets = false;
   }

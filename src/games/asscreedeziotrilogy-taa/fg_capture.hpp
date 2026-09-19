@@ -30,11 +30,9 @@ inline std::weak_ptr<Capture> current;
 // Private DX9Ex shared buffers only. No format changes to game resources.
 struct Capture {
   Inputs inputs;
-  std::array<ComPtr<IDirect3DTexture9>, 4> textures;
-  std::array<ComPtr<IDirect3DSurface9>, 4> surfaces;
-  ComPtr<IDirect3DSurface9> scene_target;
+  std::array<ComPtr<IDirect3DTexture9>, 3> textures;
+  std::array<ComPtr<IDirect3DSurface9>, 3> surfaces;
   ComPtr<IDirect3DTexture9> scene_copy;
-  bool ui_valid = false;
   ComPtr<IDirect3DVertexBuffer9> vertices;
   ComPtr<IDirect3DPixelShader9> shader, copy;
   ComPtr<IDirect3DQuery9> complete;
@@ -67,7 +65,7 @@ struct Capture {
     for (unsigned i = 0; i < ((inputs.flags & hudless) ? 3u : 2u); ++i) {
       ComPtr<IDirect3DSurface9> staging;
       if (FAILED(device->CreateOffscreenPlainSurface(inputs.width, inputs.height,
-          (i == 1 || i == 3) ? D3DFMT_R32F : D3DFMT_A16B16G16R16F, D3DPOOL_SYSTEMMEM, &staging, nullptr))
+          i == 1 ? D3DFMT_R32F : D3DFMT_A16B16G16R16F, D3DPOOL_SYSTEMMEM, &staging, nullptr))
           || FAILED(device->GetRenderTargetData(surfaces[i].Get(), staging.Get()))) return false;
       std::ofstream file(directory / names[i], std::ios::binary);
       D3DLOCKED_RECT lock{};
@@ -115,7 +113,7 @@ struct Capture {
                const taa::Matrix& reprojection, const taa::Matrix& sky,
                const std::array<float, 2>& jitter, bool continuous) {
     inputs.flags = 0;
-    hudless_stage = 0; ui_valid = false; scene_target.Reset();
+    hudless_stage = 0;
     if (failed) return;
     try {
       if (!shader) {
@@ -127,10 +125,10 @@ struct Capture {
         D3DDEVICE_CREATION_PARAMETERS creation{};
         dlaa::Check(device->GetCreationParameters(&creation), dlaa::Stage::device);
         inputs.window = uintptr_t(creation.hFocusWindow);
-        for (unsigned i = 0; i < 4; ++i) {
+        for (unsigned i = 0; i < textures.size(); ++i) {
           HANDLE shared = nullptr;
           dlaa::Check(device->CreateTexture(width, height, 1, D3DUSAGE_RENDERTARGET,
-              (i == 1 || i == 3) ? D3DFMT_R32F : D3DFMT_A16B16G16R16F, D3DPOOL_DEFAULT, &textures[i], &shared), dlaa::Stage::shared_textures);
+              i == 1 ? D3DFMT_R32F : D3DFMT_A16B16G16R16F, D3DPOOL_DEFAULT, &textures[i], &shared), dlaa::Stage::shared_textures);
           if (!shared) throw dlaa::Failure{dlaa::Stage::shared_textures, ERROR_NOT_SUPPORTED};
           inputs.textures[i] = uintptr_t(shared);
           dlaa::Check(textures[i]->GetSurfaceLevel(0, &surfaces[i]), dlaa::Stage::device);
@@ -218,39 +216,14 @@ struct Capture {
       device->SetPixelShader(copy.Get());
       dlaa::Check(device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2), dlaa::Stage::shader);
       dlaa::Check(complete->Issue(D3DISSUE_END), dlaa::Stage::gpu_wait);
-      scene_target = source;
-      // Separate transmittance target: original game RGB/alpha are untouched.
-      ConfigureDraw(device, saved, 3);
-      dlaa::Check(device->Clear(0, nullptr, D3DCLEAR_TARGET, 0xFFFFFFFF, 1.f, 0), dlaa::Stage::device);
-      ui_valid = true;
-      inputs.flags |= hudless | ui_alpha;
+      inputs.flags |= hudless;
       hudless_stage = 3;
     } catch (const dlaa::Failure& failure) { error = failure.code; }
-  }
-
-  // Accumulate coverage using original shader alpha without changing game RGB.
-  template <typename Draw>
-  void AccumulateUi(IDirect3DDevice9* device, Draw&& draw) {
-    try {
-      dlaa::SavedDraw saved(device);
-      device->SetDepthStencilSurface(nullptr);
-      for (unsigned i = 1; i < saved.count; ++i) device->SetRenderTarget(i, nullptr);
-      dlaa::Check(device->SetRenderTarget(0, surfaces[3].Get()), dlaa::Stage::device);
-      device->SetViewport(&saved.viewport);
-      device->SetRenderState(D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED);
-      device->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, FALSE);
-      device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO);
-      device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-      device->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
-      draw();
-    } catch (...) { ui_valid = false; }
   }
 
   bool Acquire(HWND window) {
     if (!inputs.flags || consumed == inputs.id || inputs.window != uintptr_t(window)) return false;
     consumed = inputs.id; // A frame is never resubmitted, including failures.
-    if (!ui_valid) inputs.flags &= ~ui_alpha;
-    ui_valid = false;
     ComPtr<IDirect3DDevice9> device;
     if (FAILED(textures[0]->GetDevice(&device)) || FAILED(complete->Issue(D3DISSUE_END))) return false;
     const ULONGLONG deadline = GetTickCount64() + 2000;

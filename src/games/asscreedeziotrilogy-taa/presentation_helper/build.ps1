@@ -1,7 +1,7 @@
 param([string]$StreamlineSdkDirectory)
 $ErrorActionPreference = 'Stop'
-if (Get-Process ACBSP,renodx-asscreedbrotherhood-dx12 -ErrorAction SilentlyContinue) {
-  throw 'Close Brotherhood and its DX12 helper before rebuilding linked outputs.'
+if (Get-Process AssassinsCreedIIGame,ACBSP,ACRSP,renodx-asscreedeziotrilogy-dx12,renodx-asscreedbrotherhood-dx12 -ErrorAction SilentlyContinue) {
+  throw 'Close the Ezio Trilogy games and their DX12 helpers before rebuilding linked outputs.'
 }
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
 $visualStudio = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath

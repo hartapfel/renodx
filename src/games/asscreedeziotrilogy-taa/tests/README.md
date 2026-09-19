@@ -9,7 +9,7 @@ From an x86 Visual Studio developer command prompt at the repository root:
 
 ```bat
 mkdir tmp\brotherhood-engine-test
-clang-cl --target=i686-pc-windows-msvc /nologo /std:c++20 /EHsc /O2 /MT /UNDEBUG /Iexternal/Detours/include src/games/asscreedbrotherhood-taa/tests/engine_projection.cpp /Fetmp/brotherhood-engine-test/engine_projection.exe /Fotmp/brotherhood-engine-test/engine_projection.obj /link external/Detours/lib.X86/detours.lib
+clang-cl --target=i686-pc-windows-msvc /nologo /std:c++20 /EHsc /O2 /MT /UNDEBUG /Iexternal/Detours/include src/games/asscreedeziotrilogy-taa/tests/engine_projection.cpp /Fetmp/brotherhood-engine-test/engine_projection.exe /Fotmp/brotherhood-engine-test/engine_projection.obj /link external/Detours/lib.X86/detours.lib
 tmp\brotherhood-engine-test\engine_projection.exe
 ```
 
@@ -28,10 +28,10 @@ CMake project. Build the x86 addon first for its generated shader headers, then
 build the matching helper and fixture from an x64 developer command prompt:
 
 ```bat
-cmake --build build64-brotherhood-dx12 --config Release --target renodx-asscreedbrotherhood-dx12 brotherhood-dlaa-handoff-test brotherhood-unified-gpu-test
-build64-brotherhood-dx12\Release\brotherhood-dlaa-handoff-test.exe
-build64-brotherhood-dx12\Release\brotherhood-dlaa-handoff-test.exe build64-brotherhood-dx12/Release/renodx-asscreedbrotherhood-dx12.exe validation
-build64-brotherhood-dx12\Release\brotherhood-unified-gpu-test.exe validation
+cmake --build build64-eziotrilogy-dx12 --config Release --target renodx-asscreedeziotrilogy-dx12 brotherhood-dlaa-handoff-test brotherhood-unified-gpu-test
+build64-eziotrilogy-dx12\Release\brotherhood-dlaa-handoff-test.exe
+build64-eziotrilogy-dx12\Release\brotherhood-dlaa-handoff-test.exe build64-eziotrilogy-dx12/Release/renodx-asscreedeziotrilogy-dx12.exe validation
+build64-eziotrilogy-dx12\Release\brotherhood-unified-gpu-test.exe validation
 ```
 
 Run from the repository root, with the game closed and the matching signed
@@ -49,7 +49,9 @@ are synthetic handoff costs, not whole-game performance numbers. No benchmark
 instrumentation is enabled in the Release addon.
 
 The unified fixture additionally covers HDR/SDR, DLAA + 3x FG, changing presets,
-feature release, helper restarts and optional-DLAA failure. In gameplay, compare
+feature release, helper restarts and optional-DLAA failure. Every valid FG frame
+must accept exactly the three remaining inputs (flags 7), with no optional
+UI-alpha mode. In gameplay, compare
 TAA and DLAA at an unchanged camera position with FG Off and no manual cap, then
 check DLAA + FG, Alt-Tab and a graphics reset. Verify image stability and recovery
 alongside frame times; a higher counter alone does not prove correct ownership.
@@ -59,7 +61,7 @@ alongside frame times; a higher counter alone does not prove correct ownership.
 From an x86 Visual Studio developer command prompt, with assertions enabled:
 
 ```bat
-clang-cl --target=i686-pc-windows-msvc /nologo /std:c++20 /EHsc /O2 /MT /UNDEBUG src/games/asscreedbrotherhood-taa/tests/geometry_upload.cpp /Fetmp/geometry_upload.exe /Fotmp/geometry_upload.obj /link d3d9.lib user32.lib
+clang-cl --target=i686-pc-windows-msvc /nologo /std:c++20 /EHsc /O2 /MT /UNDEBUG src/games/asscreedeziotrilogy-taa/tests/geometry_upload.cpp /Fetmp/geometry_upload.exe /Fotmp/geometry_upload.obj /link d3d9.lib user32.lib
 tmp\geometry_upload.exe
 ```
 
@@ -71,7 +73,7 @@ and that releasing it permits reset. It does not load the game or its addons.
 ## Scene-camera acquisition
 
 ```bat
-clang-cl --target=i686-pc-windows-msvc /nologo /std:c++20 /EHsc /O2 /MT /UNDEBUG src/games/asscreedbrotherhood-taa/tests/camera_acquisition.cpp /Fetmp/camera_acquisition.exe /Fotmp/camera_acquisition.obj
+clang-cl --target=i686-pc-windows-msvc /nologo /std:c++20 /EHsc /O2 /MT /UNDEBUG src/games/asscreedeziotrilogy-taa/tests/camera_acquisition.cpp /Fetmp/camera_acquisition.exe /Fotmp/camera_acquisition.obj
 tmp\camera_acquisition.exe
 ```
 
