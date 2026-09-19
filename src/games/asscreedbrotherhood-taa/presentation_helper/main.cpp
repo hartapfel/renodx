@@ -15,6 +15,7 @@
 #include "./fg_import.hpp"
 #include "./streamline.hpp"
 #include "./dlaa.hpp"
+#include "./overlay_input.hpp"
 
 using namespace acbrotherhood::presentation;
 using acbrotherhood::dlaa::Handle;
@@ -118,6 +119,7 @@ void Run(Packet* packet, HANDLE request, HANDLE reply, HANDLE parent, HANDLE sou
   window.value = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_NOPARENTNOTIFY, wc.lpszClassName, L"RenoDX DX12 output", WS_CHILD | WS_DISABLED,
                                  0, 0, packet->width, packet->height, game_window, nullptr, wc.hInstance, nullptr);
   if (!window.value) throw Failure{Stage::window, GetLastError()};
+  OverlayInput overlay_input(window.value);
   BOOL tearing = FALSE;
   ComPtr<IDXGIFactory5> factory5;
   if (SUCCEEDED(factory.As(&factory5))) factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tearing, sizeof(tearing));
@@ -329,6 +331,7 @@ void Run(Packet* packet, HANDLE request, HANDLE reply, HANDLE parent, HANDLE sou
     const UINT flags = (packet->present_flags & DXGI_PRESENT_RESTART)
         | (tearing && !packet->pacing_state.sync_interval ? packet->present_flags & DXGI_PRESENT_ALLOW_TEARING : 0);
     streamline.Prepare(packet, images);
+    overlay_input.Update(game_window);
     const HRESULT present = swapchain->Present(packet->pacing_state.sync_interval, flags);
     Check(present, Stage::present);
     streamline.AfterPresent(packet, queue.Get());

@@ -400,6 +400,20 @@ the separate repository DLSS SDK; Streamline owns DLAA and FG together. Its
 installer checks NVIDIA production signatures and copies the matching eight
 runtime DLLs and licenses. Version 2.14.1 includes DLSS/DLSS-G 310.9.1.
 
+## Third-party helper overlays
+
+The helper renders through a disabled child window while the game retains input
+focus. For overlays that subclass this child window, the helper mirrors keyboard
+transitions and mouse position/buttons while the game is foreground. It does not
+activate the helper window or block the game's controls. Pause the game while
+using such a menu; use keyboard navigation for wheel/text operations.
+
+OptiScaler 0.9.4's manual polling requires its exact window to be foreground,
+which excludes this child canvas. In its helper-folder `OptiScaler.ini`, use
+`OverlayMenu=true` under `[Menu]` and `ManualInputPolling=false` under `[Hotfix]`.
+The default menu shortcut is Insert. OptiScaler is optional and not bundled.
+This input compatibility does not validate every alternative upscaler/FG backend.
+
 ## Packaging a release
 
 Build the addon and unified helper in Release. Stage real file contents:
