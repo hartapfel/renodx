@@ -5,7 +5,7 @@
 #include <cstdint>
 
 namespace acbrotherhood::dlaa {
-constexpr uint32_t kProtocol = 3;
+constexpr uint32_t kProtocol = 4;
 constexpr uint32_t kMagic = 0x41414C44;
 // NGX render-preset values: DLL default (no hint), F, J, K, L, M.
 constexpr std::array<uint32_t, 6> kRenderPresets = {0, 6, 10, 11, 12, 13};
@@ -34,8 +34,10 @@ struct alignas(8) Packet {
   uint32_t error = 0;
   uint32_t render_preset = 0;
   uint32_t backend = 0; // Helper acknowledgement: D3D12 = 12.
+  uint64_t generation = 0; // Distinguishes reused DX9 handles after reset.
+  float current_camera[16] = {}, clip_to_previous[16] = {};
 };
-static_assert(sizeof(Frame) == 24 && sizeof(Packet) == 112);
+static_assert(sizeof(Frame) == 24 && sizeof(Packet) == 248);
 static_assert(offsetof(Packet, frame) == 56 && offsetof(Packet, state) == 92);
 static_assert(offsetof(Packet, render_preset) == 104);
 }  // namespace acbrotherhood::dlaa

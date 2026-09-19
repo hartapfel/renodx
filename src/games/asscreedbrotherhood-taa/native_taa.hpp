@@ -864,8 +864,7 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
       Performance::CpuScope timer(capture_enabled != 0.f ? &data->performance.cpu_ticks[Performance::MOTION] : nullptr);
       RenderObjectMotion(native, &data->object_motion, data->main_depth_surface.Get(),
                          data->width, data->height, data->jitter, continuous,
-                         data->scene_samples != D3DMULTISAMPLE_NONE ? data->depth.Get() : nullptr,
-                         frame_generation::NeedsInputs() && frame_generation::output_enabled);
+                         data->scene_samples != D3DMULTISAMPLE_NONE ? data->depth.Get() : nullptr);
     }
     if (capture_enabled != 0.f) data->performance.EndMotionGpu();
     {
@@ -900,7 +899,7 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
           resolved = acbrotherhood::dlaa::Resolve(native, &data->dlaa, scene_texture.Get(), data->depth.Get(),
                         data->object_motion.ready ? data->object_motion.resources.texture.Get() : nullptr,
                         data->current_to_previous_clip, sky_reprojection, data->width, data->height,
-                        data->jitter, data->frame, continuous, confidence_preview == 3.f, rcas_strength);
+                        data->jitter, data->frame, continuous, confidence_preview == 3.f, rcas_strength, data->camera);
           // Release native TAA history once DLAA takes over. Recreate it only
           // if the helper fails or the selected mode needs the TAA fallback.
           if (resolved) data->resolve = {};
@@ -941,7 +940,6 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
             << " historyPair=" << continuous << " objectDraws=" << data->object_motion.current.size()
             << " rootMotion=" << data->object_motion.root_motion_draws
             << " cameraOnlyDraws=" << data->object_motion.camera_only_draws
-            << " fgGeometryMotion=" << (frame_generation::NeedsInputs() && frame_generation::output_enabled)
             << " rigidMotion=" << data->object_motion.matched_rigid << " skinMotion=" << data->object_motion.matched_skin
             << " unmatchedMotion=" << data->object_motion.unmatched << " motionReady=" << data->object_motion.ready << " motionStages=";
     for (unsigned count : data->object_motion.capture_stages) message << count << ',';

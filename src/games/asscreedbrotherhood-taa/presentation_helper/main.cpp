@@ -9,10 +9,12 @@
 #include <cstdlib>
 #include <fstream>
 #include <vector>
+#include <memory>
 #include "../dlaa_handles.hpp"
 #include "../presentation_protocol.hpp"
 #include "./fg_import.hpp"
 #include "./streamline.hpp"
+#include "./dlaa.hpp"
 
 using namespace acbrotherhood::presentation;
 using acbrotherhood::dlaa::Handle;
@@ -170,6 +172,8 @@ void Run(Packet* packet, HANDLE request, HANDLE reply, HANDLE parent, HANDLE sou
     acbrotherhood::frame_generation::Streamline* value;
     ~Shutdown() { value->Shutdown(); }
   } shutdown{&streamline};
+  // Destroy AA and release its Streamline viewport before shared runtime shutdown.
+  std::unique_ptr<acbrotherhood::dlaa::Dlaa> dlaa;
   auto previous_status = acbrotherhood::frame_generation::Status::off;
   uint32_t previous_configured = 0;
   for (;;) {
@@ -184,6 +188,37 @@ void Run(Packet* packet, HANDLE request, HANDLE reply, HANDLE parent, HANDLE sou
     if (wait != WAIT_OBJECT_0 + 1) throw Failure{Stage::protocol, GetLastError()};
     MemoryBarrier();
     if (packet->command == Command::stop) break;
+    if (packet->command == Command::dlaa_evaluate || packet->command == Command::dlaa_release) {
+      auto& aa = packet->dlaa;
+      try {
+        if (packet->command == Command::dlaa_release) {
+          if (dlaa && dlaa->generation == aa.generation) dlaa.reset();
+          aa.state = acbrotherhood::dlaa::WorkerState::complete;
+        } else {
+          if (packet->frame != last_frame + 1 || aa.adapter_low != packet->adapter_low
+              || aa.adapter_high != packet->adapter_high || aa.width != packet->width || aa.height != packet->height)
+            throw acbrotherhood::dlaa::Failure{acbrotherhood::dlaa::Stage::protocol, ERROR_INVALID_DATA};
+          if (dlaa && (dlaa->generation != aa.generation || dlaa->preset != aa.render_preset)) dlaa.reset();
+          if (!dlaa) {
+            dlaa = std::make_unique<acbrotherhood::dlaa::Dlaa>();
+            dlaa->Start(&aa, device.Get(), queue.Get(), bridge5.Get(), context4.Get(), parent, &streamline, packet->validation != 0);
+            *log << "Unified DLAA ready " << aa.width << 'x' << aa.height << " preset=" << aa.render_preset
+                 << " device=" << device.Get() << " queue=" << queue.Get() << std::endl;
+          }
+          streamline.Begin(uint32_t(packet->frame), false); streamline.RenderBegin();
+          dlaa->Evaluate(&aa);
+        }
+      } catch (const acbrotherhood::dlaa::Failure& failure) {
+        dlaa.reset();
+        aa.state = acbrotherhood::dlaa::WorkerState::failed; aa.stage = failure.stage; aa.error = failure.code;
+        *log << "DLAA failed stage=" << uint32_t(failure.stage) << " error=" << failure.code << std::endl;
+        // If the device was lost the presenter must fall back too.
+        Check(device->GetDeviceRemovedReason(), Stage::device);
+      }
+      packet->state = State::complete;
+      MemoryBarrier(); SetEvent(reply);
+      continue;
+    }
     const uint64_t frame = packet->frame;
     if (frame != last_frame + 1 || packet->sync_interval > 4 || packet->generation_requested > 5
         || packet->pacing.reflex_mode > 2 || packet->pacing.render_fps > 1000)

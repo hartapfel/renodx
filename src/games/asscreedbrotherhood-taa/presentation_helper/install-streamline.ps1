@@ -13,7 +13,7 @@ if ($sdkVersion -notmatch '#define SL_VERSION_MAJOR 2\s' -or
     $sdkVersion -notmatch '#define SL_VERSION_PATCH 1\s') {
   throw 'Use the official Streamline 2.14.1 SDK matching the DX12 helper headers.'
 }
-$runtimeFiles = @('sl.interposer.dll','sl.common.dll','sl.dlss_g.dll','sl.reflex.dll','sl.pcl.dll','nvngx_dlssg.dll')
+$runtimeFiles = @('sl.interposer.dll','sl.common.dll','sl.dlss.dll','sl.dlss_g.dll','sl.reflex.dll','sl.pcl.dll','nvngx_dlss.dll','nvngx_dlssg.dll')
 foreach ($runtimeFile in $runtimeFiles) {
   $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $sdkPath ('bin/x64/' + $runtimeFile))
   if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'NVIDIA Corporation') {

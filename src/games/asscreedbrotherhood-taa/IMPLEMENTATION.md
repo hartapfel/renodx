@@ -3067,6 +3067,8 @@ also resume FG with the automatic 4467-us output interval still active.
 
 ## 44. Restore static geometry motion for frame generation (2026-09-19)
 
+Historical experiment; section 46 restores the shared AA/FG optimization.
+
 The user requested fuller object-motion coverage to test the remaining distant
 decorative-building artifacts. The previous optimization recorded static draws
 but omitted their GPU motion replay when matching poses, unchanged buffers and
@@ -3107,3 +3109,114 @@ measurement for this build. The user reports no improvement in the decorative-
 building artifacts, but requested retaining the expanded geometry path. It
 remains enabled for FG; the static-camera optimization still applies with FG Off.
 This experiment does not resolve the building artifact.
+
+## 45. Unified DX12 helper (2026-09-19)
+
+This supersedes the separate DLAA-worker architecture in earlier sections.
+`renodx-asscreedbrotherhood-dx12.exe` now owns DLAA, FG, Reflex and presentation
+in one x64 process, on one DX12 device/direct queue and one DX11 sharing bridge.
+The addon has one inherited IPC mapping/request/reply channel and kill-on-close
+job. No separate AA process is launched. The old `dlaa_helper` executable/build
+target is removed; its preparation shader moved into `presentation_helper`.
+
+### Frame order and ownership
+
+The presenter is established after a successful visible native presentation,
+as before. A weak reference publishes the active client to the pre-LUT scene
+hook; TAA covers startup and presentation recreation. Shared ownership never
+keeps an obsolete presenter alive between AA calls. A recursive mutex serializes
+AA, Reflex and presentation commands. AA waits do not dispatch window messages
+into an active DX9 draw; output commands retain sent-message processing for
+child-window operations. AA selection does not change the native frame counter.
+
+The x86 AA state retains only its DX9 textures, preparation/output shaders and
+small local request. It submits `dlaa_evaluate` to the active presenter after
+the existing DX9 completion query. DLAA evaluates on the presenter's device and
+queue, then copies the result back for native RCAS, color grading and HUD. Final
+FG and presentation still occur later. The same DX11 immediate context transports
+both stages; there is no production CPU image readback. Existing private AA
+command allocator/fence protects its DX11-to-DX12-to-DX9 ownership boundaries;
+the GPU queue/device are shared. The two GPU handoffs remain necessary while
+the game renders intervening passes in DX9.
+
+### One NVIDIA lifecycle
+
+Streamline 2.14.1 loads `sl.dlss` alongside Reflex/PCL and optional DLSS-G, replacing
+direct NGX initialization in the old helper. The runtime installer includes eight
+signed production DLLs, with DLSS and DLSS-G 310.9.1. A single `slSetD3DDevice`
+binds the presenter device. DLAA uses viewport 1; FG uses viewport 0, keeping
+pre-LUT linear color, bias-current-color mask and undilated vectors separate
+from final scene/HUD tags. Both use the current presentation frame token.
+
+DLAA keeps native-resolution HDR working color, auto exposure, previous-current
+UV vectors with scale 1, non-inverted depth, separate jitter and responsive mask.
+The existing projection factorization supplies real unjittered camera constants
+even when FG is Off. Original compute preparation and output conversion remain.
+Default selects Streamline's default preset; explicit F/J/K/L/M values retain
+their mapping. Preset changes release only the DLAA viewport/feature and force
+fresh history; they do not recreate the swapchain or pause FG/Reflex.
+
+### Reset and failure behavior
+
+Presentation protocol 8 embeds DLAA payload version 4. A monotonically increasing
+AA generation disambiguates recycled legacy handles. Texture size must match the
+current presenter; the addon uses TAA until a resized presenter is available.
+Switching away from DLAA releases its helper resources before DX9 textures go away.
+FG Off/On currently recreates the presenter as before; AA reacquires the new
+client and resets history. GPU completion precedes feature/resource destruction,
+and DLAA is destroyed before the shared Streamline shutdown.
+
+Unsupported/failed DLAA marks its nested reply, leaving presentation and FG alive.
+IPC failure stops the shared worker, causing native presentation fallback and
+TAA fallback together. A device removal escalates to the presenter's failure path.
+Old binaries fail protocol validation. Update addon/helper/runtime together and
+remove the obsolete `renodx-asscreedbrotherhood-dlaa` directory with the game closed.
+
+### Verification
+
+Release addon/helper compile. The unified GPU fixture passes 297 DLAA evaluations
+and 198 active 3x FG frames across standalone SDR, HDR10, helper recreation and
+resolution changes. It checks finite constant-color output, Default/F/K/Default
+presets, explicit release/recreation, and an invalid-AA request that leaves FG
+running. DX12 validation reports no error; helper logs prove one device/queue
+for both features. `presentation_helper/tests/unified.cpp` preserves this fixture
+as optional target `brotherhood-unified-gpu-test`; build the addon first and run
+the test from the repository root with `validate` for the DX12 debug layer.
+
+Real ReShade standalone reset testing passes tiny-window fullscreen startup,
+8x -> 4x -> Off -> 8x MSAA, scene/jitter equivalence and worker-exit fallback.
+The HDR reset fixture also passes the same MSAA sequence and native fallback.
+Live 3840x2160 HDR10 gameplay confirms one unified helper process and no old DLAA
+worker. DLAA and 3x FG both report active with no feature error, and the user
+confirms normal image and motion. Switching from the default DLSS preset to M
+recreates DLAA on the same logged device/queue. With the manual cap returned to
+0, the helper retains the automatic 4467-us output interval, driver VSync and
+240-Hz VRR detection. Reduced process/device duplication is verified; no FPS
+improvement is claimed without a controlled comparison. Known decorative-building
+FG artifacts remain unresolved.
+
+## 46. Shared static-camera motion policy for AA and FG (2026-09-19)
+
+At the user's request, remove the FG-only `replay_static` override introduced in
+section 44. TAA, DLAA, the motion preview and FG now consume the same combined
+motion field. Unchanged rigid geometry with matched history, unchanged buffers
+and reliable native depth uses camera reprojection, including static buildings.
+Moving characters, cloth, deformed/changed geometry, ambiguous instances and
+late materials still retain their existing replay and complementary depth.
+This restores the earlier optimization; it does not remove building motion from
+the dense field supplied to FG. Sky reprojection and MSAA depth handling remain.
+
+The extra building replay did not improve the distant decorative-band artifacts
+in the user's comparison. Removing it reduces replay work without claiming a
+measured FPS gain or a fix for that unresolved artifact. The unified helper from
+section 45 remains the release architecture.
+
+Release addon/helper builds pass. The DX9 GPU regression verifies static draw
+omission, moving transforms, buffer mutations, late/deforming geometry and camera
+cuts. It also checks static omission and retained late-geometry motion/depth with
+both native and MSAA visibility. Camera and Reflex policy tests pass. The unified
+DX12 validation fixture passes all 297 DLAA evaluations and 198 active 3x FG
+frames after adding explicit foreground acquisition to the test harness; the
+initial background-window run correctly paused FG. The final motion-policy
+change has synthetic GPU coverage; the preceding unified-helper gameplay check
+is recorded in section 45.

@@ -14,6 +14,7 @@ Keep an existing working ReShade installation. Native MSAA is optional.
 | --- | --- |
 | RenoDX HDR + TAA | Updated `renodx-asscreedeziotrilogy.addon32` and `renodx-asscreedbrotherhood-taa.addon32` |
 | Native SDR + TAA | `renodx-asscreedbrotherhood-taa.addon32` only |
+| DLAA / Frame Generation / Reflex, with either configuration | Also install the matching `renodx-asscreedbrotherhood-dx12` helper folder; see the runtime installation below |
 
 Close the game before replacing either file. The matching Ezio Trilogy build
 has embedded TAA removed. **Do not combine this addon with an older experimental
@@ -56,19 +57,16 @@ rejected there. The extra display pass runs only while a diagnostic is selected.
 
 Static buildings with reliable depth can use camera motion. Object vectors are
 needed for independent movement and deformation; they also supply depth for
-some late materials. With Frame Generation Off, replay omits confirmed unchanged rigid draws that
+some late materials. For TAA, DLAA and Frame Generation, replay omits confirmed unchanged rigid draws that
 write native scene depth. New/ambiguous instances, changed transforms or buffers,
 deformation, and late materials retain replay. Capture and classification still
 cost CPU time; this is not a claim that all static-scene overhead is eliminated.
 Sky uses camera rotation/FOV without translation parallax or finite-depth checks.
 
-With Frame Generation selected, all supported captured geometry is replayed,
-including static buildings. FG receives the geometry's vectors and depth wherever
-replay is valid; camera reprojection remains the fallback for uncovered pixels
-and sky. Existing upload batching and shader/state caches remain enabled. This
-increases replay work. The live comparison showed no improvement in the known
-distant-building FG artifacts; expanded coverage is retained, but those artifacts
-remain unresolved.
+Frame Generation receives the same combined camera/object motion as AA. The
+experiment replaying all static buildings did not improve the known distant-
+building FG artifacts, so its extra replay work has been removed. Existing upload
+batching and shader/state caches remain enabled. Those artifacts remain unresolved.
 
 The resolve retains cubic history sampling and motion-responsive weighting.
 If a character part briefly loses its previous pose, other directly tracked
@@ -140,52 +138,54 @@ same scene hook, jitter, camera and object motion capture. It is experimental;
 TAA remains the default. **Requires an NVIDIA RTX GPU and native MSAA Off.**
 With MSAA enabled, the selection falls back to the existing TAA/MSAA path.
 
-Install this directory beside `renodx-asscreedbrotherhood-taa.addon32`:
+Install the **unified DX12 helper** beside the addon:
 
 ```text
-renodx-asscreedbrotherhood-dlaa/
-  renodx-asscreedbrotherhood-dlaa.exe
-  nvngx_dlss.dll
-  NVIDIA-DLSS-LICENSE.txt
+renodx-asscreedbrotherhood-dx12/
+  renodx-asscreedbrotherhood-dx12.exe
+  streamline/
+    sl.interposer.dll
+    sl.common.dll
+    sl.dlss.dll
+    sl.dlss_g.dll
+    sl.reflex.dll
+    sl.pcl.dll
+    nvngx_dlss.dll
+    nvngx_dlssg.dll
+    (included NVIDIA licenses)
 ```
 
-Restart after installing the helper, then select **Anti-Aliasing → DLAA**.
-**DLAA Status** must say **DLAA active at native resolution**. Startup runs
-asynchronously with TAA temporarily active. Missing files, unsupported hardware,
-sharing errors or a stopped helper return to TAA with a visible reason/error.
-Active status is green; initialization/runtime failure status is red. Startup
-and deliberate TAA fallbacks (MSAA or diagnostic views) retain neutral text.
-Switch to TAA and back to DLAA to retry. The helper log is
-`renodx-asscreedbrotherhood-dlaa/renodx-dlaa-helper.log`.
+Restart after installing, select **Anti-Aliasing → DLAA**, and check for the
+green **DLAA active at native resolution (DX12)** status. TAA covers startup
+and unavailable DLAA. Failures show red status; switch to TAA and back to retry.
+If output itself failed, use Retry DX12 Output. Log: the unified helper's
+`renodx-dx12-present.log` (Streamline writes its own log under `streamline/`).
 
-**DLSS Preset** is a dropdown shown when DLAA is selected. **DLL Default**
-leaves the preset hint unset, so the installed runtime chooses its own default.
-Other options request F (legacy), J, K, L or M; availability depends on the DLL,
-and NVIDIA driver overrides may take precedence. Changing the selection restarts
-DLAA with fresh history and temporarily uses TAA. The selection is remembered
-as `DLAAPreset`; fresh installs and settings reset use DLL Default. Update both
-the addon and helper together, since their versioned protocol must match.
+**DLSS Preset** appears when DLAA is selected. **Default** lets NVIDIA choose;
+F (legacy), J, K, L and M request explicit presets, subject to runtime/driver
+support. A change releases only DLAA resources and resets its history. The
+presenter, FG and Reflex keep running. Motion vectors remain automatic.
 
-The optional helper is a hidden x64 process because Brotherhood is x86 and
-NVIDIA's runtime is x64. GPU images cross through shared textures, without CPU
-image readback. Installing the helper requests DX9Ex through ReShade at device
-creation; the HDR addon and DX12 presenter also request this. Standalone TAA
-without either helper does not request this change. The DLAA helper creates no window or swapchain and
-does not present frames. Keep its **64-bit** NVIDIA DLL inside the helper folder.
-
-DLAA preparation and NVIDIA reconstruction now run on **DX12**. A DX11 device
-only bridges the game's legacy DX9 shared textures; it does not evaluate DLAA
-or present. The DLAA helper and DX12 presenter remain separate processes, with
-one final presentation path. The order is:
+One hidden x64 process handles DLAA, FG, Reflex and presentation because the
+game is x86 and NVIDIA's runtime is x64. They share one DX12 device, direct
+queue, DX11 sharing bridge and Streamline initialization. Images stay on the
+GPU. The DX11 bridge only transports legacy DX9 textures; reconstruction and
+presentation use DX12. The two processing points remain:
 
 ```text
-DX9 scene/depth/motion -> DX12 DLAA -> DX9 RCAS/color grade/HUD
-  -> native SDR or RenoDX HDR output -> DX12 frame generation and presentation
+DX9 scene/depth/motion → unified helper: DX12 DLAA
+  → DX9 RCAS/color grading/HUD → native SDR or RenoDX HDR output
+  → same helper/device/queue: DX12 FG, Reflex and presentation
 ```
 
-Both effects use DX12 while retaining their correct insertion points. Moving
-DLAA to the final backbuffer would filter the HUD and change the color pipeline.
-Update the addon and DLAA helper together (DLAA protocol 3).
+DLAA runs before the game's LUT and HUD. FG consumes the completed scene and
+HUD information at presentation. Separate Streamline viewport tags prevent
+these different color/depth/motion lifetimes from overwriting each other.
+DX9Ex is requested when the unified helper is installed. Keep all x64 runtime
+DLLs in its `streamline/` directory, never beside the 32-bit game executable.
+The old `renodx-asscreedbrotherhood-dlaa` folder is no longer used and can be
+removed with the game closed. Update addon and helper together: presentation
+protocol 8 carries DLAA requests (payload version 4) on the same IPC channel.
 
 Without the DX12 presenter, standalone exclusive fullscreen supplies the missing
 fullscreen display-mode descriptor in ReShade's DX9-to-DX9Ex creation path;
@@ -210,7 +210,7 @@ diagnostics; they do not expose NVIDIA's internal history decisions.
 
 This addon does not upgrade game resources, unclamp lighting, replace the LUT,
 tone map or enable HDR. DX12 replaces presentation automatically when its helper
-is installed, including standalone SDR. Without that helper, AA retains native output. Its
+is installed, including standalone SDR. Without that helper, TAA retains native output; DLAA and FG are unavailable. Its
 floating-point textures are private temporal working buffers. Native SDR scene
 formats and sampling are preserved; with RenoDX it consumes the existing FP16
 scene before the HDR LUT replacement.
@@ -244,8 +244,8 @@ fetches the pinned official Streamline 2.14.1 SDK; pass
 The repository's vendored Streamline is unchanged. Put
 `build64-brotherhood-dx12/Release/renodx-asscreedbrotherhood-dx12.exe` inside a folder
 named `renodx-asscreedbrotherhood-dx12` beside the addon. It uses Windows' DX11/DX12
-runtime and needs no NVIDIA SDK DLLs for ordinary presentation. The DLAA helper
-remains separate.
+runtime and needs no NVIDIA SDK DLLs for ordinary presentation. DLAA, FG and
+Reflex use the signed Streamline runtime in this same helper directory.
 
 Check Output Status under Setup and Information. A disabled
 child window displays DX12 output while the game retains its input window.
@@ -271,7 +271,7 @@ it is not expected to improve performance by itself.
 Frame-generation depth, motion and HUD-less inputs are captured automatically
 when FG is selected. Developer input-dump details remain in implementation
 section 36; those controls are no longer exposed in the release menu.
-Update the addon and presenter together (presentation protocol 7).
+Update the addon and presenter together (presentation protocol 8).
 
 ### Experimental DLSS Frame Generation and Reflex
 
@@ -363,7 +363,7 @@ by the selected mode. These are throughput measurements, not measured monitor
 scanout or generated-frame timing. Stale samples disappear after a pause; the
 history clears on output restart. Native fallback and FG Off show equal rates.
 
-Replace the addon and presenter together: presentation protocol 7 removes the
+Replace the addon and presenter together: presentation protocol 8 also replaces the separate DLAA worker. It retains removal of the
 old display/VSync settings. Old `DX12Output`, `TAAMotionSource`, `ReflexDisplayFPS`,
 `DX12VSync` and `FGInputCapture` configuration entries are ignored. Existing AA,
 preset, FG, Reflex, cap and sharpening preferences remain intact.
@@ -388,65 +388,43 @@ are required. Shader headers are generated under
 `build32/asscreedbrotherhood-taa.include/embed/`. No GitHub snapshot/download URL is
 established by this extraction; publishing is a separate step.
 
-Build the optional helper separately using its game-local Release preset:
+Build the unified helper separately using its game-local Release preset:
 
 ```powershell
-& src/games/asscreedbrotherhood-taa/dlaa_helper/build.ps1
+& src/games/asscreedbrotherhood-taa/presentation_helper/build.ps1 -StreamlineSdkDirectory <Streamline-2.14.1-SDK>
+& src/games/asscreedbrotherhood-taa/presentation_helper/install-streamline.ps1 -SdkDirectory <Streamline-2.14.1-SDK>
 ```
 
-Output: `build64-brotherhood-dlaa/Release/`. Distribute the executable, NVIDIA
-runtime and license together in the directory shown above. The ordinary addon
-target remains x86; no global presets or CI workflows are changed. The helper
-uses the repository's existing `external/DLSS` SDK.
+Output: `build64-brotherhood-dx12/Release/`. The helper build no longer links
+the separate repository DLSS SDK; Streamline owns DLAA and FG together. Its
+installer checks NVIDIA production signatures and copies the matching eight
+runtime DLLs and licenses. Version 2.14.1 includes DLSS/DLSS-G 310.9.1.
 
 ## Packaging a release
 
-Build the x86 addon and x64 helper in Release, then copy these four files;
-do not archive the entire build or game directory:
+Build the addon and unified helper in Release. Stage real file contents:
 
-| Build output | Destination inside the release ZIP |
+| Build output | Destination inside the ZIP |
 | --- | --- |
-| `build32/Release/renodx-asscreedbrotherhood-taa.addon32` | `renodx-asscreedbrotherhood-taa.addon32` |
-| `build64-brotherhood-dlaa/Release/renodx-asscreedbrotherhood-dlaa.exe` | `renodx-asscreedbrotherhood-dlaa/renodx-asscreedbrotherhood-dlaa.exe` |
-| `build64-brotherhood-dlaa/Release/nvngx_dlss.dll` | `renodx-asscreedbrotherhood-dlaa/nvngx_dlss.dll` |
-| `build64-brotherhood-dlaa/Release/NVIDIA-DLSS-LICENSE.txt` | `renodx-asscreedbrotherhood-dlaa/NVIDIA-DLSS-LICENSE.txt` |
+| `build32/Release/renodx-asscreedbrotherhood-taa.addon32` | ZIP root |
+| `build64-brotherhood-dx12/Release/renodx-asscreedbrotherhood-dx12.exe` | `renodx-asscreedbrotherhood-dx12/` |
+| The eight DLLs and three license files installed under `build64-brotherhood-dx12/Release/streamline/` | `renodx-asscreedbrotherhood-dx12/streamline/` |
 
-Include installation instructions, the repository MIT license, the mod and RCAS
-copyright/license notices, and the source commit/build identification. Copy real
-file contents into a clean staging directory; development symlinks and junctions
-are not release files. Zip the **contents** of that directory so extracting into
-the game folder produces this layout directly:
+Include installation instructions, MIT and RCAS notices, source/build identity,
+and checksums. Do not archive the build directory: exclude logs, PDB/LIB/OBJ,
+test executables, captures, SDK files, ReShade and personal configuration.
+Do not package the obsolete DLAA executable or its old helper directory.
 
-```text
-ACBSP.exe                                      (already installed)
-renodx-asscreedbrotherhood-taa.addon32
-renodx-asscreedbrotherhood-dlaa/
-  renodx-asscreedbrotherhood-dlaa.exe
-  nvngx_dlss.dll
-  NVIDIA-DLSS-LICENSE.txt
-```
+Users close the game, install 32-bit ReShade with full addon support for DirectX
+9, and extract beside `ACBSP.exe`. Keep an existing working ReShade installation.
+Replace addon and unified helper together; remove duplicate renamed addons.
+The old `renodx-asscreedbrotherhood-dlaa` folder may be removed after updating.
+TAA defaults On; sharpening and Debug default Off. DLAA requires RTX and MSAA
+Off; FG requires supported NVIDIA hardware/runtime, TAA or DLAA and Debug Off.
+ReShade shader effects pause FG; the settings overlay can remain open.
 
-Installation instructions should tell users to close the game, install 32-bit
-ReShade with addon support for DirectX 9, and extract beside `ACBSP.exe`. An
-existing working ReShade installation can be kept. TAA and Object Motion start
-enabled; sharpening starts Off. DLAA additionally requires an RTX GPU, native
-MSAA Off and a restart after installing the helper. Select DLAA in the addon
-panel and check for green active status; DLL Default is the default preset.
-
-A TAA-only download can omit the helper directory. For HDR, users install the
-current Ezio Trilogy addon separately. Replace older TAA addon files instead of
-leaving duplicate renamed addons installed. For DLAA updates, replace the addon
-and helper together. Keep the x64 NVIDIA DLL inside its helper directory.
-
-For a build that includes frame generation, also package the matching
-`renodx-asscreedbrotherhood-dx12/renodx-asscreedbrotherhood-dx12.exe` and its
-complete signed `streamline/` runtime and licenses, installed by the script in
-the Frame Generation section. This additional directory enables standalone SDR
-and HDR presentation. Do not include logs, test executables or the SDK itself.
-
-Exclude game files, ReShade loader/configuration, DevKit, captures, shader dumps,
-logs, PDB/LIB/OBJ files and private settings from the mod ZIP. The compiled addon
-already embeds its shaders; users do not need HLSL files or the SDK/build tools.
+The current Ezio Trilogy HDR addon is optional and distributed separately.
+A TAA-only package may omit the helper, leaving native output and no DLAA/FG.
 
 ## Verification
 
