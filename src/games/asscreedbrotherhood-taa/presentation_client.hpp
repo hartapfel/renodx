@@ -23,7 +23,9 @@ struct Client {
   Handle mapping, request, reply, parent, fence_handle, job, process;
   Packet* packet = nullptr;
   uint64_t frame = 0;
+  uint64_t source_sequence = 0, pending_source = 0;
   bool in_flight = false;
+  bool dlaa_pending = false;
   bool failed = false;
   uint64_t begun_frame = 0;
   bool render_marked = false;
@@ -48,6 +50,8 @@ struct Client {
     source_device.Reset();
     encoder = {};
     in_flight = false;
+    dlaa_pending = false;
+    source_sequence = pending_source = 0;
   }
   void Wait(DWORD timeout, bool service_messages = true) {
     const HANDLE waits[] = {reply.value, process.value};
@@ -67,23 +71,49 @@ struct Client {
   }
   // Serialized with Present/Reflex on the same IPC channel and DX12 queue.
   // A DLAA feature failure leaves presentation alive; a transport failure does not.
-  void Dlaa(dlaa::Packet* inputs, bool release = false) {
+  // Submit CPU preparation before DX9 finishes its input draw. The helper
+  // queues a GPU wait and cannot read those textures until FinishDlaa signals.
+  void BeginDlaa(const dlaa::Packet& inputs, bool release = false) {
     if (!packet || failed || in_flight) throw Failure{Stage::protocol, ERROR_INVALID_STATE};
     try {
-      packet->dlaa = *inputs;
+      packet->dlaa = inputs;
       packet->command = release ? Command::dlaa_release : Command::dlaa_evaluate;
       packet->frame = frame + 1;
+      packet->source_ready = pending_source = release ? 0 : ++source_sequence;
+      dlaa_pending = true;
       in_flight = true;
-      MemoryBarrier(); SetEvent(request.value);
-      // AA never changes HWNDs. Do not dispatch a reset into the active DX9 draw.
-      Wait(10000, false);
-      if (packet->state != State::complete) throw Failure{Stage::protocol, ERROR_INVALID_DATA};
-      *inputs = packet->dlaa;
+      MemoryBarrier();
+      if (!SetEvent(request.value)) throw Failure{Stage::protocol, GetLastError()};
     } catch (...) {
       failed = true;
       Stop();
       throw;
     }
+  }
+  // Caller must have completed the native DX9 input event query. Acknowledge
+  // only after the helper finishes its final copy back into the DX9 texture.
+  void FinishDlaa(dlaa::Packet* inputs) {
+    if (!packet || failed || !in_flight || !dlaa_pending) throw Failure{Stage::protocol, ERROR_INVALID_STATE};
+    try {
+      if (pending_source) {
+        Check(context->Signal(source_fence.Get(), pending_source), Stage::sharing);
+        context->Flush();
+      }
+      // AA never changes HWNDs. Do not dispatch a reset into the active DX9 draw.
+      Wait(10000, false);
+      if (packet->state != State::complete) throw Failure{Stage::protocol, ERROR_INVALID_DATA};
+      *inputs = packet->dlaa;
+      dlaa_pending = false;
+      pending_source = 0;
+    } catch (...) {
+      failed = true;
+      Stop();
+      throw;
+    }
+  }
+  void Dlaa(dlaa::Packet* inputs, bool release = false) {
+    BeginDlaa(*inputs, release);
+    FinishDlaa(inputs);
   }
   void Start(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& source, HWND window,
              DXGI_COLOR_SPACE_TYPE color_space, const std::filesystem::path& executable, bool validation = false,
@@ -158,6 +188,7 @@ struct Client {
   }
   HRESULT Present(ID3D11Texture2D* source, UINT sync_interval, UINT flags, const frame_generation::Inputs* inputs = nullptr,
                   uint32_t pause_flags = 0) {
+    if (!packet || failed || in_flight) throw Failure{Stage::protocol, ERROR_INVALID_STATE};
     if (sync_interval > 4 || (flags & ~(DXGI_PRESENT_ALLOW_TEARING | DXGI_PRESENT_RESTART)))
       throw Failure{Stage::present, ERROR_NOT_SUPPORTED};
     packet->frame = ++frame; packet->sync_interval = sync_interval; packet->present_flags = flags;
@@ -179,7 +210,8 @@ struct Client {
       }
     }
     context->CopyResource(shared_texture.Get(), source);
-    Check(context->Signal(source_fence.Get(), frame), Stage::sharing);
+    packet->source_ready = ++source_sequence;
+    Check(context->Signal(source_fence.Get(), packet->source_ready), Stage::sharing);
     context->Flush();  // Publish the source copy and fence; no CPU readback/wait.
     packet->command = Command::present;
     in_flight = true;

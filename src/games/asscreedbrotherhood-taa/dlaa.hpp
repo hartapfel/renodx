@@ -95,7 +95,14 @@ struct State {
   void Stop() {
     const std::lock_guard lock(presentation::mutex);
     if (auto client = owner.lock(); client && !client->failed && client->packet) {
-      try { client->Dlaa(packet, true); } catch (...) {}
+      if (client->in_flight) {
+        // A failed native query may leave the helper waiting for inputs. Kill
+        // our worker before releasing textures it could otherwise still read.
+        client->failed = true;
+        client->Stop();
+      } else {
+        try { client->Dlaa(packet, true); } catch (...) {}
+      }
     }
     owner.reset(); ready = false;
   }
@@ -223,14 +230,10 @@ struct State {
         Check(device->SetPixelShaderConstantF(4, input_constants, 2), Stage::shader);
         Check(device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2), Stage::shader);
         Check(complete->Issue(D3DISSUE_END), Stage::gpu_wait);
-        const ULONGLONG deadline = GetTickCount64() + 2000;
-        for (;;) {
-          const HRESULT result = complete->GetData(nullptr, 0, D3DGETDATA_FLUSH);
-          Check(result, Stage::gpu_wait);
-          if (result == S_OK) break;
-          if (GetTickCount64() >= deadline) throw Failure{Stage::gpu_wait, WAIT_TIMEOUT};
-          SwitchToThread();
-        }
+        // Submit DX9 once. Repeated FLUSH polling adds driver work without
+        // changing the dependency; subsequent polls only check completion.
+        HRESULT completion = complete->GetData(nullptr, 0, D3DGETDATA_FLUSH);
+        Check(completion, Stage::gpu_wait);
         const ULONGLONG now = GetTickCount64();
         packet->frame = {frame, jitter[0], jitter[1], previous_time ? float(now - previous_time) : 16.666667f, reset ? 1u : 0u};
         std::memcpy(packet->current_camera, &camera.m[0][0], sizeof(packet->current_camera));
@@ -240,8 +243,17 @@ struct State {
           std::fill(std::begin(packet->clip_to_previous), std::end(packet->clip_to_previous), 0.f);
           for (unsigned i = 0; i < 4; ++i) packet->clip_to_previous[i * 5] = 1.f;
         }
-        try { client->Dlaa(packet); }
-        catch (const presentation::Failure& failure) { throw Failure{Stage::protocol, failure.code}; }
+        try {
+          client->BeginDlaa(*packet);
+          const ULONGLONG deadline = GetTickCount64() + 2000;
+          while (completion == S_FALSE) {
+            if (GetTickCount64() >= deadline) throw Failure{Stage::gpu_wait, WAIT_TIMEOUT};
+            SwitchToThread();
+            completion = complete->GetData(nullptr, 0, 0);
+            Check(completion, Stage::gpu_wait);
+          }
+          client->FinishDlaa(packet);
+        } catch (const presentation::Failure& failure) { throw Failure{Stage::protocol, failure.code}; }
         if (packet->state == WorkerState::failed) throw Failure{packet->stage, packet->error};
         if (packet->state != WorkerState::complete || packet->completed_id != frame)
           throw Failure{Stage::protocol, ERROR_INVALID_DATA};

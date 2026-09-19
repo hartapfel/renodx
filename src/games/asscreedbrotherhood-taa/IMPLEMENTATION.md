@@ -3393,3 +3393,163 @@ addon contains neither capture setting key nor the periodic telemetry string;
 the visible Debug View still defaults Off and remains available for diagnosing
 depth, motion and history. The engine's version checks, sample ownership and
 failure fallback remain active during normal play.
+
+## 52. Overlapped DLAA input handoff (2026-09-19)
+
+DLAA still runs before the native LUT/postprocessing, so DX9 needs its completed
+output in the same frame. Removing that return wait would allow unfinished or
+previous-frame textures into the game. These changes shorten the handoff while
+preserving that dependency and the existing one-command-at-a-time IPC contract:
+
+- `Client::BeginDlaa` sends immutable camera/resource metadata as soon as the
+  native input draw is submitted. The helper can prepare commands concurrently
+  with DX9 finishing the draw. Its DX11 input copies first queue a GPU wait on
+  the producer's shared source fence. They cannot read the inputs early.
+- After the DX9 event query completes, `FinishDlaa` signals that fence through
+  the producer's DX11 context. The existing GPU fences then order the DX11 input
+  copies, DX12 DLAA and final DX11 copy back into the native output texture. The
+  reply still requires the final output write to be complete.
+- Source readiness has its own monotonically increasing sequence, separate from
+  presentation frame IDs: DLAA and Present both use it within a single frame.
+  Presentation protocol **9** adds `source_ready`; the addon and helper must be
+  updated together. The nested DLAA protocol and temporal frame IDs are unchanged.
+- DLSS writes directly into the DX12 output texture shared with DX11. This removes
+  a private FP16 output allocation and a full-resolution DX12 `CopyResource`.
+  At 3840x2160 the removed texture is 63.28 MiB. The return transfer to the native
+  DX9 texture remains necessary. Input sanitization and DLSS presets are unchanged.
+- Native DLAA, FG capture and standalone presentation flush their DX9 event
+  query once, then poll without further flushes. Completion/error/timeout checks
+  are retained. They do not repeatedly ask the driver to submit the same work.
+- If the native input query fails after the request is sent, the addon terminates
+  its owned worker before releasing its shared textures. It never writes a
+  release command over the packet while the helper owns it.
+
+No extra frame queue, frame cap, spin thread or synchronous CPU texture readback
+is introduced. Ordinary Release diagnostics remain inactive. The engine jitter,
+motion classification and frame-generation presentation completion rules are
+unchanged. This does not parallelize the game's simulation or remove its CPU
+bottlenecks; the game still waits for DLAA before submitting later postprocessing.
+
+Verification: `brotherhood-dlaa-handoff-test` uses real DX9Ex shared render targets
+at 720p and 4K, changes color markers at history resets, checks returned pixels
+and frame IDs, deliberately requests evaluation before inputs are written, and
+cancels a pending producer before readiness. DX12 validation passes. The unified
+GPU fixture passes 297 DLAA evaluations and 198 active 3x-FG frames across SDR/HDR,
+resolution/helper restarts, preset changes, deliberate invalid-preset failure
+and feature release/recreation. Release x86 addon and x64 helper builds pass.
+
+In the isolated constant-color benchmark (OptiScaler temporarily disabled), the
+median DX9-input-through-return time changed from 0.953 to 0.922 ms at 720p and
+from 1.820 to 1.757 ms at 4K. These short synthetic measurements show a modest
+handoff reduction, **not** a measured gameplay FPS improvement. They exclude the
+game's draw submission, object-motion replay and final presentation. OptiScaler
+was restored afterward; live gameplay comparison is still required.
+
+The first live comparison after that change was approximately 150 FPS without
+AA, 108 with TAA and 90 with DLAA, at an unchanged CPU-heavy view with FG Off.
+These correspond to 6.67, 9.26 and 11.11 ms/frame. The 1.85 ms difference between
+TAA and DLAA is consistent with the synthetic handoff cost, but does not isolate
+every cause. There is no measured before/after gameplay speedup for this change.
+The helper confirmed native-resolution 4K HDR DLAA with no reported error.
+
+## 53. Reuse native animated-geometry upload buffers (2026-09-19)
+
+Windows CPU sampling of the live game showed driver work under
+`GeometryCache::Snapshot`. That path created and uploaded a separate native
+vertex buffer for each new immutable cloth pose. This was still happening after
+the earlier palette batching and static-building replay optimizations.
+
+`GeometryUploadPool` now leases exact-size dynamic, write-only DX9 vertex buffers.
+`GeometrySnapshot` returns its buffer only when the last snapshot owner releases
+the pose. Current and previous poses therefore retain separate buffers. Reused
+buffers are uploaded with `D3DLOCK_DISCARD`: the DX9 driver may rename their backing
+storage while earlier queued draws still consume the old version. No GPU query
+or CPU readback is added. CPU shadow bytes, pose identity, partial-upload validity,
+deformation matching, replay offsets and draw order are unchanged.
+
+The pool holds at most 64 free buffers / 4 MiB. FIFO replacement adapts to mesh
+sizes encountered in later scenes. Existing live-snapshot bounds remain intact;
+the extra cached capacity is bounded separately. Reset/device teardown releases
+the cache with `GeometryCache`. Buffers are not pooled across devices.
+
+The x86 GPU regression queues 64 distinct draws with immediate buffer reuse and
+no completion wait between them, then verifies every color marker. It also keeps
+three simultaneous immutable poses, checks cache bounds with mixed allocation
+sizes, and resets the device after releasing resources. All 64 uploads reuse
+buffers after the three initial allocations. The existing split-stream motion
+fixture still passes native/replay coverage, partial DISCARD/NOOVERWRITE data,
+cloth deformation, skin palettes, material alpha, 48 phases of both tree variants,
+state restoration and reset. The final x86 Release addon rebuild passes and is
+linked to Brotherhood. The matching helper also passes the delayed-input and
+pending-request cancellation checks at 720p and 4K; OptiScaler is restored after
+the isolated tests. Live gameplay with the rebuilt addon initializes DX12 DLAA
+without an error, and the user confirms stable clothing and motion. The reported
+current-scene rates are approximately 135 FPS without AA, 100 with TAA and 85 with
+DLAA (FG Off, manual cap 0). Relative to No AA, those are about 2.59 ms for TAA and
+4.36 ms for DLAA, versus 2.59 / 4.44 ms in the earlier comparison. The No-AA rate
+also changed, so these rough samples do not establish a gameplay speedup from
+the pool. Its verified benefit is fewer native resource creations; the remaining
+per-draw capture/validation, matching and motion replay still incur CPU work.
+
+Profiling note: the ordinary Release PDB did not identify all optimized addon
+functions correctly. A local relink of the exact object files with an LLD map
+resolved the sampled addresses. Its `.text` matched the live build byte-for-byte
+after masking PE base relocations. The trace and symbol map are local diagnostic
+artifacts; no debugger attachment or game-code modification was used.
+
+## 54. Modern-day camera acquisition and insertion-point audit (2026-09-19)
+
+Outside the Animus, the captured Desmond scene contained 811 draws and no
+`0x4B000956` vertex shader. Camera acquisition had been registered only for that
+material. Consequently TAA never obtained a valid camera/depth pair, DLAA could
+not evaluate, and FG received no usable scene inputs. The LUT and final scene
+composite were still present; moving the resolve later would not address this.
+
+The audit combined a live DevKit draw/resource capture with read-only Ghidra
+analysis of the previously captured code from the supported executable:
+
+- Scene geometry writes full-resolution FP16 color and R32_FLOAT depth. The LUT
+  draw at 805 uses VS `0x9CB80815` / PS `0x48DCE479`, scene color on s0, a volume
+  LUT on s1 and the same scene-depth texture still bound on s8. Its output feeds
+  the subsequent composite; the final scene copy is draw 810, VS `0x3E4AE466` /
+  PS `0xC9F2C59B`. Earlier copies using that pixel shader precede the LUT and
+  therefore cannot consume this frame's FG input-valid flag.
+- Ghidra's `FUN_01135f90` binds scene depth to texture stage 8. The postprocess
+  chain at `FUN_01146880` alternates the scene surfaces stored at +0x4254/+0x4258.
+  The LUT function `FUN_01166be0` binds scene color at s0 and its LUT at s1,
+  uploads 0.9375 and 0.03125 to pixel constants 0/1, and draws a fullscreen pass.
+  These are exactly 15/16 and 1/32 for the captured 16-entry LUT shader.
+  Function names here are addresses in the local Ghidra runtime-code project,
+  not symbols supplied by the game.
+- The projection/view setters at `FUN_01105a50` / `FUN_01105ad0` compose the
+  engine context's camera separately from material selection. Existing hooks
+  retain that camera and the exact command batch's jitter sample. See
+  [JITTER_AUDIT.md](JITTER_AUDIT.md) for executable checks and synchronization.
+
+Camera acquisition now accepts the compiler-declared WVP/world contract across
+rigid-material variants. It requires a full-target viewport, depth testing,
+matching scene-color/R32-depth dimensions, and a GPU WVP that agrees with the
+current engine camera and affine world transform. World position uses c8-c10;
+c11 is deliberately excluded because packed variants use it for other data.
+Without a supported engine hook, the same contract reconstructs a finite,
+invertible VP from the uploaded matrices. Unknown contracts fail closed.
+Two verified draws establish a camera; repeated draws with the same immutable
+engine projection stamp skip the extra matrix queries. New stamps are checked
+again, and scene/resource mismatches continue to reject temporal history.
+
+The insertion order remains scene geometry -> TAA/DLAA on the LUT's input ->
+native LUT/postprocessing -> final scene copy/HUD separation -> DX12 FG and
+presentation. Motion classification, static-building optimization and the
+shared-texture synchronization protocol are unchanged.
+
+The matrix regression passes engine/GPU agreement, packed c11 data, fallback,
+and invalid-camera rejection. A native DX9 GPU fixture removes the old anchor's
+hash with a harmless shader comment: the previous addon fails the jitter
+reference check; the corrected addon passes color/depth sample agreement,
+MSAA -> Off -> MSAA, ResetEx, buffered/UP draws and secondary-swapchain handling
+in both HDR and standalone SDR. Release compilation passes. The user confirmed
+working DLAA/FG and a stable image in the previously failing modern-day scene.
+Read-only inspection of the live helper confirmed 3840x2160 HDR, DX12 DLAA with
+advancing completion IDs, active 2x FG, accepted depth/motion/HUD-less/UI-alpha
+inputs, and zero reported DLAA/FG errors. This retest did not include a round
+trip through the Animus or every modern-day/cutscene variant.

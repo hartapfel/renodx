@@ -92,12 +92,13 @@ inline bool TryPresent(IDirect3DDevice9* device, IDirect3DSwapChain9* swapchain,
     Check(device->StretchRect(backbuffer.Get(), nullptr, output->surface.Get(), nullptr, D3DTEXF_NONE), Stage::copy);
     Check(output->complete->Issue(D3DISSUE_END), Stage::gpu_wait);
     const auto deadline = GetTickCount64() + 2000;
+    HRESULT ready = output->complete->GetData(nullptr, 0, D3DGETDATA_FLUSH);
     for (;;) {
-      const HRESULT ready = output->complete->GetData(nullptr, 0, D3DGETDATA_FLUSH);
       if (ready == S_OK) break;
       Check(ready, Stage::gpu_wait);
       if (GetTickCount64() > deadline) throw Failure{Stage::gpu_wait, WAIT_TIMEOUT};
       SwitchToThread();
+      ready = output->complete->GetData(nullptr, 0, 0);
     }
     D3D11_TEXTURE2D_DESC source{}; output->source->GetDesc(&source);
     if (!PresentFrame(session, output->bridge.Get(), output->source.Get(), source, output->window,

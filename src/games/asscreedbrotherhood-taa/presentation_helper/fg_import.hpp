@@ -15,7 +15,7 @@ struct ImportedImage {
   uint64_t handle = 0;
   UINT width = 0, height = 0, pixel_bytes = 0;
   void Open(ID3D11Device5* device11, ID3D12Device* device12, uint64_t legacy,
-            UINT w, UINT h, DXGI_FORMAT format, bool validation) {
+            UINT w, UINT h, DXGI_FORMAT format, bool validation, bool unordered_access = false) {
     using presentation::Check;
     using presentation::Stage;
     Check(device11->OpenSharedResource(reinterpret_cast<HANDLE>(uintptr_t(legacy)), IID_PPV_ARGS(&source)), Stage::sharing);
@@ -30,6 +30,7 @@ struct ImportedImage {
     desc.Width = w; desc.Height = h; desc.DepthOrArraySize = desc.MipLevels = 1;
     desc.Format = format; desc.SampleDesc.Count = 1;
     desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    if (unordered_access) desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     Check(device12->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_SHARED, &desc, D3D12_RESOURCE_STATE_COMMON,
                                             nullptr, IID_PPV_ARGS(&texture)), Stage::sharing);
     dlaa::Handle shared;

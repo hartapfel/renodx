@@ -87,7 +87,7 @@ struct Dlaa {
   uint64_t generation = 0, last_frame = 0;
   uint32_t width = 0, height = 0, preset = 0;
   std::array<frame_generation::ImportedImage, 4> shared;
-  ComPtr<ID3D12Resource> color, motion, responsive, output;
+  ComPtr<ID3D12Resource> color, motion, responsive;
   ComPtr<ID3D12RootSignature> root;
   ComPtr<ID3D12PipelineState> prepare;
   ComPtr<ID3D12DescriptorHeap> descriptors;
@@ -136,7 +136,7 @@ struct Dlaa {
     for (unsigned i = 0; i < shared.size(); ++i) {
       try {
         shared[i].Open(bridge, gpu.device.Get(), handles[i], width, height,
-                       i == 2 ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_R16G16B16A16_FLOAT, false);
+                       i == 2 ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_R16G16B16A16_FLOAT, false, i == 3);
       } catch (const acbrotherhood::presentation::Failure& failure) {
         throw Failure{Stage::shared_textures, failure.code};
       }
@@ -144,7 +144,6 @@ struct Dlaa {
     color = WorkingTexture(gpu.device.Get(), width, height, DXGI_FORMAT_R16G16B16A16_FLOAT);
     motion = WorkingTexture(gpu.device.Get(), width, height, DXGI_FORMAT_R16G16_FLOAT);
     responsive = WorkingTexture(gpu.device.Get(), width, height, DXGI_FORMAT_R8_UNORM);
-    output = WorkingTexture(gpu.device.Get(), width, height, DXGI_FORMAT_R16G16B16A16_FLOAT);
     const D3D12_DESCRIPTOR_RANGE ranges[] = {{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0},
                                              {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0, 0, 2}};
     D3D12_ROOT_PARAMETER root_parameter{};
@@ -191,7 +190,7 @@ struct Dlaa {
     gpu.Submit();
     gpu.Wait();
   }
-  void Evaluate(Packet* packet) {
+  void Evaluate(Packet* packet, ID3D11Fence* source_fence, uint64_t source_ready) {
     const Frame frame = packet->frame;
     if (frame.id <= last_frame || !std::isfinite(frame.jitter_x) || !std::isfinite(frame.jitter_y)
         || std::abs(frame.jitter_x) > .5f || std::abs(frame.jitter_y) > .5f || !std::isfinite(frame.time_ms)
@@ -207,8 +206,11 @@ struct Dlaa {
     sl::Constants constants{};
     if (!frame_generation::CameraConstants(camera, &constants)) throw Failure{Stage::evaluate, ERROR_INVALID_DATA};
     CheckSl(streamline->set_constants(constants, *streamline->token, viewport), Stage::evaluate);
-    // DX9 completed its input writes before requesting this frame. Copy legacy
-    // shared images into DX12-compatible resources, then hand off via a fence.
+    // The CPU can prepare/submit this work while DX9 is finishing its inputs.
+    // The producer signals only after its native event query completes. Keep
+    // the dependency on GPU queues instead of serializing both CPU threads.
+    if (!source_ready) throw Failure{Stage::protocol, ERROR_INVALID_DATA};
+    Check(copies->Wait(source_fence, source_ready), Stage::gpu_wait);
     for (unsigned i = 0; i < 3; ++i) copies->CopyResource(shared[i].bridge.Get(), shared[i].source.Get());
     Check(copies->Signal(gpu.fence11.Get(), ++gpu.sequence), Stage::gpu_wait);
     copies->Flush();
@@ -224,13 +226,14 @@ struct Dlaa {
     gpu.commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
     for (auto* resource : {color.Get(), motion.Get(), responsive.Get()})
       gpu.Barrier(resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    gpu.Barrier(shared[3].texture.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     sl::Extent extent{0, 0, width, height};
     sl::Resource input_color{sl::ResourceType::eTex2d, color.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
     sl::Resource input_motion{sl::ResourceType::eTex2d, motion.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
     sl::Resource input_depth{sl::ResourceType::eTex2d, shared[2].texture.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
     sl::Resource input_bias{sl::ResourceType::eTex2d, responsive.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
-    sl::Resource output_color{sl::ResourceType::eTex2d, output.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS};
+    sl::Resource output_color{sl::ResourceType::eTex2d, shared[3].texture.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS};
     const sl::ResourceTag tags[] = {
         {&input_color, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eOnlyValidNow, &extent},
         {&output_color, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eOnlyValidNow, &extent},
@@ -244,11 +247,9 @@ struct Dlaa {
       gpu.Barrier(resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     for (unsigned i = 0; i < 3; ++i)
       gpu.Barrier(shared[i].texture.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
-    gpu.Barrier(output.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    gpu.Barrier(shared[3].texture.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
-    gpu.commands->CopyResource(shared[3].texture.Get(), output.Get());
-    gpu.Barrier(shared[3].texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
-    gpu.Barrier(output.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    // DLSS writes the shareable output directly. No private FP16 output or
+    // full-screen DX12 copy is needed before the DX11 -> DX9 return transfer.
+    gpu.Barrier(shared[3].texture.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
     gpu.Submit();
     Check(copies->Wait(gpu.fence11.Get(), gpu.sequence), Stage::gpu_wait);
     copies->CopyResource(shared[3].source.Get(), shared[3].bridge.Get());

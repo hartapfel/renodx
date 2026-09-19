@@ -48,6 +48,13 @@ target_include_directories(brotherhood-unified-gpu-test PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../../../../build32/asscreedbrotherhood-taa.include"
   "${CMAKE_CURRENT_SOURCE_DIR}/../../../../external/reshade")
 target_link_libraries(brotherhood-unified-gpu-test PRIVATE d3d11 d3d9 dxgi user32)
+add_executable(brotherhood-dlaa-handoff-test EXCLUDE_FROM_ALL tests/dlaa_handoff.cpp)
+target_compile_features(brotherhood-dlaa-handoff-test PRIVATE cxx_std_20)
+target_compile_options(brotherhood-dlaa-handoff-test PRIVATE /UNDEBUG)
+target_include_directories(brotherhood-dlaa-handoff-test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../../build32/asscreedbrotherhood-taa.include"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../../external/reshade")
+target_link_libraries(brotherhood-dlaa-handoff-test PRIVATE d3d11 d3d9 dxgi user32)
 add_executable(brotherhood-overlay-input-test EXCLUDE_FROM_ALL tests/overlay_input.cpp)
 target_compile_features(brotherhood-overlay-input-test PRIVATE cxx_std_20)
 target_compile_options(brotherhood-overlay-input-test PRIVATE /UNDEBUG)

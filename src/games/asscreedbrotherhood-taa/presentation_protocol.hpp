@@ -7,7 +7,7 @@
 #include "./dlaa_protocol.hpp"
 
 namespace acbrotherhood::presentation {
-constexpr uint32_t kMagic = 0x32315844, kProtocol = 8;
+constexpr uint32_t kMagic = 0x32315844, kProtocol = 9;
 enum class State : int32_t { starting, ready, complete, failed };
 enum class Command : uint32_t { present, stop, begin_frame, render_begin, dlaa_evaluate, dlaa_release };
 enum class Stage : uint32_t { none, protocol, adapter, device, sharing, window, swapchain, copy, gpu_wait, present };
@@ -37,8 +37,11 @@ struct alignas(8) Packet {
   PacingSettings pacing;
   PacingState pacing_state;
   dlaa::Packet dlaa;
+  // GPU readiness uses a separate monotonically increasing timeline: DLAA
+  // and Present can both consume producer textures during the same game frame.
+  uint64_t source_ready = 0;
 };
-static_assert(sizeof(Packet) == 728 && offsetof(Packet, frame) == 48 && offsetof(Packet, output_window) == 88);
+static_assert(sizeof(Packet) == 736 && offsetof(Packet, frame) == 48 && offsetof(Packet, output_window) == 88);
 struct Failure { Stage stage; uint32_t code; };
 inline void Check(long result, Stage stage) {
   if (result < 0) throw Failure{stage, uint32_t(result)};
