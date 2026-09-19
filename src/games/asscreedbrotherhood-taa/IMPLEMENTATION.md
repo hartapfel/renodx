@@ -11,9 +11,10 @@ Brotherhood-specific implementation, not a general solution for every DX9 game.
 | --- | --- |
 | `addon.cpp` | Registration, independent settings and lifecycle entry point |
 | `native_taa.hpp` | ReShade events, camera/draw capture, jitter, scene hook, frame/reset lifecycle |
+| `engine_camera.hpp` | Version-checked engine projection hook, prepared-view samples, worker context and command-packet handoff; see section 50 |
 | `native_draw.hpp` | Indexed-draw ranges and reset-safe immediate uploads |
 | `taa_camera.hpp` | Matrix conventions, double-precision inverse/multiply and camera agreement |
-| `taa_jitter.hpp` | Eight Halton samples and safe SM3 constant-table recognition |
+| `taa_jitter.hpp` | Scene-latched Halton samples and safe SM3 constant-table recognition |
 | `taa_geometry.hpp` | Sparse CPU upload cache and immutable changing-vertex snapshots |
 | `taa_motion.hpp` | Audited shader profiles, opacity parsing, pose identity/matching and native replay |
 | `taa_motion_vs.vs_3_0.hlsl` | Rigid/packed positions and two-oscillator wind |
@@ -123,7 +124,14 @@ out-of-bounds motion even when that motion cannot safely sample history.
 
 ## 4. Jitter and frame sequencing
 
-Eight samples use Halton bases 2 and 3, index `frame % 8 + 1`, minus 0.5 pixels.
+See [the projection jitter audit](JITTER_AUDIT.md) for the Ghidra CPU matrix
+path, transpose convention, early/late projection equivalence test, and the
+unverified requirements for moving jitter into the engine's camera cache.
+
+Eight samples use Halton bases 2 and 3, index `phase % 8 + 1`, minus 0.5 pixels.
+The sample phase advances only after a valid jittered scene, independently of
+the presentation counter. MSAA uses half of this temporal footprint in both its
+depth prepass and color pass.
 To offset clip position by a subpixel amount, update the projection rows:
 
 ```text
@@ -140,17 +148,31 @@ The current color sample is taken at `outputUV + jitter / renderSize`.
 Do not infer projection constants from arbitrary instructions. `HasProjection`
 parses bounded SM3 CTAB records and requires compiler-authored `g_WorldViewProj`
 at float c0–c3. It rejects truncated bytecode, missing/stripped contracts and
-local DEF instructions overwriting those rows. 264/277 dumped vertex shaders
-passed that contract. A bounded 512-shader cache retains shader references.
+local DEF instructions overwriting those rows. The initial dump had 264/277
+matching shaders; the expanded 2026-09-19 dump has 268 matching contracts.
+A bounded 512-shader cache retains shader references.
 This is broader than the 19 audited motion profiles; it does not prove that
 every particle or transparency path is temporally correct.
 
-Jitter requires Experimental mode, a preceding valid frame, matching main depth
-and viewport, depth enabled, and non-UP geometry. Preview modes do not jitter.
-First frames and invalid histories seed without blending. Present advances the
-frame, swaps current/previous object lists and selects the next jitter. Mode
-changes reset temporal resources and validity. Camera gaps over 250 ms, size
-changes, or projected cut probes displaced by over 1.5 NDC invalidate history.
+Jitter requires the temporal scene mode, a preceding valid frame and matching
+main scene color/depth, sample count and viewport. The existing native UP wrapper
+supplies real buffers, so its eligible immediate geometry receives the same
+jitter. Depth-disabled draws additionally need a proven c8 world contract and
+WVP/world agreement with at least two current camera anchors; unknown-camera
+effects remain excluded. Depth preview does not jitter.
+
+The first eligible draw latches a `JitterFrame`, including whether that scene
+can jitter at all. The selected offset is immutable for the scene. A resource
+change after jitter has been used invalidates temporal input, as does a failed
+constant update/restore. The scene resolve forwards the actual sample to TAA,
+DLAA, motion replay and FG instead of recomputing one from the Present count.
+
+Only the primary swapchain's Present retires the scene and swaps object history;
+secondary presentation/destruction cannot reset it. Empty and warm-up frames do
+not consume a sample. First frames and invalid histories seed without blending.
+Mode/backend changes and native reset clear temporal resources and sample state.
+Camera gaps over 250 ms, size changes, or projected cut probes displaced by over
+1.5 NDC invalidate history. See section 49 for verification and coverage limits.
 
 ## 5. Resolve, precision and color transport
 
@@ -3250,3 +3272,124 @@ passes 297 DLAA evaluations and 198 active 3x FG frames across SDR/HDR and reset
 The live log reaches OptiScaler's menu-opening branch after Insert, while the
 presenter continues reporting active 3x FG without an error. The user confirms
 that the OptiScaler overlay now works correctly in gameplay.
+
+## 48. Missing helper after Windows Defender quarantine (2026-09-19)
+
+Repeated startup failures reported protocol-stage error 2. Windows Defender's
+Operational log records quarantine of the helper at 10:46 under
+`Trojan:Script/Wacatac.C!ml`; the game-folder junction still existed but its
+executable was missing. This explains the file-not-found failures and stale helper
+log. It does not establish whether Defender's detection was a false positive.
+
+The subsequently restored executable matched the 402d9207 release manifest
+(SHA-256 `7b7dc777cbff3eb529fbb46addb99ee7a451d89ff32c526390dc7acb178b54a8`).
+A custom Defender scan left it in place without a new recorded detection. The
+next live run resumed 4K HDR10 output, DLAA and 3x FG without a helper error.
+No antivirus exclusion or protection-setting change was made by this workflow.
+
+Output status now distinguishes missing files/directories, explicit antivirus
+blocking/removal and access denial from generic DX12 failures, directing users
+to installation and protection history. DLAA preserves the actual file-access
+error and explains missing-helper fallback. The addon does not automatically
+restore quarantined files or repeatedly relaunch a failed session.
+
+The diagnostic Release rebuild passes. The restored helper passes three fresh
+process starts spanning SDR/HDR, 297 DLAA evaluations and 198 active 3x FG frames
+with DX12 validation. Its checksum remains unchanged and Defender records no
+new detection during that test. This verifies current recovery, not immunity
+from future security detections.
+
+## 49. Projection jitter coverage and render synchronization (2026-09-19)
+
+The [Ghidra audit](JITTER_AUDIT.md) identifies the engine's projection/view/world
+cache and the transpose before shader upload. It also proves that the existing
+`J * (P * V * W)` operation produces projection jitter equivalent to inserting
+`J` at the projection stage. This update improves the render-time path; it does
+not install a detour into the engine's camera cache or change game code.
+
+Section 4 describes the new immutable scene sample and coverage gates. Native
+buffered UP geometry is no longer excluded categorically. Depth-disabled draws
+can qualify through an additional proven world/matching-camera contract. The
+main scene's jitter, depth prepass, motion inputs and resolve consume one sample,
+and unrelated swapchains cannot advance its sequence or destroy its history.
+The static-camera motion optimization remains enabled.
+
+Release x86 compilation and CPU regressions pass. Native DX9 GPU tests compare
+all eight phases against independently jittered reference triangles, including
+depth-disabled buffered/UP geometry and constant restoration. HDR tests pass at
+2x/4x/8x MSAA, with native reset and MSAA -> Off -> MSAA transitions. Standalone
+SDR passes at 8x with the same transitions. Presenting/destroying an additional
+swapchain during the scene preserves the expected phase in both HDR and SDR.
+
+With input diagnostics enabled, `jitterPhase` identifies the scene sample,
+`jitterInvalid` records rejected temporal input, `jitterImmediate` counts native
+UP draws covered, and `jitterDepthOff` counts accepted depth-disabled draws.
+`jitterRejected` counts depth-disabled draws whose camera contract was not proven;
+it is not a count of all excluded passes. The existing `unsupportedDraws` counter
+still covers eligible shaders without the audited projection contract.
+
+For gameplay verification, build target `asscreedbrotherhood-taa` in Release and
+load its linked `.addon32`. Compare TAA/DLAA on/off at stationary rooflines, then
+pan past scenery, characters and effects. Check MSAA Off and a supported MSAA
+level with TAA, including an in-game graphics reset; DLAA continues to require
+MSAA Off. Look for newly moving HUD, displaced effects, or persistent invalid
+camera pairs. Synthetic checks do not prove every visible pass is covered or
+that temporal artifacts and unrelated base-game stutters have been eliminated.
+
+The user subsequently confirmed that stationary and moving views look good with
+the rebuilt addon. Live 3840x2160 HDR diagnostics verified TAA and DX12 DLAA,
+with zero invalid jitter frames or camera conflicts across 43 periodic samples.
+The new immediate/depth-disabled coverage branches were not exercised in that
+view; their validation remains the independent GPU fixtures above. No debugger
+attachment was used for this follow-up.
+
+## 50. Engine projection hook and queued camera ownership (2026-09-19)
+
+The next implementation replaces draw-time jitter on the audited Brotherhood
+executable with an actual engine projection setter hook. Section 49 describes
+the earlier work and the fallback retained for unrecognized executable versions.
+The [complete audit](JITTER_AUDIT.md#engine-projection-hook-2026-09-19) records
+all seven RVAs, context offsets, projection equations, ownership rules and tests.
+
+The view-preparation hook assigns an immutable sample before camera setup.
+The projection setter receives a 16-byte-aligned jittered P, retaining the
+original camera P and unjittered VP. The engine composes VP/WVP and updates its
+own constant cache normally. Main-view selection requires the learned renderer,
+camera identity, audited source/caller and full scene viewport. Auxiliary views
+do not qualify solely because they use the same renderer.
+
+Worker context copies inherit the sample. Constant-packet stamps associate it
+with an exact command descriptor and payload; execution activates it immediately
+before the corresponding VS upload. Partial c0-c3 uploads retain the same
+camera. Queued older frames never borrow the next CPU frame's jitter. SRW-locked
+bounded maps and thread-local producer/consumer state avoid a global render-phase
+race; stamps are stored only for camera transitions.
+
+`native_taa.hpp` adopts the actual engine sample and removes its offset from
+captured camera/object matrices. It does not jitter again or restore unjittered
+constants after engine-owned draws. Epoch changes invalidate temporal history;
+mixed frame IDs/dimensions invalidate the input. The existing DLAA/FG helper,
+motion replay policy and optimized static-building path are preserved.
+
+Executable timestamp/image size/machine and instruction-prefix checks gate
+installation. Unknown code retains the draw-time path. The module is pinned for
+callback lifetime, so unloading/replacing it requires exiting the game. No
+on-disk game patch or debugger attachment is needed.
+
+Release compilation and the preserved x86 engine fixture pass. The new build
+also passes HDR/standalone SDR fallback GPU coverage/reset tests. Live 4K HDR
+checks cover DLAA, AA Off, TAA + 8x MSAA and return to DLAA/MSAA Off: all camera
+anchors, command batches and stamps matched across 68 sampled active scenes,
+with no invalid jitter frames or unjittered MSAA prepass draws. The user confirms
+stable motion, reset recovery and improved edge handling. Other executable
+versions and unrelated base-game stutters are outside that verification.
+
+## 51. Release diagnostics cleanup (2026-09-19)
+
+The confirmed engine hook runs without the temporary camera candidate dump.
+Detailed TAA input telemetry now requires developer capture mode, and the hidden
+capture/resolve settings are compiled only into non-Release builds. The Release
+addon contains neither capture setting key nor the periodic telemetry string;
+the visible Debug View still defaults Off and remains available for diagnosing
+depth, motion and history. The engine's version checks, sample ownership and
+failure fallback remain active during normal play.

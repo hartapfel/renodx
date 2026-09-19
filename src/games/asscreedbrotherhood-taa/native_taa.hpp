@@ -20,6 +20,7 @@
 #include "./taa_motion.hpp"
 #include "./native_draw.hpp"
 #include "./taa_performance.hpp"
+#include "./engine_camera.hpp"
 
 namespace acbrotherhood::taa {
 
@@ -55,6 +56,7 @@ struct __declspec(uuid("524af7c1-6944-46ca-875e-2acb70ec8f32")) DeviceData {
   struct ProjectionShader {
     ComPtr<IDirect3DVertexShader9> shader;
     bool supported = false;
+    bool has_world = false;
   };
   std::unordered_map<IDirect3DVertexShader9*, ProjectionShader> projection_shaders;
   ResolveResources resolve;
@@ -63,11 +65,22 @@ struct __declspec(uuid("524af7c1-6944-46ca-875e-2acb70ec8f32")) DeviceData {
   unsigned active_backend = 1;
   Matrix original_projection = {};
   std::array<float, 2> jitter = {}, previous_jitter = {};
+  JitterFrame jitter_frame;
   unsigned active_mode = 0;
   unsigned jitter_draws = 0, unsupported_draws = 0;
+  unsigned immediate_jitter_draws = 0, depth_disabled_jitter_draws = 0, rejected_jitter_draws = 0;
+  unsigned engine_camera_matches = 0;
+  engine_camera::Projection engine_projection;
+  uint64_t engine_batch = 0;
+  unsigned engine_slot = 0;
+  uintptr_t engine_renderer = 0;
+  uint64_t engine_sample_frame = 0;
+  unsigned engine_jitter_draws = 0;
+  unsigned engine_epoch = 0;
   bool jitter_applied = false;
   bool resolving = false;
   IDirect3DDevice9* draw_wrapper = nullptr;
+  uintptr_t primary_swapchain = 0;  // Identity only; never retain a reset-blocking reference.
   ULONGLONG scene_time = 0;
   MotionState object_motion;
   Performance performance;
@@ -94,6 +107,33 @@ struct __declspec(uuid("524af7c1-6944-46ca-875e-2acb70ec8f32")) DeviceData {
   };
   std::unordered_multimap<MotionMesh, DepthDraw, MotionMeshHash> msaa_depth_geometry;
 };
+
+// Adopt the sample carried by this command stream, never a mutable Present
+// counter from the worker that happened to generate the next frame.
+inline void AdoptEngineSample(DeviceData* data, unsigned width, unsigned height) {
+  const auto* projection = engine_camera::Current();
+  if (!projection || !projection->main_view) return;
+  const auto& frame = projection->frame;
+  if (data->engine_epoch != frame.configuration.epoch) {
+    data->previous_valid = false;
+    data->resolve.valid = false;
+    data->engine_epoch = frame.configuration.epoch;
+  }
+  if ((data->engine_sample_frame && data->engine_sample_frame != frame.id)
+      || frame.configuration.width != width || frame.configuration.height != height) {
+    data->jitter_frame.invalid = true;
+    return;
+  }
+  data->engine_sample_frame = frame.id;
+  data->jitter_frame.latched = true;
+  data->jitter_frame.active = data->jitter_frame.used = projection->modified;
+  data->jitter_frame.phase = frame.phase;
+  data->jitter_frame.width = width;
+  data->jitter_frame.height = height;
+  data->jitter_frame.samples = D3DMULTISAMPLE_TYPE(frame.configuration.samples);
+  data->jitter_frame.offset = projection->modified ? frame.jitter : std::array<float, 2>{};
+  data->jitter = data->jitter_frame.offset;
+}
 
 // Depth and material programs have different declarations/secondary streams,
 // but share their position/index range. Pair that range AND its clip transform.
@@ -453,7 +493,7 @@ inline constexpr auto CaptureObjectMotion = []<typename Context> requires ((Cont
   std::memcpy(&draw.clip, vertex_constants[0].data(), sizeof(Matrix));
   std::memcpy(&draw.world, vertex_constants[8].data(), sizeof(Matrix));
   draw.clip_plane = vertex_constants[18];
-  draw.unjittered_clip = data->jitter_applied ? data->original_projection : draw.clip;
+  draw.unjittered_clip = data->jitter_applied ? data->original_projection : engine_camera::Unjitter(draw.clip);
   if (pixel_properties.clip_semantic == -1) draw.clip_plane = {0.f, 0.f, 0.f, -1.f};
   for (const auto& row : draw.world.m) for (float component : row) if (!std::isfinite(component)) return {};
   for (const auto& row : draw.clip.m) for (float component : row) if (!std::isfinite(component)) return {};
@@ -525,19 +565,8 @@ inline constexpr auto CaptureObjectMotion = []<typename Context> requires ((Cont
         && SUCCEEDED(native->GetRenderState(D3DRS_ALPHABLENDENABLE, &blend)) && !blend;
     // Rigid positions use c8-c10, with an affine homogeneous row; c11 is not
     // consistently an affine row in the original vertex shaders.
-    for (unsigned row = 0; row < 4 && draw.camera_static_candidate; ++row) {
-      for (unsigned column = 0; column < 4; ++column) {
-        double expected = column == 3 ? data->camera.m[row][3] : 0.;
-        double magnitude = std::abs(expected);
-        for (unsigned i = 0; i < 3; ++i) {
-          const double term = double(data->camera.m[row][i]) * draw.world.m[i][column];
-          expected += term;
-          magnitude += std::abs(term);
-        }
-        if (std::abs(expected - draw.unjittered_clip.m[row][column]) > 2.e-5 * std::max(1., magnitude))
-          draw.camera_static_candidate = false;
-      }
-    }
+    draw.camera_static_candidate = draw.camera_static_candidate
+                                   && MatchesCameraProjection(draw.unjittered_clip, draw.world, data->camera);
     if (draw.camera_static_candidate) {
       const std::array<uintptr_t, 3> buffers = {draw.mesh.vertices, draw.mesh.secondary_vertices, draw.mesh.indices};
       for (size_t i = 0; i < buffers.size(); ++i) if (buffers[i]) {
@@ -555,10 +584,9 @@ inline constexpr auto CaptureObjectMotion = []<typename Context> requires ((Cont
 };
 
 inline constexpr auto ApplyJitter = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context> {
-  if (acbrotherhood::native_draw::immediate_draw_depth
-      || context.cmd_list->get_device()->get_api() != reshade::api::device_api::d3d9) return {};
+  if (context.cmd_list->get_device()->get_api() != reshade::api::device_api::d3d9) return {};
   auto* data = renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device());
-  if (!data || data->active_mode != 1 || data->resolving || data->scene_seen || !data->previous_valid
+  if (!data || data->active_mode != 1 || data->resolving || data->scene_seen || data->jitter_applied
       || !data->main_depth_surface || data->resolve.failed) return {};
   Performance::CpuScope timer(capture_enabled != 0.f ? &data->performance.cpu_ticks[Performance::JITTER] : nullptr);
   if (auto* up = renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device()); up && up->up_vertices) return {};
@@ -582,8 +610,9 @@ inline constexpr auto ApplyJitter = []<typename Context>(Context& context) -> re
       || color_desc.MultiSampleType != (depth_prepass ? D3DMULTISAMPLE_NONE : data->scene_samples)
       || FAILED(native->GetViewport(&viewport)) || viewport.X != 0 || viewport.Y != 0
       || viewport.Width != data->previous_width || viewport.Height != data->previous_height
-      || FAILED(native->GetRenderState(D3DRS_ZENABLE, &depth_enabled)) || !depth_enabled) return {};
-  // Native Draw*UP needs separate replay handling; leave those paths untouched.
+      || FAILED(native->GetRenderState(D3DRS_ZENABLE, &depth_enabled))) return {};
+  // Our UP wrapper has already supplied real buffers to this ordinary draw.
+  // It may be jittered using the same projection contract and pass identity.
   ComPtr<IDirect3DVertexBuffer9> vertices;
   UINT offset, stride;
   if (FAILED(native->GetStreamSource(0, &vertices, &offset, &stride)) || !vertices) return {};
@@ -596,26 +625,68 @@ inline constexpr auto ApplyJitter = []<typename Context>(Context& context) -> re
     std::vector<DWORD> code(size / sizeof(DWORD));
     if (FAILED(shader->GetFunction(code.data(), &size))) return {};
     if (data->projection_shaders.size() >= 512) data->projection_shaders.clear();
-    found = data->projection_shaders.emplace(shader.Get(), DeviceData::ProjectionShader{shader, HasProjection(code)}).first;
+    DeviceData::ProjectionShader projection{shader};
+    projection.supported = HasProjection(code, &projection.has_world);
+    found = data->projection_shaders.emplace(shader.Get(), std::move(projection)).first;
   }
   if (!found->second.supported) {
     ++data->unsupported_draws;
     return {};
   }
   if (FAILED(native->GetVertexShaderConstantF(0, &data->original_projection.m[0][0], 4))) return {};
+  if (const auto* engine = engine_camera::Current(); engine && engine->frame.owned) {
+    // The engine has already composed Pj*V*W and queued those exact constants.
+    // Keep them resident: restoring unjittered values would desynchronize its
+    // changed-register cache. Only expose an unjittered copy to our capture.
+    if (!engine->main_view) return {};
+    AdoptEngineSample(data, viewport.Width, viewport.Height);
+    if (!engine->modified) return {};
+    data->original_projection = engine_camera::Unjitter(data->original_projection);
+    data->jitter_applied = true;
+    ++data->engine_jitter_draws;
+    if (depth_prepass) ++data->depth_jitter_draws;
+    else ++data->jitter_draws;
+    return {.post_callback = [](Context& context, const void*) {
+      renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device())->jitter_applied = false;
+    }};
+  }
+  if (!depth_enabled) {
+    Matrix world = {};
+    // Keep depth-disabled screen-space/unknown-camera draws untouched. The
+    // matching scene target alone is insufficient proof for a sky/effect draw.
+    if (depth_prepass || !found->second.has_world || data->camera_draws < 2 || data->conflicting_cameras
+        || FAILED(native->GetVertexShaderConstantF(8, &world.m[0][0], 3))
+        || !MatchesCameraProjection(data->original_projection, world, data->camera)) {
+      ++data->rejected_jitter_draws;
+      return {};
+    }
+  }
+  if (!data->jitter_frame.Latch(viewport.Width, viewport.Height, data->scene_samples, data->previous_valid)) return {};
+  data->jitter = data->jitter_frame.offset;
+  // c0-c3 contain WVP, not P alone. With the shader's column-vector convention,
+  // J * (P * V * W) == (J * P) * V * W: this is projection jitter, applied after
+  // composition. Preserve row3 in the offset so the pixel displacement is
+  // independent of depth. See JITTER_AUDIT.md for the native CPU transpose path.
   Matrix jittered = data->original_projection;
   for (unsigned column = 0; column < 4; ++column) {
     jittered.m[0][column] += 2.f * data->jitter[0] / viewport.Width * jittered.m[3][column];
     jittered.m[1][column] -= 2.f * data->jitter[1] / viewport.Height * jittered.m[3][column];
   }
-  if (FAILED(native->SetVertexShaderConstantF(0, &jittered.m[0][0], 4))) return {};
+  if (FAILED(native->SetVertexShaderConstantF(0, &jittered.m[0][0], 4))) {
+    data->jitter_frame.invalid = true;
+    return {};
+  }
+  data->jitter_frame.used = true;
   data->jitter_applied = true;
+  if (acbrotherhood::native_draw::immediate_draw_depth) ++data->immediate_jitter_draws;
+  if (!depth_enabled) ++data->depth_disabled_jitter_draws;
   if (depth_prepass) ++data->depth_jitter_draws;
   else ++data->jitter_draws;
   return {.post_callback = [](Context& context, const void*) {
     auto* data = renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device());
     Performance::CpuScope timer(capture_enabled != 0.f ? &data->performance.cpu_ticks[Performance::JITTER] : nullptr);
-    reinterpret_cast<IDirect3DDevice9*>(context.cmd_list->get_native())->SetVertexShaderConstantF(0, &data->original_projection.m[0][0], 4);
+    if (FAILED(reinterpret_cast<IDirect3DDevice9*>(context.cmd_list->get_native())->SetVertexShaderConstantF(0, &data->original_projection.m[0][0], 4)))
+      data->jitter_frame.invalid = true;
     data->jitter_applied = false;
   }};
 };
@@ -638,6 +709,8 @@ inline void OnDestroySwapchain(reshade::api::swapchain* swapchain, bool) {
   // Release every default-pool reference before native Reset, including when
   // no Present occurs between a material draw and a graphics settings change.
   if (auto* data = renodx::utils::data::Get<DeviceData>(swapchain->get_device())) {
+    if (data->primary_swapchain && data->primary_swapchain != swapchain->get_native()) return;
+    engine_camera::Configure({});
     const auto topology = data->topology;
     auto* wrapper = data->draw_wrapper;
     acbrotherhood::native_draw::ResetImmediate(wrapper);
@@ -694,7 +767,7 @@ inline constexpr auto CaptureMsaaDepth = []<typename Context> requires ((Context
       || FAILED(native->GetStreamSourceFreq(0, &frequency)) || frequency != 1
       || FAILED(native->GetVertexShaderConstantF(0, &draw.clip.m[0][0], 4))) return {};
   // Static omission compares physical transforms, not the temporal sample.
-  if (data->jitter_applied) draw.clip = data->original_projection;
+  draw.clip = data->jitter_applied ? data->original_projection : engine_camera::Unjitter(draw.clip);
   mesh.vertices = reinterpret_cast<uintptr_t>(draw.vertices.Get());
   if constexpr (Context::ArgumentType::COMMAND_TYPE == renodx::utils::command_action::COMMAND_TYPE_DRAW_INDEXED) {
     mesh.indexed = true;
@@ -758,7 +831,7 @@ inline constexpr auto CaptureCamera = []<typename Context>(Context& context) -> 
   Matrix world, world_view_projection, camera, inverse_camera;
   if (FAILED(native->GetVertexShaderConstantF(0, &world_view_projection.m[0][0], 4))
       || FAILED(native->GetVertexShaderConstantF(8, &world.m[0][0], 4))) return {};
-  if (data->jitter_applied) world_view_projection = data->original_projection;
+  world_view_projection = data->jitter_applied ? data->original_projection : engine_camera::Unjitter(world_view_projection);
   if (!MultiplyByInverse(world_view_projection, world, &camera) || !Invert(camera, &inverse_camera)) return {};
 
   if (data->camera_draws != 0 && (data->depth.Get() != depth_texture.Get() || !SameCamera(data->camera, camera))) {
@@ -766,10 +839,20 @@ inline constexpr auto CaptureCamera = []<typename Context>(Context& context) -> 
     return {};
   }
   data->camera = camera;
+  if (engine_camera::FindCamera(camera, &data->engine_projection)) {
+    ++data->engine_camera_matches;
+    data->engine_batch = engine_camera::consuming ? engine_camera::consuming->serial : 0;
+    data->engine_slot = engine_camera::consuming ? engine_camera::consuming->slot : 0;
+    if (engine_camera::consuming) data->engine_renderer = engine_camera::consuming->renderer;
+  }
+  AdoptEngineSample(data, color_desc.Width, color_desc.Height);
   data->depth = depth_texture;
   data->width = color_desc.Width;
   data->height = color_desc.Height;
   if (data->scene_samples != color_desc.MultiSampleType || (data->main_color_surface && data->main_color_surface != color)) {
+    // A target replacement after an earlier jittered draw is not a uniformly
+    // sampled scene, even if its dimensions happen to match the previous one.
+    if (data->jitter_frame.used) data->jitter_frame.invalid = true;
     data->previous_valid = false;
     data->resolve.valid = false;
     data->object_motion.current.clear();
@@ -819,6 +902,7 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
   // s8 is stale with respect to the LUT shader, but this capture proves it is
   // exactly the R32 MRT written by the verified material draws this frame.
   data->current_valid = data->camera_draws >= 2 && !data->conflicting_cameras
+                        && !data->jitter_frame.invalid
                         && (data->scene_samples == D3DMULTISAMPLE_NONE || data->msaa_depth_draws >= 2)
                         && (!(data->depth_jitter_draws || (data->scene_samples != D3DMULTISAMPLE_NONE && data->jitter_draws))
                             || (data->scene_samples != D3DMULTISAMPLE_NONE && data->depth_jitter_draws && data->jitter_draws
@@ -833,7 +917,7 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
                         && Invert(data->camera, &inverse_camera);
   // A new target may have bypassed ApplyJitter. Resolve and motion replay must
   // use the actual sample offset, including the unjittered warm-up frame.
-  if (!data->jitter_draws && !data->depth_jitter_draws) data->jitter = {};
+  data->jitter = data->jitter_frame.used ? data->jitter_frame.offset : std::array<float, 2>{};
   data->current_to_previous_clip = {};
   const ULONGLONG now = GetTickCount64();
   const bool pair_valid = data->current_valid && data->previous_valid && now - data->scene_time < 250
@@ -929,7 +1013,7 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
     data->resolve.valid = false;
   }
   if (capture_enabled != 0.f) ++data->performance.frames;
-  if (data->frame % 120 == 0) {
+  if (capture_enabled != 0.f && data->frame % 120 == 0) {
     std::ostringstream message;
     message << "Brotherhood TAA input capture: draws=" << data->camera_draws << " cameraConflict=" << data->conflicting_cameras
             << " current=" << data->current_valid << " consecutivePair=" << pair_valid
@@ -937,6 +1021,19 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
             << " msaa=" << unsigned(data->scene_samples) << " depthPrepass=" << data->msaa_depth_draws
             << " depthJitter=" << data->depth_jitter_draws << " depthUnjittered=" << data->msaa_depth_unjittered_draws
             << " unsupportedDraws=" << data->unsupported_draws << " resolve=" << data->resolve.valid
+            << " jitterPhase=" << data->jitter_frame.phase << " jitterInvalid=" << data->jitter_frame.invalid
+            << " jitterImmediate=" << data->immediate_jitter_draws << " jitterDepthOff=" << data->depth_disabled_jitter_draws
+            << " jitterRejected=" << data->rejected_jitter_draws
+            << " engineCameras=" << data->engine_camera_matches << " engineBatch=" << data->engine_batch
+            << " engineSlot=" << data->engine_slot << " engineCaller=" << std::hex << data->engine_projection.caller
+            << " engineContext=" << data->engine_projection.context << " engineSource=" << data->engine_projection.source
+            << " engineCamera=" << data->engine_projection.camera_object << std::dec
+            << " engineProjection=" << data->engine_projection.serial
+            << " engineFrame=" << data->engine_sample_frame << " engineJitter=" << data->engine_jitter_draws
+            << " engineModified=" << engine_camera::modified.load() << " engineStamps=" << engine_camera::tagged.load() << ',' << engine_camera::consumed.load()
+            << " engineViewport=" << data->engine_projection.viewport[0] << ',' << data->engine_projection.viewport[1]
+            << ',' << data->engine_projection.viewport[2] << ',' << data->engine_projection.viewport[3]
+            << " engineJobs=" << engine_camera::built.load() << ',' << engine_camera::executed.load() << ',' << engine_camera::setters.load()
             << " historyPair=" << continuous << " objectDraws=" << data->object_motion.current.size()
             << " rootMotion=" << data->object_motion.root_motion_draws
             << " cameraOnlyDraws=" << data->object_motion.camera_only_draws
@@ -991,6 +1088,16 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
   if (swapchain->get_device()->get_api() != reshade::api::device_api::d3d9) return;
   auto* data = renodx::utils::data::Get<DeviceData>(swapchain->get_device());
   if (!data) return;
+  ComPtr<IDirect3DSwapChain9> primary;
+  if (FAILED(reinterpret_cast<IDirect3DDevice9*>(swapchain->get_device()->get_native())->GetSwapChain(0, &primary))) return;
+  data->primary_swapchain = reinterpret_cast<uintptr_t>(primary.Get());
+  if (data->primary_swapchain != swapchain->get_native()) return;
+  if (!engine_camera::attempted) {
+    const bool hooked = engine_camera::Install();
+    reshade::log::message(reshade::log::level::info, hooked
+        ? "Brotherhood engine camera: projection and command hooks active."
+        : "Brotherhood engine camera: executable contract unavailable; keeping draw-time projection jitter.");
+  }
   mode = enabled == 0.f ? 0.f : debug_view == 1.f ? 2.f : 1.f;
   confidence_preview = enabled == 0.f ? 0.f : debug_view == 2.f ? 3.f
                         : debug_view == 3.f ? 1.f : debug_view == 4.f ? 2.f : 0.f;
@@ -1023,6 +1130,11 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
   data->object_motion.geometry->Retire();
   data->scene_seen = data->current_valid = data->conflicting_cameras = false;
   data->previous_jitter = data->jitter_draws != 0 ? data->jitter : std::array<float, 2>{};
+  data->jitter_frame.Complete(data->previous_valid);
+  data->immediate_jitter_draws = data->depth_disabled_jitter_draws = data->rejected_jitter_draws = 0;
+  data->engine_camera_matches = 0;
+  data->engine_sample_frame = 0;
+  data->engine_jitter_draws = 0;
   data->jitter_draws = data->unsupported_draws = 0;
   if (data->active_mode != unsigned(mode) || data->active_backend != unsigned(enabled)) {
     data->resolve = {};
@@ -1032,15 +1144,16 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
     data->previous_valid = false;
     data->active_mode = unsigned(mode);
     data->active_backend = unsigned(enabled);
+    data->jitter_frame = {};
   }
   if (!UseObjectMotion()) data->object_motion = {};
   ++data->frame;
-  data->jitter = data->active_mode == 1 && data->previous_valid && !data->resolve.failed
-                     ? Jitter(data->frame) : std::array<float, 2>{};
-  // MSAA already samples geometric coverage across the pixel. A half-sized
-  // temporal footprint adds eight shading phases without as much resampling
-  // blur on its resolved thin edges. Both passes consume this exact value.
-  if (data->scene_samples != D3DMULTISAMPLE_NONE) for (float& offset : data->jitter) offset *= 0.5f;
+  // The first verified draw latches the sample; auxiliary/empty presentations
+  // cannot select a new phase or alter the offset used by scene consumers.
+  data->jitter = {};
+  engine_camera::Configure({data->engine_renderer, data->engine_projection.camera_object,
+                            data->width, data->height, unsigned(data->scene_samples), 0,
+                            data->active_mode == 1 && !data->resolve.failed && data->engine_renderer != 0});
 }
 
 inline void OnSceneDrawn(reshade::api::command_list* cmd_list) {
