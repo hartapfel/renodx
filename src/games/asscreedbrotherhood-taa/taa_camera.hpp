@@ -105,6 +105,23 @@ inline Matrix Multiply(const Matrix& left, const Matrix& right) {
   return result;
 }
 
+// The rigid material families use c8-c10 for affine world position; c11 can
+// hold a normal/clip-plane row. Prefer the unjittered engine VP only when it
+// reproduces the GPU WVP. Without engine hooks, recover VP from the same
+// shader-authored matrix contract and require an invertible finite camera.
+inline bool RecoverSceneCamera(const Matrix& clip, Matrix world, const Matrix* engine, Matrix* result) {
+  world.m[3][0] = world.m[3][1] = world.m[3][2] = 0.f;
+  world.m[3][3] = 1.f;
+  Matrix camera, inverse;
+  if (engine) {
+    if (!MatchesCameraProjection(clip, world, *engine)) return false;
+    camera = *engine;
+  } else if (!MultiplyByInverse(clip, world, &camera)) return false;
+  if (!Invert(camera, &inverse)) return false;
+  *result = camera;
+  return true;
+}
+
 // Perspective camera center maps to (0,0,z,0), so inverse(VP)'s third
 // column gives its homogeneous world position. Subtract that center before
 // projecting the ray into the previous camera: sky has rotation/FOV motion,

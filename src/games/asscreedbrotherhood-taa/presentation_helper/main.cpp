@@ -208,7 +208,7 @@ void Run(Packet* packet, HANDLE request, HANDLE reply, HANDLE parent, HANDLE sou
                  << " device=" << device.Get() << " queue=" << queue.Get() << std::endl;
           }
           streamline.Begin(uint32_t(packet->frame), false); streamline.RenderBegin();
-          dlaa->Evaluate(&aa);
+          dlaa->Evaluate(&aa, source_fence.Get(), packet->source_ready);
         }
       } catch (const acbrotherhood::dlaa::Failure& failure) {
         dlaa.reset();
@@ -248,7 +248,8 @@ void Run(Packet* packet, HANDLE request, HANDLE reply, HANDLE parent, HANDLE sou
     }
     if (IsIconic(game_window) || GetAncestor(GetForegroundWindow(), GA_ROOT) != GetAncestor(game_window, GA_ROOT))
       packet->pause_flags |= acbrotherhood::frame_generation::window_inactive;
-    Check(context4->Wait(source_fence.Get(), frame), Stage::sharing);
+    if (!packet->source_ready) throw Failure{Stage::protocol, ERROR_INVALID_DATA};
+    Check(context4->Wait(source_fence.Get(), packet->source_ready), Stage::sharing);
     Check(context4->Wait(fence11.Get(), last_frame * 4), Stage::sharing);
     context4->CopyResource(input11.Get(), source.Get());
     packet->accepted_inputs = 0;

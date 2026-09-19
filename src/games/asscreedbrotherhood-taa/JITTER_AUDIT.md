@@ -188,8 +188,11 @@ exit; restart the game to replace/unload this build.
 
 ### Main-view selection and projection math
 
-The initial unmodified frames recover VP from known camera-anchor draws and
-match it against engine contexts. This learns the renderer and camera object.
+The initial unmodified frames validate VP against full-resolution scene draws
+whose compiler constant table declares WVP at c0-c3 and world at c8-c10. They
+match the actual uploaded WVP against the engine context's unjittered VP and
+affine world transform. This learns the renderer and camera object without
+depending on a particular material shader being visible.
 Modification then requires that renderer, the exact camera object, the audited
 camera projection source (`camera+0xe0`) and a viewport at `camera+0x84` equal to
 `{0,0,scene_width,scene_height}`. Observed projection call sites include

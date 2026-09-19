@@ -18,15 +18,72 @@
 
 namespace acbrotherhood::taa {
 
+// Recycle only snapshots whose CPU owners have released them. A DISCARD lock
+// lets DX9 retain any storage still read by queued GPU draws, without a query
+// wait or creating a new driver resource for every cloth upload.
+struct GeometryUploadPool {
+  struct Buffer {
+    Microsoft::WRL::ComPtr<IDirect3DVertexBuffer9> vertices;
+    UINT bytes = 0;
+  };
+  std::mutex mutex;
+  std::array<Buffer, 64> free;
+  size_t cached_bytes = 0;
+  size_t recycle_cursor = 0;
+  uint64_t created = 0, reused = 0;
+
+  HRESULT Acquire(IDirect3DDevice9* native, UINT bytes, Microsoft::WRL::ComPtr<IDirect3DVertexBuffer9>* vertices) {
+    {
+      const std::scoped_lock lock(mutex);
+      // Exact sizes preserve the existing live-snapshot memory accounting.
+      // Character meshes normally retain their vertex count between poses.
+      for (auto& buffer : free) if (buffer.vertices && buffer.bytes == bytes) {
+        *vertices = std::move(buffer.vertices);
+        buffer.bytes = 0;
+        cached_bytes -= bytes;
+        ++reused;
+        return S_OK;
+      }
+    }
+    const HRESULT result = native->CreateVertexBuffer(bytes, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
+                                                       0, D3DPOOL_DEFAULT, vertices->ReleaseAndGetAddressOf(), nullptr);
+    if (SUCCEEDED(result)) { const std::scoped_lock lock(mutex); ++created; }
+    return result;
+  }
+
+  void Recycle(Microsoft::WRL::ComPtr<IDirect3DVertexBuffer9>* vertices, UINT bytes) {
+    if (!*vertices || bytes > 4 * 1024 * 1024) return;
+    const std::scoped_lock lock(mutex);
+    // Replace older cached sizes as the scene changes; a full cache must not
+    // permanently retain the first scene's meshes and miss every later pose.
+    for (;;) {
+      auto& buffer = free[recycle_cursor];
+      recycle_cursor = (recycle_cursor + 1) % free.size();
+      cached_bytes -= buffer.bytes;
+      buffer = {};
+      if (cached_bytes + bytes <= 4 * 1024 * 1024) {
+        buffer.vertices = std::move(*vertices);
+        buffer.bytes = bytes;
+        cached_bytes += bytes;
+        return;
+      }
+    }
+  }
+};
+
 struct GeometrySnapshot {
   Microsoft::WRL::ComPtr<IDirect3DVertexBuffer9> vertices;
   // Retain exact bytes to recognize duplicate material submissions even when
   // the game uploads the same cloth pose again at another ring-buffer offset.
   std::vector<unsigned char> data;
   std::shared_ptr<std::atomic_size_t> allocation;
+  std::shared_ptr<GeometryUploadPool> pool;
   size_t bytes = 0;
   UINT offset = 0;
-  ~GeometrySnapshot() { if (allocation) allocation->fetch_sub(bytes); }
+  ~GeometrySnapshot() {
+    if (allocation) allocation->fetch_sub(bytes);
+    if (pool) pool->Recycle(std::addressof(vertices), UINT(bytes));
+  }
 };
 
 // Copy mutable vertices while the game still owns a valid CPU mapping. Never
@@ -50,6 +107,7 @@ struct GeometryCache {
   std::mutex mutex;
   std::unordered_map<uintptr_t, Buffer> buffers;
   std::shared_ptr<std::atomic_size_t> gpu_bytes = std::make_shared<std::atomic_size_t>(0);
+  std::shared_ptr<GeometryUploadPool> uploads = std::make_shared<GeometryUploadPool>();
   size_t cpu_bytes = 0;
   size_t upload_bytes = 0;
   uint64_t redirected_upload_bytes = 0, direct_capture_bytes = 0;
@@ -182,9 +240,9 @@ struct GeometryCache {
         || cpu_bytes + gpu_bytes->load() + size > 8 * 1024 * 1024) return {};
     auto snapshot = std::make_shared<GeometrySnapshot>();
     snapshot->data.resize(size);
-    if (FAILED(native->CreateVertexBuffer(size, D3DUSAGE_WRITEONLY, 0, D3DPOOL_DEFAULT, &snapshot->vertices, nullptr))) return {};
+    if (FAILED(uploads->Acquire(native, size, std::addressof(snapshot->vertices)))) return {};
     void* destination = nullptr;
-    if (FAILED(snapshot->vertices->Lock(0, 0, &destination, 0))) return {};
+    if (FAILED(snapshot->vertices->Lock(0, 0, &destination, D3DLOCK_DISCARD))) return {};
     for (UINT copied = 0; copied < size;) {
       const UINT source = offset + copied;
       const UINT count = std::min(size - copied, PAGE_SIZE - source % PAGE_SIZE);
@@ -195,6 +253,7 @@ struct GeometryCache {
     std::memcpy(destination, snapshot->data.data(), size);
     if (FAILED(snapshot->vertices->Unlock())) return {};
     snapshot->allocation = gpu_bytes;
+    snapshot->pool = uploads;
     snapshot->bytes = size;
     snapshot->offset = offset;
     gpu_bytes->fetch_add(snapshot->bytes);

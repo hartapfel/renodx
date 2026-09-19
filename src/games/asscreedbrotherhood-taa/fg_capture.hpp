@@ -254,8 +254,8 @@ struct Capture {
     ComPtr<IDirect3DDevice9> device;
     if (FAILED(textures[0]->GetDevice(&device)) || FAILED(complete->Issue(D3DISSUE_END))) return false;
     const ULONGLONG deadline = GetTickCount64() + 2000;
+    HRESULT result = complete->GetData(nullptr, 0, D3DGETDATA_FLUSH);
     for (;;) {
-      const HRESULT result = complete->GetData(nullptr, 0, D3DGETDATA_FLUSH);
       if (result == S_OK) {
         if (dump_requested.exchange(false)) {
           try { dump_status = Dump() ? 1 : -1; } catch (...) { dump_status = -1; }
@@ -267,6 +267,7 @@ struct Capture {
         return false;
       }
       SwitchToThread();
+      result = complete->GetData(nullptr, 0, 0);
     }
   }
 };

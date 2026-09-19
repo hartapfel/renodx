@@ -46,6 +46,7 @@ struct __declspec(uuid("524af7c1-6944-46ca-875e-2acb70ec8f32")) DeviceData {
   UINT width = 0, height = 0;
   UINT previous_width = 0, previous_height = 0;
   unsigned camera_draws = 0;
+  uint64_t captured_projection_serial = 0;
   unsigned frame = 0;
   bool conflicting_cameras = false;
   bool scene_seen = false;
@@ -107,6 +108,26 @@ struct __declspec(uuid("524af7c1-6944-46ca-875e-2acb70ec8f32")) DeviceData {
   };
   std::unordered_multimap<MotionMesh, DepthDraw, MotionMeshHash> msaa_depth_geometry;
 };
+
+// Cache the compiler-authored matrix contract once per native vertex shader.
+// Both jitter and camera acquisition need this evidence; a material hash is
+// not a reliable main-camera anchor across the modern-day and Animus scenes.
+inline const DeviceData::ProjectionShader* GetProjectionShader(DeviceData* data, IDirect3DDevice9* native) {
+  ComPtr<IDirect3DVertexShader9> shader;
+  if (FAILED(native->GetVertexShader(&shader)) || !shader) return nullptr;
+  auto found = data->projection_shaders.find(shader.Get());
+  if (found == data->projection_shaders.end()) {
+    UINT size = 0;
+    if (FAILED(shader->GetFunction(nullptr, &size)) || size == 0 || size % sizeof(DWORD)) return nullptr;
+    std::vector<DWORD> code(size / sizeof(DWORD));
+    if (FAILED(shader->GetFunction(code.data(), &size))) return nullptr;
+    if (data->projection_shaders.size() >= 512) data->projection_shaders.clear();
+    DeviceData::ProjectionShader projection{shader};
+    projection.supported = HasProjection(code, &projection.has_world);
+    found = data->projection_shaders.emplace(shader.Get(), std::move(projection)).first;
+  }
+  return &found->second;
+}
 
 // Adopt the sample carried by this command stream, never a mutable Present
 // counter from the worker that happened to generate the next frame.
@@ -616,20 +637,8 @@ inline constexpr auto ApplyJitter = []<typename Context>(Context& context) -> re
   ComPtr<IDirect3DVertexBuffer9> vertices;
   UINT offset, stride;
   if (FAILED(native->GetStreamSource(0, &vertices, &offset, &stride)) || !vertices) return {};
-  ComPtr<IDirect3DVertexShader9> shader;
-  if (FAILED(native->GetVertexShader(&shader)) || !shader) return {};
-  auto found = data->projection_shaders.find(shader.Get());
-  if (found == data->projection_shaders.end()) {
-    UINT size = 0;
-    if (FAILED(shader->GetFunction(nullptr, &size)) || size == 0 || size % sizeof(DWORD)) return {};
-    std::vector<DWORD> code(size / sizeof(DWORD));
-    if (FAILED(shader->GetFunction(code.data(), &size))) return {};
-    if (data->projection_shaders.size() >= 512) data->projection_shaders.clear();
-    DeviceData::ProjectionShader projection{shader};
-    projection.supported = HasProjection(code, &projection.has_world);
-    found = data->projection_shaders.emplace(shader.Get(), std::move(projection)).first;
-  }
-  if (!found->second.supported) {
+  const auto* projection = GetProjectionShader(data, native);
+  if (!projection || !projection->supported) {
     ++data->unsupported_draws;
     return {};
   }
@@ -654,7 +663,7 @@ inline constexpr auto ApplyJitter = []<typename Context>(Context& context) -> re
     Matrix world = {};
     // Keep depth-disabled screen-space/unknown-camera draws untouched. The
     // matching scene target alone is insufficient proof for a sky/effect draw.
-    if (depth_prepass || !found->second.has_world || data->camera_draws < 2 || data->conflicting_cameras
+    if (depth_prepass || !projection->has_world || data->camera_draws < 2 || data->conflicting_cameras
         || FAILED(native->GetVertexShaderConstantF(8, &world.m[0][0], 3))
         || !MatchesCameraProjection(data->original_projection, world, data->camera)) {
       ++data->rejected_jitter_draws;
@@ -804,7 +813,12 @@ inline bool OnClearDepth(reshade::api::command_list* cmd_list, reshade::api::res
 inline constexpr auto CaptureCamera = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context> {
   if ((capture_enabled == 0.f && mode == 0.f) || context.cmd_list->get_device()->get_api() != reshade::api::device_api::d3d9) return {};
   auto* data = renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device());
-  if (data == nullptr || data->scene_seen || data->conflicting_cameras) return {};
+  if (data == nullptr || data->resolving || data->scene_seen || data->conflicting_cameras) return {};
+  const auto* engine = engine_camera::Current();
+  // Two validated draws establish this exact immutable engine projection.
+  // A new camera stamp must be checked again, including transitions between
+  // modern-day and Animus cameras. Do not repeat matrix queries for every mesh.
+  if (engine && engine->serial && data->camera_draws >= 2 && data->captured_projection_serial == engine->serial) return {};
   Performance::CpuScope timer(capture_enabled != 0.f ? &data->performance.cpu_ticks[Performance::CAMERA] : nullptr);
   auto* native = reinterpret_cast<IDirect3DDevice9*>(context.cmd_list->get_native());
   Microsoft::WRL::ComPtr<IDirect3DSurface9> color, depth;
@@ -828,17 +842,32 @@ inline constexpr auto CaptureCamera = []<typename Context>(Context& context) -> 
   if (depth_desc.Format != D3DFMT_R32F || depth_desc.MultiSampleType != D3DMULTISAMPLE_NONE
       || color_desc.Width != depth_desc.Width || color_desc.Height != depth_desc.Height) return {};
 
-  Matrix world, world_view_projection, camera, inverse_camera;
+  const auto* projection = GetProjectionShader(data, native);
+  D3DVIEWPORT9 viewport;
+  DWORD depth_enabled = 0;
+  if (!projection || !projection->supported || !projection->has_world
+      || FAILED(native->GetViewport(&viewport)) || viewport.X || viewport.Y
+      || viewport.Width != color_desc.Width || viewport.Height != color_desc.Height
+      || FAILED(native->GetRenderState(D3DRS_ZENABLE, &depth_enabled)) || !depth_enabled) return {};
+  Matrix world = {}, world_view_projection, camera;
   if (FAILED(native->GetVertexShaderConstantF(0, &world_view_projection.m[0][0], 4))
-      || FAILED(native->GetVertexShaderConstantF(8, &world.m[0][0], 4))) return {};
+      || FAILED(native->GetVertexShaderConstantF(8, &world.m[0][0], 3))) return {};
   world_view_projection = data->jitter_applied ? data->original_projection : engine_camera::Unjitter(world_view_projection);
-  if (!MultiplyByInverse(world_view_projection, world, &camera) || !Invert(camera, &inverse_camera)) return {};
+  if (engine && engine->serial) {
+    // Ghidra: the engine composes transpose(V*P) at context+0x330 and records
+    // the camera+0xe0 projection with its viewport. Require the GPU's WVP to
+    // agree; merely having a recent camera or a full-sized target is not proof.
+    if (!engine->camera_object
+        || engine->viewport != std::array<float, 4>{0.f, 0.f, float(color_desc.Width), float(color_desc.Height)}) return {};
+  }
+  if (!RecoverSceneCamera(world_view_projection, world, engine && engine->serial ? &engine->camera : nullptr, &camera)) return {};
 
   if (data->camera_draws != 0 && (data->depth.Get() != depth_texture.Get() || !SameCamera(data->camera, camera))) {
     data->conflicting_cameras = true;
     return {};
   }
   data->camera = camera;
+  data->captured_projection_serial = engine ? engine->serial : 0;
   if (engine_camera::FindCamera(camera, &data->engine_projection)) {
     ++data->engine_camera_matches;
     data->engine_batch = engine_camera::consuming ? engine_camera::consuming->serial : 0;
@@ -1116,6 +1145,7 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
   }
   data->depth.Reset();
   data->camera_draws = 0;
+  data->captured_projection_serial = 0;
   data->msaa_depth_texture.Reset();
   data->msaa_depth_surface.Reset();
   data->msaa_depth_draws = 0;
@@ -1250,7 +1280,6 @@ inline void Use(DWORD reason) {
     renodx::utils::command_action::Register(CaptureUiAlpha, {.command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
     renodx::utils::command_action::Register(ApplyJitter, {.command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
     renodx::utils::command_action::Register(CaptureCamera, {
-        .shader_hash = 0x4B000956u,
         .command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
     renodx::utils::command_action::Register(CaptureMsaaDepth, {.shader_hash = 0x65A612BEu, .command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
     renodx::utils::command_action::Register(OnLut, {.shader_hash = 0x9CB80815u, .command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
