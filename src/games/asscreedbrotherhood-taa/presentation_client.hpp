@@ -3,6 +3,8 @@
 #include <d3d11_4.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>
+#include <memory>
+#include <mutex>
 #include "./helper_process.hpp"
 #include "./presentation_protocol.hpp"
 #include "./fg_encode.hpp"
@@ -10,6 +12,9 @@
 namespace acbrotherhood::presentation {
 using Microsoft::WRL::ComPtr;
 using dlaa::Handle;
+struct Client;
+inline std::recursive_mutex mutex;
+inline std::weak_ptr<Client> active_client;
 struct Client {
   ComPtr<ID3D11Device> source_device;
   ComPtr<ID3D11Texture2D> shared_texture;
@@ -19,6 +24,7 @@ struct Client {
   Packet* packet = nullptr;
   uint64_t frame = 0;
   bool in_flight = false;
+  bool failed = false;
   uint64_t begun_frame = 0;
   bool render_marked = false;
   uint32_t input_error = 0;
@@ -43,9 +49,10 @@ struct Client {
     encoder = {};
     in_flight = false;
   }
-  void Wait(DWORD timeout) {
+  void Wait(DWORD timeout, bool service_messages = true) {
     const HANDLE waits[] = {reply.value, process.value};
-    const DWORD result = helper::WaitForSignals(waits, timeout);
+    const DWORD result = service_messages ? helper::WaitForSignals(waits, timeout)
+                                         : WaitForMultipleObjects(2, waits, FALSE, timeout);
     if (result != WAIT_OBJECT_0) throw Failure{Stage::protocol, uint32_t(result == WAIT_TIMEOUT ? WAIT_TIMEOUT : ERROR_PROCESS_ABORTED)};
     MemoryBarrier();
     in_flight = false;
@@ -57,6 +64,26 @@ struct Client {
     // Allow a simultaneous multiplier change to finish its old schedule too.
     return 2000 + std::max(CalculatePacing(packet->pacing, 5, 5, 0).interval_us,
         packet->pacing_state.interval_us) * 6 / 1000;
+  }
+  // Serialized with Present/Reflex on the same IPC channel and DX12 queue.
+  // A DLAA feature failure leaves presentation alive; a transport failure does not.
+  void Dlaa(dlaa::Packet* inputs, bool release = false) {
+    if (!packet || failed || in_flight) throw Failure{Stage::protocol, ERROR_INVALID_STATE};
+    try {
+      packet->dlaa = *inputs;
+      packet->command = release ? Command::dlaa_release : Command::dlaa_evaluate;
+      packet->frame = frame + 1;
+      in_flight = true;
+      MemoryBarrier(); SetEvent(request.value);
+      // AA never changes HWNDs. Do not dispatch a reset into the active DX9 draw.
+      Wait(10000, false);
+      if (packet->state != State::complete) throw Failure{Stage::protocol, ERROR_INVALID_DATA};
+      *inputs = packet->dlaa;
+    } catch (...) {
+      failed = true;
+      Stop();
+      throw;
+    }
   }
   void Start(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& source, HWND window,
              DXGI_COLOR_SPACE_TYPE color_space, const std::filesystem::path& executable, bool validation = false,

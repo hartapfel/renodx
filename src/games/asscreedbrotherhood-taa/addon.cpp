@@ -51,7 +51,7 @@ renodx::utils::settings::Settings settings = {
         .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
         .label = "Anti-Aliasing",
         .section = "Anti-Aliasing",
-        .tooltip = "TAA supports native MSAA. DLAA requires an NVIDIA RTX GPU, the DLAA helper and MSAA Off; TAA is the fallback. Object motion is automatic for both methods. Off disables temporal AA and frame-generation inputs.",
+        .tooltip = "TAA supports native MSAA. DLAA requires an NVIDIA RTX GPU, the unified DX12 helper and MSAA Off; TAA is the fallback. Object motion is automatic for both methods. Off disables temporal AA and frame-generation inputs.",
         .on_draw = [] { return DrawChoice("TAAEnabled", "Anti-Aliasing"); },
     },
     new renodx::utils::settings::Setting{
@@ -271,7 +271,7 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "TAA supports native MSAA. DLAA requires an RTX GPU, the DLAA helper and MSAA Off.",
+        .label = "TAA supports native MSAA. DLAA requires an RTX GPU, the unified DX12 helper and MSAA Off.",
         .section = "Setup and Information",
     },
     new renodx::utils::settings::Setting{
@@ -350,8 +350,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
     std::wstring path(32768, L'\0');
     if (GetModuleFileNameW(module, path.data(), DWORD(path.size()))) {
       renodx::utils::device_upgrade::use_dx9ex_upgrade = GetFileAttributesW(
-          (std::filesystem::path(path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dlaa" / L"renodx-asscreedbrotherhood-dlaa.exe").c_str()) != INVALID_FILE_ATTRIBUTES
-          || GetFileAttributesW((std::filesystem::path(path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dx12" / L"renodx-asscreedbrotherhood-dx12.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
+          (std::filesystem::path(path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dx12" / L"renodx-asscreedbrotherhood-dx12.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
     }
     renodx::utils::settings::global_name = "asscreedbrotherhood-taa";
     renodx::utils::settings::use_presets = false;

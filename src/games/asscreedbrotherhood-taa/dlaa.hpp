@@ -14,12 +14,13 @@
 #include <embed/shaders.h>
 #include "./dlaa_protocol.hpp"
 #include "./dlaa_handles.hpp"
-#include "./helper_process.hpp"
+#include "./presentation_client.hpp"
 #include "./taa_camera.hpp"
 
 namespace acbrotherhood::dlaa {
 using Microsoft::WRL::ComPtr;
 inline HMODULE addon_module = nullptr;
+inline std::atomic<uint64_t> next_generation = 0;
 inline float render_preset = 0.f;  // Parsed NGX value; 0 leaves the DLL's choice untouched.
 enum class Status { idle, starting, active, msaa, diagnostic, failed };
 inline std::atomic<Status> status = Status::idle;
@@ -31,7 +32,7 @@ inline const char* StatusText() {
     case Status::msaa: return "Using TAA: turn native MSAA Off to use DLAA.";
     case Status::diagnostic: return "Using TAA for this diagnostic view.";
     case Status::failed: return "Using TAA: DLAA could not start or stopped. Check the helper installation, NVIDIA RTX driver and helper log. Select TAA, then DLAA to retry.";
-    default: return "DLAA requires an NVIDIA RTX GPU and the separate x64 helper folder beside the addon.";
+    default: return "DLAA requires an NVIDIA RTX GPU and the unified DX12 helper folder beside the addon.";
   }
 }
 struct Failure { Stage stage; uint32_t code; };
@@ -84,25 +85,16 @@ struct State {
   bool failed = false, ready = false;
   ULONGLONG started = 0, previous_time = 0;
   uint64_t previous_frame = 0;
-  Handle mapping, request, reply, parent, job, process;
-  Packet* packet = nullptr;
+  Packet storage;
+  Packet* packet = &storage;
+  std::weak_ptr<presentation::Client> owner;
   ~State() { Stop(); }
-  // Only this addon's child is terminated, and only after a failed/finished
-  // session. Kill-on-job-close also covers an unexpected game exit.
   void Stop() {
-    if (process.value) {
-      if (packet && ready) {
-        packet->command = Command::stop;
-        MemoryBarrier(); SetEvent(request.value);
-        WaitForSingleObject(process.value, 20);
-      }
-      job = Handle{};
-      WaitForSingleObject(process.value, 1000);
-      process = Handle{};
+    const std::lock_guard lock(presentation::mutex);
+    if (auto client = owner.lock(); client && !client->failed && client->packet) {
+      try { client->Dlaa(packet, true); } catch (...) {}
     }
-    if (packet) { UnmapViewOfFile(packet); packet = nullptr; }
-    mapping = Handle{}; request = Handle{}; reply = Handle{}; parent = Handle{};
-    ready = false;
+    owner.reset(); ready = false;
   }
   void Fail(Stage stage, uint32_t code) {
     // Never write a command into a packet still owned by an in-flight worker.
@@ -123,19 +115,10 @@ struct State {
     width = render_width; height = render_height;
     if (!width || !height || uint64_t(width) * height > 8388608)
       throw Failure{Stage::shared_textures, uint32_t(E_OUTOFMEMORY)};
-    const auto executable = directory / L"renodx-asscreedbrotherhood-dlaa.exe";
+    const auto executable = directory / L"renodx-asscreedbrotherhood-dx12.exe";
     if (GetFileAttributesW(executable.c_str()) == INVALID_FILE_ATTRIBUTES)
       throw Failure{Stage::protocol, ERROR_FILE_NOT_FOUND};
-    SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-    mapping = Handle(CreateFileMappingW(INVALID_HANDLE_VALUE, &security, PAGE_READWRITE, 0, sizeof(Packet), nullptr));
-    request = Handle(CreateEventW(&security, FALSE, FALSE, nullptr));
-    reply = Handle(CreateEventW(&security, FALSE, FALSE, nullptr));
-    if (!mapping.value || !request.value || !reply.value
-        || !DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(), &parent.value, SYNCHRONIZE, TRUE, 0))
-      throw Failure{Stage::protocol, GetLastError()};
-    packet = static_cast<Packet*>(MapViewOfFile(mapping.value, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Packet)));
-    if (!packet) throw Failure{Stage::protocol, GetLastError()};
-    new (packet) Packet{};
+    packet->generation = ++next_generation;
     packet->width = width; packet->height = height;
     packet->render_preset = preset;
     D3DDEVICE_CREATION_PARAMETERS creation{};
@@ -170,9 +153,6 @@ struct State {
     std::memcpy(mapped, quad, sizeof(quad));
     Check(vertices->Unlock(), Stage::device);
 
-    const HANDLE inherited[] = {mapping.value, request.value, reply.value, parent.value};
-    const DWORD launch_error = helper::Launch(executable, inherited, &job, &process);
-    if (launch_error) throw Failure{Stage::protocol, launch_error};
     started = GetTickCount64();
     status = Status::starting; error_code = 0; error_stage = 0;
   }
@@ -180,25 +160,26 @@ struct State {
   bool Resolve(IDirect3DDevice9* device, IDirect3DTexture9* scene, IDirect3DTexture9* depth,
                IDirect3DTexture9* object, const taa::Matrix& reprojection, const taa::Matrix& sky,
                const std::array<float, 2>& jitter, uint64_t frame, bool pair_valid,
-               bool preview, float sharpening) {
+               bool preview, float sharpening, const taa::Matrix& camera) {
     if (failed) return false;
     try {
-      if (!ready) {
-        const HANDLE waits[] = {reply.value, process.value};
-        const DWORD result = WaitForMultipleObjects(2, waits, FALSE, 0);
-        if (result == WAIT_TIMEOUT && GetTickCount64() - started < 30000) return false;
-        if (result != WAIT_OBJECT_0) throw Failure{Stage::protocol, result};
-        MemoryBarrier();
-        if (packet->state != WorkerState::ready) throw Failure{packet->stage, packet->error};
-        if (packet->backend != 12) throw Failure{Stage::protocol, ERROR_REVISION_MISMATCH};
-        ready = true;
+      const std::lock_guard lock(presentation::mutex);
+      const auto client = presentation::active_client.lock();
+      if (!client || client->failed || !client->packet
+          || client->packet->width != width || client->packet->height != height) {
+        ready = false; status = Status::starting;
+        if (GetTickCount64() - started > 30000) throw Failure{Stage::protocol, ERROR_NOT_READY};
+        return false;
       }
+      const bool new_session = owner.lock() != client;
+      owner = client;
+      started = GetTickCount64();
       D3DSURFACE_DESC desc{};
       DWORD srgb = FALSE;
       Check(scene->GetLevelDesc(0, &desc), Stage::device);
       Check(device->GetSamplerState(0, D3DSAMP_SRGBTEXTURE, &srgb), Stage::device);
       const bool linear = srgb && desc.Format != D3DFMT_A16B16G16R16F;
-      const bool reset = !pair_valid || !previous_frame || frame != previous_frame + 1
+      const bool reset = new_session || !pair_valid || !previous_frame || frame != previous_frame + 1
                          || source_format != desc.Format || original_srgb != srgb;
       unsigned display = 0;
       {
@@ -249,16 +230,19 @@ struct State {
         }
         const ULONGLONG now = GetTickCount64();
         packet->frame = {frame, jitter[0], jitter[1], previous_time ? float(now - previous_time) : 16.666667f, reset ? 1u : 0u};
-        packet->command = Command::evaluate;
-        MemoryBarrier();
-        if (!SetEvent(request.value)) throw Failure{Stage::protocol, GetLastError()};
-        const HANDLE waits[] = {reply.value, process.value};
-        const DWORD result = WaitForMultipleObjects(2, waits, FALSE, previous_frame ? 250 : 5000);
-        if (result != WAIT_OBJECT_0) throw Failure{Stage::evaluate, result};
-        MemoryBarrier();
+        std::memcpy(packet->current_camera, &camera.m[0][0], sizeof(packet->current_camera));
+        // Camera cut/warm-up uses identity reprojection, as history is reset.
+        if (pair_valid) std::memcpy(packet->clip_to_previous, &reprojection.m[0][0], sizeof(packet->clip_to_previous));
+        else {
+          std::fill(std::begin(packet->clip_to_previous), std::end(packet->clip_to_previous), 0.f);
+          for (unsigned i = 0; i < 4; ++i) packet->clip_to_previous[i * 5] = 1.f;
+        }
+        try { client->Dlaa(packet); }
+        catch (const presentation::Failure& failure) { throw Failure{Stage::protocol, failure.code}; }
         if (packet->state == WorkerState::failed) throw Failure{packet->stage, packet->error};
         if (packet->state != WorkerState::complete || packet->completed_id != frame)
           throw Failure{Stage::protocol, ERROR_INVALID_DATA};
+        ready = true;
         previous_time = now;
         // The helper has finished reading input color; reuse it as output
         // conversion scratch, then reuse helper output for optional RCAS.
@@ -303,7 +287,7 @@ struct State {
 inline bool Resolve(IDirect3DDevice9* device, std::unique_ptr<State>* state, IDirect3DTexture9* scene,
                      IDirect3DTexture9* depth, IDirect3DTexture9* object, const taa::Matrix& reprojection,
                      const taa::Matrix& sky, UINT width, UINT height, const std::array<float, 2>& jitter,
-                     uint64_t frame, bool pair_valid, bool preview, float sharpening) {
+                     uint64_t frame, bool pair_valid, bool preview, float sharpening, const taa::Matrix& camera) {
   if (*state && ((*state)->width != width || (*state)->height != height
                  || (*state)->preset != uint32_t(render_preset))) state->reset();
   if (!*state) {
@@ -311,10 +295,10 @@ inline bool Resolve(IDirect3DDevice9* device, std::unique_ptr<State>* state, IDi
     try {
       std::wstring module_path(32768, L'\0');
       if (!GetModuleFileNameW(addon_module, module_path.data(), DWORD(module_path.size()))) throw Failure{Stage::protocol, GetLastError()};
-      (*state)->Start(device, width, height, std::filesystem::path(module_path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dlaa");
+      (*state)->Start(device, width, height, std::filesystem::path(module_path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dx12");
     } catch (const Failure& error) { (*state)->Fail(error.stage, error.code); }
       catch (...) { (*state)->Fail(Stage::protocol, E_OUTOFMEMORY); }
   }
-  return (*state)->Resolve(device, scene, depth, object, reprojection, sky, jitter, frame, pair_valid, preview, sharpening);
+  return (*state)->Resolve(device, scene, depth, object, reprojection, sky, jitter, frame, pair_valid, preview, sharpening, camera);
 }
 }  // namespace acbrotherhood::dlaa

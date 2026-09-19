@@ -5,6 +5,7 @@
 #include <mutex>
 #include <sl.h>
 #include <sl_dlss_g.h>
+#include <sl_dlss.h>
 #include <sl_reflex.h>
 #include <sl_security.h>
 #include "./fg_camera.hpp"
@@ -18,11 +19,16 @@ inline void OnAPIError(const sl::APIError& error) {
 }
 
 // Streamline lives exclusively in the x64 presenter. No interposer, NVAPI
-// hooks or plugin DLLs are loaded into the 32-bit game/DLAA helper.
+// hooks or plugin DLLs are loaded into the 32-bit game.
 struct Streamline {
   HMODULE module = nullptr;
   bool initialized = false, ready = false, generating = false, render_started = false, paced = false;
   bool generation_loaded = false, generation_ready = false, vsync_supported = false;
+  bool dlaa_ready = false;
+  uint32_t dlaa_error = 0;
+  PFun_slDLSSSetOptions* dlaa_options = nullptr;
+  PFun_slEvaluateFeature* evaluate = nullptr;
+  PFun_slFreeResources* free_resources = nullptr;
   uint32_t reflex_error = 0, applied_mode = UINT32_MAX, applied_limit = UINT32_MAX;
   uint32_t error = 0, frame_id = 0;
   uint32_t maximum_frames = 0, configured_frames = 0;
@@ -103,10 +109,10 @@ struct Streamline {
         || !Export(&feature_function, "slGetFeatureFunction") || !Export(&new_token, "slGetNewFrameToken")
         || !Export(&set_tags, "slSetTagForFrame") || !Export(&set_constants, "slSetConstants")) return;
     const wchar_t* plugins[] = {directory.c_str()};
-    const sl::Feature features[] = {sl::kFeatureReflex, sl::kFeaturePCL, sl::kFeatureDLSS_G};
+    const sl::Feature features[] = {sl::kFeatureReflex, sl::kFeaturePCL, sl::kFeatureDLSS, sl::kFeatureDLSS_G};
     sl::Preferences preferences{};
     preferences.pathsToPlugins = plugins; preferences.numPathsToPlugins = 1;
-    preferences.featuresToLoad = features; preferences.numFeaturesToLoad = requested ? 3 : 2;
+    preferences.featuresToLoad = features; preferences.numFeaturesToLoad = requested ? 4 : 3;
     preferences.pathToLogsAndData = directory.c_str();
     preferences.engine = sl::EngineType::eCustom; preferences.engineVersion = "RenoDX Brotherhood DX12 1";
     preferences.projectId = "3ad1c215-850f-4111-bcf4-5b7a4364600e";
@@ -122,7 +128,15 @@ struct Streamline {
     if (!initialized) return;
     keep_device = device; keep_factory = factory;
     sl::AdapterInfo info{}; info.deviceLUID = reinterpret_cast<uint8_t*>(&adapter); info.deviceLUIDSizeInBytes = sizeof(adapter);
-    if (!Accept(set_device(device)) || !Accept(supported(sl::kFeatureReflex, info)) || !Accept(supported(sl::kFeaturePCL, info))
+    if (!Accept(set_device(device))) return;
+    // DLAA capability is independent of Reflex/FG. Keep its optional failure
+    // out of FG's error latch so unsupported AA never disables presentation.
+    dlaa_ready = Accept(supported(sl::kFeatureDLSS, info))
+        && Feature(sl::kFeatureDLSS, &dlaa_options, "slDLSSSetOptions")
+        && Export(&evaluate, "slEvaluateFeature") && Export(&free_resources, "slFreeResources");
+    dlaa_error = dlaa_ready ? 0 : error;
+    error = 0;
+    if (!Accept(supported(sl::kFeatureReflex, info)) || !Accept(supported(sl::kFeaturePCL, info))
         || !Feature(sl::kFeatureReflex, &reflex_options, "slReflexSetOptions")
         || !Feature(sl::kFeatureReflex, &sleep, "slReflexSleep")
         || !Feature(sl::kFeatureReflex, &reflex_state, "slReflexGetState")
@@ -165,9 +179,9 @@ struct Streamline {
       throw presentation::Failure{presentation::Stage::present, error};
   }
   void Begin(uint32_t frame, bool before_game) {
-    if (!ready || frame == frame_id) return;
+    if (!initialized || frame == frame_id) return;
     frame_id = frame; token = nullptr; render_started = false; paced = before_game;
-    if (!Accept(new_token(token, &frame_id)) || !token || !Accept(sleep(*token))) {
+    if (!Accept(new_token(token, &frame_id)) || !token || (ready && !Accept(sleep(*token)))) {
       reflex_error = error; Pause(); ready = false; return;
     }
     Mark(sl::PCLMarker::eSimulationStart);

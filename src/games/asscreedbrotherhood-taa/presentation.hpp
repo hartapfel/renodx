@@ -19,7 +19,6 @@ inline std::atomic<bool> retry_requested = false;
 enum class Status { waiting, active, failed };
 inline std::atomic<Status> status = Status::waiting;
 inline std::atomic<uint32_t> error_stage = 0, error_code = 0;
-inline std::recursive_mutex mutex;
 inline std::atomic<bool> render_marker_pending = false;
 inline bool effects_rendered = false;
 inline std::unordered_set<reshade::api::effect_runtime*> open_overlays;
@@ -68,6 +67,7 @@ inline bool PresentFrame(const std::shared_ptr<Session>& session, ID3D11Device* 
                          HWND window, DXGI_COLOR_SPACE_TYPE color_space, UINT sync, UINT flags, HRESULT* result) {
   try {
     if (session->client) {
+      if (session->client->failed) throw Failure{Stage::protocol, ERROR_PROCESS_ABORTED};
       const auto* packet = session->client->packet;
       if (packet->width != desc.Width || packet->height != desc.Height || packet->format != uint32_t(desc.Format)
           || packet->color_space != uint32_t(color_space) || packet->window != uintptr_t(window)
@@ -85,6 +85,7 @@ inline bool PresentFrame(const std::shared_ptr<Session>& session, ID3D11Device* 
           std::filesystem::path(path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dx12" / L"renodx-asscreedbrotherhood-dx12.exe",
           false, frame_generation::RequestedFrames(), RequestedPacing());
       if (session->retired) return false;
+      active_client = client;
     }
     const auto client = session->client;
     // Multiplier changes reuse the current presenter; Off releases the helper's

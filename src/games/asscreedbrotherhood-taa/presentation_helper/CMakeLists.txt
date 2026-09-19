@@ -18,7 +18,13 @@ if(NOT streamline_version MATCHES "SL_VERSION_MAJOR 2[\r\n]" OR
    NOT streamline_version MATCHES "SL_VERSION_PATCH 1[\r\n]")
   message(FATAL_ERROR "The DX12 presenter requires the pinned Streamline 2.14.1 SDK.")
 endif()
-add_executable(renodx-asscreedbrotherhood-dx12 main.cpp)
+find_program(FXC fxc HINTS "${CMAKE_CURRENT_SOURCE_DIR}/../../../../bin" REQUIRED)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/dlaa_prepare.h"
+  COMMAND "${FXC}" /nologo /WX /O3 /T cs_5_0 /E main /Vn dlaa_prepare
+          /Fh "${CMAKE_CURRENT_BINARY_DIR}/dlaa_prepare.h" "${CMAKE_CURRENT_SOURCE_DIR}/dlaa_prepare.hlsl"
+  DEPENDS dlaa_prepare.hlsl VERBATIM)
+add_executable(renodx-asscreedbrotherhood-dx12 main.cpp "${CMAKE_CURRENT_BINARY_DIR}/dlaa_prepare.h")
+target_include_directories(renodx-asscreedbrotherhood-dx12 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_include_directories(renodx-asscreedbrotherhood-dx12 PRIVATE "${streamline_sdk_SOURCE_DIR}/include" "${streamline_sdk_SOURCE_DIR}/external/nvapi")
 target_compile_features(renodx-asscreedbrotherhood-dx12 PRIVATE cxx_std_20)
 target_compile_definitions(renodx-asscreedbrotherhood-dx12 PRIVATE NOMINMAX)
@@ -33,3 +39,12 @@ add_executable(brotherhood-reflex-pacing-test EXCLUDE_FROM_ALL tests/pacing.cpp)
 target_compile_features(brotherhood-reflex-pacing-test PRIVATE cxx_std_20)
 target_compile_options(brotherhood-reflex-pacing-test PRIVATE /UNDEBUG)
 target_include_directories(brotherhood-reflex-pacing-test PRIVATE "${streamline_sdk_SOURCE_DIR}/external/nvapi")
+# Build the x86 addon first to generate its embedded shaders; run this optional
+# GPU fixture from the repository root with the signed runtime installed.
+add_executable(brotherhood-unified-gpu-test EXCLUDE_FROM_ALL tests/unified.cpp)
+target_compile_features(brotherhood-unified-gpu-test PRIVATE cxx_std_20)
+target_compile_options(brotherhood-unified-gpu-test PRIVATE /UNDEBUG)
+target_include_directories(brotherhood-unified-gpu-test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../../build32/asscreedbrotherhood-taa.include"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../../external/reshade")
+target_link_libraries(brotherhood-unified-gpu-test PRIVATE d3d11 d3d9 dxgi user32)
