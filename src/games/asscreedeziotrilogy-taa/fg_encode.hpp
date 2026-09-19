@@ -18,10 +18,10 @@ struct Encoder {
   ComPtr<ID3D11PixelShader> ps;
   ComPtr<ID3D11Buffer> constants;
   ComPtr<ID3D11SamplerState> sampler;
-  ComPtr<ID3D11Texture2D> source, encoded, mask_source, mask_encoded;
-  ComPtr<ID3D11ShaderResourceView> srv, mask_srv;
-  ComPtr<ID3D11RenderTargetView> rtv, mask_rtv;
-  uint64_t generation = 0, shared_handle = 0, mask_handle = 0;
+  ComPtr<ID3D11Texture2D> source, encoded;
+  ComPtr<ID3D11ShaderResourceView> srv;
+  ComPtr<ID3D11RenderTargetView> rtv;
+  uint64_t generation = 0, shared_handle = 0;
   std::wstring hdr_module;
 
   bool Encode(ID3D11Device* native, const D3D11_TEXTURE2D_DESC& output, Inputs* inputs) {
@@ -75,11 +75,6 @@ struct Encoder {
       HANDLE handle = nullptr;
       Check(resource->GetSharedHandle(&handle), Stage::sharing);
       shared_handle = uintptr_t(handle);
-      target.Format = DXGI_FORMAT_R32_FLOAT;
-      Check(device->CreateTexture2D(&target, nullptr, &mask_encoded), Stage::sharing);
-      Check(device->CreateRenderTargetView(mask_encoded.Get(), nullptr, &mask_rtv), Stage::sharing);
-      resource.Reset(); Check(mask_encoded.As(&resource), Stage::sharing);
-      Check(resource->GetSharedHandle(&handle), Stage::sharing); mask_handle = uintptr_t(handle);
     }
     if (generation != inputs->generation) {
       srv.Reset(); source.Reset();
@@ -88,13 +83,6 @@ struct Encoder {
       if (desc.Width != output.Width || desc.Height != output.Height || desc.Format != DXGI_FORMAT_R16G16B16A16_FLOAT
           || desc.SampleDesc.Count != 1) return false;
       Check(device->CreateShaderResourceView(source.Get(), nullptr, &srv), Stage::sharing);
-      mask_srv.Reset(); mask_source.Reset();
-      if (inputs->textures[3]) {
-        Check(device->OpenSharedResource(reinterpret_cast<HANDLE>(uintptr_t(inputs->textures[3])), IID_PPV_ARGS(&mask_source)), Stage::sharing);
-        mask_source->GetDesc(&desc);
-        if (desc.Width != output.Width || desc.Height != output.Height || desc.Format != DXGI_FORMAT_R32_FLOAT || desc.SampleDesc.Count != 1) return false;
-        Check(device->CreateShaderResourceView(mask_source.Get(), nullptr, &mask_srv), Stage::sharing);
-      }
       generation = inputs->generation;
     }
     // Swap the complete native context state, including every shader stage,
@@ -111,16 +99,14 @@ struct Encoder {
     context->PSSetShader(ps.Get(), nullptr, 0);
     ID3D11Buffer* cb = constants.Get(); context->PSSetConstantBuffers(13, 1, &cb);
     ID3D11SamplerState* sampling = sampler.Get(); context->PSSetSamplers(0, 1, &sampling);
-    ID3D11ShaderResourceView* views[] = {srv.Get(), mask_srv.Get()}; context->PSSetShaderResources(0, 2, views);
-    ID3D11RenderTargetView* targets[] = {rtv.Get(), mask_rtv.Get()}; context->OMSetRenderTargets(2, targets, nullptr);
+    context->PSSetShaderResources(0, 1, srv.GetAddressOf());
+    context->OMSetRenderTargets(1, rtv.GetAddressOf(), nullptr);
     const D3D11_VIEWPORT viewport{0,0,float(output.Width),float(output.Height),0.f,1.f};
     context->RSSetViewports(1, &viewport);
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->Draw(3, 0);
     inputs->textures[2] = shared_handle;
     inputs->hudless_format = output.Format;
-    inputs->textures[3] = mask_handle;
-    if (!mask_srv) inputs->flags &= ~ui_alpha;
     inputs->flags |= hdr_encoded;
     return true;
   }

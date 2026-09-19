@@ -168,7 +168,7 @@ void Run(Packet* packet, HANDLE request, HANDLE reply, HANDLE parent, HANDLE sou
   RECT output_rect{0, 0, LONG(packet->width), LONG(packet->height)};
   uint64_t last_input = 0, input_generation = 0;
   uint32_t last_input_flags = 0;
-  std::array<acbrotherhood::frame_generation::ImportedImage, 4> images;
+  std::array<acbrotherhood::frame_generation::ImportedImage, 3> images;
   // Shutdown while the tagged resources, swapchain and device remain alive.
   struct Shutdown {
     acbrotherhood::frame_generation::Streamline* value;
@@ -259,20 +259,20 @@ void Run(Packet* packet, HANDLE request, HANDLE reply, HANDLE parent, HANDLE sou
     // A handle may be recycled after Reset, so generation is part of identity.
     if ((auxiliary.flags & acbrotherhood::frame_generation::motion_depth) && auxiliary.id > last_input
         && auxiliary.generation && auxiliary.width == packet->width && auxiliary.height == packet->height
-        && auxiliary.window == packet->window && !(auxiliary.flags & ~15u)) {
+        && auxiliary.window == packet->window && !(auxiliary.flags & ~7u)) {
       try {
         if (input_generation != auxiliary.generation) { images = {}; input_generation = auxiliary.generation; }
         unsigned count = 2;
-        if ((auxiliary.flags & 6u) == 6u && auxiliary.hudless_format == packet->format) count = (auxiliary.flags & acbrotherhood::frame_generation::ui_alpha) ? 4 : 3;
+        if ((auxiliary.flags & 6u) == 6u && auxiliary.hudless_format == packet->format) count = 3;
         for (unsigned i = 0; i < count; ++i) {
           if (images[i].handle != auxiliary.textures[i]) {
             images[i] = {};
             images[i].Open(bridge5.Get(), device.Get(), auxiliary.textures[i], packet->width, packet->height,
-                i == 0 ? DXGI_FORMAT_R16G16B16A16_FLOAT : (i == 1 || i == 3) ? DXGI_FORMAT_R32_FLOAT : format, packet->validation != 0);
+                i == 0 ? DXGI_FORMAT_R16G16B16A16_FLOAT : i == 1 ? DXGI_FORMAT_R32_FLOAT : format, packet->validation != 0);
           }
         }
         for (unsigned i = 0; i < count; ++i) context4->CopyResource(images[i].bridge.Get(), images[i].source.Get());
-        packet->accepted_inputs = count == 4 ? 15u : count == 3 ? 7u : 1u;
+        packet->accepted_inputs = count == 3 ? 7u : 1u;
         last_input = auxiliary.id;
       } catch (const Failure& failure) {
         images = {}; input_generation = 0;
@@ -289,7 +289,7 @@ void Run(Packet* packet, HANDLE request, HANDLE reply, HANDLE parent, HANDLE sou
     Check(queue->Wait(fence.Get(), frame * 4 - 3), Stage::sharing);
     Check(allocator->Reset(), Stage::copy);
     Check(commands->Reset(allocator.Get(), nullptr), Stage::copy);
-    for (unsigned i = 0; i < ((packet->accepted_inputs & 8) ? 4u : (packet->accepted_inputs & 2) ? 3u : packet->accepted_inputs ? 2u : 0u); ++i)
+    for (unsigned i = 0; i < ((packet->accepted_inputs & 2) ? 3u : packet->accepted_inputs ? 2u : 0u); ++i)
       images[i].Readback(commands.Get());
     ID3D12Resource* backbuffer = backbuffers[swapchain->GetCurrentBackBufferIndex()].Get();
     D3D12_RESOURCE_BARRIER barriers[2]{};
@@ -355,7 +355,7 @@ void Run(Packet* packet, HANDLE request, HANDLE reply, HANDLE parent, HANDLE sou
       previous_status = packet->generation_status;
       previous_configured = packet->generation_configured;
     }
-    for (unsigned i = 0; i < ((packet->accepted_inputs & 8) ? 4u : (packet->accepted_inputs & 2) ? 3u : packet->accepted_inputs ? 2u : 0u); ++i)
+    for (unsigned i = 0; i < ((packet->accepted_inputs & 2) ? 3u : packet->accepted_inputs ? 2u : 0u); ++i)
       packet->input_checksums[i] = images[i].Checksum();
     if (readback) {
       void* mapped = nullptr;

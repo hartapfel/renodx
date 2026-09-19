@@ -125,7 +125,7 @@ struct State {
     width = render_width; height = render_height;
     if (!width || !height || uint64_t(width) * height > 8388608)
       throw Failure{Stage::shared_textures, uint32_t(E_OUTOFMEMORY)};
-    const auto executable = directory / L"renodx-asscreedbrotherhood-dx12.exe";
+    const auto executable = directory / L"renodx-asscreedeziotrilogy-dx12.exe";
     if (GetFileAttributesW(executable.c_str()) == INVALID_FILE_ATTRIBUTES)
       throw Failure{Stage::protocol, GetLastError()};
     packet->generation = ++next_generation;
@@ -310,7 +310,7 @@ inline bool Resolve(IDirect3DDevice9* device, std::unique_ptr<State>* state, IDi
     try {
       std::wstring module_path(32768, L'\0');
       if (!GetModuleFileNameW(addon_module, module_path.data(), DWORD(module_path.size()))) throw Failure{Stage::protocol, GetLastError()};
-      (*state)->Start(device, width, height, std::filesystem::path(module_path.c_str()).parent_path() / L"renodx-asscreedbrotherhood-dx12");
+      (*state)->Start(device, width, height, std::filesystem::path(module_path.c_str()).parent_path() / L"renodx-asscreedeziotrilogy-dx12");
     } catch (const Failure& error) { (*state)->Fail(error.stage, error.code); }
       catch (...) { (*state)->Fail(Stage::protocol, E_OUTOFMEMORY); }
   }

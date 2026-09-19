@@ -2,8 +2,10 @@
 
 Current implementation as extracted on 2026-09-17. This describes the code in
 this folder; [DEVELOPMENT_HISTORY.md](./DEVELOPMENT_HISTORY.md) preserves earlier
-observations, including superseded limitations. It is an experimental,
-Brotherhood-specific implementation, not a general solution for every DX9 game.
+observations, including superseded limitations. It began as a Brotherhood
+implementation and now ships as `asscreedeziotrilogy-taa`; historical sections
+retain their original names and test scope. It remains experimental, not a
+general solution for every DX9 game.
 
 ## 1. Ownership and source map
 
@@ -2887,6 +2889,9 @@ not proof that all moving-surface artifacts disappear.
 
 ### Actual HUD opacity
 
+Historical implementation, removed in section 55 after live reports of stutter
+when mask validity changed. The following records the original investigation.
+
 After the verified final scene copy, clear a private DX9 R32F transmittance
 texture to one. For known game HUD pixel shaders (7258C5E9, 5E3A6B72, FB5A6594,
 AFDE4E3D) with standard source-alpha/premultiplied source-over blending, replay
@@ -3553,3 +3558,53 @@ Read-only inspection of the live helper confirmed 3840x2160 HDR, DX12 DLAA with
 advancing completion IDs, active 2x FG, accepted depth/motion/HUD-less/UI-alpha
 inputs, and zero reported DLAA/FG errors. This retest did not include a round
 trip through the Animus or every modern-day/cutscene variant.
+
+## 55. Remove optional UI-alpha capture and tagging (2026-09-19)
+
+Live gameplay exposed stutter when an accepted/rejected HUD mask switched
+DLSS-G's UI-recomposition option. The mask path is now removed end to end:
+
+- No HUD draw replay callback, blend/shader eligibility checks, transmittance
+  clear, UI-valid state or ReShade-overlay tracking for mask suppression.
+- No native DX9 R32F mask, DX11 mask import/encoding/output, or DX12 mask bridge.
+  HUD-less encoding writes one color target. Its SDR/HDR color math is unchanged.
+- No `kBufferTypeUIAlpha` tag. `enableUserInterfaceRecomposition` stays false and
+  `uiBufferFormat` stays unknown. Depth, motion and HUD-less color remain tagged
+  with their existing resource-state and lifetime guarantees. The final output
+  still contains the ordinary game HUD and ReShade overlay.
+- The shared input structure carries three texture handles. Presentation
+  protocol **10** has 272-byte `Inputs` and a 720-byte `Packet`; update the x86
+  addon and x64 helper together. Unknown input bits are rejected. Complete
+  encoded input flags are always 7, rather than alternating between 7 and 15.
+
+This removes approximately 94.9 MiB of full-resolution mask allocations at 4K
+(three R32F surfaces), their transfers, and the extra native HUD submissions.
+It removes mask-driven option changes; it does not claim to fix unrelated
+base-game hitches or the known moving-building FG artifacts.
+
+Validation: renamed Release x86 addon and x64 helper compile, including both
+SDR/HDR encoding shaders. Native DX9/DX11/DX12 transport tests pass exact depth
+and motion checksums, signed FP16 scene copying, HDR encoding against the
+original output shader, unchanged SDR code values, render-state restoration,
+resizing and stale/missing-input rejection. The unified GPU fixture passes 297
+DLAA evaluations and 198 active 3x-FG frames across SDR/HDR, restarts and preset
+changes with DX12 validation; every valid frame accepts exactly input flags 7.
+The delayed-input/cancellation handoff fixture also passes at 720p and 4K.
+These checks establish the removed mode switch and valid remaining inputs;
+live pacing after the removal has not yet been compared.
+
+## 56. Ezio Trilogy addon name (2026-09-19)
+
+Following the user's working-gameplay reports in all three Ezio games, the
+source/build target is `asscreedeziotrilogy-taa`, the addon is
+`renodx-asscreedeziotrilogy-taa.addon32`, and the unified helper is
+`renodx-asscreedeziotrilogy-dx12/renodx-asscreedeziotrilogy-dx12.exe`.
+The overlay title and metadata identify the trilogy. Remove the previous
+Brotherhood-named addon when updating to avoid double injection. Persisted
+settings intentionally retain the original `asscreedbrotherhood-taa` key.
+
+This rename does not extend the audited engine-code signatures: engine-side
+projection hooks still require the verified Brotherhood executable. Other games
+continue through the existing shader-contract camera/jitter path. Prior test
+results describe the games actually tested, not a claim of complete trilogy
+scene or animated-material coverage.

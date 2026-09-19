@@ -191,7 +191,7 @@ struct Streamline {
     Mark(sl::PCLMarker::eSimulationEnd); Mark(sl::PCLMarker::eRenderSubmitStart);
     render_started = true;
   }
-  void Prepare(presentation::Packet* packet, const std::array<ImportedImage, 4>& images) {
+  void Prepare(presentation::Packet* packet, const std::array<ImportedImage, 3>& images) {
     packet->generation_error = error;
     packet->generated_present_count = 0;
     packet->generation_max = maximum_frames;
@@ -228,15 +228,12 @@ struct Streamline {
     sl::Resource motion{sl::ResourceType::eTex2d, images[0].texture.Get(), D3D12_RESOURCE_STATE_COMMON};
     sl::Resource depth{sl::ResourceType::eTex2d, images[1].texture.Get(), D3D12_RESOURCE_STATE_COMMON};
     sl::Resource hudless{sl::ResourceType::eTex2d, images[2].texture.Get(), D3D12_RESOURCE_STATE_COMMON};
-    sl::Resource ui{sl::ResourceType::eTex2d, images[3].texture.Get(), D3D12_RESOURCE_STATE_COMMON};
-    const bool has_ui = enable && (packet->accepted_inputs & ui_alpha);
     const sl::ResourceTag tags[] = {
         {enable ? &motion : nullptr, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &extent},
         {enable ? &depth : nullptr, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &extent},
         {enable ? &hudless : nullptr, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &extent},
-        {has_ui ? &ui : nullptr, sl::kBufferTypeUIAlpha, sl::ResourceLifecycle::eValidUntilPresent, &extent},
         {nullptr, sl::kBufferTypeBackbuffer, sl::ResourceLifecycle::eValidUntilPresent, &extent}};
-    if (!Accept(set_tags(*token, viewport, tags, 5, nullptr))) enable = false;
+    if (!Accept(set_tags(*token, viewport, tags, uint32_t(std::size(tags)), nullptr))) enable = false;
     sl::DLSSGOptions options{};
     options.mode = enable ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
     options.numFramesToGenerate = enable ? packet->generation_requested : 1;
@@ -245,8 +242,10 @@ struct Streamline {
     options.colorHeight = options.mvecDepthHeight = packet->height;
     options.colorBufferFormat = options.hudLessBufferFormat = packet->format;
     options.mvecBufferFormat = DXGI_FORMAT_R16G16B16A16_FLOAT; options.depthBufferFormat = DXGI_FORMAT_R32_FLOAT;
-    options.uiBufferFormat = has_ui ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_UNKNOWN;
-    options.enableUserInterfaceRecomposition = has_ui ? sl::eTrue : sl::eFalse;
+    // Use the final image and HUD-less input consistently. Partial UI masks
+    // used to toggle this option during gameplay and cause pacing hitches.
+    options.uiBufferFormat = DXGI_FORMAT_UNKNOWN;
+    options.enableUserInterfaceRecomposition = sl::eFalse;
     options.onErrorCallback = OnAPIError;
     if (!Accept(set_options(viewport, options)))
       throw presentation::Failure{presentation::Stage::present, error};

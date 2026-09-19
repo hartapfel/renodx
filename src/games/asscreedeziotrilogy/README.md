@@ -371,13 +371,13 @@ Scratch evidence: `tmp/asscreedeziotrilogy/pacing/dispatch-refresh/`,
 
 ## Optional Brotherhood TAA addon
 
-TAA has moved to [asscreedbrotherhood-taa](../asscreedbrotherhood-taa/README.md). This HDR
+TAA has moved to [asscreedeziotrilogy-taa](../asscreedeziotrilogy-taa/README.md). This HDR
 addon contains no TAA settings, jitter or motion capture. Install the separate
-`renodx-asscreedbrotherhood-taa.addon32` beside the updated Ezio Trilogy addon to use
+`renodx-asscreedeziotrilogy-taa.addon32` beside the updated Ezio Trilogy addon to use
 both. Native MSAA is optional and can be combined with TAA. The TAA addon also
 supports standalone native SDR.
 Do not pair it with an older experimental Ezio build that still embeds TAA.
-See the [implementation guide](../asscreedbrotherhood-taa/IMPLEMENTATION.md) for the
+See the [implementation guide](../asscreedeziotrilogy-taa/IMPLEMENTATION.md) for the
 complete pipeline, motion-vector work, verification and remaining limitations.
 
 ## Brotherhood building lighting — 2026-09-16

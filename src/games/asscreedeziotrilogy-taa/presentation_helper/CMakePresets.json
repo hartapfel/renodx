@@ -3,7 +3,7 @@
   "configurePresets": [{
     "name": "clang-x64",
     "generator": "Ninja Multi-Config",
-    "binaryDir": "${sourceDir}/../../../../build64-brotherhood-dx12",
+    "binaryDir": "${sourceDir}/../../../../build64-eziotrilogy-dx12",
     "cacheVariables": {
       "CMAKE_CXX_COMPILER": "clang-cl.exe",
       "CMAKE_CXX_COMPILER_TARGET": "x86_64-pc-windows-msvc",

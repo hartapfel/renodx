@@ -7,7 +7,7 @@
 #include "./dlaa_protocol.hpp"
 
 namespace acbrotherhood::presentation {
-constexpr uint32_t kMagic = 0x32315844, kProtocol = 9;
+constexpr uint32_t kMagic = 0x32315844, kProtocol = 10;
 enum class State : int32_t { starting, ready, complete, failed };
 enum class Command : uint32_t { present, stop, begin_frame, render_begin, dlaa_evaluate, dlaa_release };
 enum class Stage : uint32_t { none, protocol, adapter, device, sharing, window, swapchain, copy, gpu_wait, present };
@@ -29,7 +29,7 @@ struct alignas(8) Packet {
   uint64_t output_window = 0;
   uint32_t validation = 0, checksum = 0;  // Readback only in the GPU fixture.
   frame_generation::Inputs inputs;
-  uint32_t accepted_inputs = 0, input_checksums[4] = {};
+  uint32_t accepted_inputs = 0, input_checksums[3] = {};
   uint32_t generation_requested = 0, pause_flags = 0; // 0 Off, otherwise generated frames (1..5).
   frame_generation::Status generation_status = frame_generation::Status::off;
   uint32_t generation_error = 0, generated_present_count = 0, reflex_active = 0;
@@ -41,7 +41,7 @@ struct alignas(8) Packet {
   // and Present can both consume producer textures during the same game frame.
   uint64_t source_ready = 0;
 };
-static_assert(sizeof(Packet) == 736 && offsetof(Packet, frame) == 48 && offsetof(Packet, output_window) == 88);
+static_assert(sizeof(Packet) == 720 && offsetof(Packet, frame) == 48 && offsetof(Packet, output_window) == 88);
 struct Failure { Stage stage; uint32_t code; };
 inline void Check(long result, Stage stage) {
   if (result < 0) throw Failure{stage, uint32_t(result)};

@@ -1,0 +1,81 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/gh/clshortfuse/renodx/renodx-metadata-schema.json",
+  "id": "asscreedeziotrilogy-taa",
+  "title": "Assassin's Creed Ezio Trilogy",
+  "variant": "Native DX9 TAA / DLAA / DLSS Frame Generation",
+  "maintainers": [
+    "hartapfel"
+  ],
+  "status": "experimental",
+  "summary": "Temporal anti-aliasing, optional NVIDIA DLAA, DLSS Frame Generation, Reflex and Lilium RCAS for the Ezio Trilogy. Compatible with the separate HDR addon.",
+  "notes": [
+    "Requires 32-bit ReShade with addon support. Native MSAA is optional. TAA and Object Motion default to On; debug views default to Off.",
+    "Adds no game resource format upgrades, HDR, tone mapping or lighting fixes. With the matching helper installed, DX12 presentation starts automatically for standalone SDR and with the separate Ezio Trilogy HDR addon.",
+    "Optional DLAA requires an RTX GPU, MSAA Off and the unified x64 DX12 helper. DLAA, FG, Reflex and presentation share one process and device. Installing that helper requests DX9Ex for GPU sharing at startup. TAA is the default and automatic fallback.",
+    "When using RenoDX HDR, install the Ezio Trilogy build with embedded TAA removed. Do not run two TAA implementations together.",
+    "Water, particles, ambiguous moving instances and some material paths remain unsupported.",
+    "Optional DLSS Frame Generation supports standalone SDR and HDR10 with the DX12 helper and supported NVIDIA hardware/runtime. Reflex is locked On with FG. The menu exposes a pre-FG cap and measured frame-rate telemetry; automatic VRR headroom applies when the driver profile enables G-Sync and VSync, including with the manual cap at zero.",
+    "The user reports working gameplay across AC II, Brotherhood and Revelations. Engine projection hooks remain restricted to the audited Brotherhood executable; other executables use the existing validated draw-level jitter path. Cross-game and cutscene coverage remains experimental.",
+    "UI-alpha capture/tagging is removed. The matching protocol-10 addon and unified helper must be updated together."
+  ],
+  "deploy": {
+    "steam_appid": 48190,
+    "game_exe": "ACBSP.exe",
+    "process_name": "ACBSP.exe",
+    "api": "d3d9",
+    "architecture": [
+      "x86"
+    ],
+    "reshade_preferred_name": "d3d9.dll"
+  },
+  "games": [
+    {
+      "id": "asscreed2",
+      "title": "Assassin's Creed II",
+      "status": "experimental",
+      "variant": "Native DX9 TAA / DLAA / DLSS Frame Generation",
+      "deploy": {
+        "steam_appid": 33230,
+        "game_exe": "AssassinsCreedIIGame.exe",
+        "process_name": "AssassinsCreedIIGame.exe",
+        "api": "d3d9",
+        "architecture": [
+          "x86"
+        ],
+        "reshade_preferred_name": "d3d9.dll"
+      }
+    },
+    {
+      "id": "asscreedbrotherhood",
+      "title": "Assassin's Creed Brotherhood",
+      "status": "experimental",
+      "variant": "Native DX9 TAA / DLAA / DLSS Frame Generation",
+      "deploy": {
+        "steam_appid": 48190,
+        "game_exe": "ACBSP.exe",
+        "process_name": "ACBSP.exe",
+        "api": "d3d9",
+        "architecture": [
+          "x86"
+        ],
+        "reshade_preferred_name": "d3d9.dll"
+      }
+    },
+    {
+      "id": "asscreedrevelations",
+      "title": "Assassin's Creed Revelations",
+      "status": "experimental",
+      "variant": "Native DX9 TAA / DLAA / DLSS Frame Generation",
+      "deploy": {
+        "steam_appid": 201870,
+        "game_exe": "ACRSP.exe",
+        "process_name": "ACRSP.exe",
+        "api": "d3d9",
+        "architecture": [
+          "x86"
+        ],
+        "reshade_preferred_name": "d3d9.dll"
+      }
+    }
+  ]
+}
