@@ -232,6 +232,7 @@ renodx::utils::settings::Settings settings = {
         .labels = {"Off", "Depth", "Motion Vectors", "History Confidence", "History Rejection"},
         .is_enabled = [] { return acbrotherhood::taa::enabled != 0.f; },
     },
+#if !defined(NDEBUG)
     new renodx::utils::settings::Setting{
         .key = "TAADumpResolve",
         .binding = &acbrotherhood::taa::dump_resolve,
@@ -254,6 +255,7 @@ renodx::utils::settings::Settings settings = {
         .labels = {"Off", "On"},
         .is_visible = [] { return false; },
     },
+#endif
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
         .label = "Output Status",
@@ -264,6 +266,12 @@ renodx::utils::settings::Settings settings = {
           else if (status.load() == Status::failed) {
             ImGui::TextColored(ImVec4(1.f, 0.35f, 0.35f, 1.f), "Native output fallback | DX12 error %u: 0x%08X", error_stage.load(), error_code.load());
             if (error_code == ERROR_REVISION_MISMATCH) ImGui::TextWrapped("Update the addon and DX12 helper together.");
+            else if (error_code == ERROR_FILE_NOT_FOUND || error_code == ERROR_PATH_NOT_FOUND)
+              ImGui::TextWrapped("The DX12 helper executable or its folder is missing. Check the installation and Windows Security protection history before restoring files.");
+            else if (error_code == ERROR_VIRUS_INFECTED || error_code == ERROR_VIRUS_DELETED)
+              ImGui::TextWrapped("Windows security software blocked or removed the helper. Review the detection in Windows Security protection history.");
+            else if (error_code == ERROR_ACCESS_DENIED)
+              ImGui::TextWrapped("Windows denied access to the helper. Check its file permissions and Windows Security protection history.");
             if (ImGui::Button("Retry DX12 Output")) retry_requested = true;
           } else ImGui::TextWrapped("DX12 starts automatically with the installed DX12 helper, in standalone SDR or with the Ezio Trilogy HDR addon. Without the helper, AA uses native output.");
           return false;

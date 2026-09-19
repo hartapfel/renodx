@@ -31,7 +31,10 @@ inline const char* StatusText() {
     case Status::active: return "DLAA active at native resolution (DX12).";
     case Status::msaa: return "Using TAA: turn native MSAA Off to use DLAA.";
     case Status::diagnostic: return "Using TAA for this diagnostic view.";
-    case Status::failed: return "Using TAA: DLAA could not start or stopped. Check the helper installation, NVIDIA RTX driver and helper log. Select TAA, then DLAA to retry.";
+    case Status::failed:
+      if (error_code == ERROR_FILE_NOT_FOUND || error_code == ERROR_PATH_NOT_FOUND)
+        return "Using TAA: the DX12 helper executable or folder is missing. Check the installation and Windows Security protection history. Restore only verified files, then retry DX12 output and DLAA.";
+      return "Using TAA: DLAA could not start or stopped. Check the helper installation, NVIDIA RTX driver and helper log. Select TAA, then DLAA to retry.";
     default: return "DLAA requires an NVIDIA RTX GPU and the unified DX12 helper folder beside the addon.";
   }
 }
@@ -117,7 +120,7 @@ struct State {
       throw Failure{Stage::shared_textures, uint32_t(E_OUTOFMEMORY)};
     const auto executable = directory / L"renodx-asscreedbrotherhood-dx12.exe";
     if (GetFileAttributesW(executable.c_str()) == INVALID_FILE_ATTRIBUTES)
-      throw Failure{Stage::protocol, ERROR_FILE_NOT_FOUND};
+      throw Failure{Stage::protocol, GetLastError()};
     packet->generation = ++next_generation;
     packet->width = width; packet->height = height;
     packet->render_preset = preset;

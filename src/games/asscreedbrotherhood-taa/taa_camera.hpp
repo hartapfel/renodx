@@ -14,6 +14,26 @@ namespace acbrotherhood::taa {
 
 using Matrix = DirectX::XMFLOAT4X4;
 
+// Validate an affine c8-c10 world transform against the unjittered scene VP.
+// Used before extending jitter to depth-disabled geometry, where depth state
+// cannot distinguish the main camera from a screen-space or auxiliary draw.
+inline bool MatchesCameraProjection(const Matrix& clip, const Matrix& world, const Matrix& camera) {
+  for (unsigned row = 0; row < 4; ++row) {
+    for (unsigned column = 0; column < 4; ++column) {
+      double expected = column == 3 ? camera.m[row][3] : 0.;
+      double magnitude = std::abs(expected);
+      for (unsigned i = 0; i < 3; ++i) {
+        const double term = double(camera.m[row][i]) * world.m[i][column];
+        expected += term;
+        magnitude += std::abs(term);
+      }
+      if (!std::isfinite(expected) || !std::isfinite(clip.m[row][column])
+          || std::abs(expected - clip.m[row][column]) > 2.e-5 * std::max(1., magnitude)) return false;
+    }
+  }
+  return true;
+}
+
 // SM3 dp4(position, cN) uses each constant register as a matrix row.
 // Keep that convention on the CPU and upload rows unchanged to HLSL.
 inline bool InvertDouble(const Matrix& matrix, std::array<double, 16>* inverse) {
