@@ -9,13 +9,26 @@ Scene tone mapping runs in the native SM3 scene/LUT shader. The addon-owned DX11
 pixel shader fits the complete HDR composition smoothly to Peak Brightness, then
 calls `renodx::draw::SwapChainPass` for output conversion.
 
+When the separate TAA/DLAA addon is installed, its **single 64-bit DX12 helper**
+also owns final presentation and frame generation. The DX11 stage remains the
+32-bit DX9/ReShade resource and HDR-output bridge; its native Present is
+suppressed after DX12 takes ownership. A 64-bit proxy cannot load into these
+32-bit games, so the helper process is required for the 64-bit DLAA/FG runtime.
+The shared images stay on the GPU. A direct copy into a DX12-owned texture was
+tested, but increased 4K handoff time and was reverted.
+
 ## Implemented
 
 - Native addon/settings/shader/swapchain lifecycle with the AC2/Brotherhood
   control set: Vanilla/PsychoV-30, detected peak brightness, game/UI brightness,
   hue shift, color grading, PsychoV parameters, Reset All and Preset Off.
-- The HDR LUT bridge uses sRGB input/output followed by gamma-2.2 SDR EOTF
-  emulation. The same conversion is used for the LUT-calibrated gray anchor.
+- The HDR LUT bridge uses sRGB input/output and keeps the decoded result in
+  linear light for PsychoV and the LUT-calibrated gray anchor.
+- HUD colors still receive the gamma-2.2 SDR EOTF before UI brightness scaling;
+  video AutoHDR uses the gamma-2.4 BT.1886 EOTF required by BT.2446A. Both
+  are separate from the removed PsychoV LUT emulation.
+- **Options → Recommended** applies the HDR-look contrast and grading values
+  while keeping the selected tone mapper, Game Brightness and UI Brightness.
 - Brotherhood alone shows **Effects → White Gradient Intensity** in both settings
   modes. The default, **0**, bypasses the overlay; **100** restores its original
   strength while retaining HDR range in PsychoV mode. Intermediate values blend

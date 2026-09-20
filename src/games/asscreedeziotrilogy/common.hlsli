@@ -174,11 +174,10 @@ float3 AC2SampleLUT(float3 encoded, sampler3D lut,
 
 float3 AC2SampleLUTLinear(float3 linear_color, sampler3D lut,
                          float3 coordinate_scale, float3 coordinate_offset) {
-  // Interpret the native LUT as sRGB input/output, then emulate the SDR
-  // display's gamma-2.2 EOTF once, before reconstructing the HDR grade.
-  const float3 graded_linear = renodx::color::srgb::Decode(
+  // The native LUT uses sRGB input and output. Keep its decoded result in
+  // linear light for PsychoV and its gray-anchor calibration.
+  return renodx::color::srgb::Decode(
       AC2SampleLUT(renodx::color::srgb::Encode(linear_color), lut, coordinate_scale, coordinate_offset));
-  return renodx::color::correct::GammaSafe(graded_linear, false, 2.2f);
 }
 
 float3 AC2GradeHDR(float3 linear_bt709, sampler3D lut,
