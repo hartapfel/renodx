@@ -937,6 +937,12 @@ this helper. Scene transport, Vanilla, HUD/video and presentation remain unchang
 With no intervening processing, sRGB decode plus this emulation is algebraically
 equivalent to decoding the sampled code values with gamma 2.2.
 
+2026-09-20: Removed the additional gamma-2.2 SDR EOTF emulation from
+`AC2SampleLUTLinear`. PsychoV and its gray-anchor measurement now use the
+sRGB-decoded LUT result directly. The encoded FP16 composition transport and
+its matching presentation decode remain unchanged; those are required for
+later game effects and are separate from the removed LUT emulation.
+
 Verification: `tmp/asscreedeziotrilogy/restore-github/`. The native 2,962-slot
 scene shader creates successfully. Seven synthetic LUTs and 420 configurations
 per sweep cover both gamut targets, multiple peak/Game Brightness values and

@@ -10,6 +10,8 @@ float3 AC2ScaleUI(float4 color) {
   }
   const float alpha = CUSTOM_UI_PREMULTIPLIED != 0.f ? color.a : 1.f;
   if (alpha <= 0.f) return color.rgb;
+  // PsychoV's composition decode is the HUD's gamma-2.2 SDR EOTF. Convert
+  // back to the same encoded domain so the game's later alpha blends match.
   return renodx::draw::EncodeColor(
       AC2ExpandForPresentation(renodx::draw::DecodeColor(color.rgb / alpha, RENODX_SWAP_CHAIN_DECODING)
                               * (RENODX_GRAPHICS_WHITE_NITS / RENODX_DIFFUSE_WHITE_NITS), AC2DisplayPeak()),

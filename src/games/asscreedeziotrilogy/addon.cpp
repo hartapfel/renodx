@@ -382,6 +382,31 @@ renodx::utils::settings::Settings settings = {
         .on_change = []() { renodx::utils::settings::ResetSettings(); },
     },
     new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
+        .label = "Recommended",
+        .section = "Options",
+        .group = "button-line-1",
+        .tooltip = "Recommended setting for HDR-look with brighter highlights and colour saturation.",
+        .tint = 0xFF5F5F,
+        .is_enabled = []() { return IsPsychoV(); },
+        .on_change = []() {
+          for (const auto* setting : settings) {
+            if (setting->section != "Tone Mapping"
+                && setting->section != "Color Grading"
+                && setting->section != "PsychoV30") continue;
+            if (setting->key == "ToneMapType"
+                || setting->key == "ToneMapGameNits"
+                || setting->key == "ToneMapUINits") continue;
+            renodx::utils::settings::UpdateSetting(setting->key, setting->default_value);
+          }
+          renodx::utils::settings::UpdateSettings({
+              {"PsychoVConeResponseExponent", 1.17f},
+              {"ColorGradeShadows", 70.f},
+              {"ColorGradeFlare", 60.f},
+          });
+        },
+    },
+    new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
         .label = "Enable Windows HDR and use 32-bit ReShade with the native DirectX 9 game.",
         .section = "Instructions",
