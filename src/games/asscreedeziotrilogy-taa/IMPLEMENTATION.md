@@ -153,7 +153,7 @@ at float c0–c3. It rejects truncated bytecode, missing/stripped contracts and
 local DEF instructions overwriting those rows. The initial dump had 264/277
 matching shaders; the expanded 2026-09-19 dump has 268 matching contracts.
 A bounded 512-shader cache retains shader references.
-This is broader than the 19 audited motion profiles; it does not prove that
+This is broader than the audited motion shader table; it does not prove that
 every particle or transparency path is temporally correct.
 
 Jitter requires the temporal scene mode, a preceding valid frame and matching
@@ -266,8 +266,21 @@ around neutral 0.5; missing previous poses are magenta, uncovered pixels black.
 | Skeletal normal displacement | `89CCF177` |
 | Tree trunk / leaves | `F53BF32F`, `9E55FEF3` |
 
-Packed positions use the native `abs(position.w * 3.81481368e-6)` scale. Skeletal
-positions scale by 10, use four unnormalized weights and up to 42 bone matrices
+AC II has a separate audited set in the same table. Its main-scene draw snapshot
+uses `2E092EA9` for packed opaque meshes and `F2DBB515` for characters; the
+related packed/cutout variants are `7E8F180F`, `F0318FEC`, `837F0104` and
+`E5046052`, while `B06A2832` and `930C136D` are skeletal variants. The
+character-adjacent `0BA91EFE` and `D15E1D27` use rigid float and packed
+positions respectively. Original
+SM3 assembly confirms the same c0–c3 projection, c8–c11 world transform and
+c18 clip-plane layout, but clip distance moves to TEXCOORD2. AC II skeletal
+positions scale by **16**, not Brotherhood's 10; replay passes that scale per
+draw. The native b15 deconstruction branch changes vertex positions and is
+excluded from capture. AC II's procedural flag (`90F35256`) and tree/leaf
+variants need separate animation replay and are not included in this set.
+
+Packed positions use the native `abs(position.w * 3.81481368e-6)` scale. Brotherhood
+skeletal positions scale by 10; both games use four unnormalized weights and up to 42 bone matrices
 (three float4 rows per bone at c120–c245). The current palette stays in native
 constants. Previous palettes use a point-sampled RGBA32F vertex texture,
 128 texels wide with one row per skeletal/tree draw. All rows are uploaded
@@ -446,7 +459,7 @@ Existing implementation verification:
 - Static diagonal over 256 frames: settled oscillation 0.00195312, sample
   confidence about 127.94; mean error to the eight-phase reference about -0.00226.
   This is a synthetic edge, not a promise of perfect static in-game pixels.
-- All 19 motion profiles compared to original CSOs: exact tested coverage,
+- The original 19 Brotherhood motion profiles compared to original CSOs: exact tested coverage,
   four-bone XYZ movement including high palette indices, both packed scales,
   mutable vertices, split streams, missing-pose behavior and state restoration.
 - Wind/tree fixtures: 48 animated phases, native opacity over seven alpha
@@ -3608,3 +3621,93 @@ projection hooks still require the verified Brotherhood executable. Other games
 continue through the existing shader-contract camera/jitter path. Prior test
 results describe the games actually tested, not a claim of complete trilogy
 scene or animated-material coverage.
+
+## 57. AC II object-motion profiles and crowd identity (2026-09-23)
+
+The first AC II port adds its audited packed and skeletal vertex profiles to the
+shared replay table. AC II uses the same c0-c3 WVP, c8-c11 world and c18 clip
+contracts as Brotherhood, but emits clip distance through TEXCOORD2 and scales
+skeletal input positions by 16. The replay shader therefore receives the skin
+scale per profile. The supported AC II set is listed in section 6; procedural
+flag and tree paths remain separate work.
+
+Live 3840x2160 motion-preview diagnostics then exposed a matching failure rather
+than another missing skin shader. Typical frames captured 600-760 object draws,
+but only 58-91 skeletal draws retained full previous palettes while 148-299 fell
+back to root/camera-only motion. There were no unmatched replay draws or shader
+parse misses. AC II reuses an immutable skin mesh and an identity world matrix
+for multiple crowd actors, so Brotherhood's mesh/world identity deliberately
+rejected the repeated instances as ambiguous.
+
+For two skinned draws with the exact same `MotionMesh`, bounded-step matching now
+uses the translation column of bone zero instead of the shared world matrix.
+Bone zero has the same palette mapping for an identical mesh and carries the
+actor's spatial translation. Mutual uniqueness and the existing 0.25-unit step
+limit remain mandatory, so overlapping or discontinuous candidates still reject
+history. Cross-mesh root recovery continues to use the world transform because
+different skin parts can remap their palettes. CPU-deformed cloth continues to
+use its captured-geometry center.
+
+The rebuilt addon produced the intended transfer in the same live area. Earlier
+samples reported about `skinMotion=58-91` and `rootMotion=148-299`; the new run
+reported `skinMotion=232-240`, `rootMotion=0` and normally
+`unmatchedMotion=0`. One sampled transition conservatively rejected two of 383
+draws and matched them again in the next sample. This confirms previous-palette
+matching for the captured skinned draws, not complete visible coverage: the
+motion preview still exposes missing character garments and body parts.
+
+The per-profile stage counters also identified a separate AC II cutout omission.
+Its packed vertex shaders write material color to COLOR0, while their initial
+profiles retained Brotherhood's default COLOR1 opacity semantic. Alpha-tested
+draws therefore stopped at the opacity gate: for example `E5046052` reached
+stage 7 ten times and stage 8 zero times, while `2E092EA9` and `7E8F180F` lost
+roughly half their submissions there. Original vertex and pixel assembly confirms
+TEXCOORD0 and COLOR0 for these variants. Their profiles now explicitly select
+UV0/COLOR0; opaque behavior is unchanged, and the conservative pixel-bytecode
+parser remains responsible for proving the actual alpha expression.
+
+The 2026-09-24 AC II cape/lower-body screenshots showed uncovered motion on
+Ezio and nearby NPCs. A live 3,112-draw DevKit frame placed unprofiled rigid
+`D15E1D27` (five draws) and `0BA91EFE` (three draws) directly among skeletal
+character materials. Their original SM3 bytecode confirms c0-c3/c8-c11/c18,
+TEXCOORD2 clip distance, UV0 and no procedural position animation when b15 is
+off. `D15E1D27` decodes packed position from `abs(v0.w * 3.81481368e-6)` and
+scales UV by 16; `0BA91EFE` reads float position and passes vertex COLOR0.
+They have explicit motion profiles. The Release addon built successfully; in the
+user-launched game both profiles reached final capture (`0BA91EFE`: 3/3,
+`D15E1D27`: 3/3), with three mutable-geometry draws captured. The user then
+confirmed full motion on Ezio's cape and the NPC lower garments in the moving
+preview. Other scenes and outfits remain unverified.
+
+## 58. AC II hair, courtesan upper bodies, and carried-object follow-up (2026-09-24)
+
+In the user-held courtesan scene, the live motion profile for displaced skeletal
+`930C136D` reached stage 7 on 26 draws but stage 8 on only 22. Its paired
+`4EA82698` pixel shader computes material opacity from texture alpha times
+`COLOR0.y`. Original `930C136D` vertex assembly shows `COLOR0.y` is packed
+`TANGENT.w / 255`, while `COLOR0.a` is packed `POSITION.w` times 0.99999994.
+The prior opacity parser only recognized `.a`, so these cutout draws were
+discarded before motion capture. The parser now records the color component;
+only this audited AC II profile accepts `.y`, and the skinned replay forwards
+the packed tangent component to its opacity lane. Other color channels and
+unproven shaders remain rejected.
+
+The user also held a frame with an NPC carrying a box. Two character-adjacent
+draws used previously unprofiled `C542FC43`. Native bytecode decodes packed
+position with the standard absolute-scale rule, scales UV0 by 16 and c100.xy,
+uses c0-c3/c8-c11 projection/world matrices, and emits the c18 clip plane on
+TEXCOORD2. An exact rigid replay profile was added. The draw's identity as the
+box and visible coverage remain to be confirmed against the motion preview.
+
+After the first rebuilt test, the user reported courtesan upper bodies and the
+carried box fixed, but hair remained uncovered in a foreground NPC. A matching
+live frame contained eight character-adjacent draws using unprofiled skeletal
+`9D1930DE` with `F46D91E3`. Its native vertex shader pushes local position
+along the decoded normal using c101.x, skins with the usual 16x position and
+42-bone palette, then applies c100.xyz mixed toward one by c20.x *after*
+skinning. The first vertex-only replay did not pass the conservative opacity
+gate, and the hair stayed uncovered. A subsequent dedicated opacity replay was
+followed by startup instability. At the user's request, the entire
+`9D1930DE` hair profile and its dedicated replay path were removed. This hair
+is intentionally left without object motion vectors; do not re-enable the
+profile without a separate stability investigation and explicit user request.

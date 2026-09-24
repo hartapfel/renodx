@@ -50,6 +50,13 @@ There is no motion-source selector. DX12 output starts automatically with the
 installed presenter, with or without the HDR addon. Input capture for FG is
 automatic and has no toggle.
 
+With HDR installed, the same 64-bit helper handles DLAA, frame generation and
+final DX12 presentation; there is no additional HDR helper. The game's native
+DX9 and the HDR/ReShade DX11 resource bridge remain 32-bit. Windows cannot load
+the helper's 64-bit code into the game, and the DX9 resources require the bridge
+before the DX12 helper can consume them. The handoff uses GPU sharing and fences,
+not CPU image readback.
+
 TAA Off disables accumulation, jitter and debug rendering. The selected debug
 view is remembered for the next time TAA is enabled. Depth does not accumulate
 history. Motion Vectors, History Confidence and History Rejection keep normal

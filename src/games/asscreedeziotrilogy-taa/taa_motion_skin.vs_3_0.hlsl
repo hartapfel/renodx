@@ -1,5 +1,5 @@
 // Position-only replay audited against native 6ADF3971 / 73550BE7 / 91F6EBFA.
-// Native positions are scaled by 10, indices are unnormalized bone indices,
+// Brotherhood positions scale by 10; AC II uses 16. Indices are unnormalized,
 // and each of the 42 bones occupies three float4 rows at c120.
 float4 current_clip_rows[4] : register(c0);
 float4 world_rows[4] : register(c8);
@@ -34,12 +34,12 @@ struct Output {
 };
 
 Output main(float4 position : POSITION, float4 weights : BLENDWEIGHT, float4 indices : BLENDINDICES, float2 uv : TEXCOORD0,
-            float4 normal : NORMAL, float4 binormal : BINORMAL, float4 previous_vertex : TEXCOORD5,
+            float4 normal : NORMAL, float4 tangent : TANGENT, float4 binormal : BINORMAL, float4 previous_vertex : TEXCOORD5,
             float4 previous_weights : TEXCOORD6, float4 previous_indices : TEXCOORD7,
             float4 previous_normal : TEXCOORD8, float4 previous_binormal : TEXCOORD9) {
-  float4 local = float4(position.xyz * 10.f, 1.f);
+  float4 local = float4(position.xyz * vertex_uv_scale.z, 1.f);
   float4 previous_local = local;
-  [branch] if (geometry_info.x != 0.f) previous_local.xyz = previous_vertex.xyz * 10.f;
+  [branch] if (geometry_info.x != 0.f) previous_local.xyz = previous_vertex.xyz * vertex_uv_scale.z;
   else {
     previous_vertex = position;
     previous_weights = weights;
@@ -47,14 +47,14 @@ Output main(float4 position : POSITION, float4 weights : BLENDWEIGHT, float4 ind
     previous_normal = normal;
     previous_binormal = binormal;
   }
-  [branch] if (displacement_info.x != 0.f) {
+  [branch] if (displacement_info.x == 1.f) {
     // Native 89CCF177 displaces along its decoded normal before skinning.
     float3 direction = (normal.xyz - 127.f) * 0.00787401572f;
     float amount = mad(binormal.w, 0.00392156839f, -0.5f);
-    local.xyz = mad(position.xyz, 10.f, direction * (amount * displacement_info.y));
+    local.xyz = mad(position.xyz, vertex_uv_scale.z, direction * (amount * displacement_info.y));
     float3 previous_direction = (previous_normal.xyz - 127.f) * 0.00787401572f;
     float previous_amount = mad(previous_binormal.w, 0.00392156839f, -0.5f);
-    previous_local.xyz = mad(previous_vertex.xyz, 10.f, previous_direction * (previous_amount * displacement_info.z));
+    previous_local.xyz = mad(previous_vertex.xyz, vertex_uv_scale.z, previous_direction * (previous_amount * displacement_info.z));
   }
   int4 rows = int4(indices * 3.f);
   // Keep the native multiply/MAD order, including its unnormalized weights.
@@ -75,6 +75,7 @@ Output main(float4 position : POSITION, float4 weights : BLENDWEIGHT, float4 ind
   output.uv = uv * vertex_uv_scale.xy;
   output.color = 1.f;
   if (position_info.y != 0.f) output.color.a = position.w * 0.99999994f;
+  if (vertex_uv_scale.w != 0.f) output.color.a = tangent.w * 0.00392156839f;
   float4 world = float4(dot(world_rows[0], float4(current, 1.f)), dot(world_rows[1], float4(current, 1.f)),
                         dot(world_rows[2], float4(current, 1.f)), dot(world_rows[3], float4(current, 1.f)));
   output.clip_distance = dot(world.xyz / world.w, clip_plane.xyz) - clip_plane.w;
