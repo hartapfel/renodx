@@ -3711,3 +3711,29 @@ followed by startup instability. At the user's request, the entire
 `9D1930DE` hair profile and its dedicated replay path were removed. This hair
 is intentionally left without object motion vectors; do not re-enable the
 profile without a separate stability investigation and explicit user request.
+
+## 59. Standalone AC II save-loading crash (2026-09-24)
+
+With HDR disabled, live capture stopped at `AssassinsCreedIIGame+0x11e05ad`,
+a null COM-pointer dereference after texture creation. Disassembly and the
+captured stack identify a 2x16, single-level DXT5 request: the engine ignores
+the `CreateTexture` HRESULT at `0x015deb60` and later calls AddRef on null.
+The process still had about 2.9 GiB of free address space. The same request
+reproduces `D3DERR_INVALIDCALL` (`0x8876086c`) with the previous standalone addon
+in the synthetic ReShade fixture.
+
+The HDR addon already contained a correction for this exact invalid texture
+request. Removing HDR removed that correction as well. `native_device.hpp`
+now independently pads nonzero single-level BC1/BC2/BC3 dimensions smaller than
+four to four. The number of encoded compression blocks does not change.
+Uncompressed textures, mip chains, valid dimensions and other APIs are left
+alone. Both addons may be installed: whichever callback runs second sees
+already-valid dimensions and does nothing.
+
+The Release build passes the reproducer after the previous build fails it.
+Regression checks cover 2x16, 16x2, 1x1 and 8x16 BC1/BC2/BC3 resources, their
+uploaded bytes, uncompressed 2x16 resources, and three device reset cycles.
+The earlier raw/tracked texture-lock regression also passes unchanged.
+The user then confirmed that standalone AC II successfully loads the save with
+the corrected Release build. The excluded hair profile remains excluded; this
+correction is independent of motion replay.

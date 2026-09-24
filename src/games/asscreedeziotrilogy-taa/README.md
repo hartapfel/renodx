@@ -208,6 +208,12 @@ by the game. Texture-lock compatibility also handles overlay textures created
 outside ReShade's resource tracking, avoiding a null-hook startup crash observed
 with RTSS. Both corrections are included in the TAA addon without requiring HDR.
 
+Standalone AC II also includes the compressed-texture loading fix: single-level
+BC1/BC2/BC3 textures smaller than a 4x4 block are padded to one block. AC II
+requests a 2x16 DXT5 texture while loading a save and otherwise dereferences
+the failed creation result. The fix preserves the existing compressed upload
+size and does not require the HDR addon.
+
 Object Motion's capture optimizations are shared with TAA. DLAA does not remove
 that CPU cost; the helper adds GPU work and synchronization. It is not a promised
 performance improvement. Resource dimensions are capped at 8,388,608 pixels.
