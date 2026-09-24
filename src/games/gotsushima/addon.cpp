@@ -156,7 +156,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "ColorGradeHighlights",
         .binding = &shader_injection.tone_map_highlights,
-        .default_value = 50.f,
+        .default_value = 42.f,
         .label = "Highlights",
         .section = "Color Grading",
         .max = 100.f,
@@ -224,7 +224,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "ColorGradeFlare",
         .binding = &shader_injection.tone_map_flare,
-        .default_value = 0.f,
+        .default_value = 60.f,
         .label = "Flare",
         .section = "Color Grading",
         .tooltip = "Flare/glare compensation.",
@@ -248,7 +248,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "PsychoVConeResponseExponent",
         .binding = &shader_injection.psychov_cone_response_exponent,
-        .default_value = 1.0f,
+        .default_value = 1.17f,
         .label = "Cone Response Exponent",
         .section = "PsychoV30",
         .tooltip = "Scales contrast calibrated to the native SDR scene curve before LUT grading and its display transform. 1.0 preserves that baseline response.",
@@ -367,7 +367,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "FxChromaticAberrationIntensity",
         .binding = &shader_injection.chromatic_aberration_intensity,
-        .default_value = 1.0f,
+        .default_value = 0.7f,
         .label = "CA Intensity",
         .section = "Effects",
         .tooltip = "Strength of the red/green lens separation. 0 removes fringing;",
@@ -378,7 +378,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "FxChromaticAberrationStartOffset",
         .binding = &shader_injection.chromatic_aberration_start_offset,
-        .default_value = 0.5f,
+        .default_value = 0.7f,
         .label = "CA Start Offset",
         .section = "Effects",
         .tooltip = "Protects the center from fringing. 0 starts at the center; 0.5 keeps the middle half clear; values near 1 confine the effect to the edges.",

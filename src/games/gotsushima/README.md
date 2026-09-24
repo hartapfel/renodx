@@ -2,7 +2,7 @@
 
 A native HDR mod for the PC version of **Ghost of Tsushima DIRECTOR'S CUT**, using Direct3D 12. It replaces the game's HDR tone curves with **PsychoV-30**, retains the game's LUT-based artistic grading, and gives scene and UI brightness separate controls.
 
-The mod also corrects HUD and video colors for BT.2020 output, uses fixed gamma-2.2 display emulation after PsychoV and a separate fixed Rec.709 encode / gamma 2.4 decode for HUD and video, and offers optional perceptual film grain, Lilium RCAS sharpening, and UE5-style chromatic aberration. These changes are implemented in the game's shaders, before the completed frame is presented.
+The mod also corrects HUD and video colors for BT.2020 output, uses a fixed Rec.709 encode / gamma 2.4 decode for HUD and video without adding SDR EOTF emulation to PsychoV, and offers optional perceptual film grain, Lilium RCAS sharpening, and UE5-style chromatic aberration. These changes are implemented in the game's shaders, before the completed frame is presented.
 
 **Native HDR must be enabled in the game.** The addon is `renodx-gotsushima.addon64`.
 
@@ -85,8 +85,7 @@ flowchart TD
     B --> C[Linear LUT shoulder, native LUT grade, reconstruction]
     C --> T[sRGB LUT decode to linear]
     T --> D[Grade-calibrated PsychoV-30 and display roll-off]
-    D --> GE[Fixed sRGB encode / gamma-2.2 decode]
-    GE --> CF[Optional Color Filter blend at fixed graded luminance]
+    D --> CF[Optional Color Filter blend at fixed graded luminance]
     CF --> E[BT.2020 and gamma-2.2 transport]
     U[HUD and video colors] --> V[Rec.709 encode, gamma 2.4 decode, BT.2020, gamma-2.2 transport]
     E --> AA[Temporal reconstruction / upscaling]
@@ -101,8 +100,6 @@ The two scene shaders, `0x313ABA52` and `0x43D9A412`, preserve the native upstre
 **PsychoV runs after LUT grading.** The curve before the LUT controls lookup coordinates and their reconstruction; it does not replace the post-LUT display tone mapper.
 
 Below Color Filter 100, both scene shader variants also evaluate PsychoV on an identity-grade reference before the native color matrices and LUTs. This reference retains the selected decoding, user grading, and existing calibration. After tone mapping, its chromaticity is normalized to the fully graded output's linear luminance and blended with the graded color. Chroma is reduced toward neutral only as needed to fit the selected gamut and peak, preserving that luminance. This occurs before grain and HUD composition; HUD/video colors and Vanilla/SDR-reference modes are unaffected. Values below 100 cost an additional PsychoV evaluation but no additional LUT samples. At 100 the reference evaluation and blend are bypassed.
-
-The selected display peak and Auto mode's 4000-nit working endpoint are inverse-corrected before PsychoV and the finite-range shoulder. Applying the fixed gamma-2.2 response afterward therefore retains those endpoints rather than reducing the requested peak. Scene white remains the unit reference. The later gamma-2.2 composition encode/decode is still a separate reversible transport, and HUD/video retain their fixed Rec.709/gamma-2.4 response.
 
 ### Linear-light LUT shoulder
 
@@ -135,9 +132,9 @@ The native matrices on either side of the bypassed scene curve are retained, but
 
 ### PsychoV, gamut, and HDR transport
 
-The local [PsychoV-30 implementation](test30.hlsl) receives the LUT result decoded from sRGB to linear. This required signal conversion is fixed. After PsychoV, roll-off, and output grading, a fixed sRGB encode followed by gamma-2.2 decode supplies the requested darker shadow response. It runs per channel in the selected target primaries (BT.709 or BT.2020), before the Color Filter luminance match, nits scaling, effects, and HUD composition. It has no toggle or slider.
+The local [PsychoV-30 implementation](test30.hlsl) receives the LUT result decoded from sRGB to linear. This required signal conversion is fixed; no optional SDR display-EOTF emulation is added before or after PsychoV. PsychoV supplies the custom scene display response.
 
-PsychoV intentionally omits the native BT.709 OETF followed by display decoding. That combination darkens shadows and midtones; preserving it is useful for an SDR reference but is no longer the custom scene's target. The custom scene instead uses the fixed sRGB-to-gamma-2.2 response described above; it does not reproduce that native transfer. BT.709 encoding paired with a display EOTF is not inherently erroneous. The original square-decode approximation is not restored. SDR in HDR and the validated HUD/video path retain their native SDR display transfer.
+PsychoV intentionally omits the native BT.709 OETF followed by display decoding. That combination darkens shadows and midtones; preserving it is useful for an SDR reference but is no longer the custom scene's target. This is a deliberate presentation choice to soften the native contrast, not a claim that BT.709 encoding paired with a display EOTF is inherently erroneous. The original square-decode approximation is not restored. SDR in HDR and the validated HUD/video path retain their native SDR display transfer.
 
 The baseline input anchor is measured by passing a fixed neutral scene value of 0.18 through the native matrices, reconstructable LUT shoulder, active LUT blend, and direct LUT decode. The baseline output anchor passes the same fixed scene value through the captured native SDR curve and grade instead. Both calibration routes omit the native SDR display transform, so anchor matching cannot add its contrast back. Anchor calibration includes the masked shader's local blend weight and uses luminance anchors to avoid imposing a new white balance.
 
@@ -337,5 +334,3 @@ Post-upscale effects routing: the command list that records the scene owns pre-H
 Map/UI exclusion: the captured map path draws tiles directly into the pre-upscale scene target. That branch bypasses the post-upscale effects pass and cancels both scene-only PQ reservations. Captured gameplay HUD paths use a separate composition target and retain effects. The output fallback decision is stored per command list and uploaded with a local settings copy, so parallel recording cannot overwrite another draw's switch through the shared user settings.
 
 Validation: twenty extracted callback branch/lifetime scenarios pass, including early map UI on another recording, returning to gameplay, and independent output decisions during interleaved scene recording. The output shader remains byte-identical to the preceding version under strict compilation. Recheck the map with frame generation off/on, then gameplay with the HUD visible and completely hidden, including an FG toggle. The Release addon was verified in game: the user confirmed stable map rendering and working gameplay effects after the map exclusion and output injection correction.
-
-Fixed scene gamma-2.2 validation: all 57 shaders pass strict compilation. Only the two scene shader binaries change; forced Vanilla and SDR-reference scene paths remain byte-identical. Numerical checks across 24 scene-white/peak combinations retain black, monotonic highlight roll-off, and the selected endpoint in Auto and manual paths. In game, check dark gradients, bright flames, both target gamuts, Color Filter, and HUD consistency.
