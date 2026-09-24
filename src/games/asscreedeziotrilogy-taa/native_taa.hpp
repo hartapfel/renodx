@@ -331,6 +331,7 @@ inline constexpr auto CaptureObjectMotion = []<typename Context> requires ((Cont
   UINT frequency = 0;
   draw.mesh.shader = context.matched_shader_hash;
   draw.skinned = profile->skinned;
+  draw.skin_scale = profile->skin_scale;
   draw.packed_position = profile->packed_position;
   draw.wind = profile->wind;
   draw.displaced = profile->displaced;
@@ -379,8 +380,13 @@ inline constexpr auto CaptureObjectMotion = []<typename Context> requires ((Cont
       // Material opacity must use the audited color lane, not a clip-coordinate
       // lane that happens to share COLOR semantics in another vertex layout.
       if (opacity.vertex_alpha && (profile->color == MotionColor::CLIP || opacity.color_semantic != profile->color_semantic)) return {};
-      draw.vertex_alpha = opacity.vertex_alpha && profile->color == MotionColor::VERTEX;
-      draw.position_alpha = opacity.vertex_alpha && profile->color == MotionColor::POSITION;
+      if (opacity.vertex_alpha && opacity.color_component != 3
+          && !(opacity.color_component == 1 && profile->hash == 0x930C136Du)) return {};
+      draw.vertex_alpha = opacity.vertex_alpha && opacity.color_component == 3 && profile->color == MotionColor::VERTEX;
+      draw.position_alpha = opacity.vertex_alpha && opacity.color_component == 3 && profile->color == MotionColor::POSITION;
+      // AC II 930C136D writes COLOR0.y from packed TANGENT.w / 255. Its
+      // alpha-tested pixel material uses that lane rather than COLOR0.a.
+      draw.tangent_alpha = opacity.vertex_alpha && opacity.color_component == 1;
       draw.saturate_alpha = opacity.saturate;
       draw.vertex_alpha_first = opacity.vertex_first;
       if (opacity.vertex_alpha && profile->color == MotionColor::WIND) {
@@ -433,7 +439,9 @@ inline constexpr auto CaptureObjectMotion = []<typename Context> requires ((Cont
   if (draw.tree && (vertex_desc.Usage & D3DUSAGE_DYNAMIC)) return {};
   reached(9);
   UINT source_streams = 0;
-  draw.motion_declaration = GetMotionDeclaration(native, &data->object_motion, draw.declaration.Get(), draw.skinned, draw.vertex_alpha, draw.displaced, (vertex_desc.Usage & D3DUSAGE_DYNAMIC) != 0, draw.tree, &source_streams);
+  draw.motion_declaration = GetMotionDeclaration(native, &data->object_motion, draw.declaration.Get(), draw.skinned, draw.vertex_alpha,
+                                                 draw.displaced, (vertex_desc.Usage & D3DUSAGE_DYNAMIC) != 0,
+                                                 draw.tree, draw.tangent_alpha, &source_streams);
   if (!draw.motion_declaration) return {};
   D3DVERTEXBUFFER_DESC secondary_desc = {};
   if (source_streams & 2u) {
@@ -1042,9 +1050,9 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
     data->resolve.valid = false;
   }
   if (capture_enabled != 0.f) ++data->performance.frames;
-  if (capture_enabled != 0.f && data->frame % 120 == 0) {
+  if ((capture_enabled != 0.f || debug_view == 2.f) && data->frame % 120 == 0) {
     std::ostringstream message;
-    message << "Brotherhood TAA input capture: draws=" << data->camera_draws << " cameraConflict=" << data->conflicting_cameras
+    message << "Ezio Trilogy TAA input capture: draws=" << data->camera_draws << " cameraConflict=" << data->conflicting_cameras
             << " current=" << data->current_valid << " consecutivePair=" << pair_valid
             << " size=" << data->width << 'x' << data->height << " jitterDraws=" << data->jitter_draws
             << " msaa=" << unsigned(data->scene_samples) << " depthPrepass=" << data->msaa_depth_draws
@@ -1088,7 +1096,7 @@ inline void OnScene(reshade::api::command_list* cmd_list) {
                 << ',' << data->performance.resolve_gpu_ms / data->performance.gpu_frames;
       data->performance.ResetTotals();
     }
-    if (capture_enabled != 0.f && data->active_mode == 4) {
+    if (debug_view == 2.f || (capture_enabled != 0.f && data->active_mode == 4)) {
       for (size_t i = 0; i < std::size(MOTION_SHADERS); ++i) {
         const auto& stages = data->object_motion.profile_stages[i];
         if (!stages[0]) continue;

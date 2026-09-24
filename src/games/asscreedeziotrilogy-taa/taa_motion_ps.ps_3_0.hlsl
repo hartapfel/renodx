@@ -11,7 +11,8 @@ sampler2D scene_depth_texture : register(s1);
 // Inverse size, enable MSAA prepass visibility, clip-depth roundoff tolerance.
 float4 depth_info : register(c8);
 
-float4 main(float4 current_clip : TEXCOORD0, float3 previous_position : TEXCOORD1, float clip_distance : TEXCOORD2, float2 uv : TEXCOORD3, float4 color : COLOR0, float2 pixel : VPOS) : COLOR0 {
+float4 main(float4 current_clip : TEXCOORD0, float3 previous_position : TEXCOORD1, float clip_distance : TEXCOORD2,
+            float2 uv : TEXCOORD3, float4 color : COLOR0, float2 pixel : VPOS) : COLOR0 {
   clip(clip_distance);
   // At native MSAA boundaries select a surface at the pixel center; never
   // average velocities/depth from unrelated foreground/background samples.

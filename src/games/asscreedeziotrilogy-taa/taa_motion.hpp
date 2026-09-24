@@ -35,6 +35,7 @@ struct MotionShader {
   bool wind = false;
   bool displaced = false;
   unsigned tree = 0;
+  float skin_scale = 10.f;
 };
 inline constexpr MotionShader MOTION_SHADERS[] = {
     {0x4B000956u, false, false, 1, false, MotionColor::VERTEX}, {0xCFF33597u, false, false, 1, false},
@@ -50,6 +51,22 @@ inline constexpr MotionShader MOTION_SHADERS[] = {
     {0xFC8CBBF0u, false, true, 2, true, MotionColor::VERTEX},
     {0xF53BF32Fu, false, false, 2, false, MotionColor::WIND, 1, 0, true, false, 1},
     {0x9E55FEF3u, false, false, 2, false, MotionColor::WIND, 1, 0, true, false, 2},
+    // AC II: original SM3 bytecode has the same c0-c3/c8-c11 projection and
+    // c18 clip contract, but different output signatures and 16x skin inputs.
+    // The b15 deconstruction branch is excluded by CaptureObjectMotion.
+    {0x2E092EA9u, false, true, 2, false, MotionColor::WHITE, 0, 0},
+    {0x7E8F180Fu, false, true, 2, false, MotionColor::VERTEX, 0, 0},
+    {0xF0318FECu, false, true, 2, true, MotionColor::WHITE, 0, 0},
+    {0x837F0104u, false, true, 2, true, MotionColor::VERTEX, 0, 0},
+    {0xE5046052u, false, true, 2, false, MotionColor::VERTEX, 0, 0},
+    {0xF2DBB515u, true, false, 2, false, MotionColor::POSITION, 0, 0, false, false, 0, 16.f},
+    {0xB06A2832u, true, false, 2, false, MotionColor::POSITION, 0, 0, false, false, 0, 16.f},
+    {0x930C136Du, true, false, 2, false, MotionColor::POSITION, 0, 0, false, true, 0, 16.f},
+    // AC II character-adjacent garments/accessories: native o4.w is the same
+    // clip plane, but these use rigid float and packed position respectively.
+    {0x0BA91EFEu, false, false, 2, false, MotionColor::VERTEX, 0, 0},
+    {0xD15E1D27u, false, true, 2, false, MotionColor::WHITE, 0, 0},
+    {0xC542FC43u, false, true, 2, true, MotionColor::WHITE, 0, 0},
 };
 
 struct MotionMesh {
@@ -96,6 +113,7 @@ struct MotionDraw {
   bool vertex_alpha = false, saturate_alpha = false;
   bool vertex_alpha_first = false;
   bool position_alpha = false;
+  bool tangent_alpha = false;
   Matrix clip = {}, unjittered_clip = {}, world = {};
   std::array<float, 4> clip_plane = {};
   std::array<float, 504> bones = {};
@@ -109,6 +127,7 @@ struct MotionDraw {
   bool translucent = false;
   float min_depth = 0.f, max_depth = 1.f;
   bool skinned = false, packed_position = false;
+  float skin_scale = 10.f;
   bool wind = false;
   bool displaced = false;
   float displacement = 0.f;
@@ -141,8 +160,14 @@ inline bool MotionWithinStep(const MotionDraw& a, const MotionDraw& b) {
   for (unsigned row = 0; row < 3; ++row) {
     // CPU-deformed clothing can share an identity world matrix across NPCs.
     // Its captured vertices supply the spatial anchor instead of that matrix.
+    // AC II also shares identity world matrices and immutable meshes across
+    // skinned crowd instances. Bone zero has a stable mesh-local mapping and
+    // carries the actor translation, so it distinguishes those palettes. Do
+    // not use it across different skin parts: their palette remaps can differ.
+    const bool same_skin_mesh = a.skinned && b.skinned && a.mesh == b.mesh;
     const float delta = a.geometry_center ? (*a.geometry_center)[row] - (*b.geometry_center)[row]
-                                          : a.world.m[row][3] - b.world.m[row][3];
+                        : same_skin_mesh ? a.bones[row * 4 + 3] - b.bones[row * 4 + 3]
+                                         : a.world.m[row][3] - b.world.m[row][3];
     distance_squared += delta * delta;
     for (unsigned column = 0; column < 3; ++column)
       if (std::abs(a.world.m[row][column] - b.world.m[row][column]) > .35f) return false;
@@ -268,6 +293,7 @@ struct MotionOpacity {
   bool vertex_first = false;
   unsigned uv_semantic = 0;
   unsigned color_semantic = 0;
+  unsigned color_component = 3;
   std::array<int, 2> uv_constants = {-1, -1};
 };
 
@@ -298,20 +324,23 @@ struct MotionState {
   unsigned shader_cache_misses = 0;
   struct Declaration {
     ComPtr<IDirect3DVertexDeclaration9> original;
-    std::array<ComPtr<IDirect3DVertexDeclaration9>, 48> motion;
-    std::array<bool, 48> attempted = {};
-    std::array<UINT, 48> streams = {};
+    std::array<ComPtr<IDirect3DVertexDeclaration9>, 96> motion;
+    std::array<bool, 96> attempted = {};
+    std::array<UINT, 96> streams = {};
   };
   std::unordered_map<IDirect3DVertexDeclaration9*, Declaration> declarations;
 };
 
 inline ComPtr<IDirect3DVertexDeclaration9> GetMotionDeclaration(IDirect3DDevice9* native, MotionState* state,
-                                                              IDirect3DVertexDeclaration9* original, bool skinned, bool vertex_alpha = false,
-                                                              bool displaced = false, bool mutable_vertices = false, unsigned tree = 0, UINT* source_streams = nullptr) {
+                                                               IDirect3DVertexDeclaration9* original, bool skinned, bool vertex_alpha = false,
+                                                               bool displaced = false, bool mutable_vertices = false, unsigned tree = 0,
+                                                               bool tangent_alpha = false,
+                                                               UINT* source_streams = nullptr) {
   if (source_streams) *source_streams = 0;
-  if (tree > 2 || (tree && (skinned || vertex_alpha || displaced || mutable_vertices))) return {};
+  if (tree > 2 || (tree && (skinned || vertex_alpha || displaced || mutable_vertices || tangent_alpha)) || (tangent_alpha && !displaced)) return {};
   auto found = state->declarations.find(original);
-  const unsigned variant = unsigned(skinned) + 2 * unsigned(vertex_alpha) + 4 * unsigned(displaced) + 8 * unsigned(mutable_vertices) + 16 * tree;
+  const unsigned variant = unsigned(skinned) + 2 * unsigned(vertex_alpha) + 4 * unsigned(displaced) + 8 * unsigned(mutable_vertices)
+                           + 16 * tree + 48 * unsigned(tangent_alpha);
   if (found == state->declarations.end()) {
     if (state->declarations.size() >= 256) state->declarations.clear();
     found = state->declarations.emplace(original, MotionState::Declaration{original}).first;
@@ -348,13 +377,14 @@ inline ComPtr<IDirect3DVertexDeclaration9> GetMotionDeclaration(IDirect3DDevice9
   {
     const bool skin = skinned, color = vertex_alpha, displacement = displaced;
     std::vector<D3DVERTEXELEMENT9> motion_elements;
-    bool position = false, weights = false, indices = false, has_color = false, normal = false, binormal = false, supported = true;
+    bool position = false, weights = false, indices = false, has_color = false, normal = false, binormal = false, tangent = false, supported = true;
     for (UINT i = 0; i < count && elements[i].Stream != 0xff; ++i) {
       const auto& element = elements[i];
       if (element.UsageIndex != 0) continue;
       if (element.Usage != D3DDECLUSAGE_POSITION && element.Usage != D3DDECLUSAGE_TEXCOORD
           && !(color && element.Usage == D3DDECLUSAGE_COLOR)
           && !(displacement && (element.Usage == D3DDECLUSAGE_NORMAL || element.Usage == D3DDECLUSAGE_BINORMAL))
+          && !(tangent_alpha && element.Usage == D3DDECLUSAGE_TANGENT)
           && !(skin && (element.Usage == D3DDECLUSAGE_BLENDWEIGHT || element.Usage == D3DDECLUSAGE_BLENDINDICES))) continue;
       if (element.Stream > 1 || element.Method != D3DDECLMETHOD_DEFAULT) { supported = false; break; }
       found->second.streams[variant] |= 1u << element.Stream;
@@ -362,10 +392,12 @@ inline ComPtr<IDirect3DVertexDeclaration9> GetMotionDeclaration(IDirect3DDevice9
       if (element.Usage == D3DDECLUSAGE_COLOR) has_color = true;
       if (element.Usage == D3DDECLUSAGE_NORMAL) normal = element.Type == D3DDECLTYPE_UBYTE4;
       if (element.Usage == D3DDECLUSAGE_BINORMAL) binormal = element.Type == D3DDECLTYPE_UBYTE4;
+      if (element.Usage == D3DDECLUSAGE_TANGENT) tangent = element.Type == D3DDECLTYPE_UBYTE4;
       if (element.Usage == D3DDECLUSAGE_BLENDWEIGHT) weights = element.Type == D3DDECLTYPE_UBYTE4N || element.Type == D3DDECLTYPE_FLOAT4;
       if (element.Usage == D3DDECLUSAGE_BLENDINDICES) indices = element.Type == D3DDECLTYPE_UBYTE4;
       motion_elements.push_back(element);
-      if (mutable_vertices && element.Usage != D3DDECLUSAGE_TEXCOORD && element.Usage != D3DDECLUSAGE_COLOR) {
+      if (mutable_vertices && element.Usage != D3DDECLUSAGE_TEXCOORD && element.Usage != D3DDECLUSAGE_COLOR
+          && element.Usage != D3DDECLUSAGE_TANGENT) {
         D3DVERTEXELEMENT9 previous = element;
         // Stream 1 may contain the game's UV/color or compressed geometry.
         // Only mutable stream-0 inputs come from the saved previous upload.
@@ -381,7 +413,8 @@ inline ComPtr<IDirect3DVertexDeclaration9> GetMotionDeclaration(IDirect3DDevice9
         motion_elements.push_back(previous);
       }
     }
-    if (supported && position && (!skin || (weights && indices)) && (!color || has_color) && (!displacement || (normal && binormal))) {
+    if (supported && position && (!skin || (weights && indices)) && (!color || has_color)
+        && (!displacement || (normal && binormal)) && (!tangent_alpha || tangent)) {
       std::stable_sort(motion_elements.begin(), motion_elements.end(), [](const auto& a, const auto& b) { return a.Stream < b.Stream; });
       motion_elements.push_back(D3DDECL_END());
       native->CreateVertexDeclaration(motion_elements.data(), &found->second.motion[variant]);
@@ -502,9 +535,10 @@ inline int MotionClipSemantic(IDirect3DPixelShader9* shader, MotionOpacity* opac
       case D3DSPR_TEMP: if (reg < alpha_origins.size()) return alpha_origins[reg][swizzle]; break;
       case D3DSPR_CONST: if (reg < constants.size()) return constants[reg][swizzle]; break;
       case D3DSPR_INPUT:
-        if (reg < colors.size() && colors[reg] >= 0 && swizzle == 3) {
+        if (reg < colors.size() && colors[reg] >= 0 && (swizzle == 1 || swizzle == 3)) {
           Term color{Term::VERTEX};
           color.opacity.color_semantic = colors[reg];
+          color.opacity.color_component = swizzle;
           return color;
         }
         if (reg < colors.size() && colors[reg] >= 0 && swizzle == 2) {
@@ -559,6 +593,7 @@ inline int MotionClipSemantic(IDirect3DPixelShader9* shader, MotionOpacity* opac
       }
       a.opacity.vertex_alpha = true;
       a.opacity.color_semantic = b.opacity.color_semantic;
+      a.opacity.color_component = b.opacity.color_component;
       return a;
     }
     return {};
@@ -893,7 +928,7 @@ inline bool RenderObjectMotion(IDirect3DDevice9* native, MotionState* state, IDi
     const std::array<std::array<float, 4>, 7> vertex_info = {{
         draw.clip_plane,
         {draw.tree ? float(draw.tree) : draw.packed_position ? 1.f : 0.f, (draw.vertex_alpha || draw.position_alpha) ? 1.f : 0.f, draw.wind ? 1.f : 0.f, draw.constant_vertex_alpha},
-        {draw.alpha_uv_scale[0], draw.alpha_uv_scale[1], 0.f, 0.f},
+        {draw.alpha_uv_scale[0], draw.alpha_uv_scale[1], draw.skin_scale, draw.tangent_alpha ? 1.f : 0.f},
         previous.wind_origin,
         draw.tree ? previous.tree_eye : std::array<float, 4>{draw.displaced ? 1.f : 0.f, draw.displacement, previous.displacement, 0.f},
         {draw.geometry ? 1.f : 0.f, 0.f, 0.f, 0.f},
@@ -918,7 +953,7 @@ inline bool RenderObjectMotion(IDirect3DDevice9* native, MotionState* state, IDi
                                                      : &previous.unjittered_clip, sizeof(Matrix));
     pixel_info[4] = {jitter[0] / width, jitter[1] / height, matched ? 1.f : draw.root_match >= 0 ? 2.f : 0.f, 0.f};
     pixel_info[5] = {float(draw.alpha_function), float(draw.alpha_reference) / 255.f, draw.alpha_pixel_uv_scale[0], draw.alpha_pixel_uv_scale[1]};
-    pixel_info[6] = {draw.alpha_scale, (draw.vertex_alpha || draw.position_alpha || draw.constant_vertex_alpha != 1.f) ? 1.f : 0.f, draw.saturate_alpha ? 1.f : 0.f, draw.vertex_alpha_first ? 1.f : 0.f};
+    pixel_info[6] = {draw.alpha_scale, (draw.vertex_alpha || draw.position_alpha || draw.tangent_alpha || draw.constant_vertex_alpha != 1.f) ? 1.f : 0.f, draw.saturate_alpha ? 1.f : 0.f, draw.vertex_alpha_first ? 1.f : 0.f};
     pixel_info[7] = {draw.alpha_final_scale, draw.translucent ? 0.5f : 0.f, 0.f, 0.f};
     if (!last_draw || std::memcmp(pixel_info.data(), last_pixel_info.data(), sizeof(pixel_info)) != 0) {
       native->SetPixelShaderConstantF(0, pixel_info[0].data(), UINT(pixel_info.size()));
