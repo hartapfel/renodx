@@ -1,4 +1,29 @@
-# Engine projection regression
+# Regression tests
+
+## Standalone AC II compressed textures
+
+`compressed_texture.cpp` reproduces the AC II loading-screen texture failure
+through the installed ReShade binary and the real Release addon. It creates a
+hidden synthetic DX9Ex device, not a game process. Build with assertions enabled:
+
+```bat
+clang-cl --target=i686-pc-windows-msvc /nologo /std:c++20 /EHsc /O2 /MT /UNDEBUG src/games/asscreedeziotrilogy-taa/tests/compressed_texture.cpp /Fecompressed-texture-test.exe /link d3d9.lib user32.lib
+```
+
+Run in an isolated directory containing that executable, 32-bit ReShade named
+`dxgi.dll`, the Release TAA addon, and the matching DX12 helper executable at
+`renodx-asscreedeziotrilogy-dx12/renodx-asscreedeziotrilogy-dx12.exe` (its presence
+selects DX9Ex; this test never presents or starts the helper). Do not install HDR
+in this fixture. Against the previous addon, `--expect-rejection` verifies that
+the exact 2x16 DXT5 request fails and returns a null texture. With the fix, run
+without arguments to check BC1/BC2/BC3 padding, unchanged encoded block counts,
+byte-preserving lock/unlock, ordinary RGBA dimensions and repeated device resets.
+
+Live verification: manually launch AC II with HDR disabled, load a save, and
+confirm the log reports `AC2: padding sub-block DX9 texture 2x16 to 4x16` and
+gameplay continues with the chosen AA mode.
+
+## Engine projection regression
 
 `engine_projection.cpp` runs the production engine hooks against a small synthetic
 camera/command stream. It needs Windows x86, the Windows SDK/DirectXMath headers,

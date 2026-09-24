@@ -1,6 +1,8 @@
 /* Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT */
 #pragma once
 
+#include <algorithm>
+#include <sstream>
 #include <include/reshade.hpp>
 #include "../../utils/device_upgrade.hpp"
 #include "./native_draw.hpp"
@@ -13,6 +15,31 @@ inline std::mutex initialization_mutex;
 // when only untracked overlay textures remain. Never retain default-pool
 // textures here: retaining them would prevent an ordinary device Reset.
 inline std::unordered_set<void**> texture_vtables;
+
+inline bool OnCreateResource(reshade::api::device* device, reshade::api::resource_desc& desc,
+                             reshade::api::subresource_data*, reshade::api::resource_usage) {
+  if (device->get_api() != reshade::api::device_api::d3d9
+      || desc.type != reshade::api::resource_type::texture_2d || desc.texture.levels != 1
+      || desc.texture.width == 0 || desc.texture.height == 0
+      || (desc.texture.width >= 4 && desc.texture.height >= 4)) return false;
+  switch (desc.texture.format) {
+    case reshade::api::format::bc1_unorm:
+    case reshade::api::format::bc2_unorm:
+    case reshade::api::format::bc3_unorm: break;
+    default: return false;
+  }
+  // AC2 ignores a failed 2x16 DXT5 CreateTexture during loading and calls
+  // AddRef on null. Its upload already contains complete compression blocks.
+  // Keep this native compatibility fix independent of the optional HDR addon;
+  // if that addon padded the same request first, the guard above is a no-op.
+  std::ostringstream message;
+  message << "AC2: padding sub-block DX9 texture " << desc.texture.width << 'x' << desc.texture.height;
+  desc.texture.width = std::max(4u, desc.texture.width);
+  desc.texture.height = std::max(4u, desc.texture.height);
+  message << " to " << desc.texture.width << 'x' << desc.texture.height;
+  reshade::log::message(reshade::log::level::info, message.str().c_str());
+  return true;
+}
 
 inline HRESULT STDMETHODCALLTYPE LockTexture(IDirect3DTexture9* texture, UINT level,
                                             D3DLOCKED_RECT* locked, const RECT* rect, DWORD flags) {
@@ -89,9 +116,11 @@ inline bool OnCreateDevice(reshade::api::device_api api, uint32_t&) {
 inline void Use(DWORD reason) {
   if (reason == DLL_PROCESS_ATTACH) {
     reshade::register_event<reshade::addon_event::create_device>(OnCreateDevice);
+    reshade::register_event<reshade::addon_event::create_resource>(OnCreateResource);
     reshade::register_event<reshade::addon_event::init_resource>(OnInitResource);
   } else if (reason == DLL_PROCESS_DETACH) {
     reshade::unregister_event<reshade::addon_event::create_device>(OnCreateDevice);
+    reshade::unregister_event<reshade::addon_event::create_resource>(OnCreateResource);
     reshade::unregister_event<reshade::addon_event::init_resource>(OnInitResource);
     native_draw::Uninstall(&texture_vtables);
     texture_vtables.clear();
