@@ -33,7 +33,8 @@ float4 main(
       // When the HUD is hidden, apply effects to the reconstructed scene at
       // this last scene-only draw. Visible HUD uses the pre-composition pass.
       _21 = GhostApplyPostUpscaleEffects(_19, uint2(SV_Position.xy));
-      _21.rgb = round(saturate(_21.rgb) * 255.f) / 255.f;
+      // Keep the effect result in float until the final SDR output write.
+      // Quantizing here and again at the backbuffer creates visible shadow steps.
     }
   }
   float _25 = log2(_21.x);
