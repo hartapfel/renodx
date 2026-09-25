@@ -55,6 +55,7 @@ struct OutputModeDefault {
 };
 
 constexpr std::array output_mode_defaults = {
+    OutputModeDefault{"ToneMapHueShift", 100.f, 50.f},
     OutputModeDefault{"ColorGradeHighlights", 42.f, 50.f},
     OutputModeDefault{"ColorGradeBlowout", 10.f, 0.f},
     OutputModeDefault{"ColorGradeFlare", 60.f, 0.f},
@@ -165,6 +166,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.02f; },
+        .on_change_value = [](float, float current) { SaveOutputModeValue("ToneMapHueShift", current); },
         .is_visible = []() { return IsPsychoV() && settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
