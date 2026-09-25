@@ -123,7 +123,9 @@ float3 GhostToneMapPsychoV30(float3 color_bt709, GhostSDRCalibration calibration
       RENODX_TONE_MAP_SATURATION,
       1.f,
       100.f,
-      RENODX_PSYCHOV_HUE_SHIFT,
+      // SDR retains its proven response-side hue control. HDR restores hue
+      // against the native scene/LUT reference after tone mapping instead.
+      GHOST_SDR_OUTPUT != 0.f ? RENODX_PSYCHOV_HUE_SHIFT : 0.f,
       1.f,
       0,
       RENODX_PSYCHOV_CONE_RESPONSE_EXPONENT * calibration.contrast,
@@ -226,6 +228,8 @@ struct GhostSceneGrade {
   float4 lut_coordinates;
   float lut_blend;
 };
+
+#include "./hue.hlsli"
 
 float3 GhostApplySceneColorFilter(
     float3 filtered_bt709,
