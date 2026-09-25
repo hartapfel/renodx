@@ -28,7 +28,7 @@ struct RootDescriptorDeleter {
   }
 };
 struct __declspec(uuid("21a1eefc-9d82-48eb-a515-c3a723790d94")) CommandData {
-  // PQ output creates a separate branch; it does not modify the gamma scene
+  // Output encoding can create a separate branch; it does not modify the gamma scene
   // later used for HUD composition. Continue only within this recording.
   uint64_t effects_scene = 0;
   bool effects_pending = false;
@@ -60,9 +60,9 @@ struct __declspec(uuid("278e677b-eb36-4d2c-8543-721872723be5")) DeviceData {
   uint64_t effects_scene = 0;
   reshade::api::resource scene_target = {};
   // The first scene-only output can also use a different command list. This
-  // reservation is only for PQ output, never for choosing a HUD target.
+  // reservation is only for output encoding, never for choosing a HUD target.
   reshade::api::command_list* scene_output_owner = nullptr;
-  // One additional scene-only PQ branch may be recorded on another list when
+  // One additional scene-only output branch may be recorded on another list when
   // DLSS FG is active and the HUD is hidden. Never use this token for HUD draws.
   reshade::api::command_list* output_owner = nullptr;
   bool logged = false;
@@ -202,7 +202,7 @@ inline bool OnOutput(reshade::api::command_list* cmd_list) {
   command->output_fallback = 0.f;
   if (auto* data = cmd_list->get_device()->get_private_data<DeviceData>()) {
     const std::lock_guard lock(data->mutex);
-    // DLSS FG encodes a scene-only PQ branch before HUD composition, then
+    // DLSS FG can encode a scene-only branch before HUD composition, then
     // encodes the visible branch afterward. The first encode must not consume
     // the untouched gamma scene's effects. The HUD continuation is local to
     // this recording; one extra scene-only output can cross command lists.
@@ -221,7 +221,7 @@ inline bool OnOutput(reshade::api::command_list* cmd_list) {
                                  && command->output_fallback != 0.f
                              ? cmd_list : nullptr;
     if (continued_output && command->output_fallback != 0.f && !data->logged_output_continuation) {
-      reshade::log::message(reshade::log::level::info, "[Ghost Effects] Second scene-only PQ output received effects with no HUD composition.");
+      reshade::log::message(reshade::log::level::info, "[Ghost Effects] Second scene-only output received effects with no HUD composition.");
       data->logged_output_continuation = true;
     }
     command->effects_scene = data->effects_scene;
@@ -230,7 +230,7 @@ inline bool OnOutput(reshade::api::command_list* cmd_list) {
     command->effects_pending = local_pending && command->output_fallback != 0.f;
     command->output_started = true;
     if (command->output_fallback != 0.f && !data->logged_fallback) {
-      reshade::log::message(reshade::log::level::info, "[Ghost Effects] Scene-only output effects active after upscaling, before PQ encoding (HUD hidden / frame-generation branch).");
+      reshade::log::message(reshade::log::level::info, "[Ghost Effects] Scene-only output effects active after upscaling, before display encoding (HUD hidden / frame-generation branch).");
       data->logged_fallback = true;
     }
   }
@@ -268,7 +268,7 @@ inline bool BeforeHUD(reshade::api::command_list* cmd_list) {
   if (data == nullptr || roots == nullptr || state == nullptr || device->get_api() != device_api::d3d12) return true;
   const std::lock_guard lock(data->mutex);
   // A same-size map layer on another recording is not necessarily the scene.
-  // Only the list that recorded it (or its own PQ branch) may inject before HUD.
+  // Only the list that recorded it (or its own output branch) may inject before HUD.
   const bool pending = roots->effects_pending && roots->effects_scene == data->effects_scene;
   const bool continued_output = pending && roots->output_started;
   if ((!pending && data->scene_output_owner == nullptr && data->output_owner == nullptr)
@@ -277,13 +277,16 @@ inline bool BeforeHUD(reshade::api::command_list* cmd_list) {
   if (target_resource.handle == 0) return true;
   const auto desc = device->get_resource_desc(target_resource);
   // The live capture's post-upscale HUD composition target. Offscreen UI
-  // textures rendered before the scene, smaller layers and PQ output are excluded.
+  // textures rendered before the scene, smaller layers and final output are excluded.
+  const bool expected_format = settings->sdr_output != 0.f
+                                   ? desc.texture.format == format::r8g8b8a8_unorm
+                                   : desc.texture.format == format::r10g10b10a2_unorm;
   if (desc.type != resource_type::texture_2d || desc.texture.width != data->width
-      || desc.texture.height != data->height || desc.texture.format != format::r10g10b10a2_unorm
+      || desc.texture.height != data->height || !expected_format
       || desc.texture.samples != 1 || desc.texture.levels != 1 || desc.texture.depth_or_layers != 1) return true;
   // The map draws UI tiles directly into the pre-upscale scene target. There
   // is no clean post-upscale scene to process in that branch: exclude it from
-  // both the in-place pass and all PQ fallbacks. Gameplay HUD uses a separate
+  // both the in-place pass and all output fallbacks. Gameplay HUD uses a separate
   // composition target in the captured FG-on/off paths.
   if (target_resource == data->scene_target) {
     data->scene_output_owner = nullptr;
@@ -291,7 +294,7 @@ inline bool BeforeHUD(reshade::api::command_list* cmd_list) {
     ++data->effects_scene;
     roots->effects_pending = false;
     if (!data->logged_early_ui) {
-      reshade::log::message(reshade::log::level::info, "[Ghost Effects] Early map/UI composition excluded from post-upscale effects and PQ fallbacks.");
+      reshade::log::message(reshade::log::level::info, "[Ghost Effects] Early map/UI composition excluded from post-upscale effects and output fallbacks.");
       data->logged_early_ui = true;
     }
     return true;
@@ -361,7 +364,7 @@ inline bool BeforeHUD(reshade::api::command_list* cmd_list) {
     if (update && update->descriptors) cmd_list->push_descriptors(shader_stage::all_graphics, layout, param, *update);
   }
   if (rendered && continued_output && !data->logged_continuation) {
-    reshade::log::message(reshade::log::level::info, "[Ghost Effects] Pre-HUD effects continued after the frame-generation PQ branch.");
+    reshade::log::message(reshade::log::level::info, "[Ghost Effects] Pre-HUD effects continued after the frame-generation output branch.");
     data->logged_continuation = true;
   }
   if (rendered && !data->logged) {

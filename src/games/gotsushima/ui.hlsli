@@ -5,7 +5,8 @@
 #include "./intermediate.hlsli"
 
 bool GhostIsUIOverrideActive() {
-  return RENODX_TONE_MAP_TYPE != 0.f
+  return GHOST_SDR_OUTPUT == 0.f
+         && RENODX_TONE_MAP_TYPE != 0.f
          && RENODX_PEAK_WHITE_NITS > 0.f
          && RENODX_GRAPHICS_WHITE_NITS > 0.f;
 }
@@ -32,8 +33,11 @@ float3 GhostRenderUI(float3 color_bt709, float coverage, bool linear_input = fal
   // decoding and coverage separate; scene grading never controls this EOTF.
   linear_bt709 = renodx::color::gamma::DecodeSafe(
       GhostSDRDisplayCode(linear_bt709), 2.4f);
+  const float3 target_color = GHOST_SDR_OUTPUT != 0.f
+                                  ? linear_bt709
+                                  : renodx::color::bt2020::from::BT709(linear_bt709);
   return GhostEncodeIntermediate(
-             renodx::color::bt2020::from::BT709(linear_bt709) * RENODX_GRAPHICS_WHITE_NITS)
+             target_color * RENODX_GRAPHICS_WHITE_NITS)
          * coverage;
 }
 

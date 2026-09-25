@@ -101,19 +101,14 @@ struct GhostSDRCalibration {
 
 float3 GhostToneMapPsychoV30(float3 color_bt709, GhostSDRCalibration calibration) {
   color_bt709 = GhostApplyPsychoVInputExtensions(color_bt709);
-  // Solve endpoints before the fixed sRGB -> gamma-2.2 display response.
-  // Its HDR extension compresses values above scene white; inverse-correct
-  // the target so the forward response still reaches the selected peak.
-  const float display_peak = renodx::color::correct::GammaSafe(
-      RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f), true, 2.2f);
+  const float display_peak = RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f);
   // Auto retains a wider HDR response before fitting it to the display.
   // At 1000 nits, direct target-volume projection can pin fire channels to
   // the peak before their luminance gradient has been resolved. The 4000-nit
   // reference was checked against the affected fire scene. Manual compression
   // remains a direct PsychoV response at the selected display peak.
   const float working_peak = RENODX_PSYCHOV_COMPRESSION == 0.f
-                                 ? max(display_peak, renodx::color::correct::GammaSafe(
-                                                         4000.f / max(RENODX_DIFFUSE_WHITE_NITS, 1.f), true, 2.2f))
+                                 ? max(display_peak, 4000.f / max(RENODX_DIFFUSE_WHITE_NITS, 1.f))
                                  : display_peak;
   float3 mapped_bt709 = renodx::tonemap::psychov::psychotm_test30(
       color_bt709,
@@ -135,12 +130,14 @@ float3 GhostToneMapPsychoV30(float3 color_bt709, GhostSDRCalibration calibration
       calibration.input_anchor.xxx,
       calibration.output_anchor.xxx,
       RENODX_PSYCHOV_GAMUT_COMPRESSION,
-      int(RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE),
+      GHOST_SDR_OUTPUT != 0.f ? 0 : int(RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE),
       1.f,
       RENODX_PSYCHOV_COMPRESSION);
 
   if (working_peak > display_peak) {
-    const float max_channel = renodx::math::Max(renodx::color::bt2020::from::BT709(mapped_bt709));
+    const float max_channel = renodx::math::Max(GHOST_SDR_OUTPUT != 0.f
+                                                    ? mapped_bt709
+                                                    : renodx::color::bt2020::from::BT709(mapped_bt709));
     const float anchor = min(1.f, display_peak * 0.5f);
     if (max_channel > anchor) {
       // Anchored finite-range Reinhard: identity and unit slope at the knee,
@@ -153,17 +150,7 @@ float3 GhostToneMapPsychoV30(float3 color_bt709, GhostSDRCalibration calibration
       mapped_bt709 *= shoulder / max_channel;
     }
   }
-  mapped_bt709 = GhostApplyPsychoVOutputExtensions(color_bt709, mapped_bt709);
-  // Fixed scene display response, separate from the reversible composition
-  // encoding and the HUD's Rec.709/gamma-2.4 response. Work in the selected
-  // target primaries so valid wide-gamut colors need no negative channels.
-  // Both Color Filter references receive this once, before matching luminance.
-  if (RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE == 0.f) {
-    return renodx::color::correct::GammaSafe(mapped_bt709, false, 2.2f);
-  }
-  return renodx::color::bt709::from::BT2020(
-      renodx::color::correct::GammaSafe(
-          renodx::color::bt2020::from::BT709(mapped_bt709), false, 2.2f));
+  return GhostApplyPsychoVOutputExtensions(color_bt709, mapped_bt709);
 }
 
 float3 GhostApplyPackedColorMatrix(
@@ -216,11 +203,16 @@ float3 GhostFitLUTInputGamut(float3 color_bt709) {
   return (color_bt709 - min_channel) * (luminance / (luminance - min_channel));
 }
 
-// Decode the reconstructed LUT's sRGB representation to linear input for
-// PsychoV. This is a signal decode, with no SDR display-EOTF emulation.
-// Do not saturate here: LUT reconstruction must retain HDR headroom.
+// HDR LUT reconstruction uses an sRGB representation. The game's SDR LUT
+// already returns linear scene color, which the native SDR output later
+// encodes for display. Keep these input signals distinct; decoding the SDR
+// result a second time crushes its midtones and distorts saturation.
+// Do not saturate here: LUT reconstruction must retain headroom.
 float3 GhostDecodeLUTOutput(float3 encoded_bt709) {
-  return renodx::color::srgb::DecodeSafe(max(encoded_bt709, 0.f.xxx));
+  encoded_bt709 = max(encoded_bt709, 0.f.xxx);
+  return GHOST_SDR_OUTPUT != 0.f
+             ? encoded_bt709
+             : renodx::color::srgb::DecodeSafe(encoded_bt709);
 }
 
 struct GhostSceneGrade {
@@ -241,24 +233,31 @@ float3 GhostApplySceneColorFilter(
     GhostSDRCalibration calibration) {
   // An identity LUT with the existing square-root shaper/reconstruction
   // returns sqrt(scene). Omit native matrices and LUT color grading for this
-  // reference, but retain the sRGB decode and all user PsychoV controls.
-  float3 unfiltered_bt2020 = max(renodx::color::bt2020::from::BT709(
-      GhostToneMapPsychoV30(GhostDecodeLUTOutput(sqrt(max(scene_bt709, 0.f.xxx))), calibration)), 0.f.xxx);
+  // reference, but retain the output-specific LUT interpretation and all user
+  // PsychoV controls.
+  const bool sdr_output = GHOST_SDR_OUTPUT != 0.f;
+  float3 unfiltered_target = GhostToneMapPsychoV30(
+      GhostDecodeLUTOutput(sqrt(max(scene_bt709, 0.f.xxx))), calibration);
+  unfiltered_target = max(sdr_output ? unfiltered_target
+                                     : renodx::color::bt2020::from::BT709(unfiltered_target), 0.f.xxx);
   const float peak = RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f);
   // Match the original RGB10A2 transport bounds and final peak guard before
   // choosing a luminance. This also covers UI white above the display peak.
-  float3 filtered_bt2020 = clamp(renodx::color::bt2020::from::BT709(filtered_bt709),
-                                0.f.xxx, (RENODX_INTERMEDIATE_SCALING / max(RENODX_DIFFUSE_WHITE_NITS, 1.f)).xxx);
-  filtered_bt2020 *= min(1.f, peak / max(renodx::math::Max(filtered_bt2020), 1e-6f));
-  const float luminance = renodx::color::y::from::BT2020(filtered_bt2020);
-  const float unfiltered_luminance = renodx::color::y::from::BT2020(unfiltered_bt2020);
-  unfiltered_bt2020 = unfiltered_luminance > 1e-6f
-                         ? unfiltered_bt2020 * (luminance / unfiltered_luminance)
+  float3 filtered_target = clamp(sdr_output ? filtered_bt709
+                                             : renodx::color::bt2020::from::BT709(filtered_bt709),
+                                 0.f.xxx, (RENODX_INTERMEDIATE_SCALING / max(RENODX_DIFFUSE_WHITE_NITS, 1.f)).xxx);
+  filtered_target *= min(1.f, peak / max(renodx::math::Max(filtered_target), 1e-6f));
+  const float luminance = sdr_output ? renodx::color::y::from::BT709(filtered_target)
+                                     : renodx::color::y::from::BT2020(filtered_target);
+  const float unfiltered_luminance = sdr_output ? renodx::color::y::from::BT709(unfiltered_target)
+                                                : renodx::color::y::from::BT2020(unfiltered_target);
+  unfiltered_target = unfiltered_luminance > 1e-6f
+                         ? unfiltered_target * (luminance / unfiltered_luminance)
                          : luminance.xxx;
-  float3 chroma = lerp(unfiltered_bt2020, filtered_bt2020, saturate(CUSTOM_COLOR_FILTER)) - luminance;
+  float3 chroma = lerp(unfiltered_target, filtered_target, saturate(CUSTOM_COLOR_FILTER)) - luminance;
   // Reduce only chroma to fit the display volume, at fixed physical Y. A
   // per-channel clamp or a max-channel scale here would change luminance.
-  const float3 target_chroma = RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE == 0.f
+  const float3 target_chroma = !sdr_output && RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE == 0.f
                                   ? renodx::color::bt709::from::BT2020(chroma)
                                   : chroma;
   const float3 chroma_limit = renodx::math::Select(
@@ -266,7 +265,8 @@ float3 GhostApplySceneColorFilter(
       (peak - luminance) / max(target_chroma, 1e-6f.xxx),
       luminance / max(-target_chroma, 1e-6f.xxx));
   chroma *= saturate(min(chroma_limit.x, min(chroma_limit.y, chroma_limit.z)));
-  return renodx::color::bt709::from::BT2020(luminance + chroma);
+  return sdr_output ? luminance + chroma
+                    : renodx::color::bt709::from::BT2020(luminance + chroma);
 }
 
 // Evaluate a neutral scene sample through the active matrices and LUTs.
@@ -328,14 +328,13 @@ GhostSDRCalibration GhostCalibratePsychoV(GhostSceneGrade grade, SamplerState lu
 }
 
 float3 GhostRenderIntermediate(float3 color_bt709) {
-  // PsychoV returns its target-gamut result represented as linear BT.709.
-  // Convert it to BT.2020 before transport so valid wide-gamut
-  // colors do not require negative channels in the RGB10A2 intermediate.
-  float3 color_bt2020 = max(
-      renodx::color::bt2020::from::BT709(color_bt709), 0.f.xxx);
-  // The fixed gamma-2.2 display response is already applied after PsychoV.
-  // Only encode for composition here; do not apply that response again.
-  return GhostEncodeIntermediate(color_bt2020 * RENODX_DIFFUSE_WHITE_NITS);
+  // HDR transports BT.2020; the SDR composition target remains BT.709.
+  float3 color_target = max(GHOST_SDR_OUTPUT != 0.f
+                                ? color_bt709
+                                : renodx::color::bt2020::from::BT709(color_bt709), 0.f.xxx);
+  // PsychoV has produced linear display color. HDR encodes for composition;
+  // SDR adapts the scene to the native final transfer without changing HUD.
+  return GhostEncodeIntermediate(color_target * RENODX_DIFFUSE_WHITE_NITS);
 }
 
 float3 GhostEncodeHDR10(float3 intermediate_encoded) {

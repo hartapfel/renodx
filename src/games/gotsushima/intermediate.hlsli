@@ -1,17 +1,24 @@
 #ifndef SRC_GAMES_GOTSUSHIMA_INTERMEDIATE_HLSLI_
 #define SRC_GAMES_GOTSUSHIMA_INTERMEDIATE_HLSLI_
 
-#include "./shared.h"
+#include "./sdr.hlsli"
 
-// Keep the bounded composition buffer in a power-law encoding, like the
-// native pre-display signal. PQ alpha blending darkens partially covered
-// black outlines and changes the apparent weight of text and icons.
-// Scene and UI use the same scale; their independent white levels are
-// already expressed in nits before this transport conversion.
-float3 GhostEncodeIntermediate(float3 color_bt2020_nits) {
-  return renodx::color::gamma::EncodeSafe(
-      max(color_bt2020_nits, 0.f.xxx) / RENODX_INTERMEDIATE_SCALING,
-      2.2f);
+// HDR uses a bounded gamma-2.2 composition buffer for scene and UI. SDR keeps
+// the native HUD untouched and converts only the PsychoV scene to the signal
+// expected by the game's unchanged BT.709 final output transfer.
+float3 GhostEncodeIntermediate(float3 color_nits) {
+  const float3 normalized = max(color_nits, 0.f.xxx) / RENODX_INTERMEDIATE_SCALING;
+  if (GHOST_SDR_OUTPUT != 0.f) {
+    return GhostInverseSDRDisplayCode(renodx::color::srgb::EncodeSafe(saturate(normalized)));
+  }
+  return renodx::color::gamma::EncodeSafe(normalized, 2.2f);
+}
+
+float3 GhostDecodeIntermediate(float3 encoded) {
+  if (GHOST_SDR_OUTPUT != 0.f) {
+    return renodx::color::srgb::DecodeSafe(GhostSDRDisplayCode(saturate(encoded)));
+  }
+  return renodx::color::gamma::DecodeSafe(max(encoded, 0.f.xxx), 2.2f);
 }
 
 #endif  // SRC_GAMES_GOTSUSHIMA_INTERMEDIATE_HLSLI_
