@@ -353,6 +353,7 @@ OutputSignature main(
   float _402 = _393 * _36.z;
   float _403 = mad(_394, _42.y, _402);
   float _404 = mad(_395, _48.x, _403);
+  const float3 ghost_native_pre_lut = float3(_398, _401, _404);
   if (GhostIsPsychoV()) {
     // Feed the linear scene through the native color-space matrices and LUT,
     // but bypass the peak-dependent component-wise rational HDR curve between
@@ -509,6 +510,7 @@ OutputSignature main(
     const float3 ghost_linear_lut = GhostDecodeLUTOutput(
         float3(_495, _496, _497));
     float3 ghost_psychov = GhostToneMapPsychoV30(ghost_linear_lut, ghost_calibration);
+    ghost_psychov = GhostRestoreNativeHDRHue(ghost_psychov, ghost_native_pre_lut, ghost_grade, s1);
     if (CUSTOM_COLOR_FILTER < 1.f) {
       ghost_psychov = GhostApplySceneColorFilter(ghost_psychov, float3(_331, _332, _333), ghost_calibration);
     }

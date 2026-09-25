@@ -56,6 +56,7 @@ struct OutputModeDefault {
 
 constexpr std::array output_mode_defaults = {
     OutputModeDefault{"ColorGradeHighlights", 42.f, 50.f},
+    OutputModeDefault{"ColorGradeBlowout", 10.f, 0.f},
     OutputModeDefault{"ColorGradeFlare", 60.f, 0.f},
     OutputModeDefault{"PsychoVConeResponseExponent", 1.17f, 1.f},
     OutputModeDefault{"PsychoVCompression", 0.f, 2.f},
@@ -160,7 +161,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 100.f,
         .label = "Hue Shift",
         .section = "Tone Mapping",
-        .tooltip = "Shifts PsychoV-30 fire hues away from pink towards orange.",
+        .tooltip = "HDR: restores native scene/LUT hues at 100 while retaining PsychoV luminance. SDR: retains the response-side PsychoV hue shift.",
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.02f; },
@@ -249,13 +250,14 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "ColorGradeBlowout",
         .binding = &shader_injection.tone_map_blowout,
-        .default_value = 0.f,
+        .default_value = 10.f,
         .label = "Blowout",
         .section = "Color Grading",
         .tooltip = "Controls color loss from overexposure.",
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.01f; },
+        .on_change_value = [](float, float current) { SaveOutputModeValue("ColorGradeBlowout", current); },
         .is_visible = []() { return settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
