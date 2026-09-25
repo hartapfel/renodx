@@ -28,4 +28,17 @@ float3 GhostSDRDisplayCode(float3 linear_bt709) {
       linear_bt709);
 }
 
+// Convert the desired SDR display code back to the linear signal expected by
+// the game's native final BT.709 OETF. This lets PsychoV use a standard sRGB
+// display response while native SDR HUD draws and their blending stay intact.
+float3 GhostInverseSDRDisplayCode(float3 display_code) {
+  const float3 magnitude = abs(display_code);
+  return renodx::math::CopySign(
+      renodx::math::Select(
+          magnitude <= 0.081f,
+          magnitude / 4.5f,
+          pow((magnitude + 0.099f) / 1.099f, 1.f / 0.45f)),
+      display_code);
+}
+
 #endif  // SRC_GAMES_GOTSUSHIMA_SDR_HLSLI_

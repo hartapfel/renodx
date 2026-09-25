@@ -42,10 +42,12 @@ struct ShaderInjectData {
   // Per-output draw state, not a user setting. Set only when the HUD pass
   // did not consume the scene's post-upscale effects.
   float post_effects_output_fallback;
+  // Set from the active swapchain, not from a user setting.
+  float sdr_output;
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 116);
+static_assert(sizeof(ShaderInjectData) == 120);
 #endif
 
 #ifndef __cplusplus
@@ -53,7 +55,8 @@ cbuffer shader_injection : register(b13, space50) {
   ShaderInjectData shader_injection : packoffset(c0);
 }
 
-#define RENODX_PEAK_WHITE_NITS shader_injection.peak_white_nits
+#define GHOST_SDR_OUTPUT shader_injection.sdr_output
+#define RENODX_PEAK_WHITE_NITS (GHOST_SDR_OUTPUT != 0.f ? GHOST_SDR_REFERENCE_WHITE_NITS : shader_injection.peak_white_nits)
 #define RENODX_DIFFUSE_WHITE_NITS shader_injection.diffuse_white_nits
 #define RENODX_GRAPHICS_WHITE_NITS shader_injection.graphics_white_nits
 #define RENODX_TONE_MAP_TYPE shader_injection.tone_map_type
@@ -84,10 +87,9 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_COLOR_FILTER shader_injection.color_filter
 #define CUSTOM_BLOOM_INTENSITY shader_injection.bloom_intensity
 
-// Use a common gamma-2.2 BT.2020 composition domain for scene and HUD.
-// Reserve the full display/UI range in RGB10A2; convert to PQ only after
-// native alpha blending and filtering. This is transport, not another grade.
-#define RENODX_INTERMEDIATE_SCALING max(max(RENODX_PEAK_WHITE_NITS, RENODX_GRAPHICS_WHITE_NITS), 1.f)
+// HDR uses a gamma-2.2 BT.2020 composition domain for scene and HUD. SDR
+// retains native BT.709 HUD composition and final display encoding.
+#define RENODX_INTERMEDIATE_SCALING (GHOST_SDR_OUTPUT != 0.f ? GHOST_SDR_REFERENCE_WHITE_NITS : max(max(RENODX_PEAK_WHITE_NITS, RENODX_GRAPHICS_WHITE_NITS), 1.f))
 #define RENODX_INTERMEDIATE_ENCODING renodx::draw::ENCODING_GAMMA_2_2
 #define RENODX_SWAP_CHAIN_DECODING renodx::draw::ENCODING_GAMMA_2_2
 #define RENODX_SWAP_CHAIN_DECODING_COLOR_SPACE \

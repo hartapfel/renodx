@@ -24,9 +24,11 @@ float4 GhostApplyPostUpscaleEffects(Texture2D<float4> scene, uint2 pixel) {
     color = renodx::effects::ApplyFilmGrain(
         color, uv, CUSTOM_RANDOM, CUSTOM_FILM_GRAIN * 0.03f,
         max(RENODX_DIFFUSE_WHITE_NITS, 1.f) / RENODX_INTERMEDIATE_SCALING,
-        false, renodx::color::BT2020_TO_XYZ_MAT);
+        false, GHOST_SDR_OUTPUT != 0.f
+                   ? renodx::color::BT709_TO_XYZ_MAT
+                   : renodx::color::BT2020_TO_XYZ_MAT);
   }
-  return float4(pow(max(color, 0.f), 1.f / 2.2f), original.a);
+  return float4(GhostEncodeIntermediate(max(color, 0.f) * RENODX_INTERMEDIATE_SCALING), original.a);
 }
 
 #endif

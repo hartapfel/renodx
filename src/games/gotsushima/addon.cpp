@@ -8,6 +8,8 @@
 #define DEBUG_LEVEL_0
 
 #include <algorithm>
+#include <array>
+#include <string>
 
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>
@@ -40,6 +42,33 @@ ShaderInjectData shader_injection;
 
 bool IsPsychoV() {
   return shader_injection.tone_map_type == 1.f;
+}
+
+bool IsSDR() {
+  return shader_injection.sdr_output != 0.f;
+}
+
+struct OutputModeDefault {
+  const char* key;
+  float hdr;
+  float sdr;
+};
+
+constexpr std::array output_mode_defaults = {
+    OutputModeDefault{"ColorGradeHighlights", 42.f, 50.f},
+    OutputModeDefault{"ColorGradeFlare", 60.f, 0.f},
+    OutputModeDefault{"PsychoVConeResponseExponent", 1.17f, 1.f},
+    OutputModeDefault{"PsychoVCompression", 0.f, 2.f},
+};
+
+bool output_mode_settings_initialized = false;
+bool output_mode_settings_sdr = false;
+
+void SaveOutputModeValue(const char* key, float value) {
+  if (!output_mode_settings_initialized || renodx::utils::settings::preset_index == 0) return;
+  const auto section = renodx::utils::settings::GetCurrentPresetName();
+  const std::string mode_key = std::string(key) + (IsSDR() ? "SDR" : "HDR");
+  reshade::set_config_value(nullptr, section.c_str(), mode_key.c_str(), value);
 }
 
 bool IsUIColorDraw(reshade::api::command_list* cmd_list) {
@@ -81,7 +110,7 @@ renodx::utils::settings::Settings settings = {
         .can_reset = false,
         .label = "Tone Mapper",
         .section = "Tone Mapping",
-        .tooltip = "Vanilla preserves native HDR. PsychoV-30 provides custom HDR. SDR in HDR reproduces the native SDR shader path at 203 nits with fixed gamma 2.2 and no mod grading or effects.",
+        .tooltip = "Vanilla preserves the game's native output. PsychoV-30 works in SDR and HDR; SDR fixes the peak at 203 nits and uses the same grading and effects controls.",
         .labels = {"Vanilla", "PsychoV-30"/* , "SDR in HDR" */},
     },
     new renodx::utils::settings::Setting{
@@ -91,10 +120,17 @@ renodx::utils::settings::Settings settings = {
         .can_reset = false,
         .label = "Peak Brightness",
         .section = "Tone Mapping",
-        .tooltip = "Overrides the game's native HDR peak brightness in nits.",
+        .tooltip = "Overrides the game's native HDR peak brightness. Fixed at 203 nits in SDR.",
         .min = 400.f,
         .max = 4000.f,
-        .is_enabled = []() { return IsPsychoV(); },
+        .is_enabled = []() { return IsPsychoV() && !IsSDR(); },
+        .is_visible = []() { return !IsSDR(); },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::TEXT,
+        .label = "Peak Brightness: 203 nits (fixed in SDR)",
+        .section = "Tone Mapping",
+        .is_visible = []() { return IsSDR() && IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapGameNits",
@@ -113,10 +149,10 @@ renodx::utils::settings::Settings settings = {
         .default_value = 203.f,
         .label = "UI Brightness",
         .section = "Tone Mapping",
-        .tooltip = "Sets HUD and menu white brightness in nits, overriding the in-game HUD brightness setting.",
+        .tooltip = "Sets HUD and menu white brightness in HDR. SDR retains the game's native HUD and brightness control.",
         .min = 80.f,
         .max = 500.f,
-        .is_enabled = []() { return IsPsychoV(); },
+        .is_enabled = []() { return IsPsychoV() && !IsSDR(); },
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapHueShift",
@@ -162,6 +198,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.02f; },
+        .on_change_value = [](float, float current) { SaveOutputModeValue("ColorGradeHighlights", current); },
         .is_visible = []() { return settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
@@ -231,6 +268,7 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.01f; },
+        .on_change_value = [](float, float current) { SaveOutputModeValue("ColorGradeFlare", current); },
         .is_visible = []() { return settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
@@ -256,6 +294,7 @@ renodx::utils::settings::Settings settings = {
         .max = 5.f,
         .format = "%.2f",
         .is_enabled = []() { return IsPsychoV(); },
+        .on_change_value = [](float, float current) { SaveOutputModeValue("PsychoVConeResponseExponent", current); },
         .is_visible = []() { return IsPsychoV() && settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
@@ -303,9 +342,9 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Gamut Compression Target",
         .section = "PsychoV30",
-        .tooltip = "Selects the display gamut used by PsychoV-30's target-volume projection.",
+        .tooltip = "Selects the HDR display gamut. SDR always uses BT.709.",
         .labels = {"BT.709", "BT.2020"},
-        .is_enabled = []() { return IsPsychoV(); },
+        .is_enabled = []() { return IsPsychoV() && !IsSDR(); },
         .is_visible = []() { return IsPsychoV() && settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
@@ -314,10 +353,11 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .label = "Compression (0 = Auto)",
         .section = "PsychoV30",
-        .tooltip = "0 uses automatic compression with a wider HDR working range and smooth display roll-off. Positive values set PsychoV's response power directly at the selected display peak.",
+        .tooltip = "0 uses automatic compression with a wider HDR working range and smooth display roll-off. Positive values set PsychoV's response power directly at the selected display peak. SDR defaults to 2.0; HDR defaults to Auto.",
         .max = 5.f,
         .format = "%.2f",
         .is_enabled = []() { return IsPsychoV(); },
+        .on_change_value = [](float, float current) { SaveOutputModeValue("PsychoVCompression", current); },
         .is_visible = []() { return IsPsychoV() && settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
@@ -444,12 +484,23 @@ renodx::utils::settings::Settings settings = {
         .section = "Options",
         .group = "button-line-2",
         .is_enabled = []() { return shader_injection.tone_map_type != GHOST_TONE_MAP_SDR_REFERENCE; },
-        .on_change = []() { renodx::utils::settings::ResetSettings(); },
+        .on_change = []() {
+          renodx::utils::settings::ResetSettings();
+          for (const auto& entry : output_mode_defaults) {
+            SaveOutputModeValue(entry.key, renodx::utils::settings::FindSetting(entry.key)->GetValue());
+          }
+        },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = " - Native HDR MUST BE ENABLED in game!",
+        .label = "Native HDR and SDR are both supported; restart the game after switching its HDR mode.",
         .section = "Instructions",
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::TEXT,
+        .label = "SDR output: PsychoV peak fixed at 203 nits; grading and post-upscale effects remain available.",
+        .section = "Instructions",
+        .is_visible = []() { return IsSDR() && IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
@@ -509,6 +560,42 @@ renodx::utils::settings::Settings settings = {
     },
 };
 
+void ApplyOutputModeSettings() {
+  if (renodx::utils::settings::preset_index == 0) {
+    for (const auto& entry : output_mode_defaults) {
+      if (auto* setting = renodx::utils::settings::FindSetting(entry.key)) {
+        setting->default_value = IsSDR() ? entry.sdr : entry.hdr;
+      }
+    }
+    return;
+  }
+  const auto section = renodx::utils::settings::GetCurrentPresetName();
+  for (const auto& entry : output_mode_defaults) {
+    auto* setting = renodx::utils::settings::FindSetting(entry.key);
+    if (setting == nullptr) continue;
+    const float loaded_value = setting->GetValue();
+    const std::string hdr_key = std::string(entry.key) + "HDR";
+    float hdr_value;
+    if (!reshade::get_config_value(nullptr, section.c_str(), hdr_key.c_str(), hdr_value)) {
+      // Existing presets have only the shared key. Retain their HDR values;
+      // a preset already matching the new SDR default gets the HDR default.
+      hdr_value = IsSDR() && loaded_value == entry.sdr ? entry.hdr : loaded_value;
+      reshade::set_config_value(nullptr, section.c_str(), hdr_key.c_str(), hdr_value);
+    }
+
+    const std::string mode_key = std::string(entry.key) + (IsSDR() ? "SDR" : "HDR");
+    float mode_value;
+    if (!reshade::get_config_value(nullptr, section.c_str(), mode_key.c_str(), mode_value)) {
+      // Carry forward an existing non-default adjustment; otherwise select
+      // the new SDR default. The HDR mode retains the existing saved value.
+      mode_value = IsSDR() && loaded_value == entry.hdr ? entry.sdr : loaded_value;
+      reshade::set_config_value(nullptr, section.c_str(), mode_key.c_str(), mode_value);
+    }
+    setting->default_value = IsSDR() ? entry.sdr : entry.hdr;
+    setting->Set(std::clamp(mode_value, setting->min, setting->GetMax()))->Write();
+  }
+}
+
 void OnPresetOff() {
   renodx::utils::settings::UpdateSettings({
       {"ToneMapType", 0.f},
@@ -546,13 +633,24 @@ bool initialized = false;
 
 void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
   (void)resize;
+  const auto format = swapchain->get_device()->get_resource_desc(swapchain->get_back_buffer(0)).texture.format;
+  const bool is_sdr = format == reshade::api::format::r8g8b8a8_unorm
+                      || format == reshade::api::format::r8g8b8a8_unorm_srgb;
+  shader_injection.sdr_output = is_sdr ? 1.f : 0.f;
+  if (!output_mode_settings_initialized || output_mode_settings_sdr != is_sdr) {
+    ApplyOutputModeSettings();
+    output_mode_settings_initialized = true;
+    output_mode_settings_sdr = is_sdr;
+  }
+  // The shader fixes SDR peak at 203 nits. Keep the saved HDR setting intact
+  // so changing output modes cannot persist a temporary SDR value over it.
+  if (is_sdr) return;
+  auto* peak_setting = renodx::utils::settings::FindSetting("ToneMapPeakNits");
+  if (peak_setting == nullptr) return;
   if (fired_on_init_swapchain) return;
 
   auto peak = renodx::utils::swapchain::GetPeakNits(swapchain);
   if (!peak.has_value()) return;
-
-  auto* peak_setting = renodx::utils::settings::FindSetting("ToneMapPeakNits");
-  if (peak_setting == nullptr) return;
   const bool using_default_peak = peak_setting->GetValue() == peak_setting->default_value;
   peak_setting->default_value = std::clamp(peak.value(), peak_setting->min, peak_setting->max);
   peak_setting->can_reset = true;
@@ -589,8 +687,11 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
         custom_shaders.erase(0xE4B02509u);
         custom_shaders.at(0x313ABA52u).on_draw = &gotsushima::lens::OnScene;
         custom_shaders.at(0x43D9A412u).on_draw = &gotsushima::lens::OnScene;
+        custom_shaders.at(0x24A0E87Eu).on_draw = &gotsushima::lens::OnScene;
         custom_shaders.at(0x53EBE0F3u).on_draw = &gotsushima::lens::OnOutput;
         custom_shaders.at(0x53EBE0F3u).on_inject = &gotsushima::lens::InjectOutput;
+        custom_shaders.at(0x571EE768u).on_draw = &gotsushima::lens::OnOutput;
+        custom_shaders.at(0x571EE768u).on_inject = &gotsushima::lens::InjectOutput;
         for (const auto hash : {
                  0x85EC39B6u, 0x9D97A7C7u, 0x2128DADEu, 0x083CEF82u,
                  0x37D7A160u, 0x6E8460A0u, 0x6B74C298u, 0x168D9561u,
@@ -616,6 +717,12 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
         // IsUIColorDraw needs retained pipeline subobjects even without DevKit.
         // Otherwise its missing-blend fallback rejects every HUD replacement.
         renodx::utils::shader::use_shader_cache = true;
+
+        renodx::utils::settings::on_preset_changed_callbacks.emplace_back([]() {
+          if (renodx::utils::settings::preset_index != 0 && output_mode_settings_initialized) {
+            ApplyOutputModeSettings();
+          }
+        });
 
 #if defined(GOTSUSHIMA_UI_DIAGNOSTICS) || defined(GOTSUSHIMA_CRASH_DIAGNOSTICS)
         gotsushima::diagnostics::Attach(&custom_shaders, &settings);

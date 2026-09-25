@@ -10,15 +10,17 @@ float3 GhostSampleFringe(Texture2D<float4> scene, float2 uv, uint2 size) {
   const int2 low = int2(floor(position));
   const int2 high = min(low + 1, int2(size) - 1);
   const float2 weight = frac(position);
-  return renodx::color::bt709::from::BT2020(lerp(
+  const float3 target_color = lerp(
       lerp(GhostLoadSharpenedScene(scene, low, size),
            GhostLoadSharpenedScene(scene, int2(high.x, low.y), size), weight.x),
       lerp(GhostLoadSharpenedScene(scene, int2(low.x, high.y), size),
            GhostLoadSharpenedScene(scene, high, size), weight.x),
-      weight.y));
+      weight.y);
+  return GHOST_SDR_OUTPUT != 0.f ? target_color
+                                 : renodx::color::bt709::from::BT2020(target_color);
 }
 
-// Linear BT.2020 in/out, before film grain and composition encoding.
+// Linear target gamut in/out, before film grain and composition encoding.
 float3 GhostApplyChromaticAberration(float3 center, Texture2D<float4> scene, float2 uv, uint2 size) {
   if (CUSTOM_CA_ENABLED == 0.f || CUSTOM_CA_INTENSITY <= 0.f) return center;
   const float start = clamp(CUSTOM_CA_START_OFFSET, 0.f, 1.f);
@@ -29,12 +31,15 @@ float3 GhostApplyChromaticAberration(float3 center, Texture2D<float4> scene, flo
                         * saturate(abs(screen_position) - start) / (1.f - start);
   if (all(fringe == 0.f)) return center;
   const float2 offset = fringe * (0.5f * 0.01f * 0.007f * CUSTOM_CA_INTENSITY);
-  const float3 base = renodx::color::bt709::from::BT2020(center);
+  const float3 base = GHOST_SDR_OUTPUT != 0.f
+                          ? center : renodx::color::bt709::from::BT2020(center);
   const float red = GhostSampleFringe(scene, uv - offset * 147.f, size).r;
   const float green = GhostSampleFringe(scene, uv - offset * 85.f, size).g;
   // Preserve the undisplaced blue channel and avoid a matrix roundtrip of the
   // whole center. Disperse BT.709 channels, not BT.2020 transport components.
-  return center + renodx::color::bt2020::from::BT709(float3(red - base.r, green - base.g, 0.f));
+  const float3 delta = float3(red - base.r, green - base.g, 0.f);
+  return center + (GHOST_SDR_OUTPUT != 0.f
+                       ? delta : renodx::color::bt2020::from::BT709(delta));
 }
 
 #endif

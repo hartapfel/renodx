@@ -1,30 +1,36 @@
 #ifndef SRC_GAMES_GOTSUSHIMA_LILIUM_RCAS_HLSLI_
 #define SRC_GAMES_GOTSUSHIMA_LILIUM_RCAS_HLSLI_
 
-#include "./shared.h"
+#include "./intermediate.hlsli"
 
 // Lilium's luminance RCAS, adapted from the Crimson Desert/Nioh 3 mods.
 // Retains the HDR normalization, 0.99 overshoot limiter, noise attenuation,
 // and luminance-ratio resolve. Black and constant neighborhoods are guarded.
-// Input is the full-resolution gamma-2.2 BT.2020 composition texture.
+// Input is the full-resolution composition texture in the active output
+// gamut (native SDR signal in BT.709, gamma-2.2 BT.2020 transport in HDR).
 // Sharpen individual decoded texels before CA performs bilinear reconstruction.
+float GhostSceneLuminance(float3 color) {
+  return GHOST_SDR_OUTPUT != 0.f ? renodx::color::y::from::BT709(color)
+                                 : renodx::color::y::from::BT2020(color);
+}
+
 float3 GhostLoadSharpenedScene(Texture2D<float4> scene, int2 pixel, uint2 size) {
   pixel = clamp(pixel, int2(0, 0), int2(size) - 1);
-  const float3 center = pow(max(scene.Load(int3(pixel, 0)).rgb, 0.f), 2.2f);
+  const float3 center = GhostDecodeIntermediate(scene.Load(int3(pixel, 0)).rgb);
   if (CUSTOM_SHARPENING <= 0.f) return center;
 
   // Retain Lilium's 125-scene-white HDR normalization in the transport domain.
   const float normalization = 125.f * max(RENODX_DIFFUSE_WHITE_NITS, 1.f) / RENODX_INTERMEDIATE_SCALING;
-  const float e = renodx::color::y::from::BT2020(center) / normalization;
+  const float e = GhostSceneLuminance(center) / normalization;
   if (e <= 0.f) return center;
-  const float b = renodx::color::y::from::BT2020(pow(max(scene.Load(
-      int3(clamp(pixel + int2(0, -1), int2(0, 0), int2(size) - 1), 0)).rgb, 0.f), 2.2f)) / normalization;
-  const float d = renodx::color::y::from::BT2020(pow(max(scene.Load(
-      int3(clamp(pixel + int2(-1, 0), int2(0, 0), int2(size) - 1), 0)).rgb, 0.f), 2.2f)) / normalization;
-  const float f = renodx::color::y::from::BT2020(pow(max(scene.Load(
-      int3(clamp(pixel + int2(1, 0), int2(0, 0), int2(size) - 1), 0)).rgb, 0.f), 2.2f)) / normalization;
-  const float h = renodx::color::y::from::BT2020(pow(max(scene.Load(
-      int3(clamp(pixel + int2(0, 1), int2(0, 0), int2(size) - 1), 0)).rgb, 0.f), 2.2f)) / normalization;
+  const float b = GhostSceneLuminance(GhostDecodeIntermediate(scene.Load(
+      int3(clamp(pixel + int2(0, -1), int2(0, 0), int2(size) - 1), 0)).rgb)) / normalization;
+  const float d = GhostSceneLuminance(GhostDecodeIntermediate(scene.Load(
+      int3(clamp(pixel + int2(-1, 0), int2(0, 0), int2(size) - 1), 0)).rgb)) / normalization;
+  const float f = GhostSceneLuminance(GhostDecodeIntermediate(scene.Load(
+      int3(clamp(pixel + int2(1, 0), int2(0, 0), int2(size) - 1), 0)).rgb)) / normalization;
+  const float h = GhostSceneLuminance(GhostDecodeIntermediate(scene.Load(
+      int3(clamp(pixel + int2(0, 1), int2(0, 0), int2(size) - 1), 0)).rgb)) / normalization;
 
   const float ring_min = min(min(b, d), min(f, h));
   const float ring_max = max(max(b, d), max(f, h));
