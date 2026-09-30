@@ -1,4 +1,4 @@
-#include "../common.hlsli"
+#include "../lutsampling.hlsli"
 
 Texture2D<float4> t0 : register(t0);
 
@@ -47,11 +47,16 @@ float4 main(
   float _18 = min(_16, CustomPixelConsts_000.z);
   float _19 = min(_17, CustomPixelConsts_000.w);
   float4 _22 = t0.Sample(s0, float2(_18, _19));
-  // RenoDX: preserve HDR through the native bounded color grade.
-  WitcherGradeState grade_state = (WitcherGradeState)0;
+  // RenoDX: retain native LUT addressing, gains and environment blending.
   if (WitcherUsePsychoV30()) {
-    grade_state = WitcherPrepareGrade(_22.rgb);
-    _22.rgb = grade_state.neutral_sdr;
+    if (CUSTOM_LUT_STRENGTH == 0.f) return _22;
+    WitcherGradeState state = WitcherPrepareGrade(_22.rgb);
+    float3 sampled = lerp(WitcherSampleLUT(state.neutral_sdr, t1, s1),
+        WitcherSampleLUT(state.neutral_sdr, t2, s2), CustomPixelConsts_016.x);
+    float3 graded = lerp(state.neutral_sdr, sampled * CustomPixelConsts_016.z,
+        CustomPixelConsts_016.y);
+    return float4(WitcherRestoreGrade(
+        lerp(state.neutral_sdr, graded, CUSTOM_LUT_STRENGTH), state), _22.w);
   }
   float _27 = abs(_22.x);
   float _28 = abs(_22.y);
@@ -176,8 +181,5 @@ float4 main(
   SV_Target.y = _164;
   SV_Target.z = _165;
   SV_Target.w = _22.w;
-  if (WitcherUsePsychoV30()) {
-    SV_Target.rgb = WitcherRestoreGrade(SV_Target.rgb, grade_state);
-  }
   return SV_Target;
 }

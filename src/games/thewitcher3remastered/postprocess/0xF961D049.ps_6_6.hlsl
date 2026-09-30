@@ -30,6 +30,8 @@ cbuffer cb3 : register(b3) {
 
 SamplerState s0 : register(s0);
 
+#include "../postgrade.hlsli"
+
 float4 main(
   noperspective float4 SV_Position : SV_Position,
   linear float2 TEXCOORD : TEXCOORD
@@ -45,10 +47,8 @@ float4 main(
     _9.rgb = WitcherApplyChromaticAberration(_9.rgb, t0, TEXCOORD, uint2(width, height));
   }
   // RenoDX: preserve HDR through the native bounded color grade.
-  WitcherGradeState grade_state = (WitcherGradeState)0;
   if (WitcherUsePsychoV30()) {
-    grade_state = WitcherPrepareGrade(_9.rgb);
-    _9.rgb = grade_state.neutral_sdr;
+    return float4(WitcherApplyPostGrade(_9.rgb, 0.f), _9.w);
   }
   float _16 = abs(_9.x);
   float _17 = abs(_9.y);
@@ -162,13 +162,5 @@ float4 main(
   SV_Target.y = _153;
   SV_Target.z = _154;
   SV_Target.w = _9.w;
-  if (WitcherUsePsychoV30()) {
-    // Preserve the native gamma-shaped transport after reconstructing HDR.
-    SV_Target.rgb = WitcherSignedPow(
-        WitcherRestoreGrade(
-            WitcherSignedPow(SV_Target.rgb, rcp(max(CustomPixelConsts_128.x, 1e-6f))),
-            grade_state),
-        CustomPixelConsts_128.x);
-  }
   return SV_Target;
 }

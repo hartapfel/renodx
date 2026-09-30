@@ -34,6 +34,8 @@ SamplerState s0 : register(s0);
 
 SamplerState s2 : register(s2);
 
+#include "../postgrade.hlsli"
+
 float4 main(
   noperspective float4 SV_Position : SV_Position,
   linear float2 TEXCOORD : TEXCOORD,
@@ -50,10 +52,8 @@ float4 main(
     _13.rgb = WitcherApplyChromaticAberration(_13.rgb, t0, TEXCOORD, uint2(width, height));
   }
   // Texture-vignette variant of the same post grade: retain its t2/s2 lookup.
-  WitcherGradeState grade_state = (WitcherGradeState)0;
   if (WitcherUsePsychoV30()) {
-    grade_state = WitcherPrepareGrade(_13.rgb);
-    _13.rgb = grade_state.neutral_sdr;
+    return float4(WitcherApplyPostGrade(_13.rgb, t2.Sample(s2, TEXCOORD_2).x), _13.w);
   }
   float _20 = abs(_13.x);
   float _21 = abs(_13.y);
@@ -172,15 +172,6 @@ float4 main(
   float _170 = CustomPixelConsts_096.w * _151.x;
   float _171 = _170 * _169;
   float _172 = saturate(_171);
-  // Scale only the native vignette blend, preserving the surrounding grade.
-  if (WitcherUsePsychoV30()) _172 *= CUSTOM_VIGNETTE_STRENGTH;
-  // In zero-nit mode, replace the coloured blend with linear HDR darkening
-  // after grade reconstruction. Retain the native mask and independent strength.
-  float black_vignette = 0.f;
-  if (WitcherUsePsychoV30() && CUSTOM_VIGNETTE_BLACK_FLOOR != 0.f && CUSTOM_VIGNETTE_STRENGTH > 0.f) {
-    black_vignette = _172;
-    _172 = 0.f;
-  }
   float _177 = CustomPixelConsts_112.x - _146;
   float _178 = CustomPixelConsts_112.y - _147;
   float _179 = CustomPixelConsts_112.z - _148;
@@ -201,12 +192,5 @@ float4 main(
   SV_Target.y = _194;
   SV_Target.z = _195;
   SV_Target.w = _13.w;
-  if (WitcherUsePsychoV30()) {
-    SV_Target.rgb = WitcherSignedPow(
-        WitcherRestoreGrade(
-            WitcherSignedPow(SV_Target.rgb, rcp(max(CustomPixelConsts_128.x, 1e-6f))),
-            grade_state) * (1.f - black_vignette),
-        CustomPixelConsts_128.x);
-  }
   return SV_Target;
 }

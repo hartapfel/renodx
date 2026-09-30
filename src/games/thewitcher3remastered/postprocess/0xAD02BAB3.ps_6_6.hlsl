@@ -30,6 +30,8 @@ cbuffer cb3 : register(b3) {
 
 SamplerState s1 : register(s1);
 
+#include "../postgrade.hlsli"
+
 float4 main(
   noperspective float4 SV_Position : SV_Position,
   linear float2 TEXCOORD : TEXCOORD,
@@ -93,12 +95,8 @@ float4 main(
     _60 = _28.y;
   }
   // RenoDX: retain CA sampling, then grade a bounded proxy of the sampled HDR.
-  WitcherGradeState grade_state = (WitcherGradeState)0;
   if (WitcherUsePsychoV30()) {
-    grade_state = WitcherPrepareGrade(float3(_59, _60, _28.z));
-    _59 = grade_state.neutral_sdr.x;
-    _60 = grade_state.neutral_sdr.y;
-    _28.z = grade_state.neutral_sdr.z;
+    return float4(WitcherApplyPostGrade(float3(_59, _60, _28.z), WitcherRadialVignette(TEXCOORD_2)), _28.w);
   }
   float _63 = abs(_59);
   float _64 = abs(_60);
@@ -230,15 +228,6 @@ float4 main(
   float _223 = CustomPixelConsts_096.w * _205;
   float _224 = _223 * _222;
   float _225 = saturate(_224);
-  // Scale only the native vignette blend, preserving the surrounding grade.
-  if (WitcherUsePsychoV30()) _225 *= CUSTOM_VIGNETTE_STRENGTH;
-  // In zero-nit mode, replace the coloured blend with linear HDR darkening
-  // after grade reconstruction. Retain the native mask and independent strength.
-  float black_vignette = 0.f;
-  if (WitcherUsePsychoV30() && CUSTOM_VIGNETTE_BLACK_FLOOR != 0.f && CUSTOM_VIGNETTE_STRENGTH > 0.f) {
-    black_vignette = _225;
-    _225 = 0.f;
-  }
   float _230 = CustomPixelConsts_112.x - _189;
   float _231 = CustomPixelConsts_112.y - _190;
   float _232 = CustomPixelConsts_112.z - _191;
@@ -259,14 +248,5 @@ float4 main(
   SV_Target.y = _247;
   SV_Target.z = _248;
   SV_Target.w = _28.w;
-  if (WitcherUsePsychoV30()) {
-    // The native initial power determines this pass's output transport.
-    // Restore in linear space, then retain that same signed encoding.
-    SV_Target.rgb = WitcherSignedPow(
-        WitcherRestoreGrade(
-            WitcherSignedPow(SV_Target.rgb, rcp(max(CustomPixelConsts_128.x, 1e-6f))),
-            grade_state) * (1.f - black_vignette),
-        CustomPixelConsts_128.x);
-  }
   return SV_Target;
 }

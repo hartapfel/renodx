@@ -1,4 +1,4 @@
-#include "../common.hlsli"
+#include "../lutsampling.hlsli"
 
 Texture2D<float4> t0 : register(t0);
 
@@ -43,11 +43,15 @@ float4 main(
   float _16 = min(_14, CustomPixelConsts_000.z);
   float _17 = min(_15, CustomPixelConsts_000.w);
   float4 _20 = t0.Sample(s0, float2(_16, _17));
-  // RenoDX: preserve the native lookup/blend in bounded SDR proxy space.
-  WitcherGradeState grade_state = (WitcherGradeState)0;
+  // RenoDX: retain native LUT addressing, gains and environment blending.
   if (WitcherUsePsychoV30()) {
-    grade_state = WitcherPrepareGrade(_20.rgb);
-    _20.rgb = grade_state.neutral_sdr;
+    if (CUSTOM_LUT_STRENGTH == 0.f) return _20;
+    WitcherGradeState state = WitcherPrepareGrade(_20.rgb);
+    float3 graded = lerp(state.neutral_sdr,
+        WitcherSampleLUT(state.neutral_sdr, t1, s1) * CustomPixelConsts_016.z,
+        CustomPixelConsts_016.y);
+    return float4(WitcherRestoreGrade(
+        lerp(state.neutral_sdr, graded, CUSTOM_LUT_STRENGTH), state), _20.w);
   }
   float _25 = abs(_20.x);
   float _26 = abs(_20.y);
@@ -140,8 +144,5 @@ float4 main(
   SV_Target.y = _121;
   SV_Target.z = _122;
   SV_Target.w = _20.w;
-  if (WitcherUsePsychoV30()) {
-    SV_Target.rgb = WitcherRestoreGrade(SV_Target.rgb, grade_state);
-  }
   return SV_Target;
 }
