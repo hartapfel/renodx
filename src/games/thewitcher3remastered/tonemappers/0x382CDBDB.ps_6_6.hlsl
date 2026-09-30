@@ -1,0 +1,932 @@
+#include "../common.hlsli"
+
+struct ShaderCommonEnvProbeParams {
+  float ShaderCommonEnvProbeParams_000;
+  float3 ShaderCommonEnvProbeParams_004;
+  float3 ShaderCommonEnvProbeParams_016;
+  row_major float4x4 ShaderCommonEnvProbeParams_028;
+  float4 ShaderCommonEnvProbeParams_092;
+  row_major float4x4 ShaderCommonEnvProbeParams_108;
+  int ShaderCommonEnvProbeParams_172;
+};
+
+struct ShaderCullingEnvProbeParams {
+  row_major float4x3 ShaderCullingEnvProbeParams_000;
+  float3 ShaderCullingEnvProbeParams_048;
+  int ShaderCullingEnvProbeParams_060;
+};
+
+struct ShaderWorldTear {
+  float4 ShaderWorldTear_000;
+  float4 ShaderWorldTear_016;
+  float ShaderWorldTear_032;
+  float ShaderWorldTear_036;
+  float ShaderWorldTear_040;
+  float ShaderWorldTear_044;
+};
+
+struct ShaderWorldTearArray {
+  int ShaderWorldTearArray_000;
+  float ShaderWorldTearArray_004;
+  float ShaderWorldTearArray_008;
+  float ShaderWorldTearArray_012;
+  ShaderWorldTear ShaderWorldTearArray_016[10];
+};
+
+struct ShaderWorldTearConstants {
+  int4 ShaderWorldTearConstants_000[16];
+};
+
+
+Texture2D<float4> t0 : register(t0);
+
+Texture2D<float4> t1 : register(t1);
+
+cbuffer cb3 : register(b3) {
+  float4 CustomPixelConsts_000 : packoffset(c000.x);
+  float4 CustomPixelConsts_016 : packoffset(c001.x);
+  float4 CustomPixelConsts_032 : packoffset(c002.x);
+  float4 CustomPixelConsts_048 : packoffset(c003.x);
+  float4 CustomPixelConsts_064 : packoffset(c004.x);
+  float4 CustomPixelConsts_080 : packoffset(c005.x);
+  float4 CustomPixelConsts_096 : packoffset(c006.x);
+  float4 CustomPixelConsts_112 : packoffset(c007.x);
+  float4 CustomPixelConsts_128 : packoffset(c008.x);
+  float4 CustomPixelConsts_144 : packoffset(c009.x);
+  float4 CustomPixelConsts_160 : packoffset(c010.x);
+  float4 CustomPixelConsts_176 : packoffset(c011.x);
+  float4 CustomPixelConsts_192 : packoffset(c012.x);
+  float4 CustomPixelConsts_208 : packoffset(c013.x);
+  float4 CustomPixelConsts_224 : packoffset(c014.x);
+  float4 CustomPixelConsts_240 : packoffset(c015.x);
+  float4 CustomPixelConsts_256 : packoffset(c016.x);
+  float4 CustomPixelConsts_272 : packoffset(c017.x);
+  float4 CustomPixelConsts_288 : packoffset(c018.x);
+  float4 CustomPixelConsts_304 : packoffset(c019.x);
+  float4 CustomPixelConsts_320 : packoffset(c020.x);
+  row_major float4x4 CustomPixelConsts_336 : packoffset(c021.x);
+};
+
+cbuffer cb12 : register(b12) {
+  float cb12_221w : packoffset(c221.w);
+  uint cb12_padding : packoffset(c340.w);
+};
+
+float4 main(
+  noperspective float4 SV_Position : SV_Position
+) : SV_Target {
+  float4 SV_Target = 0;
+  uint _8 = uint(SV_Position.x);
+  uint _9 = uint(SV_Position.y);
+  float4 _11 = t1.Load(int3(0, 0, 0));
+  float4 _14 = t0.Load(int3(_8, _9, 0));
+  uint _26 = uint(CustomPixelConsts_064.x);
+  float _43 = CustomPixelConsts_256.x * 11.199999809265137f;
+  float _44 = max(_11.x, CustomPixelConsts_064.y);
+  float _45 = min(_44, CustomPixelConsts_064.z);
+  float _46 = max(_45, 9.999999747378752e-05f);
+  float _47 = _46 / _43;
+  float _48 = log2(_47);
+  float _49 = _48 * CustomPixelConsts_256.z;
+  float _50 = exp2(_49);
+  float _51 = _50 * _43;
+  float _52 = CustomPixelConsts_256.x / _51;
+  float _53 = _52 * _14.x;
+  float _54 = _52 * _14.y;
+  float _55 = _52 * _14.z;
+  float _56 = dot(float3(0.2125999927520752f, 0.7152000069618225f, 0.0722000002861023f), float3(_53, _54, _55));
+  float _57 = abs(_56);
+  // RenoDX: preserve exposed HDR through the later grade/effect passes.
+  // PsychoV runs after those passes, immediately before UI composition.
+  const bool compensate_brightness = WitcherUsePsychoV30() && CUSTOM_NATIVE_BRIGHTNESS_COMPENSATION != 0.f;
+  if (WitcherUsePsychoV30() && !compensate_brightness) {
+    return float4(_53, _54, _55, _57);
+  }
+  if (compensate_brightness) {
+    // Run the unchanged native curve on reference grey, not the HDR scene.
+    _53 = _54 = _55 = 0.18f;
+  }
+  float _162;
+  float _179;
+  float _195;
+  float _214;
+  float _230;
+  float _249;
+  float _266;
+  float _282;
+  float _302;
+  float _318;
+  float _339;
+  float _355;
+  float _371;
+  float _389;
+  float _405;
+  float _421;
+  float _436;
+  float _452;
+  float _471;
+  float _486;
+  float _508;
+  float _523;
+  float _539;
+  float _558;
+  float _573;
+  float _589;
+  float _604;
+  float _620;
+  float _639;
+  float _654;
+  float _709;
+  float _710;
+  float _711;
+  float _759;
+  float _760;
+  float _761;
+  switch (_26) {
+    case 2: {
+      _759 = _53;
+      _760 = _54;
+      _761 = _55;
+      break;
+    }
+    case 1: {
+      float _111 = CustomPixelConsts_128.w * 0.0009765625f;
+      float _112 = log2(_111);
+      float _113 = CustomPixelConsts_128.w * 90.5096664428711f;
+      float _114 = log2(_113);
+      float _115 = _53 * 0.8424790501594543f;
+      float _116 = mad(_54, 0.07843360304832458f, _115);
+      float _117 = mad(_55, 0.07922374457120895f, _116);
+      float _118 = _53 * 0.04232824221253395f;
+      float _119 = mad(_54, 0.8784686326980591f, _118);
+      float _120 = mad(_55, 0.07916612923145294f, _119);
+      float _121 = _53 * 0.042375653982162476f;
+      float _122 = mad(_54, 0.07843360304832458f, _121);
+      float _123 = mad(_55, 0.8791429996490479f, _122);
+      float _124 = log2(_117);
+      float _125 = log2(_120);
+      float _126 = log2(_123);
+      float _127 = max(_124, _112);
+      float _128 = max(_125, _112);
+      float _129 = max(_126, _112);
+      float _130 = min(_127, _114);
+      float _131 = min(_128, _114);
+      float _132 = min(_129, _114);
+      float _133 = _130 - _112;
+      float _134 = _131 - _112;
+      float _135 = _132 - _112;
+      float _136 = _114 - _112;
+      float _137 = _133 / _136;
+      float _138 = _134 / _136;
+      float _139 = _135 / _136;
+      bool _142 = (cb12_221w > 0.0f);
+      [branch]
+      if (_142) {
+        float _144 = -1.0f / CustomPixelConsts_256.w;
+        float _145 = 1.0f - CustomPixelConsts_304.w;
+        float _146 = _145 * CustomPixelConsts_304.x;
+        float _147 = _146 * 2.0f;
+        bool _148 = (_147 == 0.0f);
+        if (!_148) {
+          bool _150 = (_147 > 0.0f);
+          bool _151 = (_147 < 0.0f);
+          int _152 = (int)(uint)(_150);
+          int _153 = (int)(uint)(_151);
+          int _154 = _152 - _153;
+          float _155 = float((int)(_154));
+          float _156 = abs(_147);
+          float _157 = log2(_156);
+          float _158 = _157 * CustomPixelConsts_256.w;
+          float _159 = exp2(_158);
+          float _160 = _159 * _155;
+          _162 = _160;
+        } else {
+          _162 = 0.0f;
+        }
+        float _163 = _162 + -1.0f;
+        bool _164 = (_146 == 0.0f);
+        if (!_164) {
+          bool _166 = (_146 > 0.0f);
+          bool _167 = (_146 < 0.0f);
+          int _168 = (int)(uint)(_166);
+          int _169 = (int)(uint)(_167);
+          int _170 = _168 - _169;
+          float _171 = float((int)(_170));
+          float _172 = abs(_146);
+          float _173 = log2(_172);
+          float _174 = CustomPixelConsts_256.w * _173;
+          float _175 = -0.0f - _174;
+          float _176 = exp2(_175);
+          float _177 = _176 * _171;
+          _179 = _177;
+        } else {
+          _179 = 0.0f;
+        }
+        float _180 = _179 * _163;
+        bool _181 = (_180 == 0.0f);
+        if (!_181) {
+          bool _183 = (_180 > 0.0f);
+          bool _184 = (_180 < 0.0f);
+          int _185 = (int)(uint)(_183);
+          int _186 = (int)(uint)(_184);
+          int _187 = _185 - _186;
+          float _188 = float((int)(_187));
+          float _189 = abs(_180);
+          float _190 = log2(_189);
+          float _191 = _190 * _144;
+          float _192 = exp2(_191);
+          float _193 = _192 * _188;
+          _195 = _193;
+        } else {
+          _195 = 0.0f;
+        }
+        float _196 = _137 - CustomPixelConsts_304.w;
+        float _197 = _196 * CustomPixelConsts_304.x;
+        float _198 = _197 / _195;
+        float _199 = 1.0f / CustomPixelConsts_256.w;
+        bool _200 = (_198 == 0.0f);
+        if (!_200) {
+          bool _202 = (_198 > 0.0f);
+          bool _203 = (_198 < 0.0f);
+          int _204 = (int)(uint)(_202);
+          int _205 = (int)(uint)(_203);
+          int _206 = _204 - _205;
+          float _207 = float((int)(_206));
+          float _208 = abs(_198);
+          float _209 = log2(_208);
+          float _210 = _209 * CustomPixelConsts_256.w;
+          float _211 = exp2(_210);
+          float _212 = _211 * _207;
+          _214 = _212;
+        } else {
+          _214 = 0.0f;
+        }
+        float _215 = _214 + 1.0f;
+        bool _216 = (_215 == 0.0f);
+        if (!_216) {
+          bool _218 = (_215 > 0.0f);
+          bool _219 = (_215 < 0.0f);
+          int _220 = (int)(uint)(_218);
+          int _221 = (int)(uint)(_219);
+          int _222 = _220 - _221;
+          float _223 = float((int)(_222));
+          float _224 = abs(_215);
+          float _225 = log2(_224);
+          float _226 = _225 * _199;
+          float _227 = exp2(_226);
+          float _228 = _227 * _223;
+          _230 = _228;
+        } else {
+          _230 = 0.0f;
+        }
+        float _231 = _198 / _230;
+        float _232 = -1.0f / CustomPixelConsts_304.y;
+        float _233 = CustomPixelConsts_304.x * CustomPixelConsts_304.w;
+        float _234 = _233 * 2.0f;
+        bool _235 = (_234 == 0.0f);
+        if (!_235) {
+          bool _237 = (_234 > 0.0f);
+          bool _238 = (_234 < 0.0f);
+          int _239 = (int)(uint)(_237);
+          int _240 = (int)(uint)(_238);
+          int _241 = _239 - _240;
+          float _242 = float((int)(_241));
+          float _243 = abs(_234);
+          float _244 = log2(_243);
+          float _245 = _244 * CustomPixelConsts_304.y;
+          float _246 = exp2(_245);
+          float _247 = _246 * _242;
+          _249 = _247;
+        } else {
+          _249 = 0.0f;
+        }
+        float _250 = _249 + -1.0f;
+        bool _251 = (_233 == 0.0f);
+        if (!_251) {
+          bool _253 = (_233 > 0.0f);
+          bool _254 = (_233 < 0.0f);
+          int _255 = (int)(uint)(_253);
+          int _256 = (int)(uint)(_254);
+          int _257 = _255 - _256;
+          float _258 = float((int)(_257));
+          float _259 = abs(_233);
+          float _260 = log2(_259);
+          float _261 = CustomPixelConsts_304.y * _260;
+          float _262 = -0.0f - _261;
+          float _263 = exp2(_262);
+          float _264 = _263 * _258;
+          _266 = _264;
+        } else {
+          _266 = 0.0f;
+        }
+        float _267 = _266 * _250;
+        bool _268 = (_267 == 0.0f);
+        if (!_268) {
+          bool _270 = (_267 > 0.0f);
+          bool _271 = (_267 < 0.0f);
+          int _272 = (int)(uint)(_270);
+          int _273 = (int)(uint)(_271);
+          int _274 = _272 - _273;
+          float _275 = float((int)(_274));
+          float _276 = abs(_267);
+          float _277 = log2(_276);
+          float _278 = _277 * _232;
+          float _279 = exp2(_278);
+          float _280 = _279 * _275;
+          _282 = _280;
+        } else {
+          _282 = 0.0f;
+        }
+        float _283 = 1.0f - CustomPixelConsts_304.z;
+        float _284 = _282 * _283;
+        float _285 = -0.0f - _284;
+        float _286 = _197 / _285;
+        float _287 = 1.0f / CustomPixelConsts_304.y;
+        bool _288 = (_286 == 0.0f);
+        if (!_288) {
+          bool _290 = (_286 > 0.0f);
+          bool _291 = (_286 < 0.0f);
+          int _292 = (int)(uint)(_290);
+          int _293 = (int)(uint)(_291);
+          int _294 = _292 - _293;
+          float _295 = float((int)(_294));
+          float _296 = abs(_286);
+          float _297 = log2(_296);
+          float _298 = _297 * CustomPixelConsts_304.y;
+          float _299 = exp2(_298);
+          float _300 = _299 * _295;
+          _302 = _300;
+        } else {
+          _302 = 0.0f;
+        }
+        float _303 = _302 + 1.0f;
+        bool _304 = (_303 == 0.0f);
+        if (!_304) {
+          bool _306 = (_303 > 0.0f);
+          bool _307 = (_303 < 0.0f);
+          int _308 = (int)(uint)(_306);
+          int _309 = (int)(uint)(_307);
+          int _310 = _308 - _309;
+          float _311 = float((int)(_310));
+          float _312 = abs(_303);
+          float _313 = log2(_312);
+          float _314 = _313 * _287;
+          float _315 = exp2(_314);
+          float _316 = _315 * _311;
+          _318 = _316;
+        } else {
+          _318 = 0.0f;
+        }
+        float _319 = _286 / _318;
+        bool _320 = (_137 >= CustomPixelConsts_304.w);
+        float _321 = _231 * _195;
+        float _322 = _284 * _319;
+        float _323 = -0.0f - _322;
+        float _324 = select(_320, _321, _323);
+        float _325 = _324 + 0.5f;
+        if (!_148) {
+          bool _327 = (_147 > 0.0f);
+          bool _328 = (_147 < 0.0f);
+          int _329 = (int)(uint)(_327);
+          int _330 = (int)(uint)(_328);
+          int _331 = _329 - _330;
+          float _332 = float((int)(_331));
+          float _333 = abs(_147);
+          float _334 = log2(_333);
+          float _335 = _334 * CustomPixelConsts_256.w;
+          float _336 = exp2(_335);
+          float _337 = _336 * _332;
+          _339 = _337;
+        } else {
+          _339 = 0.0f;
+        }
+        float _340 = _339 + -1.0f;
+        if (!_164) {
+          bool _342 = (_146 > 0.0f);
+          bool _343 = (_146 < 0.0f);
+          int _344 = (int)(uint)(_342);
+          int _345 = (int)(uint)(_343);
+          int _346 = _344 - _345;
+          float _347 = float((int)(_346));
+          float _348 = abs(_146);
+          float _349 = log2(_348);
+          float _350 = CustomPixelConsts_256.w * _349;
+          float _351 = -0.0f - _350;
+          float _352 = exp2(_351);
+          float _353 = _352 * _347;
+          _355 = _353;
+        } else {
+          _355 = 0.0f;
+        }
+        float _356 = _355 * _340;
+        bool _357 = (_356 == 0.0f);
+        if (!_357) {
+          bool _359 = (_356 > 0.0f);
+          bool _360 = (_356 < 0.0f);
+          int _361 = (int)(uint)(_359);
+          int _362 = (int)(uint)(_360);
+          int _363 = _361 - _362;
+          float _364 = float((int)(_363));
+          float _365 = abs(_356);
+          float _366 = log2(_365);
+          float _367 = _366 * _144;
+          float _368 = exp2(_367);
+          float _369 = _368 * _364;
+          _371 = _369;
+        } else {
+          _371 = 0.0f;
+        }
+        float _372 = _138 - CustomPixelConsts_304.w;
+        float _373 = _372 * CustomPixelConsts_304.x;
+        float _374 = _373 / _371;
+        bool _375 = (_374 == 0.0f);
+        if (!_375) {
+          bool _377 = (_374 > 0.0f);
+          bool _378 = (_374 < 0.0f);
+          int _379 = (int)(uint)(_377);
+          int _380 = (int)(uint)(_378);
+          int _381 = _379 - _380;
+          float _382 = float((int)(_381));
+          float _383 = abs(_374);
+          float _384 = log2(_383);
+          float _385 = _384 * CustomPixelConsts_256.w;
+          float _386 = exp2(_385);
+          float _387 = _386 * _382;
+          _389 = _387;
+        } else {
+          _389 = 0.0f;
+        }
+        float _390 = _389 + 1.0f;
+        bool _391 = (_390 == 0.0f);
+        if (!_391) {
+          bool _393 = (_390 > 0.0f);
+          bool _394 = (_390 < 0.0f);
+          int _395 = (int)(uint)(_393);
+          int _396 = (int)(uint)(_394);
+          int _397 = _395 - _396;
+          float _398 = float((int)(_397));
+          float _399 = abs(_390);
+          float _400 = log2(_399);
+          float _401 = _400 * _199;
+          float _402 = exp2(_401);
+          float _403 = _402 * _398;
+          _405 = _403;
+        } else {
+          _405 = 0.0f;
+        }
+        float _406 = _374 / _405;
+        if (!_235) {
+          bool _408 = (_234 > 0.0f);
+          bool _409 = (_234 < 0.0f);
+          int _410 = (int)(uint)(_408);
+          int _411 = (int)(uint)(_409);
+          int _412 = _410 - _411;
+          float _413 = float((int)(_412));
+          float _414 = abs(_234);
+          float _415 = log2(_414);
+          float _416 = _415 * CustomPixelConsts_304.y;
+          float _417 = exp2(_416);
+          float _418 = _417 * _413;
+          float _419 = _418 + -1.0f;
+          _421 = _419;
+        } else {
+          _421 = -1.0f;
+        }
+        if (!_251) {
+          bool _423 = (_233 > 0.0f);
+          bool _424 = (_233 < 0.0f);
+          int _425 = (int)(uint)(_423);
+          int _426 = (int)(uint)(_424);
+          int _427 = _425 - _426;
+          float _428 = float((int)(_427));
+          float _429 = abs(_233);
+          float _430 = log2(_429);
+          float _431 = CustomPixelConsts_304.y * _430;
+          float _432 = -0.0f - _431;
+          float _433 = exp2(_432);
+          float _434 = _433 * _428;
+          _436 = _434;
+        } else {
+          _436 = 0.0f;
+        }
+        float _437 = _436 * _421;
+        bool _438 = (_437 == 0.0f);
+        if (!_438) {
+          bool _440 = (_437 > 0.0f);
+          bool _441 = (_437 < 0.0f);
+          int _442 = (int)(uint)(_440);
+          int _443 = (int)(uint)(_441);
+          int _444 = _442 - _443;
+          float _445 = float((int)(_444));
+          float _446 = abs(_437);
+          float _447 = log2(_446);
+          float _448 = _447 * _232;
+          float _449 = exp2(_448);
+          float _450 = _449 * _445;
+          _452 = _450;
+        } else {
+          _452 = 0.0f;
+        }
+        float _453 = _452 * _283;
+        float _454 = -0.0f - _453;
+        float _455 = _373 / _454;
+        bool _456 = (_455 == 0.0f);
+        if (!_456) {
+          bool _458 = (_455 > 0.0f);
+          bool _459 = (_455 < 0.0f);
+          int _460 = (int)(uint)(_458);
+          int _461 = (int)(uint)(_459);
+          int _462 = _460 - _461;
+          float _463 = float((int)(_462));
+          float _464 = abs(_455);
+          float _465 = log2(_464);
+          float _466 = _465 * CustomPixelConsts_304.y;
+          float _467 = exp2(_466);
+          float _468 = _467 * _463;
+          float _469 = _468 + 1.0f;
+          _471 = _469;
+        } else {
+          _471 = 1.0f;
+        }
+        bool _472 = (_471 == 0.0f);
+        if (!_472) {
+          bool _474 = (_471 > 0.0f);
+          bool _475 = (_471 < 0.0f);
+          int _476 = (int)(uint)(_474);
+          int _477 = (int)(uint)(_475);
+          int _478 = _476 - _477;
+          float _479 = float((int)(_478));
+          float _480 = abs(_471);
+          float _481 = log2(_480);
+          float _482 = _481 * _287;
+          float _483 = exp2(_482);
+          float _484 = _483 * _479;
+          _486 = _484;
+        } else {
+          _486 = 0.0f;
+        }
+        float _487 = _455 / _486;
+        bool _488 = (_138 >= CustomPixelConsts_304.w);
+        float _489 = _406 * _371;
+        float _490 = _453 * _487;
+        float _491 = -0.0f - _490;
+        float _492 = select(_488, _489, _491);
+        float _493 = _492 + 0.5f;
+        if (!_148) {
+          bool _495 = (_147 > 0.0f);
+          bool _496 = (_147 < 0.0f);
+          int _497 = (int)(uint)(_495);
+          int _498 = (int)(uint)(_496);
+          int _499 = _497 - _498;
+          float _500 = float((int)(_499));
+          float _501 = abs(_147);
+          float _502 = log2(_501);
+          float _503 = _502 * CustomPixelConsts_256.w;
+          float _504 = exp2(_503);
+          float _505 = _504 * _500;
+          float _506 = _505 + -1.0f;
+          _508 = _506;
+        } else {
+          _508 = -1.0f;
+        }
+        if (!_164) {
+          bool _510 = (_146 > 0.0f);
+          bool _511 = (_146 < 0.0f);
+          int _512 = (int)(uint)(_510);
+          int _513 = (int)(uint)(_511);
+          int _514 = _512 - _513;
+          float _515 = float((int)(_514));
+          float _516 = abs(_146);
+          float _517 = log2(_516);
+          float _518 = CustomPixelConsts_256.w * _517;
+          float _519 = -0.0f - _518;
+          float _520 = exp2(_519);
+          float _521 = _520 * _515;
+          _523 = _521;
+        } else {
+          _523 = 0.0f;
+        }
+        float _524 = _523 * _508;
+        bool _525 = (_524 == 0.0f);
+        if (!_525) {
+          bool _527 = (_524 > 0.0f);
+          bool _528 = (_524 < 0.0f);
+          int _529 = (int)(uint)(_527);
+          int _530 = (int)(uint)(_528);
+          int _531 = _529 - _530;
+          float _532 = float((int)(_531));
+          float _533 = abs(_524);
+          float _534 = log2(_533);
+          float _535 = _534 * _144;
+          float _536 = exp2(_535);
+          float _537 = _536 * _532;
+          _539 = _537;
+        } else {
+          _539 = 0.0f;
+        }
+        float _540 = _139 - CustomPixelConsts_304.w;
+        float _541 = _540 * CustomPixelConsts_304.x;
+        float _542 = _541 / _539;
+        bool _543 = (_542 == 0.0f);
+        if (!_543) {
+          bool _545 = (_542 > 0.0f);
+          bool _546 = (_542 < 0.0f);
+          int _547 = (int)(uint)(_545);
+          int _548 = (int)(uint)(_546);
+          int _549 = _547 - _548;
+          float _550 = float((int)(_549));
+          float _551 = abs(_542);
+          float _552 = log2(_551);
+          float _553 = _552 * CustomPixelConsts_256.w;
+          float _554 = exp2(_553);
+          float _555 = _554 * _550;
+          float _556 = _555 + 1.0f;
+          _558 = _556;
+        } else {
+          _558 = 1.0f;
+        }
+        bool _559 = (_558 == 0.0f);
+        if (!_559) {
+          bool _561 = (_558 > 0.0f);
+          bool _562 = (_558 < 0.0f);
+          int _563 = (int)(uint)(_561);
+          int _564 = (int)(uint)(_562);
+          int _565 = _563 - _564;
+          float _566 = float((int)(_565));
+          float _567 = abs(_558);
+          float _568 = log2(_567);
+          float _569 = _568 * _199;
+          float _570 = exp2(_569);
+          float _571 = _570 * _566;
+          _573 = _571;
+        } else {
+          _573 = 0.0f;
+        }
+        float _574 = _542 / _573;
+        if (!_235) {
+          bool _576 = (_234 > 0.0f);
+          bool _577 = (_234 < 0.0f);
+          int _578 = (int)(uint)(_576);
+          int _579 = (int)(uint)(_577);
+          int _580 = _578 - _579;
+          float _581 = float((int)(_580));
+          float _582 = abs(_234);
+          float _583 = log2(_582);
+          float _584 = _583 * CustomPixelConsts_304.y;
+          float _585 = exp2(_584);
+          float _586 = _585 * _581;
+          float _587 = _586 + -1.0f;
+          _589 = _587;
+        } else {
+          _589 = -1.0f;
+        }
+        if (!_251) {
+          bool _591 = (_233 > 0.0f);
+          bool _592 = (_233 < 0.0f);
+          int _593 = (int)(uint)(_591);
+          int _594 = (int)(uint)(_592);
+          int _595 = _593 - _594;
+          float _596 = float((int)(_595));
+          float _597 = abs(_233);
+          float _598 = log2(_597);
+          float _599 = CustomPixelConsts_304.y * _598;
+          float _600 = -0.0f - _599;
+          float _601 = exp2(_600);
+          float _602 = _601 * _596;
+          _604 = _602;
+        } else {
+          _604 = 0.0f;
+        }
+        float _605 = _604 * _589;
+        bool _606 = (_605 == 0.0f);
+        if (!_606) {
+          bool _608 = (_605 > 0.0f);
+          bool _609 = (_605 < 0.0f);
+          int _610 = (int)(uint)(_608);
+          int _611 = (int)(uint)(_609);
+          int _612 = _610 - _611;
+          float _613 = float((int)(_612));
+          float _614 = abs(_605);
+          float _615 = log2(_614);
+          float _616 = _615 * _232;
+          float _617 = exp2(_616);
+          float _618 = _617 * _613;
+          _620 = _618;
+        } else {
+          _620 = 0.0f;
+        }
+        float _621 = _620 * _283;
+        float _622 = -0.0f - _621;
+        float _623 = _541 / _622;
+        bool _624 = (_623 == 0.0f);
+        if (!_624) {
+          bool _626 = (_623 > 0.0f);
+          bool _627 = (_623 < 0.0f);
+          int _628 = (int)(uint)(_626);
+          int _629 = (int)(uint)(_627);
+          int _630 = _628 - _629;
+          float _631 = float((int)(_630));
+          float _632 = abs(_623);
+          float _633 = log2(_632);
+          float _634 = _633 * CustomPixelConsts_304.y;
+          float _635 = exp2(_634);
+          float _636 = _635 * _631;
+          float _637 = _636 + 1.0f;
+          _639 = _637;
+        } else {
+          _639 = 1.0f;
+        }
+        bool _640 = (_639 == 0.0f);
+        if (!_640) {
+          bool _642 = (_639 > 0.0f);
+          bool _643 = (_639 < 0.0f);
+          int _644 = (int)(uint)(_642);
+          int _645 = (int)(uint)(_643);
+          int _646 = _644 - _645;
+          float _647 = float((int)(_646));
+          float _648 = abs(_639);
+          float _649 = log2(_648);
+          float _650 = _649 * _287;
+          float _651 = exp2(_650);
+          float _652 = _651 * _647;
+          _654 = _652;
+        } else {
+          _654 = 0.0f;
+        }
+        float _655 = _623 / _654;
+        bool _656 = (_139 >= CustomPixelConsts_304.w);
+        float _657 = _574 * _539;
+        float _658 = _621 * _655;
+        float _659 = -0.0f - _658;
+        float _660 = select(_656, _657, _659);
+        float _661 = _660 + 0.5f;
+        _709 = _325;
+        _710 = _493;
+        _711 = _661;
+      } else {
+        float _663 = _137 * _137;
+        float _664 = _138 * _138;
+        float _665 = _139 * _139;
+        float _666 = _663 * _663;
+        float _667 = _664 * _664;
+        float _668 = _665 * _665;
+        float _669 = _663 * 15.5f;
+        float _670 = _664 * 15.5f;
+        float _671 = _665 * 15.5f;
+        float _672 = _137 * -40.13999938964844f;
+        float _673 = _138 * -40.13999938964844f;
+        float _674 = _139 * -40.13999938964844f;
+        float _675 = _137 * 6.868000030517578f;
+        float _676 = _675 * _663;
+        float _677 = _138 * 6.868000030517578f;
+        float _678 = _677 * _664;
+        float _679 = _139 * 6.868000030517578f;
+        float _680 = _679 * _665;
+        float _681 = _663 * 0.42980000376701355f;
+        float _682 = _664 * 0.42980000376701355f;
+        float _683 = _665 * 0.42980000376701355f;
+        float _684 = _137 * 0.11909999698400497f;
+        float _685 = _138 * 0.11909999698400497f;
+        float _686 = _139 * 0.11909999698400497f;
+        float _687 = _669 + 31.959999084472656f;
+        float _688 = _687 + _672;
+        float _689 = _666 * _688;
+        float _690 = _684 + -0.002319999970495701f;
+        float _691 = _690 + _681;
+        float _692 = _691 - _676;
+        float _693 = _692 + _689;
+        float _694 = _670 + 31.959999084472656f;
+        float _695 = _694 + _673;
+        float _696 = _667 * _695;
+        float _697 = _685 + -0.002319999970495701f;
+        float _698 = _697 + _682;
+        float _699 = _698 - _678;
+        float _700 = _699 + _696;
+        float _701 = _671 + 31.959999084472656f;
+        float _702 = _701 + _674;
+        float _703 = _668 * _702;
+        float _704 = _686 + -0.002319999970495701f;
+        float _705 = _704 + _683;
+        float _706 = _705 - _680;
+        float _707 = _706 + _703;
+        _709 = _693;
+        _710 = _700;
+        _711 = _707;
+      }
+      float _712 = _709 * CustomPixelConsts_112.x;
+      float _713 = _710 * CustomPixelConsts_112.y;
+      float _714 = _711 * CustomPixelConsts_112.z;
+      float _715 = log2(_712);
+      float _716 = log2(_713);
+      float _717 = log2(_714);
+      float _718 = _715 * CustomPixelConsts_128.x;
+      float _719 = _716 * CustomPixelConsts_128.y;
+      float _720 = _717 * CustomPixelConsts_128.z;
+      float _721 = exp2(_718);
+      float _722 = exp2(_719);
+      float _723 = exp2(_720);
+      float _724 = dot(float3(_721, _722, _723), float3(0.2126729041337967f, 0.7151522040367126f, 0.07217500358819962f));
+      float _725 = _721 - _724;
+      float _726 = _722 - _724;
+      float _727 = _723 - _724;
+      float _728 = _725 * CustomPixelConsts_112.w;
+      float _729 = _726 * CustomPixelConsts_112.w;
+      float _730 = _727 * CustomPixelConsts_112.w;
+      float _731 = _728 + _724;
+      float _732 = _729 + _724;
+      float _733 = _730 + _724;
+      float _734 = max(_731, 0.0f);
+      float _735 = max(_732, 0.0f);
+      float _736 = max(_733, 0.0f);
+      float _737 = _734 * 1.1968790292739868f;
+      float _738 = mad(_735, -0.09802088141441345f, _737);
+      float _739 = mad(_736, -0.09902974218130112f, _738);
+      float _740 = _734 * -0.052896853536367416f;
+      float _741 = mad(_735, 1.1519031524658203f, _740);
+      float _742 = mad(_736, -0.09896117448806763f, _741);
+      float _743 = _734 * -0.05297163501381874f;
+      float _744 = mad(_735, -0.09804344922304153f, _743);
+      float _745 = mad(_736, 1.151073694229126f, _744);
+      float _746 = max(_739, 9.999999747378752e-05f);
+      float _747 = max(_742, 9.999999747378752e-05f);
+      float _748 = max(_745, 9.999999747378752e-05f);
+      float _749 = log2(_746);
+      float _750 = log2(_747);
+      float _751 = log2(_748);
+      float _752 = _749 * 2.200000047683716f;
+      float _753 = _750 * 2.200000047683716f;
+      float _754 = _751 * 2.200000047683716f;
+      float _755 = exp2(_752);
+      float _756 = exp2(_753);
+      float _757 = exp2(_754);
+      _759 = _755;
+      _760 = _756;
+      _761 = _757;
+      break;
+    }
+    default: {
+      float _59 = _53 * CustomPixelConsts_112.x;
+      float _60 = _54 * CustomPixelConsts_112.x;
+      float _61 = _55 * CustomPixelConsts_112.x;
+      float _62 = CustomPixelConsts_112.z * CustomPixelConsts_112.y;
+      float _63 = _59 + _62;
+      float _64 = _60 + _62;
+      float _65 = _61 + _62;
+      float _66 = _63 * _53;
+      float _67 = _64 * _54;
+      float _68 = _65 * _55;
+      float _69 = CustomPixelConsts_128.x * CustomPixelConsts_128.y;
+      float _70 = _66 + _69;
+      float _71 = _67 + _69;
+      float _72 = _68 + _69;
+      float _73 = _59 + CustomPixelConsts_112.y;
+      float _74 = _60 + CustomPixelConsts_112.y;
+      float _75 = _61 + CustomPixelConsts_112.y;
+      float _76 = _73 * _53;
+      float _77 = _74 * _54;
+      float _78 = _75 * _55;
+      float _79 = CustomPixelConsts_128.x * CustomPixelConsts_128.z;
+      float _80 = _76 + _79;
+      float _81 = _77 + _79;
+      float _82 = _78 + _79;
+      float _83 = _70 / _80;
+      float _84 = _71 / _81;
+      float _85 = _72 / _82;
+      float _86 = CustomPixelConsts_128.y / CustomPixelConsts_128.z;
+      float _87 = _83 - _86;
+      float _88 = _84 - _86;
+      float _89 = _85 - _86;
+      float _90 = max(0.0f, _87);
+      float _91 = max(0.0f, _88);
+      float _92 = max(0.0f, _89);
+      float _93 = _90 * CustomPixelConsts_256.y;
+      float _94 = _91 * CustomPixelConsts_256.y;
+      float _95 = _92 * CustomPixelConsts_256.y;
+      float _96 = CustomPixelConsts_112.x * 11.199999809265137f;
+      float _97 = _96 + _62;
+      float _98 = _97 * 11.199999809265137f;
+      float _99 = _98 + _69;
+      float _100 = _96 + CustomPixelConsts_112.y;
+      float _101 = _100 * 11.199999809265137f;
+      float _102 = _101 + _79;
+      float _103 = _99 / _102;
+      float _104 = _103 - _86;
+      float _105 = max(0.0f, _104);
+      float _106 = _93 / _105;
+      float _107 = _94 / _105;
+      float _108 = _95 / _105;
+      _759 = _106;
+      _760 = _107;
+      _761 = _108;
+      break;
+    }
+  }
+  SV_Target.x = _759;
+  SV_Target.y = _760;
+  SV_Target.z = _761;
+  SV_Target.w = _57;
+  if (compensate_brightness) {
+    SV_Target.rgb = (_14.rgb * _52) * WitcherNativeBrightnessScale(SV_Target.rgb);
+  }
+  return SV_Target;
+}
