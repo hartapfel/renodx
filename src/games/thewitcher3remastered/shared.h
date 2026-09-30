@@ -2,6 +2,13 @@
 #define SRC_GAMES_THEWITCHER3REMASTERED_SHARED_H_
 
 // Keep scalar order identical in the C++ injection payload and HLSL cbuffer.
+#define WITCHER_FLAG_GAMUT_TARGET (1u << 0)
+#define WITCHER_FLAG_CA (1u << 1)
+#define WITCHER_FLAG_SHARPENING (1u << 2)
+#define WITCHER_FLAG_VIGNETTE_BLACK (1u << 3)
+#define WITCHER_FLAG_NATIVE_BRIGHTNESS (1u << 4)
+#define WITCHER_FLAG_GAMUT_UNCLAMP (1u << 5)
+
 struct ShaderInjectData {
   float peak_white_nits;
   float diffuse_white_nits;
@@ -24,25 +31,24 @@ struct ShaderInjectData {
   float psychov_background_anchor;
 
   float psychov_gamut_compression;
-  float psychov_gamut_compression_mode;
+  float mode_flags;
   float psychov_compression;
   float graphics_white_nits;
 
-  float chromatic_aberration_mode;
   float chromatic_aberration_intensity;
   float chromatic_aberration_start_offset;
-  float sharpening_mode;
   float sharpening;
   float film_grain;
   float random_seed;
   float bloom_strength;
   float vignette_strength;
-  float vignette_black_floor;
-  float native_brightness_compensation;
+  float custom_lut_strength;
+  float custom_lut_scaling;
+  float custom_color_grading;
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 124);
+static_assert(sizeof(ShaderInjectData) == 120);
 #else
 // DX12 injection binding, paired with addon.cpp; native buffers use space0.
 cbuffer shader_injection : register(b13, space50) {
@@ -67,20 +73,25 @@ cbuffer shader_injection : register(b13, space50) {
 #define RENODX_PSYCHOV_ADAPTATION_ANCHOR shader_injection.psychov_adaptation_anchor
 #define RENODX_PSYCHOV_BACKGROUND_ANCHOR shader_injection.psychov_background_anchor
 #define RENODX_PSYCHOV_GAMUT_COMPRESSION shader_injection.psychov_gamut_compression
-#define RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE shader_injection.psychov_gamut_compression_mode
+#define WITCHER_MODE_FLAG(flag) float((asuint(shader_injection.mode_flags) & (flag)) != 0u)
+#define RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE WITCHER_MODE_FLAG(WITCHER_FLAG_GAMUT_TARGET)
 #define RENODX_PSYCHOV_COMPRESSION shader_injection.psychov_compression
 
-#define CUSTOM_CA_MODE shader_injection.chromatic_aberration_mode
+#define CUSTOM_CA_MODE WITCHER_MODE_FLAG(WITCHER_FLAG_CA)
 #define CUSTOM_CA_INTENSITY shader_injection.chromatic_aberration_intensity
 #define CUSTOM_CA_START_OFFSET shader_injection.chromatic_aberration_start_offset
-#define CUSTOM_SHARPENING_MODE shader_injection.sharpening_mode
+#define CUSTOM_SHARPENING_MODE WITCHER_MODE_FLAG(WITCHER_FLAG_SHARPENING)
 #define CUSTOM_SHARPENING shader_injection.sharpening
 #define CUSTOM_FILM_GRAIN shader_injection.film_grain
 #define CUSTOM_RANDOM shader_injection.random_seed
 #define CUSTOM_BLOOM_STRENGTH shader_injection.bloom_strength
 #define CUSTOM_VIGNETTE_STRENGTH shader_injection.vignette_strength
-#define CUSTOM_VIGNETTE_BLACK_FLOOR shader_injection.vignette_black_floor
-#define CUSTOM_NATIVE_BRIGHTNESS_COMPENSATION shader_injection.native_brightness_compensation
+#define CUSTOM_VIGNETTE_BLACK_FLOOR WITCHER_MODE_FLAG(WITCHER_FLAG_VIGNETTE_BLACK)
+#define CUSTOM_NATIVE_BRIGHTNESS_COMPENSATION WITCHER_MODE_FLAG(WITCHER_FLAG_NATIVE_BRIGHTNESS)
+#define CUSTOM_GAMUT_UNCLAMP WITCHER_MODE_FLAG(WITCHER_FLAG_GAMUT_UNCLAMP)
+#define CUSTOM_LUT_STRENGTH shader_injection.custom_lut_strength
+#define CUSTOM_LUT_SCALING shader_injection.custom_lut_scaling
+#define CUSTOM_COLOR_GRADING shader_injection.custom_color_grading
 
 // Scene intermediates use BT.709; the native output pass encodes BT.2020 PQ.
 #include "../../shaders/color.hlsl"

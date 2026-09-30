@@ -30,6 +30,8 @@ cbuffer cb3 : register(b3) {
 
 SamplerState s0 : register(s0);
 
+#include "../postgrade.hlsli"
+
 float4 main(
   noperspective float4 SV_Position : SV_Position,
   linear float2 TEXCOORD : TEXCOORD,
@@ -46,10 +48,8 @@ float4 main(
     _11.rgb = WitcherApplyChromaticAberration(_11.rgb, t0, TEXCOORD, uint2(width, height));
   }
   // RenoDX: preserve HDR through the native bounded color grade.
-  WitcherGradeState grade_state = (WitcherGradeState)0;
   if (WitcherUsePsychoV30()) {
-    grade_state = WitcherPrepareGrade(_11.rgb);
-    _11.rgb = grade_state.neutral_sdr;
+    return float4(WitcherApplyPostGrade(_11.rgb, WitcherRadialVignette(TEXCOORD_2)), _11.w);
   }
   float _18 = abs(_11.x);
   float _19 = abs(_11.y);
@@ -181,15 +181,6 @@ float4 main(
   float _178 = CustomPixelConsts_096.w * _160;
   float _179 = _178 * _177;
   float _180 = saturate(_179);
-  // Scale only the native vignette blend, preserving the surrounding grade.
-  if (WitcherUsePsychoV30()) _180 *= CUSTOM_VIGNETTE_STRENGTH;
-  // In zero-nit mode, replace the coloured blend with linear HDR darkening
-  // after grade reconstruction. Retain the native mask and independent strength.
-  float black_vignette = 0.f;
-  if (WitcherUsePsychoV30() && CUSTOM_VIGNETTE_BLACK_FLOOR != 0.f && CUSTOM_VIGNETTE_STRENGTH > 0.f) {
-    black_vignette = _180;
-    _180 = 0.f;
-  }
   float _185 = CustomPixelConsts_112.x - _144;
   float _186 = CustomPixelConsts_112.y - _145;
   float _187 = CustomPixelConsts_112.z - _146;
@@ -210,13 +201,5 @@ float4 main(
   SV_Target.y = _202;
   SV_Target.z = _203;
   SV_Target.w = _11.w;
-  if (WitcherUsePsychoV30()) {
-    // Preserve the native gamma-shaped transport after reconstructing HDR.
-    SV_Target.rgb = WitcherSignedPow(
-        WitcherRestoreGrade(
-            WitcherSignedPow(SV_Target.rgb, rcp(max(CustomPixelConsts_128.x, 1e-6f))),
-            grade_state) * (1.f - black_vignette),
-        CustomPixelConsts_128.x);
-  }
   return SV_Target;
 }
