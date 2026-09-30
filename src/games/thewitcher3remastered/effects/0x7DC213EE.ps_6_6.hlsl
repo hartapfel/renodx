@@ -1,0 +1,94 @@
+#include "../common.hlsli"
+
+Texture2D<float4> t0 : register(t0);
+
+Texture2D<float4> t1 : register(t1);
+
+cbuffer cb3 : register(b3) {
+  float4 CustomPixelConsts_000 : packoffset(c000.x);
+  float4 CustomPixelConsts_016 : packoffset(c001.x);
+  float4 CustomPixelConsts_032 : packoffset(c002.x);
+  float4 CustomPixelConsts_048 : packoffset(c003.x);
+  float4 CustomPixelConsts_064 : packoffset(c004.x);
+  float4 CustomPixelConsts_080 : packoffset(c005.x);
+  float4 CustomPixelConsts_096 : packoffset(c006.x);
+  float4 CustomPixelConsts_112 : packoffset(c007.x);
+  float4 CustomPixelConsts_128 : packoffset(c008.x);
+  float4 CustomPixelConsts_144 : packoffset(c009.x);
+  float4 CustomPixelConsts_160 : packoffset(c010.x);
+  float4 CustomPixelConsts_176 : packoffset(c011.x);
+  float4 CustomPixelConsts_192 : packoffset(c012.x);
+  float4 CustomPixelConsts_208 : packoffset(c013.x);
+  float4 CustomPixelConsts_224 : packoffset(c014.x);
+  float4 CustomPixelConsts_240 : packoffset(c015.x);
+  float4 CustomPixelConsts_256 : packoffset(c016.x);
+  float4 CustomPixelConsts_272 : packoffset(c017.x);
+  float4 CustomPixelConsts_288 : packoffset(c018.x);
+  float4 CustomPixelConsts_304 : packoffset(c019.x);
+  float4 CustomPixelConsts_320 : packoffset(c020.x);
+  row_major float4x4 CustomPixelConsts_336 : packoffset(c021.x);
+};
+
+SamplerState s0 : register(s0);
+
+SamplerState s1 : register(s1);
+
+float4 main(
+  noperspective float4 SV_Position : SV_Position
+) : SV_Target {
+  float4 SV_Target = 0;
+  int _9 = int(SV_Position.x);
+  int _10 = int(SV_Position.y);
+  int _14 = int(CustomPixelConsts_064.z);
+  int _15 = int(CustomPixelConsts_064.w);
+  uint _16 = _9 - _14;
+  uint _17 = _10 - _15;
+  float _18 = float((int)(_16));
+  float _19 = float((int)(_17));
+  float _20 = _18 + 0.5f;
+  float _21 = _19 + 0.5f;
+  float _25 = _20 / CustomPixelConsts_048.x;
+  float _26 = _21 / CustomPixelConsts_048.y;
+  float _30 = CustomPixelConsts_016.x * _25;
+  float _31 = CustomPixelConsts_016.y * _26;
+  int _34 = int(CustomPixelConsts_064.x);
+  int _35 = int(CustomPixelConsts_064.y);
+  float _36 = float((int)(_34));
+  float _37 = float((int)(_35));
+  float _38 = _30 + _36;
+  float _39 = _31 + _37;
+  float _43 = _38 / CustomPixelConsts_000.x;
+  float _44 = _39 / CustomPixelConsts_000.y;
+  float _48 = CustomPixelConsts_080.x + 0.5f;
+  float _49 = CustomPixelConsts_080.y + 0.5f;
+  float _50 = _48 / CustomPixelConsts_000.x;
+  float _51 = _49 / CustomPixelConsts_000.y;
+  float _54 = CustomPixelConsts_080.z + 0.5f;
+  float _55 = CustomPixelConsts_080.w + 0.5f;
+  float _56 = _54 / CustomPixelConsts_000.x;
+  float _57 = _55 / CustomPixelConsts_000.y;
+  float _58 = max(_43, _50);
+  float _59 = max(_44, _51);
+  float _60 = min(_58, _56);
+  float _61 = min(_59, _57);
+  float4 _64 = t0.SampleLevel(s0, float2(_60, _61), 0.0f);
+  float _75 = CustomPixelConsts_128.x * SV_Position.x;
+  float _76 = CustomPixelConsts_128.y * SV_Position.y;
+  float4 _83 = t1.Sample(s1, float2(_75, _76));
+  float _87 = _83.x * CustomPixelConsts_112.x;
+  float _88 = _83.y * CustomPixelConsts_112.y;
+  float _89 = _83.z * CustomPixelConsts_112.z;
+  float _90 = _87 + CustomPixelConsts_096.x;
+  float _91 = _88 + CustomPixelConsts_096.y;
+  float _92 = _89 + CustomPixelConsts_096.z;
+  float _93 = _90 * _64.x;
+  float _94 = _91 * _64.y;
+  float _95 = _92 * _64.z;
+  SV_Target.x = _93;
+  SV_Target.y = _94;
+  SV_Target.z = _95;
+  SV_Target.w = 0.0f;
+  // Native ONE/ONE blend adds this RGB before exposure. Preserve zero alpha.
+  if (WitcherUsePsychoV30()) SV_Target.rgb *= CUSTOM_BLOOM_STRENGTH;
+  return SV_Target;
+}

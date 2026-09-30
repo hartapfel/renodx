@@ -1,0 +1,77 @@
+Texture2D<float4> t0 : register(t0);
+
+Texture2D<float4> t1 : register(t1);
+
+cbuffer cb3 : register(b3) {
+  float4 CustomPixelConsts_000 : packoffset(c000.x);
+  float4 CustomPixelConsts_016 : packoffset(c001.x);
+  float4 CustomPixelConsts_032 : packoffset(c002.x);
+  float4 CustomPixelConsts_048 : packoffset(c003.x);
+  float4 CustomPixelConsts_064 : packoffset(c004.x);
+  float4 CustomPixelConsts_080 : packoffset(c005.x);
+  float4 CustomPixelConsts_096 : packoffset(c006.x);
+  float4 CustomPixelConsts_112 : packoffset(c007.x);
+  float4 CustomPixelConsts_128 : packoffset(c008.x);
+  float4 CustomPixelConsts_144 : packoffset(c009.x);
+  float4 CustomPixelConsts_160 : packoffset(c010.x);
+  float4 CustomPixelConsts_176 : packoffset(c011.x);
+  float4 CustomPixelConsts_192 : packoffset(c012.x);
+  float4 CustomPixelConsts_208 : packoffset(c013.x);
+  float4 CustomPixelConsts_224 : packoffset(c014.x);
+  float4 CustomPixelConsts_240 : packoffset(c015.x);
+  float4 CustomPixelConsts_256 : packoffset(c016.x);
+  float4 CustomPixelConsts_272 : packoffset(c017.x);
+  float4 CustomPixelConsts_288 : packoffset(c018.x);
+  float4 CustomPixelConsts_304 : packoffset(c019.x);
+  float4 CustomPixelConsts_320 : packoffset(c020.x);
+  row_major float4x4 CustomPixelConsts_336 : packoffset(c021.x);
+};
+
+SamplerState s0 : register(s0);
+
+SamplerState s1 : register(s1);
+
+float4 main(
+  noperspective float4 SV_Position : SV_Position,
+  linear float2 TEXCOORD : TEXCOORD,
+  linear float2 TEXCOORD_1 : TEXCOORD1,
+  linear float2 TEXCOORD_2 : TEXCOORD2
+) : SV_Target {
+  float4 SV_Target = 0;
+  float4 _13 = t0.Sample(s0, float2(TEXCOORD.x, TEXCOORD.y));
+  float4 _19 = t1.Sample(s1, float2(TEXCOORD_1.x, TEXCOORD_1.y));
+  float _26 = dot(float3(_19.x, _19.y, _19.z), float3(0.30000001192092896f, 0.5899999737739563f, 0.10999999940395355f));
+  float _29 = _26 * -3.0f;
+  float _30 = exp2(_29);
+  float _31 = _30 * CustomPixelConsts_032.w;
+  float _32 = saturate(_31);
+  float _33 = _32 + -1.0f;
+  float _34 = _33 * CustomPixelConsts_048.x;
+  float _35 = _34 + 1.0f;
+  float _39 = CustomPixelConsts_032.x * _13.x;
+  float _40 = CustomPixelConsts_032.y * _13.y;
+  float _41 = CustomPixelConsts_032.z * _13.z;
+  float _42 = _39 * _35;
+  float _43 = _40 * _35;
+  float _44 = _41 * _35;
+  float _45 = saturate(_42);
+  float _46 = saturate(_43);
+  float _47 = saturate(_44);
+  float _48 = 1.0f - _19.x;
+  float _49 = 1.0f - _19.y;
+  float _50 = 1.0f - _19.z;
+  float _51 = 1.0f - _45;
+  float _52 = 1.0f - _46;
+  float _53 = 1.0f - _47;
+  float _54 = _51 * _48;
+  float _55 = _52 * _49;
+  float _56 = _53 * _50;
+  float _57 = 1.0f - _54;
+  float _58 = 1.0f - _55;
+  float _59 = 1.0f - _56;
+  SV_Target.x = _57;
+  SV_Target.y = _58;
+  SV_Target.z = _59;
+  SV_Target.w = _19.w;
+  return SV_Target;
+}

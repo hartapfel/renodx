@@ -1,0 +1,256 @@
+[
+  {
+    "shader": "0x382CDBDB.ps_6_6",
+    "original_sha256": "611e059a5697efec9a88de68ece24e86ca1c68e345517a1bcd56ddf958aca1e3",
+    "hlsl_sha256": "c35845616922f738d72623d5458b6fcfd51e1b150cc43f2f5f7a7716c1303227",
+    "strict_compile": "passed",
+    "intrinsic_count_differences": {
+      "cbufferLoadLegacy.f32": [
+        6,
+        9
+      ]
+    },
+    "recompiled_cbuffer_sizes": [
+      "400",
+      "5456"
+    ],
+    "branch_counts": [
+      65,
+      62
+    ],
+    "path": "tonemappers/0x382CDBDB.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x2F2D0992.ps_6_6",
+    "original_sha256": "a7f733ec4352a698707553a1c5297074953945eb078909195490f03abdaa39d7",
+    "hlsl_sha256": "b9e541d06590adc6269fdcff1a96ec541a29e9eaa9c44c8a7db2d20a9c58c0cb",
+    "strict_compile": "passed",
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400"
+    ],
+    "branch_counts": [
+      0,
+      0
+    ],
+    "path": "luts/0x2F2D0992.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0xAD02BAB3.ps_6_6",
+    "original_sha256": "b9acca56b884fef8ed47b58ed67bf3165ba5b78735759030f3dab151a3da9c9e",
+    "hlsl_sha256": "c7a733d7b35b11ffcb10b958142b3122594292a20bfdfe074d7b3d989fd379fe",
+    "strict_compile": "passed",
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400"
+    ],
+    "branch_counts": [
+      2,
+      2
+    ],
+    "path": "postprocess/0xAD02BAB3.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x8F5737B5.ps_6_6",
+    "original_sha256": "5625336dd2c24133108ad1a1d5824999d7ac733e6fe757be49f874b125c2d876",
+    "hlsl_sha256": "ce15c543161ee7a98d60fd4047501f687c044149564604a9aa57f7cabd2d199a",
+    "strict_compile": "passed",
+    "intrinsic_count_differences": {
+      "cbufferLoadLegacy.f32": [
+        20,
+        24
+      ]
+    },
+    "recompiled_cbuffer_sizes": [
+      "400",
+      "5456"
+    ],
+    "branch_counts": [
+      155,
+      152
+    ],
+    "path": "output/0x8F5737B5.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0xFB1B4062.ps_6_6",
+    "original_sha256": "ba8b86dcc82652d102eb15e7714af5051be5f84597eee60224aec4992dfbdedb",
+    "hlsl_sha256": "168a08ce4b92a882eb9aa751071a07188f0bd8ac81f45f67e1d3d5c9af8ab67d",
+    "strict_compile": "passed",
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400"
+    ],
+    "branch_counts": [
+      0,
+      0
+    ],
+    "path": "effects/0xFB1B4062.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x29754CAF.ps_6_6",
+    "original_sha256": "60e64bf0280b443b88d7efb5fe4117477d90ce55954c70a7eaf29c3c90369b4d",
+    "hlsl_sha256": "7d25691a7a09ee760f91ab12fe3b64929486992f71787fda70d735f4cfe1c033",
+    "strict_compile": "passed",
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400",
+      "5456"
+    ],
+    "branch_counts": [
+      4,
+      4
+    ],
+    "path": "blur/0x29754CAF.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x4B0ABFCA.ps_6_6",
+    "original_sha256": "e6026329610bd15196285593728fd19cae665942c47b722679bc8f8ff5ae803a",
+    "hlsl_sha256": "48a632762260ba4ad0cc44d3c52c787234d04e0528b88789662ca0ed4ffef4c7",
+    "strict_compile": "passed",
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400",
+      "5456"
+    ],
+    "branch_counts": [
+      6,
+      6
+    ],
+    "path": "blur/0x4B0ABFCA.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x724E225F.ps_6_6",
+    "original_sha256": "2c6f5b5048cc12deb7d3658e23e7bd5ee5515edc7f23f06b848ca66b2c23d4a8",
+    "hlsl_sha256": "4fc11999cade434ee9fa61481e34ca5b83e44ce58ad2f3d91871b47d0e3f04c6",
+    "strict_compile": "passed",
+    "intrinsic_count_differences": {
+      "cbufferLoadLegacy.f32": [
+        13,
+        17
+      ]
+    },
+    "recompiled_cbuffer_sizes": [
+      "400",
+      "5456"
+    ],
+    "branch_counts": [
+      130,
+      127
+    ],
+    "differential_cases": 360,
+    "original_blocks_visited": 133,
+    "path": "tonemappers/0x724E225F.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x90AD6BBC.ps_6_6",
+    "original_sha256": "180d71c08bc3d746bbab57ceb4b8d43b34ed20baf8637f13d72f64d06167f9ac",
+    "hlsl_sha256": "08dc5327ffdc3bac09e4ae90af9987d552d78a7c7d0afa80934b4421d057303f",
+    "strict_compile": "passed",
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400"
+    ],
+    "branch_counts": [
+      0,
+      0
+    ],
+    "path": "luts/0x90AD6BBC.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x16967617.ps_6_6",
+    "original_sha256": "0d47dd7cdf5fb0b2498dc97f228d7636bb7f65454488e0db3fbaa974eaf0e8df",
+    "hlsl_sha256": "91f1ac37dfb0129d30f1bd26748e98105cdc5dad6ab992c009b2ecb6842bb652",
+    "strict_compile": "passed",
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400"
+    ],
+    "branch_counts": [
+      0,
+      0
+    ],
+    "path": "postprocess/0x16967617.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x7DC213EE.ps_6_6",
+    "original_sha256": "4b3225125e86e1f9f36d3c39fc92cebac946127cab1480104345b1692d7acace",
+    "hlsl_sha256": "11323c21d12ba89d9d079fdd8b32a298393f9f3c4b40452a309d33f89ae9cb74",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400"
+    ],
+    "differential_cases": 360,
+    "max_scaled_error": 0,
+    "path": "effects/0x7DC213EE.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0xC5AB358E.ps_6_6",
+    "original_sha256": "cf52b2a89a15b8e6fb568115e0d39e0e59d4b663b885c6b37696174942cd6828",
+    "hlsl_sha256": "c21e40edff795cfbb3efd65c303d7fef56c63e92960f7fab43999db354236283",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400"
+    ],
+    "differential_cases": 360,
+    "max_scaled_error": 0,
+    "path": "postprocess/0xC5AB358E.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x0F6A9050.ps_6_6",
+    "original_sha256": "e886cb952e5fddf9335c45b6524faafbdd6ce209241e99d159ddc83ffb781d23",
+    "hlsl_sha256": "b643da5fc4a5603188e8fea31207d6c83a294a2b5dacdea2838008fc271977fd",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400"
+    ],
+    "differential_cases": 360,
+    "original_blocks_visited": 1,
+    "original_blocks_total": 1,
+    "max_scaled_error": 0,
+    "path": "luts/0x0F6A9050.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x496222DA.ps_6_6",
+    "original_sha256": "11661dde175cf77b26eac4f2f56d4c71c4e8ee59cc2ed6a54de1ecf399e7deb3",
+    "hlsl_sha256": "f333b2491943848492761e743fe7bc6d3ef7d0e2956d551060b1dea947b332ad",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {
+      "cbufferLoadLegacy.f32": [
+        21,
+        32
+      ]
+    },
+    "recompiled_cbuffer_sizes": [
+      "400",
+      "5456"
+    ],
+    "differential_cases": 360,
+    "original_blocks_visited": 154,
+    "original_blocks_total": 225,
+    "max_scaled_error": 6.854534149169922e-06,
+    "path": "output/0x496222DA.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0xF961D049.ps_6_6",
+    "original_sha256": "152e1875ff248d969f58982557f482743e0bf897c9b8e2d912f7795fe89aba62",
+    "hlsl_sha256": "2dcee524292a2878e057f78c67796e4605e4b3d0a6c5092c3633aa96d9b2b983",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400"
+    ],
+    "differential_cases": 360,
+    "original_blocks_visited": 1,
+    "original_blocks_total": 1,
+    "max_scaled_error": 0,
+    "path": "postprocess/0xF961D049.ps_6_6.hlsl.original"
+  }
+]
