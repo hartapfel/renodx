@@ -13,7 +13,13 @@ a 30 FPS cap; isolated GPU timing and broader scene coverage remain untested.
 `motion_blur.cpp` runs the same HLSL on D3D11 WARP (compiled as `cs_5_0`) to check
 stationary identity, signed HDR preservation, full-resolution one-pixel detail,
 30/60/120/240 FPS shutter response, static-foreground occlusion, and moving-edge
-coverage against an analytical temporal reference. Shipping compilation uses
+coverage against an analytical temporal reference. The camera-pan regression
+gives separate surfaces identical screen motion, then varies their depths:
+their output must match the equal-depth reconstruction. Before the correction,
+this produced up to 0.351 error and an artificially sharp foreground edge;
+motion-aware occlusion weighting eliminates that difference without changing
+the stationary-foreground test. All 17 cases / 423,793 pixels pass, and the user
+confirmed the correction in-game after rebuilding. Shipping compilation uses
 `cs_6_6` with strict diagnostics. These tests do not establish game velocity
 units, resource lifetime safety, native-intensity independence, or GPU cost.
 
