@@ -1,12 +1,16 @@
 # Archived native HLSL
 
-These fifteen files are unmodified decompiler output from the original dumped DXIL, regenerated after repairing the repository decompiler. `.hlsl.original` prevents the recursive game shader build and live loader from treating archived baselines as active replacements. Copy a file into a separate scratch/live directory and remove only `.original` to reuse it.
+These twenty-two files are unmodified decompiler output from the original dumped DXIL, regenerated after repairing the repository decompiler. `.hlsl.original` prevents the recursive game shader build and live loader from treating archived baselines as active replacements. Copy a file into a separate scratch/live directory and remove only `.original` to reuse it.
 
 `manifest.json` records each original CSO SHA-256 and the exact generated HLSL SHA-256. The original eight binary copies were byte-length/SHA-256 checked against the game dump; the two candle-scene variants were dumped directly from DevKit and hashed before decompilation. They remain in `tmp/thewitcher3remastered/original`; do not copy CSOs into the game source/live folder.
 
-Archives are grouped into `tonemappers/`, `luts/`, `postprocess/`, `effects/`, and `output/`, matching the active shader folders. `blur/` contains the supporting `0x29754CAF` and `0x4B0ABFCA` baselines, which have no active replacements. Each manifest entry's `path` is relative to this directory. Moving the archives preserved their exact bytes and hashes.
+Archives are grouped into `tonemappers/`, `luts/`, `postprocess/`, `effects/`, and `output/`, matching the active shader folders. `blur/` contains the supporting `0x29754CAF` and `0x4B0ABFCA` baselines, with only the resolve (`0x4B0ABFCA`) replaced in `../effects/`; preparation stays native. Each manifest entry's `path` is relative to this directory. Moving the archives preserved their exact bytes and hashes.
 
 ## Validation
+
+The second cutscene post-grade baseline `0x9600E32A` contains native CA and no vignette. Its original and recompiled resource/signature contracts and intrinsic counts match, with exact differential agreement over 360 cases covering all three blocks. The forced-Vanilla replacement passes the same checks. Evidence: `tmp/thewitcher3remastered/cutscene-oct01/`.
+
+The spatial tint/highlight composite `0xDFD5C392` was captured in the dim interior scene. Its unmodified baseline passes strict compilation, signature/resource/buffer-size and intrinsic-count checks, and 360 differential cases with exact agreement. The original contains an unconditional 1.1 RGB ceiling. Original CSO and validation evidence are in `tmp/thewitcher3remastered/original/` and `dim-scene/`.
 
 The cutscene post-grade baseline `0xF961D049` was dumped directly from the live capture and decompiled with the standalone tool. Strict compilation, input/output signatures, bindings, 400-byte buffer extent, and intrinsic counts pass; 360 differential cases match exactly. No unresolved artifacts remain. The replacement's forced-Vanilla executable instructions equal the audited baseline. Original binary, disassemblies, and audit evidence remain under `tmp/thewitcher3remastered/cutscene/` and `original/`.
 
@@ -35,3 +39,16 @@ The candle-scene variants `0x90AD6BBC` and `0x16967617` needed no additional dec
 The bloom/flare revision adds unchanged native archives for `0x7DC213EE` (additive bloom composite) and `0xC5AB358E` (post grade with a sampled vignette). Both standalone decompiles contain no unresolved artifacts and pass strict compilation, signature/resource/400-byte extent audits, identical intrinsic counts, and 360-case differential execution with exact agreement. The edited forced-Vanilla shaders retain those native executable instructions; the manifest records original CSO and archived HLSL hashes. Evidence is under `tmp/thewitcher3remastered/bloom-flare/`. The archive now contains twelve baselines.
 
 The frame-generation capture adds `0x0F6A9050` (independently graded LUT pair) and `0x496222DA` (four-output HDR compositor), bringing the archive to fourteen baselines. Both standalone decompiles pass strict compilation and signature/resource/buffer-extent audits without unresolved artifacts. The LUT intrinsic counts match; the compositor has 32 cbuffer loads versus 21 in the original due to reconstructed scopes. Native baselines and forced-Vanilla replacements each pass 360 differential cases against the original binaries, with largest scaled error below 7e-6. The compositor fixtures visit 154 of 225 original blocks, so this is not exhaustive branch coverage. Evidence: `tmp/thewitcher3remastered/framegen/baseline-audit.json` and `vanilla-audit.json`.
+
+The light-shaft input `0x1132ADF9` and bloom-only composite `0x5E320F6F` were added with the native effect controls. Both pass strict compilation, matching input/output/resource contracts and DXIL intrinsic counts; their default/Vanilla paths match original DXIL over 360 cases each. Existing DOF and bloom+dirt baselines are reused unchanged. Evidence: `tmp/thewitcher3remastered/effect-controls/`.
+
+
+The three `motionblur/` archives are unchanged cs_6_6 decompiler output. All pass
+strict cs_6_6 compilation, matching input/output/binding/resource-property checks,
+116-byte b0 extent, NumThreads (8x8 / 8x8 / 16x16), and exact intrinsic counts.
+The final resolve (`0x866E78BC`) additionally matches original DXIL exactly over
+600 differential cases covering all seven blocks. The preparation/filter stages
+were structurally audited, including the filter loop and WaveActiveMax; no GPU
+differential or live baseline-equivalence result is claimed for them. Only the
+final resolve receives an enhanced replacement; Native still runs original DXIL.
+Evidence: `tmp/thewitcher3remastered/motion-blur/baseline-audit.json`.

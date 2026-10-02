@@ -36,7 +36,10 @@ float3 WitcherRestoreGrade(float3 graded_sdr, WitcherGradeState state) {
 float WitcherNativeBrightnessScale(float3 native_midgray) {
   float scale = dot(native_midgray, float3(0.2126f, 0.7152f, 0.0722f)) / 0.18f;
   // Invalid native parameters must not contaminate an otherwise valid scene.
-  return (scale >= 0.f && scale <= 3.402823466e+38f) ? scale : 1.f;
+  scale = (scale >= 0.f && scale <= 3.402823466e+38f) ? scale : 1.f;
+  // Cap each environment's gain before transition blending. Retain native
+  // darkening while preventing this compensation from adding exposure.
+  return CUSTOM_NATIVE_BRIGHTNESS_DARKEN_ONLY != 0.f ? min(scale, 1.f) : scale;
 }
 
 // Native gamma-shaped intermediates must retain signed wide-gamut channels.
@@ -50,6 +53,8 @@ float3 WitcherApplyPsychoVInputExtensions(float3 color_bt709) {
 
   if (RENODX_TONE_MAP_GAMMA == 1.f
       && RENODX_TONE_MAP_CONTRAST == 1.f
+      && RENODX_TONE_MAP_CONTRAST_HIGHLIGHTS == 1.f
+      && RENODX_TONE_MAP_CONTRAST_SHADOWS == 1.f
       && RENODX_TONE_MAP_FLARE == 0.f) {
     return color_bt709;
   }
@@ -62,8 +67,14 @@ float3 WitcherApplyPsychoVInputExtensions(float3 color_bt709) {
     adjusted_luminance = pow(adjusted_luminance, RENODX_TONE_MAP_GAMMA);
   }
   if (RENODX_TONE_MAP_CONTRAST != 1.f
+      || RENODX_TONE_MAP_CONTRAST_HIGHLIGHTS != 1.f
+      || RENODX_TONE_MAP_CONTRAST_SHADOWS != 1.f
       || RENODX_TONE_MAP_FLARE != 0.f) {
     static const float mid_gray = 0.18f;
+    // Match the other mods' split contrast, preserving RGB ratios and the
+    // grey pivot. Grade before PsychoV so stronger contrast retains rolloff.
+    const float split_contrast = adjusted_luminance < mid_gray
+        ? RENODX_TONE_MAP_CONTRAST_SHADOWS : RENODX_TONE_MAP_CONTRAST_HIGHLIGHTS;
     const float normalized_luminance = max(
         adjusted_luminance / mid_gray,
         1e-6f);
@@ -74,7 +85,7 @@ float3 WitcherApplyPsychoVInputExtensions(float3 color_bt709) {
         1.f);
     adjusted_luminance = pow(
         normalized_luminance,
-        RENODX_TONE_MAP_CONTRAST * flare_exponent) * mid_gray;
+        RENODX_TONE_MAP_CONTRAST * split_contrast * flare_exponent) * mid_gray;
   }
 
   return renodx::color::correct::Luminance(

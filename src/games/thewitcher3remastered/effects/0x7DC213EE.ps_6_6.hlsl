@@ -75,6 +75,8 @@ float4 main(
   float _75 = CustomPixelConsts_128.x * SV_Position.x;
   float _76 = CustomPixelConsts_128.y * SV_Position.y;
   float4 _83 = t1.Sample(s1, float2(_75, _76));
+  // Camera Lens Effects contributes texture-modulated dirt; base bloom is independent.
+  if (WitcherUsePsychoV30()) _83.rgb *= CUSTOM_LENS_STRENGTH;
   float _87 = _83.x * CustomPixelConsts_112.x;
   float _88 = _83.y * CustomPixelConsts_112.y;
   float _89 = _83.z * CustomPixelConsts_112.z;

@@ -252,5 +252,120 @@
     "original_blocks_total": 1,
     "max_scaled_error": 0,
     "path": "postprocess/0xF961D049.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0xDFD5C392.ps_6_6",
+    "original_sha256": "3873f4efedb76b830b1bac54a20f505fa1469117d6e023e24c3dde93a39aaf12",
+    "hlsl_sha256": "735939fad2ebbaea56f6d6b8bf4e4bc4c176e590259be037e7adf42255e8d00a",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400",
+      "5456"
+    ],
+    "differential_cases": 360,
+    "original_blocks_visited": 1,
+    "original_blocks_total": 1,
+    "max_scaled_error": 0,
+    "path": "effects/0xDFD5C392.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x9600E32A.ps_6_6",
+    "original_sha256": "464f9fcc05890091c95a74b11f3bd92d8b294a538a168dca56d49ebf9b92fe88",
+    "hlsl_sha256": "72aa26e1f19c30cc6ee6f3acd9697134815cf9dd68882148008c88f3f1d7910d",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400"
+    ],
+    "differential_cases": 360,
+    "original_blocks_visited": 3,
+    "original_blocks_total": 3,
+    "max_scaled_error": 0,
+    "path": "postprocess/0x9600E32A.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x1132ADF9.ps_6_6",
+    "original_sha256": "1c883ec563ba66439265bf4c16ff49ba9d1626ff8a3fdfa260c6ec5a9c84cfc8",
+    "hlsl_sha256": "de37df092dced0cabb7e755e9a654317c1764d9af36792dd61fe2f0c1236b4f6",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "5456"
+    ],
+    "differential_cases": 360,
+    "path": "effects/0x1132ADF9.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x5E320F6F.ps_6_6",
+    "original_sha256": "3009ad6a9369de206f469d43495f5ebb39127bbc0e51b4982fa99e5e040567c9",
+    "hlsl_sha256": "6290db7cc883a908ee0387f1e2210b56664e0eab5fdc9ab7b6a35718ef2e6aa2",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400"
+    ],
+    "differential_cases": 360,
+    "path": "effects/0x5E320F6F.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x5388164E.cs_6_6",
+    "original_sha256": "4331b523c5a9f5c11ff9fce01acc288965c9238eb5a0aa74cff53a2ce8f46954",
+    "hlsl_sha256": "d95104be402ab7d404afc33419509ce809b90f9e2ccce98c2c144f82b24b1987",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "116"
+    ],
+    "path": "motionblur/0x5388164E.cs_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x47C602BB.cs_6_6",
+    "original_sha256": "5a16d1e2c1e45b848379ca637af9dd18282e41013fc96fc9fc5ad534b66b8584",
+    "hlsl_sha256": "aaf63728edc0154d323a14700d271c22019b23bbe4d9b1e2cf4df1c47dea81e1",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "116"
+    ],
+    "path": "motionblur/0x47C602BB.cs_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x866E78BC.cs_6_6",
+    "original_sha256": "e0570a8172f033bc2354a34307caf276c6b59a518bc59caf9acb5c12240a3120",
+    "hlsl_sha256": "6d2130ba9c133a804ece6f34ec53bc8240f63269e9ab07599057f87db1d9395e",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "116"
+    ],
+    "path": "motionblur/0x866E78BC.cs_6_6.hlsl.original",
+    "differential_cases": 600,
+    "original_blocks_visited": 7,
+    "original_blocks_total": 7,
+    "max_scaled_error": 0
+  },
+  {
+    "shader": "0x2B7AF9F0.cs_6_6",
+    "original_sha256": "bc5eacc34c81ed6c99db9381657b104eb74b101190d4b3472b7ce402f4faf1ab",
+    "hlsl_sha256": "206a33f0363eb80cf3994ba347626e4e1b35c80fea184d36a5f98ab959fef999",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "116"
+    ],
+    "path": "motionblur/0x2B7AF9F0.cs_6_6.hlsl.original",
+    "differential_cases": 600,
+    "original_blocks_visited": 7,
+    "original_blocks_total": 7,
+    "max_scaled_error": 0
   }
 ]

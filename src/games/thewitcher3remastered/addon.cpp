@@ -9,6 +9,7 @@
 #define DEBUG_LEVEL_0
 
 #include <algorithm>
+#include <vector>
 
 #include <deps/imgui/imgui.h>
 #include <include/reshade.hpp>
@@ -22,6 +23,7 @@
 #include "../../utils/settings.hpp"
 #include "../../utils/swapchain.hpp"
 #include "./shared.h"
+#include "./motion_blur.hpp"
 
 namespace {
 
@@ -33,6 +35,8 @@ renodx::mods::shader::CustomShaders custom_shaders = {
 };
 
 ShaderInjectData shader_injection;
+// Compute replacement selection is CPU-only; it needs no additional root data.
+float motion_blur_mode = 1.f;
 bool fired_on_init_swapchain = false;
 
 // The post-processing shaders use pixel-visible b3 and b12 in space0.
@@ -91,6 +95,15 @@ bool ShouldInjectPostProcessLayout(std::span<const reshade::api::pipeline_layout
 
 bool IsPsychoV() {
   return shader_injection.tone_map_type == 1.f;
+}
+
+// Settings::Write clears only this percentage field; neighboring flags and
+// percentages retain their values.
+std::vector<uint32_t> PackedPercentValues(uint32_t shift) {
+  std::vector<uint32_t> values;
+  values.reserve(101);
+  for (uint32_t value = 0; value <= 100; ++value) values.push_back(value << shift);
+  return values;
 }
 
 renodx::utils::settings::Settings settings = {
@@ -163,13 +176,13 @@ renodx::utils::settings::Settings settings = {
         new renodx::utils::settings::Setting{
         .key = "NativeBrightnessCompensation",
         .binding = &shader_injection.mode_flags,
-        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .packed_values = {0u, WITCHER_FLAG_NATIVE_BRIGHTNESS},
+        .packed_values = {0u, WITCHER_FLAG_NATIVE_BRIGHTNESS, WITCHER_FLAG_NATIVE_BRIGHTNESS_DARKEN_ONLY},
         .label = "Brightness Compensation",
         .section = "Tone Mapping",
-        .tooltip = "Uses the active native curve's middle-grey gain as an exposure multiplier. Follows environment transitions. Can darken or brighten the scene.",
-        .labels = {"Off", "On"},
+        .tooltip = "Uses the native curve's middle-grey gain as an exposure multiplier. On allows darkening and brightening; Darken Only caps each environment's gain at 1x before transition blending. It does not disable the game's separate auto-exposure.",
+        .labels = {"Off", "On", "Darken Only"},
         .is_enabled = []() { return IsPsychoV(); },
         .is_visible = []() { return settings[0]->GetValue() >= 1.f; },
     },
@@ -209,7 +222,7 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * 0.01f; },
         .is_visible = []() { return settings[0]->GetValue() >= 1.f; },
     },
-    new renodx::utils::settings::Setting{
+/*     new renodx::utils::settings::Setting{
         .key = "GamutUnclamp",
         .binding = &shader_injection.mode_flags,
         .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
@@ -221,7 +234,7 @@ renodx::utils::settings::Settings settings = {
         .labels = {"Vanilla", "Wide Color Gamut"},
         .is_enabled = []() { return IsPsychoV(); },
         .is_visible = []() { return settings[0]->GetValue() >= 1.f; },
-    },
+    }, */
     new renodx::utils::settings::Setting{
         .key = "ColorGradeExposure",
         .binding = &shader_injection.tone_map_exposure,
@@ -257,6 +270,20 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "ColorGradeHighlightContrast",
+        .binding = &shader_injection.mode_flags,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 50.f,
+        .packed_values = PackedPercentValues(WITCHER_CONTRAST_HIGHLIGHTS_SHIFT),
+        .label = "Highlight Contrast",
+        .section = "Color Grading",
+        .tooltip = "Adjusts contrast above 18% grey before PsychoV. 50 is neutral; lower values flatten highlights and higher values increase their contrast. PsychoV still rolls highlights toward Peak Brightness.",
+        .max = 100.f,
+        .format = "%d",
+        .is_enabled = []() { return IsPsychoV(); },
+        .is_visible = []() { return settings[0]->GetValue() >= 1.f; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "ColorGradeShadows",
         .binding = &shader_injection.tone_map_shadows,
         .default_value = 50.f,
@@ -265,6 +292,20 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV(); },
         .parse = [](float value) { return value * 0.02f; },
+        .is_visible = []() { return settings[0]->GetValue() >= 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "ColorGradeShadowContrast",
+        .binding = &shader_injection.mode_flags,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 50.f,
+        .packed_values = PackedPercentValues(WITCHER_CONTRAST_SHADOWS_SHIFT),
+        .label = "Shadow Contrast",
+        .section = "Color Grading",
+        .tooltip = "Adjusts contrast below 18% grey before PsychoV. 50 is neutral; lower values flatten shadows and higher values deepen them. Keeps the grey pivot fixed.",
+        .max = 100.f,
+        .format = "%d",
+        .is_enabled = []() { return IsPsychoV(); },
         .is_visible = []() { return settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
@@ -328,7 +369,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "PsychoVConeResponseExponent",
         .binding = &shader_injection.psychov_cone_response_exponent,
-        .default_value = 1.f,
+        .default_value = 1.16f,
         .label = "Cone Response Exponent",
         .section = "PsychoV30",
         .tooltip = "Sets the cone response exponent. 1.0 is the uncalibrated neutral baseline.",
@@ -392,7 +433,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "PsychoVCompression",
         .binding = &shader_injection.psychov_compression,
-        .default_value = 0.f,
+        .default_value = 0.95f,
         .label = "Compression (0 = Auto)",
         .section = "PsychoV30",
         .tooltip = "0 selects PsychoV-30 automatic compression. Positive values set the response power directly.",
@@ -402,26 +443,65 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return IsPsychoV() && settings[0]->GetValue() >= 1.f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "FxDepthBlur",
+        .binding = &shader_injection.effect_strengths,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 50.f,
+        .packed_values = PackedPercentValues(WITCHER_EFFECT_BLUR_SHIFT),
+        .label = "Blur",
+        .section = "Effects",
+        .tooltip = "Ports the original mod's depth-blur radius control. 0 removes depth blur; 50 is original-mod strength; 100 doubles the radius. Does not control Motion Blur or Witcher Senses.",
+        .max = 100.f,
+        .format = "%d",
+        .is_enabled = []() { return IsPsychoV(); },
+    },
+    new renodx::utils::settings::Setting{
         .key = "FxBloomStrength",
         .binding = &shader_injection.bloom_strength,
-        .default_value = 100.f,
+        .default_value = 50.f,
         .label = "Bloom Strength",
         .section = "Effects",
-        .tooltip = "Scales the native additive bloom contribution before exposure and tone mapping. 0 removes it; 100 retains the game's strength. Requires native Bloom to be enabled.",
+        .tooltip = "Scales the native additive bloom contribution before exposure and tone mapping. 0 removes it; 50 retains the game's strength; 100 doubles it. Requires native Bloom to be enabled.",
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV(); },
-        .parse = [](float value) { return value * 0.01f; },
+        .parse = [](float value) { return value * 0.02f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxSunShaftStrength",
+        .binding = &shader_injection.effect_strengths,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 50.f,
+        .packed_values = PackedPercentValues(WITCHER_EFFECT_SHAFTS_SHIFT),
+        .label = "Sunshafts Strength",
+        .section = "Effects",
+        .tooltip = "Scales the native sky input feeding sunshafts, as in the original mod. 0 removes it; 50 is native strength; 100 doubles it. Requires native Light Shafts.",
+        .max = 100.f,
+        .format = "%d",
+        .is_enabled = []() { return IsPsychoV(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxLensDirt",
+        .binding = &shader_injection.effect_strengths,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 50.f,
+        .packed_values = PackedPercentValues(WITCHER_EFFECT_LENS_SHIFT),
+        .label = "Lens Dirt",
+        .section = "Effects",
+        .tooltip = "Scales the dirt texture contribution, as in the original mod. 0 removes dirt; 50 is native strength; 100 doubles it. Requires native Camera Lens Effects and Bloom.",
+        .max = 100.f,
+        .format = "%d",
+        .is_enabled = []() { return IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
         .key = "FxVignetteStrength",
         .binding = &shader_injection.vignette_strength,
-        .default_value = 100.f,
+        .default_value = 50.f,
         .label = "Vignette Strength",
         .section = "Effects",
-        .tooltip = "Scales the native vignette. 0 removes it; 100 retains the game's strength. Applies to both radial and texture-based vignettes.",
+        .tooltip = "Scales the native vignette. 0 removes it; 50 retains the game's strength; 100 doubles it. Applies to both radial and texture-based vignettes.",
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV(); },
-        .parse = [](float value) { return value * 0.01f; },
+        .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
         .key = "FxVignetteBlackFloor",
@@ -436,13 +516,48 @@ renodx::utils::settings::Settings settings = {
         .is_enabled = []() { return IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
+        .key = "FxMotionBlurMode",
+        .binding = &motion_blur_mode,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .label = "Motion Blur",
+        .section = "Effects",
+        .tooltip = "Enhanced reconstructs full-resolution HDR blur from per-object frame motion and depth. The mod controls shutter duration independently of native intensity. Requires the game's Motion Blur setting.",
+        .labels = {"Native", "Enhanced"},
+        .is_enabled = []() { return IsPsychoV(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxMotionShutterAngle",
+        .binding = &witcher::motion::shutter_angle,
+        .default_value = 180.f,
+        .label = "Motion Blur Shutter Angle",
+        .section = "Effects",
+        .tooltip = "Exposure as a fraction of each rendered frame: 180 degrees is half a frame. The same movement produces a shorter blur at higher FPS. 0 disables blur.",
+        .min = 0.f,
+        .max = 360.f,
+        .format = "%.0f degrees",
+        .is_enabled = []() { return IsPsychoV() && motion_blur_mode == 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxMotionSamples",
+        .binding = &witcher::motion::sample_count,
+        .default_value = 64.f,
+        .label = "Motion Blur Samples",
+        .section = "Effects",
+        .tooltip = "Maximum reconstruction samples per pixel. Short motion automatically uses fewer samples.",
+        .min = 16.f,
+        .max = 128.f,
+        .format = "%.0f",
+        .is_enabled = []() { return IsPsychoV() && motion_blur_mode == 1.f; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "FxSharpeningMode",
         .binding = &shader_injection.mode_flags,
         .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
-        .default_value = 0.f,
+        .default_value = 1.f,
         .packed_values = {0u, WITCHER_FLAG_SHARPENING},
         .label = "Sharpening",
-        .section = "Effects",
+        .section = "RenoFX",
         .tooltip = "Native follows the game's sharpening setting. Lilium RCAS replaces native sharpening and runs before chromatic aberration.",
         .labels = {"Native", "Lilium RCAS"},
         .is_enabled = []() { return IsPsychoV(); },
@@ -452,7 +567,7 @@ renodx::utils::settings::Settings settings = {
         .binding = &shader_injection.sharpening,
         .default_value = 0.f,
         .label = "Lilium RCAS Strength",
-        .section = "Effects",
+        .section = "RenoFX",
         .tooltip = "Sharpens scene detail with noise attenuation. 0 disables sharpening in Lilium RCAS mode. Does not sharpen HUD or menu graphics.",
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV() && renodx::utils::bitwise::HasFlag(shader_injection.mode_flags, WITCHER_FLAG_SHARPENING); },
@@ -461,9 +576,9 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "FxFilmGrain",
         .binding = &shader_injection.film_grain,
-        .default_value = 0.f,
+        .default_value = 50.f,
         .label = "Perceptual Film Grain",
-        .section = "Effects",
+        .section = "RenoFX",
         .tooltip = "Adds luminance-adaptive film grain after sharpening and chromatic aberration. 0 disables it. Does not affect HUD or menu graphics.",
         .max = 100.f,
         .is_enabled = []() { return IsPsychoV(); },
@@ -476,7 +591,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .packed_values = {0u, WITCHER_FLAG_CA},
         .label = "Chromatic Aberration",
-        .section = "Effects",
+        .section = "RenoFX",
         .tooltip = "Native follows the game's CA setting. RenoDX replaces it with the Ghost of Tsushima mod's lens dispersion, even when native CA is disabled.",
         .labels = {"Native", "RenoDX"},
         .is_enabled = []() { return IsPsychoV(); },
@@ -486,7 +601,7 @@ renodx::utils::settings::Settings settings = {
         .binding = &shader_injection.chromatic_aberration_intensity,
         .default_value = 0.7f,
         .label = "CA Intensity",
-        .section = "Effects",
+        .section = "RenoFX",
         .tooltip = "Strength of the red/green lens separation. 0 removes fringing.",
         .max = 5.f,
         .format = "%.2f",
@@ -497,7 +612,7 @@ renodx::utils::settings::Settings settings = {
         .binding = &shader_injection.chromatic_aberration_start_offset,
         .default_value = 0.7f,
         .label = "CA Start Offset",
-        .section = "Effects",
+        .section = "RenoFX",
         .tooltip = "Protects the center from fringing. 0 starts at the center; 0.5 keeps the middle half clear; values near 1 confine the effect to the edges.",
         .max = 0.95f,
         .format = "%.2f",
@@ -587,7 +702,9 @@ void OnPresetOff() {
       {"ColorGradeExposure", 1.f},
       {"ColorGradeGamma", 1.f},
       {"ColorGradeHighlights", 50.f},
+      {"ColorGradeHighlightContrast", 50.f},
       {"ColorGradeShadows", 50.f},
+      {"ColorGradeShadowContrast", 50.f},
       {"ColorGradeContrast", 50.f},
       {"ColorGradeSaturation", 50.f},
       {"ColorGradeHighlightSaturation", 50.f},
@@ -599,8 +716,12 @@ void OnPresetOff() {
       {"FxSharpeningMode", 0.f},
       {"FxSharpening", 0.f},
       {"FxFilmGrain", 0.f},
-      {"FxBloomStrength", 100.f},
-      {"FxVignetteStrength", 100.f},
+      {"FxMotionBlurMode", 0.f},
+      {"FxDepthBlur", 50.f},
+      {"FxSunShaftStrength", 50.f},
+      {"FxLensDirt", 50.f},
+      {"FxBloomStrength", 50.f},
+      {"FxVignetteStrength", 50.f},
       {"FxVignetteBlackFloor", 0.f},
   });
 }
@@ -635,6 +756,11 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
     case DLL_PROCESS_ATTACH:
       if (!reshade::register_addon(h_module)) return FALSE;
 
+      witcher::motion::code = {__0xF3B10000, __0xF3B10001, __0xF3B10002, __0xF3B10003};
+      renodx::utils::descriptor::trace_descriptor_tables = true;
+      // These shaders are private compute passes, not native replacements.
+      for (uint32_t hash : {0xF3B10000u, 0xF3B10001u, 0xF3B10002u, 0xF3B10003u}) custom_shaders.erase(hash);
+
       // Extend only compatible post-process layouts; cloning regressed level loading.
       renodx::mods::shader::expected_constant_buffer_space = 50;
       renodx::mods::shader::expected_constant_buffer_index = 13;
@@ -647,6 +773,14 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
       };
       // Defer replacement until the draw so a rejected layout keeps its native shader.
       for (auto& [hash, custom_shader] : custom_shaders) {
+        if (hash == 0x866E78BC || hash == 0x2B7AF9F0) {
+          custom_shader.on_draw = [](auto* cmd) {
+            return !IsPsychoV() || motion_blur_mode != 1.f || !witcher::motion::Run(cmd);
+          };
+          custom_shader.on_replace = [](auto*) { return false; };
+          custom_shader.on_inject = [](auto*) { return false; };
+          continue;
+        }
         if (hash == 0x3650C210) {
           // The native sharpening dispatch becomes a copy only in custom mode.
           // It uses native bindings exclusively; never extend/inject its layout.
@@ -662,6 +796,14 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
                  && details->injection_index >= 0 && details->injection_register_index == 13;
         };
       }
+      custom_shaders[0x9F1C32F1] = {
+          .crc32 = 0x9F1C32F1,
+          .on_replace = [](auto*) { return false; },
+          .on_inject = [](auto*) { return false; },
+          .on_draw = [](auto* cmd) {
+            return !IsPsychoV() || motion_blur_mode != 1.f || witcher::motion::CaptureMotionDepth(cmd);
+          },
+      };
       reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
       break;
     case DLL_PROCESS_DETACH:
@@ -670,6 +812,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
       break;
   }
 
+  witcher::motion::Use(fdw_reason);
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
   renodx::utils::random::Use(fdw_reason, {&shader_injection.random_seed});
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
