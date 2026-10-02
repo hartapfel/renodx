@@ -8,6 +8,16 @@
 #define WITCHER_FLAG_VIGNETTE_BLACK (1u << 3)
 #define WITCHER_FLAG_NATIVE_BRIGHTNESS (1u << 4)
 #define WITCHER_FLAG_GAMUT_UNCLAMP (1u << 5)
+#define WITCHER_FLAG_NATIVE_BRIGHTNESS_DARKEN_ONLY (1u << 6)
+
+// Split contrast percentages share unused bits with the boolean/mode flags.
+#define WITCHER_CONTRAST_HIGHLIGHTS_SHIFT 7u
+#define WITCHER_CONTRAST_SHADOWS_SHIFT 14u
+
+// Three independent integer percentages share the final available root DWORD.
+#define WITCHER_EFFECT_BLUR_SHIFT 0u
+#define WITCHER_EFFECT_SHAFTS_SHIFT 7u
+#define WITCHER_EFFECT_LENS_SHIFT 14u
 
 struct ShaderInjectData {
   float peak_white_nits;
@@ -45,10 +55,11 @@ struct ShaderInjectData {
   float custom_lut_strength;
   float custom_lut_scaling;
   float custom_color_grading;
+  float effect_strengths;
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 120);
+static_assert(sizeof(ShaderInjectData) == 124);
 #else
 // DX12 injection binding, paired with addon.cpp; native buffers use space0.
 cbuffer shader_injection : register(b13, space50) {
@@ -64,6 +75,8 @@ cbuffer shader_injection : register(b13, space50) {
 #define RENODX_TONE_MAP_HIGHLIGHTS shader_injection.tone_map_highlights
 #define RENODX_TONE_MAP_SHADOWS shader_injection.tone_map_shadows
 #define RENODX_TONE_MAP_CONTRAST shader_injection.tone_map_contrast
+#define RENODX_TONE_MAP_CONTRAST_HIGHLIGHTS (float((asuint(shader_injection.mode_flags) >> WITCHER_CONTRAST_HIGHLIGHTS_SHIFT) & 127u) * 0.02f)
+#define RENODX_TONE_MAP_CONTRAST_SHADOWS (float((asuint(shader_injection.mode_flags) >> WITCHER_CONTRAST_SHADOWS_SHIFT) & 127u) * 0.02f)
 #define RENODX_TONE_MAP_SATURATION shader_injection.tone_map_saturation
 #define RENODX_TONE_MAP_HIGHLIGHT_SATURATION shader_injection.tone_map_highlight_saturation
 #define RENODX_TONE_MAP_BLOWOUT shader_injection.tone_map_blowout
@@ -87,11 +100,17 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_BLOOM_STRENGTH shader_injection.bloom_strength
 #define CUSTOM_VIGNETTE_STRENGTH shader_injection.vignette_strength
 #define CUSTOM_VIGNETTE_BLACK_FLOOR WITCHER_MODE_FLAG(WITCHER_FLAG_VIGNETTE_BLACK)
-#define CUSTOM_NATIVE_BRIGHTNESS_COMPENSATION WITCHER_MODE_FLAG(WITCHER_FLAG_NATIVE_BRIGHTNESS)
+#define CUSTOM_NATIVE_BRIGHTNESS_COMPENSATION WITCHER_MODE_FLAG(WITCHER_FLAG_NATIVE_BRIGHTNESS | WITCHER_FLAG_NATIVE_BRIGHTNESS_DARKEN_ONLY)
+#define CUSTOM_NATIVE_BRIGHTNESS_DARKEN_ONLY WITCHER_MODE_FLAG(WITCHER_FLAG_NATIVE_BRIGHTNESS_DARKEN_ONLY)
 #define CUSTOM_GAMUT_UNCLAMP WITCHER_MODE_FLAG(WITCHER_FLAG_GAMUT_UNCLAMP)
 #define CUSTOM_LUT_STRENGTH shader_injection.custom_lut_strength
 #define CUSTOM_LUT_SCALING shader_injection.custom_lut_scaling
 #define CUSTOM_COLOR_GRADING shader_injection.custom_color_grading
+
+#define WITCHER_EFFECT_STRENGTH(shift) (float((asuint(shader_injection.effect_strengths) >> (shift)) & 127u) * 0.02f)
+#define CUSTOM_BLUR_STRENGTH WITCHER_EFFECT_STRENGTH(WITCHER_EFFECT_BLUR_SHIFT)
+#define CUSTOM_SHAFTS_STRENGTH WITCHER_EFFECT_STRENGTH(WITCHER_EFFECT_SHAFTS_SHIFT)
+#define CUSTOM_LENS_STRENGTH WITCHER_EFFECT_STRENGTH(WITCHER_EFFECT_LENS_SHIFT)
 
 // Scene intermediates use BT.709; the native output pass encodes BT.2020 PQ.
 #include "../../shaders/color.hlsl"

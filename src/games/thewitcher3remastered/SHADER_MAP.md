@@ -1,6 +1,6 @@
 # Native HDR shader map
 
-Inspected 2026-09-29 from `E:\SteamLibrary\steamapps\common\The Witcher 3\bin\x64_dx12\renodx-dev\dump`, plus live DevKit snapshots. All 463 original CSOs were copied and SHA-256 verified under `tmp/thewitcher3remastered/original`. The manifest and disassemblies are in the same scratch directory. No replacement shaders were registered or loaded during the initial investigation. The subsequent implementation is described in [README.md](./README.md); fourteen replacement shaders are now embedded in the addon. Scene rendering, grading controls and highlight rolloff were checked live before the frame-generation revision; its integrated runtime check remains pending.
+Inspected 2026-09-29 from `E:\SteamLibrary\steamapps\common\The Witcher 3\bin\x64_dx12\renodx-dev\dump`, plus live DevKit snapshots. All 463 original CSOs were copied and SHA-256 verified under `tmp/thewitcher3remastered/original`. The manifest and disassemblies are in the same scratch directory. No replacement shaders were registered or loaded during the initial investigation. The subsequent implementation is described in [README.md](./README.md); nineteen replacement shaders are now in the source in the addon. Scene rendering, grading controls and highlight rolloff were checked live before the frame-generation revision; its integrated runtime check remains pending.
 
 ## Frame-generation capture
 
@@ -177,3 +177,89 @@ The 5891-draw capture contains additive bloom `0x7DC213EE` at 5817, main exposur
 Bloom Strength scales `0x7DC213EE` RGB immediately before ONE/ONE blending; alpha remains zero. Sun Flare Strength scales the flare contribution before the screen-blend saturation, with exact scene passthrough at zero. Both default to 100 and operate before final PsychoV. They do not scale the scene, UI, sun disc or atmospheric scattering. Temporary bypasses did not explain the whole reported glow: the user saw little flare change and slight bloom improvement, and suspected native HDR was active.
 
 `0xC5AB358E` explains an actual uncovered HDR path: it is the `0x16967617` post grade with the analytic vignette replaced by a t2/s2 texture lookup. The replacement preserves that lookup, brackets grading with the existing HDR proxy/reconstruction, and adds the same RCAS -> CA sampling. Grain still runs later in the final HDR shader. Both new originals are archived and audited. Eleven replacements compile strictly, the expanded payload is 29 DWORDs, and the existing root-layout restriction remains unchanged. Live appearance/injection checks are pending relaunch; probes were unloaded and the live path restored to the mod folder.
+
+## Interior spatial tint/highlight composite: `0xDFD5C392`
+
+The 2026-09-30 interior capture runs this pixel shader directly after the covered exposure transition pass and a material-mask helper (`0x19A9F88E`), before upscaling, LUTs and final PsychoV mapping. It reads scene `t0/s0`, depth `t1/s1`, and a five-tap mask `t2/s2`, with native `b3` (400 bytes) and `b12` (5456 bytes). It reconstructs position from depth, computes distance-dependent luminance tint, adds mask-based colour and then unconditionally applies `min(rgb, 1.1)`. The clamp remains even when the effect strength is zero. The precise game-facing name of this effect has not been verified.
+
+The initial live exposure target retained RGB values above 1000 while the composite target stopped at 1.099609375 (half-float 1.1); later LUT output remained around 1.7. These readbacks are live and not frame-frozen. This proves a shader ceiling before final display mapping, rather than a display-peak setting or compensation gain alone. The replacement bypasses only that upper clamp in valid PsychoV mode and preserves native alpha and effect math. Vanilla retains the original cap. No resource upgrade is needed for its RGBA16F target.
+
+The supporting mask shader is not modified or claimed as a validated baseline: its standalone decompile failed strict compilation, and its original binary remains archived in scratch. The actual clipping shader decompiled successfully and passed structural/differential checks.
+
+DevKit live unload also removed the currently active addon runtime replacements during inspection; loading the covered pixel set restored HDR exposure. The new hash remains inactive until included in the addon, because this mod defers replacement to draw time and looks up its registered custom shader table. Do not treat an MCP activation flag as proof of execution for a newly added hash.
+
+## Cutscene CA without vignette: `0x9600E32A`
+
+The 2026-10-01 capture (1,354 draws) uses `0x382CDBDB` at draw 1339, native sharpening `0x3650C210` at 1346, screen blend `0xFB1B4062` at 1347, this previously unregistered post-process at 1348, and covered output/grain `0x8F5737B5` at 1352. This explains why grain works while the RCAS and CA controls are absent. The pass reads scene `t0/s1`, has a 400-byte `b3`, and writes 3840x2160 RGBA16F. It has native radial CA using `c16/c17` and the same analytic grade as `0xF961D049`, with neither a vignette nor a second UV semantic.
+
+The replacement preserves original Vanilla code and native CA selection. In PsychoV it sharpens the center and displaced samples before native/RenoDX CA, then calls the shared HDR-safe grade with a zero vignette mask. Native alpha passes through. Grain stays in the final compositor after these effects. No layout, setting, or payload changes are needed; CMake discovers the additional hash automatically. Baseline and effect validation are recorded in `tmp/thewitcher3remastered/cutscene-oct01/`; integrated execution requires rebuilding the registered addon table. No live shader overrides were loaded during this capture.
+
+## Native effect intensity controls (2026-10-01)
+
+| Native option | Proven passes | Control location |
+|---|---|---|
+| Depth of Field | `0x29754CAF`, `0x4B0ABFCA`; both disappear when disabled | Scale the native depth blur factor before preparation quantization and resolve radius/discard. |
+| Light Shafts | `0x1132ADF9` plus two `0x6DB9B38D` draws disappear when disabled | Scale RGB once in the depth-masked sky input, leaving the shared radial filter and alpha unchanged. |
+| Camera Lens Effects | `0x7DC213EE` swaps to `0x5E320F6F` when disabled | Scale only the texture-modulated lens-dirt term before adding base bloom; retain Bloom Strength in both variants. |
+
+These stages precede the scene grade/final HDR compositor and therefore cover downstream regular/frame-generation post-process variants without repeated attenuation. The archived frame-generation draws share the same effect hashes; archived cutscenes confirm the bloom+dirt variant. The 526-binary archive was scanned for similar contracts/math, with no additional matching DOF/shaft/dirt variant identified. This does not prove coverage of uncaptured cutscene-specific effects.
+
+The game's Blur option is separate from Motion Blur (`AllowBlur` versus `AllowMotionBlur`). Sprint/dodge captures did not establish a Blur pass; Witcher Senses `0xDBABCC6C` also remains present with Blur off. Blur is intentionally deferred at the user's request and has no inactive slider. Live comparison captures and validation: `tmp/thewitcher3remastered/effect-controls/`.
+
+### Original-mod comparison correction
+
+`0x0C19D45C` (old depth blur) maps to `0x4B0ABFCA`. Blur now follows the old non-sky radius multiplier and restores its `saturate(sum_of_sample_alpha * 25)` output. Remaster native outputs zero alpha, so the captured source-alpha blend suppresses its RGB regardless of radius. Preparation `0x29754CAF` is no longer replaced. The earlier DOF-control description above records the superseded implementation. Lens dirt and sunshaft multiplication points match the old shaders; slider mapping is now 0/50/100 = 0×/1×/2×. A live execution check remains needed for the reported unresponsive shaft/dirt controls.
+
+
+## Motion blur (2026-10-03)
+
+Native Motion Blur controls a three-dispatch chain after depth blur and before
+sharpening, lens-flare composition and LUT grading. Turning it off removes the
+chain. The two observed final-resolve variants are both intercepted.
+
+| Hash | Role | Thread group |
+|---|---|---|
+| `0x9F1C32F1` | Convert object motion; reconstruct camera motion from depth for sentinel pixels | 8x8 |
+| `0x5388164E` | Reduced color/velocity preparation (native b0, 116 bytes) | 8x8 |
+| `0x47C602BB` | Reduced-resolution line blur | 8x8 |
+| `0x866E78BC` | Final resolve, observed at native intensity 1 | 16x16 |
+| `0x2B7AF9F0` | Final resolve, observed at native intensity 10 | 16x16 |
+
+Verified with DevKit after correcting extended root-signature tracking:
+
+- Conversion t0 is 2560x1440 depth, t1 is object motion and u0 is converted
+  motion. It runs twice, writing RGBA16F and RG16F resources respectively.
+- Resolve t1 is full-resolution 3840x2160 linear HDR (RGBA16F); t2 references the
+  RGBA16F conversion output. u0 is another full-resolution RGBA16F texture.
+- `0x29754CAF` has the projection constants in graphics b12 (a descriptor-table
+  CBV). Native depth linearization is
+  `1 / ((rawDepth * c22.x + c22.y) * c21.x + c21.y)`.
+- Conversion b10 contains dimensions and the current-to-previous clip transform.
+  The camera branch computes a UV displacement; the output is negated for both
+  camera and object branches. This is before the native blur intensity scaling.
+
+Enhanced mode takes a private R32F depth snapshot at conversion, keyed to the
+exact motion-output resource. It then bypasses the native resolve using the
+following private shaders; their identifiers are excluded from the native hash
+replacement map:
+
+| Private identifier | Role |
+|---|---|
+| `0xF3B10003` | Copy depth while the native conversion already has it readable |
+| `0xF3B10000` | Longest motion in each 32x32 output-pixel tile |
+| `0xF3B10001` | Neighboring dominant motion for silhouette coverage |
+| `0xF3B10002` | Full-resolution, depth-aware two-direction reconstruction |
+
+The half-shutter radius is `motionUV * outputSize * shutterAngle / 720`, capped
+at 32 output pixels. Thus frame-rate scaling comes from per-frame displacement;
+no second delta-time multiplier or native intensity constant is used. Native
+low-resolution blur is unused when the private reconstruction succeeds. The
+original dispatch remains the fallback for incomplete bindings, Native mode or
+Vanilla tone mapping. Both graphics and compute bindings are restored afterward.
+
+Live checks confirmed loading, responsive 0/180-degree shutter control, Geralt
+remaining clear during camera orbit, and identical Enhanced strength at native
+intensity 1 and 10. A repeated live comparison confirmed less blur at higher FPS.
+At a 30 FPS cap the user reported roughly unchanged GPU usage
+versus Native; this is not an isolated GPU timestamp measurement. See
+`tests/README.md` for numerical reference checks and remaining verification.

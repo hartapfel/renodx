@@ -1,0 +1,127 @@
+Texture2D<float4> t0 : register(t0);
+
+Texture2D<float2> t1 : register(t1);
+
+Texture2D<float3> t2 : register(t2);
+
+RWTexture2D<float4> u0 : register(u0);
+
+cbuffer cb0 : register(b0) {
+  float2 CSCustomConstants_000 : packoffset(c000.x);
+  float2 CSCustomConstants_008 : packoffset(c000.z);
+  float2 CSCustomConstants_016 : packoffset(c001.x);
+  float2 CSCustomConstants_024 : packoffset(c001.z);
+  float2 CSCustomConstants_032 : packoffset(c002.x);
+  float2 CSCustomConstants_040 : packoffset(c002.z);
+  float2 CSCustomConstants_048 : packoffset(c003.x);
+  float2 CSCustomConstants_056 : packoffset(c003.z);
+  float2 CSCustomConstants_064 : packoffset(c004.x);
+  float2 CSCustomConstants_072 : packoffset(c004.z);
+  float2 CSCustomConstants_080 : packoffset(c005.x);
+  float2 CSCustomConstants_088 : packoffset(c005.z);
+  float CSCustomConstants_096 : packoffset(c006.x);
+  float CSCustomConstants_100 : packoffset(c006.y);
+  float CSCustomConstants_104 : packoffset(c006.z);
+  float CSCustomConstants_108 : packoffset(c006.w);
+  int CSCustomConstants_112 : packoffset(c007.x);
+};
+
+SamplerState s0 : register(s0);
+
+[numthreads(8, 8, 1)]
+void main(
+  uint3 SV_DispatchThreadID : SV_DispatchThreadID,
+  uint3 SV_GroupID : SV_GroupID,
+  uint3 SV_GroupThreadID : SV_GroupThreadID,
+  uint SV_GroupIndex : SV_GroupIndex
+) {
+  float2 _11 = t1.Load(int3((int)(SV_DispatchThreadID.x), (int)(SV_DispatchThreadID.y), 0));
+  float _14 = float((uint)SV_DispatchThreadID.x);
+  float _15 = float((uint)SV_DispatchThreadID.y);
+  float _16 = _14 + 0.5f;
+  float _17 = _15 + 0.5f;
+  float _21 = CSCustomConstants_016.x * _16;
+  float _22 = CSCustomConstants_016.y * _17;
+  float _23 = _11.x + -1.0f;
+  float _24 = _11.y + -1.0f;
+  float _25 = _23 * 0.20000000298023224f;
+  float _26 = _24 * 0.20000000298023224f;
+  float _29 = _25 * _25;
+  float _30 = _26 * _26;
+  float _31 = _29 + _30;
+  float _32 = sqrt(_31);
+  float _33 = _32 * 1000.0f;
+  int _34 = int(_33);
+  int _35 = max(_34, 1);
+  int _36 = min(_35, CSCustomConstants_112);
+  int _37 = WaveActiveMax(_36);
+  float _41 = CSCustomConstants_024.x * _25;
+  float _42 = CSCustomConstants_024.y * _26;
+  int _45 = (int)(SV_DispatchThreadID.x) & 255;
+  int _46 = (int)(SV_DispatchThreadID.y) & 255;
+  float3 _48 = t2.Load(int3(_45, _46, 0));
+  float _50 = _48.x * CSCustomConstants_108;
+  bool _51 = (_37 == 0);
+  float _55;
+  float _56;
+  float _57;
+  float _58;
+  float _65;
+  float _66;
+  float _67;
+  float _68;
+  int _69;
+  if (!_51) {
+    _65 = 0.0f;
+    _66 = 0.0f;
+    _67 = 0.0f;
+    _68 = 0.0f;
+    _69 = 0;
+    while(true) {
+      float _70 = float((uint)_69);
+      float _71 = _70 + _50;
+      float _72 = float((uint)_37);
+      float _73 = _71 / _72;
+      float _74 = _73 + -0.5f;
+      float _78 = _41 * _74;
+      float _79 = _42 * _74;
+      float _80 = _78 + _21;
+      float _81 = _79 + _22;
+      float _82 = min(_80, CSCustomConstants_032.x);
+      float _83 = min(_81, CSCustomConstants_032.y);
+      float4 _86 = t0.SampleLevel(s0, float2(_82, _83), 0.0f);
+      float _91 = _86.x + _65;
+      float _92 = _86.y + _66;
+      float _93 = _86.z + _67;
+      float _94 = _86.w + _68;
+      uint _95 = _69 + 1u;
+      bool _96 = (_95 == _37);
+      if (!_96) {
+        _65 = _91;
+        _66 = _92;
+        _67 = _93;
+        _68 = _94;
+        _69 = _95;
+        continue;
+      }
+      while(true) {
+        _55 = _91;
+        _56 = _92;
+        _57 = _93;
+        _58 = _94;
+        break;
+      }
+      break;
+    }
+  } else {
+    _55 = 0.0f;
+    _56 = 0.0f;
+    _57 = 0.0f;
+    _58 = 0.0f;
+  }
+  float _59 = max(0.0010000000474974513f, _58);
+  float _60 = _55 / _59;
+  float _61 = _56 / _59;
+  float _62 = _57 / _59;
+  u0[int2((int)(SV_DispatchThreadID.x), (int)(SV_DispatchThreadID.y))] = float4(_60, _61, _62, 0.0f);
+}

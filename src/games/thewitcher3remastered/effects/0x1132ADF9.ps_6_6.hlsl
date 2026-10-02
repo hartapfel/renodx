@@ -1,0 +1,79 @@
+#include "../common.hlsli"
+
+struct ShaderCommonEnvProbeParams {
+  float ShaderCommonEnvProbeParams_000;
+  float3 ShaderCommonEnvProbeParams_004;
+  float3 ShaderCommonEnvProbeParams_016;
+  row_major float4x4 ShaderCommonEnvProbeParams_028;
+  float4 ShaderCommonEnvProbeParams_092;
+  row_major float4x4 ShaderCommonEnvProbeParams_108;
+  int ShaderCommonEnvProbeParams_172;
+};
+
+struct ShaderCullingEnvProbeParams {
+  row_major float4x3 ShaderCullingEnvProbeParams_000;
+  float3 ShaderCullingEnvProbeParams_048;
+  int ShaderCullingEnvProbeParams_060;
+};
+
+struct ShaderWorldTear {
+  float4 ShaderWorldTear_000;
+  float4 ShaderWorldTear_016;
+  float ShaderWorldTear_032;
+  float ShaderWorldTear_036;
+  float ShaderWorldTear_040;
+  float ShaderWorldTear_044;
+};
+
+struct ShaderWorldTearArray {
+  int ShaderWorldTearArray_000;
+  float ShaderWorldTearArray_004;
+  float ShaderWorldTearArray_008;
+  float ShaderWorldTearArray_012;
+  ShaderWorldTear ShaderWorldTearArray_016[10];
+};
+
+struct ShaderWorldTearConstants {
+  int4 ShaderWorldTearConstants_000[16];
+};
+
+
+Texture2D<float4> t0 : register(t0);
+
+Texture2D<float4> t1 : register(t1);
+
+cbuffer cb12 : register(b12) {
+  float cb12_022x : packoffset(c022.x);
+  float cb12_022y : packoffset(c022.y);
+  float cb12_287x : packoffset(c287.x);
+  uint cb12_padding : packoffset(c340.w);
+};
+
+float4 main(
+  noperspective float4 SV_Position : SV_Position
+) : SV_Target {
+  float4 SV_Target = 0;
+  int _7 = int(SV_Position.x);
+  int _8 = int(SV_Position.y);
+  float _9 = float((int)(_7));
+  float _10 = float((int)(_8));
+  float _13 = cb12_287x * _9;
+  float _14 = _10 * cb12_287x;
+  uint _15 = uint(_13);
+  uint _16 = uint(_14);
+  float4 _18 = t1.Load(int3(_15, _16, 0));
+  float4 _21 = t0.Load(int3(_7, _8, 0));
+  float _27 = cb12_022x * _18.x;
+  float _29 = _27 + cb12_022y;
+  bool _30 = (_29 >= 1.0f);
+  float _31 = select(_30, 1.0f, 0.0f);
+  float _32 = _31 * _21.x;
+  float _33 = _31 * _21.y;
+  float _34 = _31 * _21.z;
+  SV_Target.x = _32;
+  SV_Target.y = _33;
+  SV_Target.z = _34;
+  SV_Target.w = 1.0f;
+  if (WitcherUsePsychoV30()) SV_Target.rgb *= CUSTOM_SHAFTS_STRENGTH;
+  return SV_Target;
+}

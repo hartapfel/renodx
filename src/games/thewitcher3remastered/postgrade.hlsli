@@ -1,7 +1,7 @@
 #ifndef SRC_GAMES_THEWITCHER3REMASTERED_POSTGRADE_HLSLI_
 #define SRC_GAMES_THEWITCHER3REMASTERED_POSTGRADE_HLSLI_
 
-// Included after native cb3 declarations. All four post-grade variants use
+// Included after native cb3 declarations. All five post-grade variants use
 // these same constants; only their vignette mask and preceding CA differ.
 float3 WitcherApplyPostGrade(float3 scene, float vignette_mask) {
   WitcherGradeState state = WitcherPrepareGrade(scene);
@@ -23,9 +23,10 @@ float3 WitcherApplyPostGrade(float3 scene, float vignette_mask) {
 
   // Decode signed values for the native luminance-dependent vignette mask;
   // log2 of a negative channel here would otherwise reintroduce NaNs.
-  float vignette = saturate(CustomPixelConsts_096.w * vignette_mask
+  // Strength can reach 2x; keep opacity bounded to prevent inverted darkening.
+  float vignette = saturate(saturate(CustomPixelConsts_096.w * vignette_mask
       * saturate(1.f - dot(WitcherSignedPow(color, 2.2f), CustomPixelConsts_096.rgb)))
-      * CUSTOM_VIGNETTE_STRENGTH;
+      * CUSTOM_VIGNETTE_STRENGTH);
   float levels = CustomPixelConsts_240.y - CustomPixelConsts_240.x;
   color = color * levels + CustomPixelConsts_240.x;
   // Contribution is blended in linear space, as in CustomColorGrading in the
