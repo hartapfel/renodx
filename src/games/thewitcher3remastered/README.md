@@ -198,9 +198,10 @@ timing, hidden surface recovery and hardware performance are not established by
 the offline tests.
 
 Validation: strict SM6.6 compilation and the Clang Release addon build pass.
-The GPU reference harness checks 15 cases / 373,935 pixels, including signed HDR,
+The GPU reference harness checks 17 cases / 423,793 pixels, including signed HDR,
 stationary identity, one-pixel detail, 30/60/120/240 FPS shutter scaling, thin
-lights, static foregrounds and moving silhouette coverage. A separate runtime
+lights, static foregrounds, moving silhouette coverage and camera pans across
+depth discontinuities. A separate runtime
 test covers dependency initialization, resource lookup, detach and reattach
 without DevKit. Both native resolve baselines pass 600 differential cases each.
 After the resource-tracker initialization fix, the user confirmed successful
@@ -211,6 +212,14 @@ FPS; the user also reported good visual quality at both frame rates.
 DevKit verified full-resolution 3840x2160 color and 2560x1440 motion/depth in the
 intensity-10 scene. At a 30 FPS cap, the user reported roughly unchanged GPU
 usage versus Native; isolated GPU timestamps have not been measured.
+
+The camera-pan regression checks that identical screen motion produces the
+same blur across depth boundaries. The earlier occlusion weighting retained
+artificially sharp foreground silhouettes; motion agreement now relaxes that
+rejection while preserving stationary-foreground protection. The new test
+failed before the correction and now matches the equal-depth reference
+exactly. After rebuilding, the user confirmed the trees/fences/buildings issue
+is resolved during strong camera panning.
 
 Resolution-change coverage and isolated GPU timing remain untested. Scratch evidence:
 `tmp/thewitcher3remastered/motion-blur/`.

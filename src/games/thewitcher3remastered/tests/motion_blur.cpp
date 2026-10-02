@@ -191,6 +191,26 @@ int main(int argc, char** argv) {
     }
     std::cout << "moving_silhouette_coverage_rmse=" << std::sqrt(error / ((HEIGHT - 32) * 96)) << '\n';
     Require(std::sqrt(error / ((HEIGHT - 32) * 96)) < .16, "Silhouette coverage departed too far from temporal reference");
+
+    // A camera pan gives separate static surfaces the same screen-space
+    // motion. Changing their depth must not make the nearer silhouette sharp:
+    // the temporal reference is the same whole-image translation in both cases.
+    for (unsigned y = 0; y < HEIGHT; ++y) for (unsigned x = 0; x < WIDTH; ++x)
+      scene[y * WIDTH + x] = x >= 96 && x < 160 ? Pixel{1, 0, 0, 1} : Pixel{0, 1, 0, 1};
+    std::fill(motion.begin(), motion.end(), Pixel{96.f / WIDTH, 0, 0, 0});
+    std::fill(depth.begin(), depth.end(), Pixel{.1f, 0, 0, 0});
+    run();
+    const auto common_motion_reference = result;
+    for (unsigned y = 0; y < HEIGHT; ++y) for (unsigned x = 96; x < 160; ++x)
+      depth[y * WIDTH + x] = {1.f, 0, 0, 0};
+    run();
+    float common_motion_error = 0;
+    for (unsigned i = 0; i < result.size(); ++i)
+      common_motion_error = std::max(common_motion_error, std::abs(result[i][0] - common_motion_reference[i][0]));
+    std::cout << "camera_pan_depth_edge_max_error=" << common_motion_error
+              << " foreground_edge=" << result[48 * WIDTH + 96][0]
+              << " equal_depth_reference=" << common_motion_reference[48 * WIDTH + 96][0] << '\n';
+    Require(common_motion_error < 1e-4f, "Depth discontinuity made a co-moving foreground artificially sharp");
     std::cout << "PASS " << cases << " three-pass GPU cases, " << cases * WIDTH * HEIGHT << " output pixels\n";
   } catch (const std::exception& error) {
     std::cerr << "FAIL " << error.what() << '\n';

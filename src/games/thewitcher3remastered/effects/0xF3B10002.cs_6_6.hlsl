@@ -64,13 +64,24 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (any(position < 0.f) || any(position > float2(image_size) - 1.f)) continue;
         int2 nearest = int2(floor(position + 0.5f));
         float2 sample_velocity = MotionRadius(nearest);
-        float sample_speed = max(length(sample_velocity), 0.5f);
+        float sample_motion_length = length(sample_velocity);
+        float sample_speed = max(sample_motion_length, 0.5f);
         float sample_depth = MotionDepth(nearest);
         // Relative, scene-scale-independent depth comparisons. Positive depths
         // increase away from the camera; f classifies a sample in front of p.
         float relative_depth = (depth - sample_depth) / max(min(depth, sample_depth), 1e-6f);
         float foreground = saturate(1.f + relative_depth);
         float background = saturate(1.f - relative_depth);
+        // Co-moving surfaces have the same shutter path even across a depth
+        // edge (for example buildings against the sky during camera rotation).
+        // Their temporal reference is an ordinary image translation. Applying
+        // occlusion rejection there overweights the foreground and leaves a
+        // sharp silhouette inside its blur trail. Relax it in proportion to
+        // motion agreement; zero-motion foregrounds retain full protection.
+        float common_motion = saturate(1.f - length(sample_velocity - velocity)
+            / max(min(speed, sample_motion_length), 1e-6f));
+        foreground = lerp(foreground, 1.f, common_motion);
+        background = lerp(background, 1.f, common_motion);
         float center_alignment = abs(dot(MotionDirection(velocity), sample_direction));
         float sample_alignment = abs(dot(MotionDirection(sample_velocity), sample_direction));
         float weight = foreground * saturate(1.f - distance / sample_speed) * sample_alignment
