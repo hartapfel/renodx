@@ -69,3 +69,54 @@ Mutation checks in tmp/thewitcher3remastered/motion-blur/ceiling-regression/
 confirm separate failures when restoring either the clamp or the limited
 neighbor search. These synthetic tests establish filter behavior, not live
 engine timing or hardware performance.
+
+
+## Video color decoding
+
+`video.cpp` accepts three ps_5_0 binaries: the mechanically transcoded original
+SM5.1 video decoder, its compiled decompiler baseline, and the production
+BT.709 replacement. The shader's static t0-t2/s0-s2 binding ranges and executable
+operations survive this profile conversion; the native archive README records
+the decompilation workaround. The harness uses a matching vertex signature and
+D3D11 WARP to compare 589,824 pixels across three opacity values, full code-range
+YCbCr combinations, and independently encoded black/white/grey/color bars.
+It checks the baseline against native bytecode and BT.709 against the coding
+equations in ITU-R BT.709-6, sections 3.2-3.4. Maximum errors are 0, 3.36e-7 and
+1.20e-7 respectively; alpha matches exactly. Shipping compilation is ps_5_1.
+
+Build the harness from an x64 Visual Studio developer shell:
+
+```powershell
+bin/fxc.exe /nologo /T ps_5_0 /E main /Ges /WX /O3 /Fo tmp/video-baseline.cso src/games/thewitcher3remastered/native/video/0x7EF4001F.ps_5_1.hlsl.original
+bin/fxc.exe /nologo /T ps_5_0 /E main /Ges /WX /O3 /Fo tmp/video-bt709.cso src/games/thewitcher3remastered/video/0x7EF4001F.ps_5_1.hlsl
+clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered/tests/video.cpp /Fe:tmp/video-test.exe /Fo:tmp/video-test.obj /link d3d11.lib d3dcompiler.lib
+./tmp/video-test.exe tmp/thewitcher3remastered/video/video-sm50.shdr tmp/video-baseline.cso tmp/video-bt709.cso
+```
+
+
+## Video brightness and AutoHDR
+
+`prepare_video_hdr.py` copies the production shaders into a scratch directory,
+remaps b13/space50 to b13 and t0/space51 to t3 for D3D11, and wraps the actual
+normal/FG pixel entry points as compute shaders. `video_hdr.cpp` exercises the
+whole output pipeline, including PQ encoding and both secondary outputs.
+No production arithmetic is replaced by a test model.
+
+The 972 configurations cover three peak/game/UI brightness values, both video
+modes and gamut targets, grayscale/color ramps, and transparent/partial/opaque
+video and UI. Checks include independent video/UI brightness, black/white
+endpoints, linear fades, gray ordering (within 0.02-nit native PQ roundoff),
+normal/FG primary and secondary parity, scene-only isolation and the combined
+FG video/UI coverage mask. 995,328 pixel outputs pass; maximum endpoint error
+is 0.236 nit, with exact output parity. These are software-GPU checks, not a
+substitute for verifying playback, callbacks, resource lifetime and gameplay.
+
+From an x64 Visual Studio developer shell:
+
+```powershell
+python src/games/thewitcher3remastered/tests/prepare_video_hdr.py tmp/witcher-video-hdr
+bin/fxc.exe /nologo /T cs_5_0 /E main /Ges /WX /O3 /Fo tmp/witcher-video-hdr/normal.cso tmp/witcher-video-hdr/output/0x8F5737B5.ps_6_6.hlsl
+bin/fxc.exe /nologo /T cs_5_0 /E main /Ges /WX /O3 /Fo tmp/witcher-video-hdr/fg.cso tmp/witcher-video-hdr/output/0x496222DA.ps_6_6.hlsl
+clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered/tests/video_hdr.cpp /Fe:tmp/witcher-video-hdr/check.exe /Fo:tmp/witcher-video-hdr/check.obj /link d3d11.lib
+./tmp/witcher-video-hdr/check.exe tmp/witcher-video-hdr/normal.cso tmp/witcher-video-hdr/fg.cso
+```

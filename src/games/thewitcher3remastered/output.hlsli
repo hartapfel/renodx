@@ -2,6 +2,7 @@
 #define SRC_GAMES_THEWITCHER3REMASTERED_OUTPUT_HLSLI_
 
 #include "./common.hlsli"
+#include "./video.hlsli"
 #include "../../shaders/effects.hlsl"
 
 // Shared by normal presentation and both frame-generation HDR outputs.

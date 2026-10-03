@@ -263,3 +263,24 @@ intensity 1 and 10. A repeated live comparison confirmed less blur at higher FPS
 At a 30 FPS cap the user reported roughly unchanged GPU usage
 versus Native; this is not an isolated GPU timestamp measurement. See
 `tests/README.md` for numerical reference checks and remaining verification.
+
+
+## Video decoding
+
+`video/0x7EF4001F.ps_5_1.hlsl` replaces the intro's three-plane YCbCr decoder.
+A live capture contains the video at draw 3, followed by subtitle/UI draws and
+HDR compositor 0x8F5737B5 at draw 7. Native texture/sampler arrays cover t0-t2
+and s0-s2 in space0; the luma plane is 1920x1080 R8_UNORM, and the destination is
+3840x2160 RGBA8_UNORM. Native coefficients are limited-range BT.601
+(1.164 Y, 1.596 Cr, -0.813 Cr, -0.392 Cb, 2.017 Cb). The replacement uses the
+BT.709 coding weights 0.2126/0.7152/0.0722 with exact limited-range expansion.
+COLOR0.w remains opacity; TEXCOORD0.xy and native sampling are unchanged.
+The CPU toggle chooses the original shader when Off, requiring no additional
+root binding. Only this matching decoder was found in the available dump.
+
+
+Video separation: video.hpp redirects only 0x7EF4001F in PsychoV mode to an
+owned RGBA8 layer. output.hlsli/video.hlsli feed this layer to both 0x8F5737B5
+and 0x496222DA at t0/space51. AutoHDR and Game Brightness apply before UI
+composition and final PQ encode. The original 8-bit UI target retains subtitles
+and HUD; their brightness does not affect video. No native resources are upgraded.

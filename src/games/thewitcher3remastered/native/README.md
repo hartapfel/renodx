@@ -52,3 +52,18 @@ were structurally audited, including the filter loop and WaveActiveMax; no GPU
 differential or live baseline-equivalence result is claimed for them. Only the
 final resolve receives an enhanced replacement; Native still runs original DXIL.
 Evidence: `tmp/thewitcher3remastered/motion-blur/baseline-audit.json`.
+
+
+## SM5.1 video baseline
+
+`video/0x7EF4001F.ps_5_1.hlsl.original` is unmodified cmd_Decompiler output.
+The original is DXBC, not DXIL. cmd_Decompiler 1.3.16 cannot directly decode
+its SM5.1 descriptor arrays. For this shader's three statically indexed space0
+textures/samplers, the disassembly declarations were mechanically expanded to
+SM5.0 registers, with the original signatures copied during assembly. No
+executable operation or literal changed. That bytecode decompiled successfully;
+the generated HLSL then passed strict ps_5_1 compilation. All 11 recompiled
+executable instructions match the original after normalizing descriptor-range
+IDs. D3D11 WARP also gives exact agreement over 196,608 pixels between the
+transcoded native bytecode and compiled baseline. Original DXBC and conversion
+artifacts remain in tmp/thewitcher3remastered/video/ and original/.

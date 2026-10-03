@@ -23,10 +23,9 @@ float3 WitcherApplyPostGrade(float3 scene, float vignette_mask) {
 
   // Decode signed values for the native luminance-dependent vignette mask;
   // log2 of a negative channel here would otherwise reintroduce NaNs.
-  // Strength can reach 2x; keep opacity bounded to prevent inverted darkening.
-  float vignette = saturate(saturate(CustomPixelConsts_096.w * vignette_mask
-      * saturate(1.f - dot(WitcherSignedPow(color, 2.2f), CustomPixelConsts_096.rgb)))
-      * CUSTOM_VIGNETTE_STRENGTH);
+  float native_vignette = saturate(CustomPixelConsts_096.w * vignette_mask
+      * saturate(1.f - dot(WitcherSignedPow(color, 2.2f), CustomPixelConsts_096.rgb)));
+  float vignette = saturate(native_vignette * CUSTOM_VIGNETTE_STRENGTH);
   float levels = CustomPixelConsts_240.y - CustomPixelConsts_240.x;
   color = color * levels + CustomPixelConsts_240.x;
   // Contribution is blended in linear space, as in CustomColorGrading in the
@@ -38,7 +37,15 @@ float3 WitcherApplyPostGrade(float3 scene, float vignette_mask) {
     color = lerp(color, CustomPixelConsts_112.rgb * levels + CustomPixelConsts_240.x, vignette);
   }
   color = WitcherRestoreGrade(WitcherSignedPow(color, rcp(exponent)), state);
-  if (CUSTOM_VIGNETTE_BLACK_FLOOR != 0.f) color *= 1.f - vignette;
+  if (CUSTOM_VIGNETTE_BLACK_FLOOR != 0.f) {
+    // The old mod scales native opacity only up to 1x. Keep that response
+    // through 50, then scale optical density instead of saturating opacity:
+    // at 100 the remaining light is squared, not abruptly clamped to black.
+    // A partial native mask stays partial; black input still stays black.
+    color *= CUSTOM_VIGNETTE_STRENGTH > 1.f
+        ? pow(1.f - native_vignette, CUSTOM_VIGNETTE_STRENGTH)
+        : 1.f - vignette;
+  }
   return WitcherSignedPow(color, exponent);
 }
 

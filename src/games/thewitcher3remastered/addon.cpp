@@ -24,6 +24,7 @@
 #include "../../utils/swapchain.hpp"
 #include "./shared.h"
 #include "./motion_blur.hpp"
+#include "./video.hpp"
 
 namespace {
 
@@ -37,6 +38,7 @@ renodx::mods::shader::CustomShaders custom_shaders = {
 ShaderInjectData shader_injection;
 // Compute replacement selection is CPU-only; it needs no additional root data.
 float motion_blur_mode = 1.f;
+float video_bt709 = 1.f;
 bool fired_on_init_swapchain = false;
 
 // The post-processing shaders use pixel-visible b3 and b12 in space0.
@@ -62,6 +64,12 @@ bool ShouldInjectPostProcessLayout(std::span<const reshade::api::pipeline_layout
             || param.push_constants.count != sizeof(ShaderInjectData) / sizeof(float)) return false;
         break;
       case pipeline_layout_param_type::push_descriptors:
+        // Like the constants above, our injected movie table is already
+        // reserved in the budget below. Do not count it again during init.
+        if (param.push_descriptors.type == descriptor_type::shader_resource_view
+            && param.push_descriptors.dx_register_space == 51
+            && param.push_descriptors.dx_register_index == 0
+            && param.push_descriptors.count == 1) break;
         inspect_range(param.push_descriptors);
         root_dwords += 2;
         break;
@@ -90,7 +98,8 @@ bool ShouldInjectPostProcessLayout(std::span<const reshade::api::pipeline_layout
   }
 
   // Never let the shared injection path truncate the complete settings payload.
-  return has_b3 && has_b12 && root_dwords <= 64 - sizeof(ShaderInjectData) / sizeof(float);
+  // The separate movie SRV needs one additional descriptor-table DWORD.
+  return has_b3 && has_b12 && root_dwords <= 63 - sizeof(ShaderInjectData) / sizeof(float);
 }
 
 bool IsPsychoV() {
@@ -457,14 +466,16 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .key = "FxBloomStrength",
-        .binding = &shader_injection.bloom_strength,
+        .binding = &shader_injection.effect_strengths,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 50.f,
+        .packed_values = PackedPercentValues(WITCHER_EFFECT_BLOOM_SHIFT),
         .label = "Bloom Strength",
         .section = "Effects",
         .tooltip = "Scales the native additive bloom contribution before exposure and tone mapping. 0 removes it; 50 retains the game's strength; 100 doubles it. Requires native Bloom to be enabled.",
         .max = 100.f,
+        .format = "%d",
         .is_enabled = []() { return IsPsychoV(); },
-        .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
         .key = "FxSunShaftStrength",
@@ -511,7 +522,7 @@ renodx::utils::settings::Settings settings = {
         .packed_values = {0u, WITCHER_FLAG_VIGNETTE_BLACK},
         .label = "Vignette Black Floor",
         .section = "Effects",
-        .tooltip = "0 nits replaces the native coloured vignette with pure darkening, so it cannot lift blacks. Vignette Strength still controls its amount.",
+        .tooltip = "Perfect Black darkens without adding a colored black floor. Above strength 50, it darkens progressively while retaining detail under partial vignette masks.",
         .labels = {"Native", "Perfect Black"},
         .is_enabled = []() { return IsPsychoV(); },
     },
@@ -542,7 +553,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "FxMotionSamples",
         .binding = &witcher::motion::sample_count,
-        .default_value = 64.f,
+        .default_value = 16.f,
         .label = "Motion Blur Samples",
         .section = "Effects",
         .tooltip = "Higher values make blur smoother but can reduce performance. Longer blur trails automatically get extra samples to keep them smooth.",
@@ -618,6 +629,28 @@ renodx::utils::settings::Settings settings = {
         .max = 0.95f,
         .format = "%.2f",
         .is_enabled = []() { return IsPsychoV() && renodx::utils::bitwise::HasFlag(shader_injection.mode_flags, WITCHER_FLAG_CA); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "VideoBT709",
+        .binding = &video_bt709,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .label = "BT.709 Video Colors",
+        .section = "Video",
+        .tooltip = "Uses BT.709 color decoding for videos. Turn off to use the game's original BT.601 decoding.",
+        .labels = {"Off", "On"},
+    },
+    new renodx::utils::settings::Setting{
+        .key = "VideoAutoHDR",
+        .binding = &shader_injection.mode_flags,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .packed_values = {0u, WITCHER_FLAG_VIDEO_AUTO_HDR},
+        .label = "Video AutoHDR",
+        .section = "Video",
+        .tooltip = "Expands SDR videos to HDR using BT.2446 Method A, as in Ezio Trilogy. Game Brightness controls the image; Peak Brightness sets the highlight limit. Off keeps SDR video at Game Brightness. Subtitles still use UI Brightness.",
+        .labels = {"Off", "On"},
+        .is_enabled = []() { return IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
@@ -718,6 +751,8 @@ void OnPresetOff() {
       {"FxSharpening", 0.f},
       {"FxFilmGrain", 0.f},
       {"FxMotionBlurMode", 0.f},
+      {"VideoBT709", 0.f},
+      {"VideoAutoHDR", 0.f},
       {"FxDepthBlur", 50.f},
       {"FxSunShaftStrength", 50.f},
       {"FxLensDirt", 50.f},
@@ -786,6 +821,15 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
       };
       // Defer replacement until the draw so a rejected layout keeps its native shader.
       for (auto& [hash, custom_shader] : custom_shaders) {
+        if (hash == 0x7EF4001F) {
+          // Video correction is independent of scene tone mapping. Selecting
+          // Off restores the original shader, with no extra constant binding.
+          custom_shader.on_replace = [](auto*) { return video_bt709 != 0.f; };
+          custom_shader.on_inject = [](auto*) { return false; };
+          custom_shader.on_draw = &witcher::video::OnDraw;
+          custom_shader.on_drawn = &witcher::video::OnDrawn;
+          continue;
+        }
         if (hash == 0x866E78BC || hash == 0x2B7AF9F0) {
           custom_shader.on_draw = [](auto* cmd) {
             return !IsPsychoV() || motion_blur_mode != 1.f || !witcher::motion::Run(cmd);
@@ -817,6 +861,15 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
             return !IsPsychoV() || motion_blur_mode != 1.f || witcher::motion::CaptureMotionDepth(cmd);
           },
       };
+      witcher::video::settings = &shader_injection;
+      for (uint32_t hash : {0x8F5737B5u, 0x496222DAu}) {
+        custom_shaders.at(hash).views = {{
+            .type = reshade::api::descriptor_type::shader_resource_view,
+            .slot = 0u,
+            .space = 51u,
+            .get_view = &witcher::video::GetView,
+        }};
+      }
       reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
       break;
     case DLL_PROCESS_DETACH:
@@ -826,6 +879,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
   }
 
   witcher::motion::Use(fdw_reason);
+  witcher::video::Use(fdw_reason);
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
   renodx::utils::random::Use(fdw_reason, {&shader_injection.random_seed});
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
