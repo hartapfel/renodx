@@ -362,3 +362,22 @@ partial masks retain detail. Reference error is below 4.5e-7 normalized.
 Scratch evidence: tmp/thewitcher3remastered/vignette-soft/. Build target:
 thewitcher3remastered, clang-x64-release. After relaunch, compare Perfect Black
 at strength 50/75/100 in the affected scene; visual validation remains pending.
+
+### Standalone video initialization (2026-10-03)
+
+The video module explicitly initializes utils::swapchain render-target tracking
+before registering its callbacks. Shader injection alone initializes that
+tracker only for addons with a custom swapchain shader; this mod uses the
+game's native HDR compositor. Previously, DevKit supplied the missing tracker,
+so without DevKit the decoder registered but movie redirection returned early
+and AutoHDR / independent movie brightness had no video layer to process.
+
+Verification after rebuilding: launch with DevKit disabled, replay the intro
+in PsychoV-30, compare Video AutoHDR On/Off and Game/UI Brightness, then enter
+the main menu and gameplay. ReShade.log should show utils::swapchain attached
+from this addon, along with the decoder and HDR output replacements. C++ syntax
+validation passed. The user rebuilt and confirmed AutoHDR works without DevKit;
+the standalone launch log confirms this addon initializes render-target tracking
+and both the decoder and HDR output replacements are active. The user's separate
+crash comparison found that disabling W3Clouds stopped the crashes; that addon
+is outside this fix.
