@@ -367,5 +367,18 @@
     "original_blocks_visited": 7,
     "original_blocks_total": 7,
     "max_scaled_error": 0
+  },
+  {
+    "shader": "0x7EF4001F.ps_5_1",
+    "original_sha256": "d0918dd9360e97d22241c5ca02fc3f85ce33e8c1e31b50b8d60dfc2972ea5ad5",
+    "hlsl_sha256": "f77d7fb9ce418e6369abf6cd89272fd6b74a8c5a06ced7dd3d47db389c3021b5",
+    "strict_compile": "passed",
+    "path": "video/0x7EF4001F.ps_5_1.hlsl.original",
+    "decompilation_method": "cmd_Decompiler via static space0 SM5.1-to-SM5.0 descriptor declaration normalization; no executable instruction changes",
+    "executable_instructions_match": true,
+    "native_instruction_count": 11,
+    "inputs_outputs_bindings_match": true,
+    "baseline_gpu_pixels": 196608,
+    "baseline_max_error": 0
   }
 ]

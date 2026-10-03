@@ -13,11 +13,13 @@
 // Split contrast percentages share unused bits with the boolean/mode flags.
 #define WITCHER_CONTRAST_HIGHLIGHTS_SHIFT 7u
 #define WITCHER_CONTRAST_SHADOWS_SHIFT 14u
+#define WITCHER_FLAG_VIDEO_AUTO_HDR (1u << 21)
 
-// Three independent integer percentages share the final available root DWORD.
+// Four independent integer percentages leave one root DWORD for the movie SRV.
 #define WITCHER_EFFECT_BLUR_SHIFT 0u
 #define WITCHER_EFFECT_SHAFTS_SHIFT 7u
 #define WITCHER_EFFECT_LENS_SHIFT 14u
+#define WITCHER_EFFECT_BLOOM_SHIFT 21u
 
 struct ShaderInjectData {
   float peak_white_nits;
@@ -50,7 +52,6 @@ struct ShaderInjectData {
   float sharpening;
   float film_grain;
   float random_seed;
-  float bloom_strength;
   float vignette_strength;
   float custom_lut_strength;
   float custom_lut_scaling;
@@ -59,7 +60,7 @@ struct ShaderInjectData {
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 124);
+static_assert(sizeof(ShaderInjectData) == 120);
 #else
 // DX12 injection binding, paired with addon.cpp; native buffers use space0.
 cbuffer shader_injection : register(b13, space50) {
@@ -97,7 +98,6 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_SHARPENING shader_injection.sharpening
 #define CUSTOM_FILM_GRAIN shader_injection.film_grain
 #define CUSTOM_RANDOM shader_injection.random_seed
-#define CUSTOM_BLOOM_STRENGTH shader_injection.bloom_strength
 #define CUSTOM_VIGNETTE_STRENGTH shader_injection.vignette_strength
 #define CUSTOM_VIGNETTE_BLACK_FLOOR WITCHER_MODE_FLAG(WITCHER_FLAG_VIGNETTE_BLACK)
 #define CUSTOM_NATIVE_BRIGHTNESS_COMPENSATION WITCHER_MODE_FLAG(WITCHER_FLAG_NATIVE_BRIGHTNESS | WITCHER_FLAG_NATIVE_BRIGHTNESS_DARKEN_ONLY)
@@ -106,11 +106,13 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_LUT_STRENGTH shader_injection.custom_lut_strength
 #define CUSTOM_LUT_SCALING shader_injection.custom_lut_scaling
 #define CUSTOM_COLOR_GRADING shader_injection.custom_color_grading
+#define CUSTOM_VIDEO_AUTO_HDR WITCHER_MODE_FLAG(WITCHER_FLAG_VIDEO_AUTO_HDR)
 
 #define WITCHER_EFFECT_STRENGTH(shift) (float((asuint(shader_injection.effect_strengths) >> (shift)) & 127u) * 0.02f)
 #define CUSTOM_BLUR_STRENGTH WITCHER_EFFECT_STRENGTH(WITCHER_EFFECT_BLUR_SHIFT)
 #define CUSTOM_SHAFTS_STRENGTH WITCHER_EFFECT_STRENGTH(WITCHER_EFFECT_SHAFTS_SHIFT)
 #define CUSTOM_LENS_STRENGTH WITCHER_EFFECT_STRENGTH(WITCHER_EFFECT_LENS_SHIFT)
+#define CUSTOM_BLOOM_STRENGTH WITCHER_EFFECT_STRENGTH(WITCHER_EFFECT_BLOOM_SHIFT)
 
 // Scene intermediates use BT.709; the native output pass encodes BT.2020 PQ.
 #include "../../shaders/color.hlsl"

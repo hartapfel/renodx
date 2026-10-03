@@ -16,8 +16,8 @@ Experimental DX12 HDR replacement for the updated Witcher 3 renderer. The native
 - Perceptual Film Grain: Ghost of Tsushima's luminance-adaptive grain, 0–100, default 0. No native grain pass was identified in the captured scene; this is a standalone slider. Both new effects require PsychoV-30.
 - Bloom Strength: 0–200, default 100. Scales the native additive bloom/dirt composite; requires PsychoV-30 and native Bloom enabled.
 - Blur, Sunshafts Strength, and Lens Dirt use the original Witcher mod's 0�100 mapping: 0 disables, 50 is unit strength, 100 doubles the effect. Blur controls the non-sky depth-blur radius and restores the old mod's accumulated-alpha blend weight; it is not Motion Blur or Witcher Senses. A zero setting also discards the sky blur branch. Lens Dirt scales only the dirt term; Sunshafts scales the masked sky input once. Keep the relevant native effects enabled. The previous Depth of Field slider has been removed.
-- Vignette Strength: 0–100, default 100. Scales the native vignette blend in all three covered post-grade variants, including radial and texture masks. 0 removes it; 50 preserves native strength; 100 doubles its opacity, bounded at fully opaque to prevent inverted darkening. Requires PsychoV-30. Replaces the former Sun Flare Strength control; lens flare now always retains its native strength.
-- Vignette Black Floor: Native (default) or 0 nits, independent of Vignette Strength. The 0-nit mode replaces the native coloured blend with linear HDR darkening after grade reconstruction, preserving the native mask. It cannot brighten the scene, preserves black, and reaches zero with a fully opaque mask. Partial masks retain some scene light; this does not force every corner to black or remove unrelated grading/grain. Requires PsychoV-30 and a native vignette stage.
+- Vignette Strength: 0-100, default 50. 0 removes the effect; 50 retains native strength. In Native black-floor mode, 100 doubles blend opacity, bounded at fully opaque. Perfect Black preserves the existing response through 50, then increases optical density: 100 squares the remaining light without turning partial masks fully opaque. Covers radial and texture masks. Requires PsychoV-30.
+- Vignette Black Floor: Native or Perfect Black (default), independent of Vignette Strength. Perfect Black applies pure linear HDR darkening after grade reconstruction, preserving the native mask and existing zero-black signal. Partial masks retain scene detail even at maximum strength; a genuinely opaque native mask can still reach zero. Requires PsychoV-30 and a native vignette stage.
 - Simple/Advanced UI, Reset All, and Preset Off. Vanilla bypasses all custom processing; Off also resets the saved controls to neutral.
 
 Defaults are unit grades/cone response, 0.18 anchors, zero hue shift/blowout/flare, full BT.2020 gamut projection, automatic compression, detected peak (1000-nit fallback), and 203-nit game/UI white. CA Intensity and Start Offset both default to 0.7 when RenoDX CA is selected.
@@ -295,3 +295,70 @@ compilation with the Release flags, and ReShade registered this addon in the
 new game session. DevKit was disabled for that session, so fresh GPU timing
 and post-fix resource captures were not collected. Hardware performance under
 long trails remains unmeasured.
+
+
+### Video playback (2026-10-03)
+
+Video > BT.709 Video Colors defaults to On and replaces the native
+limited-range BT.601 YCbCr decoder with BT.709. It works with both tone mappers;
+Off restores the original decoder. The 16/235 luma range, chroma range, native
+texture sampling and vertex opacity are preserved.
+
+With PsychoV-30, videos follow Game Brightness, independently of UI Brightness.
+Video > Video AutoHDR defaults to On and uses the same BT.2446 Method A curve,
+gamma-2.4 SDR decoding and 203-nit brightness anchor as Ezio Trilogy. Game
+Brightness controls the curve while white reaches Peak Brightness. Off keeps
+SDR video at Game Brightness. Subtitles and HUD still use UI Brightness. Vanilla
+keeps native brightness/composition; Preset Off disables both video toggles,
+and Reset All restores them.
+
+The native video pass 0x7EF4001F draws into a separate RGBA8 movie layer in
+PsychoV mode, retaining its native geometry, viewport, blend state and fade.
+Both HDR output variants sample that layer at t0/space51, decode it and compose
+it in linear light below the UI, after scene tone mapping and film grain.
+AutoHDR runs after the last UNORM write, directly into PQ output, so highlights
+are never squeezed back into the 8-bit layer. The secondary SDR output and the
+frame-generation UI coverage mask include the movie. Frame generation's
+scene-only output remains movie/UI-free. Resource selection follows the actual
+UI input and current presentation frame; a transparent fallback prevents a
+finished movie from appearing over gameplay. Native game resources are unchanged.
+
+The additional SRV uses the final root DWORD. Bloom now shares the existing
+packed effect-percentage field, reducing constants from 124 to 120 bytes;
+its saved setting key and 0/50/100 strength mapping remain unchanged.
+
+Native baseline operations match exactly after descriptor-range normalization.
+Decoder GPU tests cover 589,824 pixels; native/baseline error is zero and BT.709
+reference error is below 3.36e-7. Full output GPU tests cover 972 configurations
+and 995,328 pixel outputs: independent movie/UI brightness, SDR/AutoHDR endpoints,
+linear fades, grayscale ramps, saturated colors, both gamut modes, and normal/FG
+output parity. Maximum endpoint error is 0.236 nit at peaks up to 4000 nits.
+Both output shaders compile strictly as ps_6_6; the decoder as ps_5_1.
+
+Build: clang-x64-release, target thewitcher3remastered. Corrected the layout
+initialization guard to recognize the added movie SRV without counting its
+reserved root DWORD twice. The user rebuilt and confirmed the controls work;
+the runtime log confirms the HDR output and video replacements are active.
+The captured frame contains the video pass, but subsequent resource readback
+occurred after returning to gameplay, so it is not a matched video comparison.
+For broader manual coverage, replay the intro and compare both video toggles,
+Game/UI/Peak Brightness, fading, subtitles and black bars, then return to gameplay.
+Also check Vanilla, Preset Off and frame generation.
+
+### Perfect Black vignette strength (2026-10-03)
+
+The original Witcher mod blends toward zero with at most 1x native opacity.
+The remaster's 2x control previously saturated that opacity, erasing partially
+vignetted corners. Perfect Black now retains the previous 0-50 response and
+uses transmittance^(strength/50) above 50. At 100, twice the optical density
+darkens progressively without prematurely reaching zero. Native-colored mode,
+strength-zero behavior, default-strength appearance, and alpha are unchanged.
+
+All five post-grade shaders compile strictly. WARP checks cover 2,800 settings /
+2,867,200 before/after pixels, including native and perfect-black modes, radial
+and texture masks, output-level lift, grading contribution and signed gamut.
+Unchanged paths match exactly; black stays black, darkening is monotonic and
+partial masks retain detail. Reference error is below 4.5e-7 normalized.
+Scratch evidence: tmp/thewitcher3remastered/vignette-soft/. Build target:
+thewitcher3remastered, clang-x64-release. After relaunch, compare Perfect Black
+at strength 50/75/100 in the affected scene; visual validation remains pending.
