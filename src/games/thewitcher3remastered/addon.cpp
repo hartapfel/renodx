@@ -527,16 +527,17 @@ renodx::utils::settings::Settings settings = {
         .is_enabled = []() { return IsPsychoV(); },
     },
     new renodx::utils::settings::Setting{
-        .key = "FxMotionShutterAngle",
+        .key = "FxMotionIntensity",
         .binding = &witcher::motion::shutter_angle,
-        .default_value = 180.f,
-        .label = "Motion Blur Shutter Angle",
+        .default_value = 50.f,
+        .label = "Motion Blur Intensity",
         .section = "Effects",
-        .tooltip = "Exposure as a fraction of each rendered frame: 180 degrees is half a frame. The same movement produces a shorter blur at higher FPS. 0 disables blur.",
+        .tooltip = "Controls how much movement is blurred. 0 is off, 50 is the default, and 100 doubles the strength. Blur automatically adjusts to the frame rate.",
         .min = 0.f,
-        .max = 360.f,
-        .format = "%.0f degrees",
+        .max = 100.f,
+        .format = "%.0f",
         .is_enabled = []() { return IsPsychoV() && motion_blur_mode == 1.f; },
+        .parse = [](float value) { return value * 3.6f; },
     },
     new renodx::utils::settings::Setting{
         .key = "FxMotionSamples",
@@ -544,7 +545,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 64.f,
         .label = "Motion Blur Samples",
         .section = "Effects",
-        .tooltip = "Maximum reconstruction samples per pixel. Short motion automatically uses fewer samples.",
+        .tooltip = "Higher values make blur smoother but can reduce performance. Longer blur trails automatically get extra samples to keep them smooth.",
         .min = 16.f,
         .max = 128.f,
         .format = "%.0f",
@@ -755,6 +756,18 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
   switch (fdw_reason) {
     case DLL_PROCESS_ATTACH:
       if (!reshade::register_addon(h_module)) return FALSE;
+
+      // Preserve saved shutter settings when switching the UI to 0-100.
+      for (const auto& section : {renodx::utils::settings::global_name,
+                                 renodx::utils::settings::global_name + "-preset1",
+                                 renodx::utils::settings::global_name + "-preset2",
+                                 renodx::utils::settings::global_name + "-preset3"}) {
+        float value = 0.f;
+        if (!reshade::get_config_value(nullptr, section.c_str(), "FxMotionIntensity", value)
+            && reshade::get_config_value(nullptr, section.c_str(), "FxMotionShutterAngle", value)) {
+          reshade::set_config_value(nullptr, section.c_str(), "FxMotionIntensity", std::clamp(value / 3.6f, 0.f, 100.f));
+        }
+      }
 
       witcher::motion::code = {__0xF3B10000, __0xF3B10001, __0xF3B10002, __0xF3B10003};
       renodx::utils::descriptor::trace_descriptor_tables = true;

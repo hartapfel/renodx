@@ -5,10 +5,10 @@ groupshared float2 tile_velocities[256];
 [numthreads(16, 16, 1)]
 void main(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID, uint index : SV_GroupIndex) {
   float2 longest = 0.f;
-  [unroll]
-  for (uint y = 0; y < 2; ++y) {
-    [unroll]
-    for (uint x = 0; x < 2; ++x) {
+  [loop]
+  for (uint y = 0; y < WITCHER_MOTION_TILE / 16u; ++y) {
+    [loop]
+    for (uint x = 0; x < WITCHER_MOTION_TILE / 16u; ++x) {
       uint2 pixel = group.xy * WITCHER_MOTION_TILE + thread.xy + uint2(x, y) * 16u;
       float2 candidate = all(pixel < image_size) ? MotionRadius(int2(pixel)) : 0.f;
       if (dot(candidate, candidate) > dot(longest, longest)) longest = candidate;

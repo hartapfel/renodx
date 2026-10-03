@@ -12,6 +12,7 @@
 #include "../../utils/descriptor.hpp"
 #include "../../utils/resource.hpp"
 #include "../../utils/shader.hpp"
+#include "motion_blur_config.h"
 
 namespace witcher::motion {
 using namespace reshade::api;
@@ -63,7 +64,7 @@ struct Parameters {
   uint32_t width, height, tiles_x, tiles_y;
   float motion_x, motion_y, radius_x, radius_y;
   float depth_x, depth_y, depth_a = 0, depth_b = 0;
-  float radius = 32;
+  float reserved = 0;
   uint32_t samples = 64, diagnostic = 0;
   float seconds = 0;
 };
@@ -255,18 +256,20 @@ inline bool Run(command_list* cmd) {
     auto& p = ctx->parameters;
     p.width = descs[0].texture.width;
     p.height = descs[0].texture.height;
-    p.tiles_x = (p.width + 31) / 32;
-    p.tiles_y = (p.height + 31) / 32;
+    p.tiles_x = (p.width + WITCHER_MOTION_TILE - 1) / WITCHER_MOTION_TILE;
+    p.tiles_y = (p.height + WITCHER_MOTION_TILE - 1) / WITCHER_MOTION_TILE;
     p.motion_x = float(descs[1].texture.width) / p.width;
     p.motion_y = float(descs[1].texture.height) / p.height;
     p.depth_x = float(descs[2].texture.width) / p.width;
     p.depth_y = float(descs[2].texture.height) / p.height;
     bool ok = true;
     for (uint32_t i = 0; i < 2 && ok; ++i) {
-      resource_desc desc(p.tiles_x, p.tiles_y, 1, 1, format::r16g16b16a16_float, 1, memory_heap::gpu_only, resource_usage::shader_resource | resource_usage::unordered_access);
+      // Preserve large finite motion through the coarse reduction, including
+      // cuts that exceed half-float range after conversion to output pixels.
+      resource_desc desc(p.tiles_x, p.tiles_y, 1, 1, format::r32g32b32a32_float, 1, memory_heap::gpu_only, resource_usage::shader_resource | resource_usage::unordered_access);
       ok = dev->create_resource(desc, nullptr, resource_usage::shader_resource_non_pixel, &ctx->tiles[i])
-           && dev->create_resource_view(ctx->tiles[i], resource_usage::shader_resource, resource_view_desc(format::r16g16b16a16_float), &ctx->tile_srvs[i])
-           && dev->create_resource_view(ctx->tiles[i], resource_usage::unordered_access, resource_view_desc(format::r16g16b16a16_float), &ctx->tile_uavs[i]);
+           && dev->create_resource_view(ctx->tiles[i], resource_usage::shader_resource, resource_view_desc(format::r32g32b32a32_float), &ctx->tile_srvs[i])
+           && dev->create_resource_view(ctx->tiles[i], resource_usage::unordered_access, resource_view_desc(format::r32g32b32a32_float), &ctx->tile_uavs[i]);
     }
     // Descriptors are immutable while referenced by submitted command lists.
     for (uint32_t i = 0; i < 3 && ok; ++i) {
