@@ -29,7 +29,7 @@ void main(uint3 id : SV_DispatchThreadID) {
   float2 dominant = tile_texture.Load(int3(clamp(tile, 0, int2(tile_count) - 1), 0));
   if (dot(velocity, velocity) > dot(dominant, dominant)) dominant = velocity;
   float radius = length(dominant);
-  if (radius <= 0.5f || max_radius <= 0.f) {
+  if (radius <= 0.5f) {
     result_texture[id.xy] = center;
     return;
   }
@@ -38,10 +38,21 @@ void main(uint3 id : SV_DispatchThreadID) {
   float2 perpendicular = float2(-direction.y, direction.x);
   if (dot(perpendicular, velocity) < 0.f) perpendicular = -perpendicular;
   float2 local_direction = MotionDirection(lerp(perpendicular, MotionDirection(velocity), saturate((speed - 0.5f) / 1.5f)));
-  // Use paired samples in both directions. At high FPS the integration domain
-  // gets shorter and needs fewer samples; a stationary foreground is still
-  // visited when moving foreground coverage can spill over it.
-  uint pairs = min(max_samples / 4u, max(2u, uint(ceil(radius))));
+  // Clip sampling, not motion, to the visible image. This retains shutter
+  // length/weights while avoiding offscreen taps for extreme motion or cuts.
+  float2 domains[2];
+  domains[0] = MotionInterval(direction, -float2(id.xy), float2(image_size - 1u) - float2(id.xy), radius);
+  domains[1] = MotionInterval(local_direction, -float2(id.xy), float2(image_size - 1u) - float2(id.xy), radius);
+  float2 half_spans = float2(domains[0].y - domains[0].x, domains[1].y - domains[1].x) * 0.5f;
+  float span = max(half_spans.x, half_spans.y);
+  if (span <= 0.5f) {
+    result_texture[id.xy] = center;
+    return;
+  }
+  // The setting controls sample density at a 32-pixel radius. Grow the budget
+  // for longer visible trails so narrow lights do not turn into dotted lines.
+  // Bound work (1024 taps), never displacement, for pathological motion.
+  uint pairs = min(256u, min(uint(ceil(float(max_samples) * max(1.f, span / 32.f) / 4.f)), max(2u, uint(ceil(span)))));
   float count = float(pairs * 4u);
   float center_speed = max(speed, 0.5f);
   float weight_sum = count / (40.f * center_speed);
@@ -57,8 +68,9 @@ void main(uint3 id : SV_DispatchThreadID) {
       for (int side = -1; side <= 1; side += 2) {
         // Shift the entire sample grid, rather than separating its two halves:
         // mirrored jitter otherwise leaves a hole around the center pixel.
-        float signed_distance = (float(side) * (float(i) + 0.25f + float(axis_index) * 0.5f)
-                               + (noise - 0.5f) * 0.475f) * radius / float(pairs);
+        float signed_distance = (domains[axis_index].x + domains[axis_index].y) * 0.5f
+            + (float(side) * (float(i) + 0.25f + float(axis_index) * 0.5f)
+               + (noise - 0.5f) * 0.475f) * half_spans[axis_index] / float(pairs);
         float distance = abs(signed_distance);
         float2 position = float2(id.xy) + sample_direction * signed_distance;
         if (any(position < 0.f) || any(position > float2(image_size) - 1.f)) continue;
@@ -93,6 +105,9 @@ void main(uint3 id : SV_DispatchThreadID) {
         // foreground even though its actual velocity is zero.
         weight += 2.f * (1.f - smoothstep(0.95f * overlap, 1.05f * overlap, distance))
                        * max(center_alignment, sample_alignment) * min(foreground, background);
+        // Different axis lengths need quadrature weights proportional to the
+        // integration interval rather than equal weight per visible sample.
+        weight *= half_spans[axis_index] / max(span, 1e-6f);
         sum += color_texture.SampleLevel(linear_clamp, (position + 0.5f) / float2(image_size), 0).rgb * weight;
         weight_sum += weight;
       }

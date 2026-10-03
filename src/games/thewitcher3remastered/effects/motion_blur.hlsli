@@ -7,7 +7,7 @@
 
 // Coordinates and velocities are in OUTPUT pixels. Inputs can be rendered at
 // a lower resolution, but color reconstruction never downsamples the image.
-static const uint WITCHER_MOTION_TILE = 32u;
+#include "../motion_blur_config.h"
 cbuffer MotionParameters : register(b0) {
   uint2 image_size;
   uint2 tile_count;
@@ -15,7 +15,7 @@ cbuffer MotionParameters : register(b0) {
   float2 velocity_to_radius;
   float2 depth_coordinate_scale;
   float2 depth_linearization;
-  float max_radius;
+  float reserved;
   uint max_samples;
   uint diagnostic_view;
   float frame_seconds;
@@ -40,9 +40,28 @@ RWTexture2D<float4> result_texture : register(u0);
 float2 MotionRadius(int2 pixel) {
   pixel = clamp(pixel, int2(0, 0), int2(image_size) - 1);
   float2 radius = velocity_texture.Load(int3(uint2(float2(pixel) * motion_coordinate_scale), 0)) * velocity_to_radius;
-  // Invalid/sentinel motion is never turned into a screen-wide streak.
+  // Do not clamp valid frame motion: a fixed pixel ceiling hides the shutter's
+  // FPS response during fast pans. The gather domain is clipped to the viewport.
   if (!all(isfinite(radius))) return 0.f;
-  return radius * min(1.f, max_radius / max(length(radius), 1e-6f));
+  return radius;
+}
+
+// Intersect a shutter segment with an axis-aligned rectangle. Used both for
+// conservative swept-tile coverage and for clipping gathers to visible pixels.
+float2 MotionInterval(float2 direction, float2 low, float2 high, float radius) {
+  float2 interval = float2(-radius, radius);
+  [unroll]
+  for (uint axis = 0u; axis < 2u; ++axis) {
+    if (abs(direction[axis]) < 1e-8f) {
+      if (low[axis] > 0.f || high[axis] < 0.f) return float2(1.f, -1.f);
+    } else {
+      float a = low[axis] / direction[axis];
+      float b = high[axis] / direction[axis];
+      interval.x = max(interval.x, min(a, b));
+      interval.y = min(interval.y, max(a, b));
+    }
+  }
+  return interval;
 }
 
 float MotionDepth(int2 pixel) {

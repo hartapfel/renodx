@@ -15,16 +15,18 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "../motion_blur_config.h"
 
 using Microsoft::WRL::ComPtr;
 using Pixel = std::array<float, 4>;
-constexpr unsigned WIDTH = 257, HEIGHT = 97;
-constexpr unsigned TILES_X = (WIDTH + 31) / 32, TILES_Y = (HEIGHT + 31) / 32;
+constexpr unsigned WIDTH = 769, HEIGHT = 385;
+constexpr unsigned TILES_X = (WIDTH + WITCHER_MOTION_TILE - 1) / WITCHER_MOTION_TILE;
+constexpr unsigned TILES_Y = (HEIGHT + WITCHER_MOTION_TILE - 1) / WITCHER_MOTION_TILE;
 struct Parameters {
   unsigned width = WIDTH, height = HEIGHT, tiles_x = TILES_X, tiles_y = TILES_Y;
   float motion_x = 1, motion_y = 1, velocity_x = WIDTH * .25f, velocity_y = HEIGHT * .25f;
   float depth_x = 1, depth_y = 1, depth_a = 1, depth_b = 0;
-  float radius = 32;
+  float reserved = 0;
   unsigned samples = 64, diagnostic = 0;
   float seconds = 1.f / 60;
 };
@@ -146,7 +148,7 @@ int main(int argc, char** argv) {
     for (unsigned i = 1; i < spreads.size(); ++i)
       Require(spreads[i - 1] > spreads[i] * 1.65 && spreads[i - 1] < spreads[i] * 2.3, "FPS response does not follow shutter duration");
 
-    // At the maximum radius, a one-pixel HDR light must not leave sampling
+    // At the former maximum radius, a one-pixel HDR light must not leave sampling
     // holes. This exposes duplicate taps when both reconstruction axes align.
     std::fill(motion.begin(), motion.end(), Pixel{128.f / WIDTH, 0, 0, 0});
     run();
@@ -211,6 +213,73 @@ int main(int argc, char** argv) {
               << " foreground_edge=" << result[48 * WIDTH + 96][0]
               << " equal_depth_reference=" << common_motion_reference[48 * WIDTH + 96][0] << '\n';
     Require(common_motion_error < 1e-4f, "Depth discontinuity made a co-moving foreground artificially sharp");
+
+    // All three shutter radii (240/120/40 pixels) exceeded the old ceiling.
+    // A fixed clamp makes these identical instead of following 30/60/180 FPS.
+    std::fill(scene.begin(), scene.end(), Pixel{0, 0, 0, 1});
+    std::fill(depth.begin(), depth.end(), Pixel{.1f, 0, 0, 0});
+    for (unsigned y = 0; y < HEIGHT; ++y) scene[y * WIDTH + 384] = {8, 4, 2, 1};
+    spreads.clear();
+    for (float fps : {30.f, 60.f, 180.f}) {
+      std::fill(motion.begin(), motion.end(), Pixel{28800.f / fps / WIDTH, 0, 0, 0});
+      run();
+      double energy = 0, moment = 0;
+      for (unsigned y = 16; y < HEIGHT - 16; ++y) for (unsigned x = 128; x <= 640; ++x) {
+        energy += result[y * WIDTH + x][0];
+        moment += result[y * WIDTH + x][0] * std::pow(double(x) - 384, 2);
+      }
+      spreads.push_back(std::sqrt(moment / energy));
+      const double reference = 7200. / fps / std::sqrt(3.);
+      std::cout << "long_trail_fps=" << fps << " spread=" << spreads.back() << " box_reference=" << reference << '\n';
+      Require(spreads.back() > reference * .8 && spreads.back() < reference * 1.2, "Long trail is truncated or mis-scaled");
+      float minimum = 8.f;
+      for (unsigned y = 16; y < HEIGHT - 16; ++y)
+        for (unsigned x = 384 - unsigned(5400 / fps); x <= 384 + unsigned(5400 / fps); ++x)
+          minimum = std::min(minimum, result[y * WIDTH + x][0]);
+      Require(minimum > .001f, "Long one-pixel light trail developed sampling holes");
+    }
+    Require(spreads[0] > spreads[1] * 1.8 && spreads[0] < spreads[1] * 2.2, "Fast pan lost 30/60 FPS scaling");
+    Require(spreads[1] > spreads[2] * 2.7 && spreads[1] < spreads[2] * 3.3, "Fast pan lost 60/180 FPS scaling");
+
+    // A moving object sweeps into pixels more than one coarse tile away.
+    // This fails even with unclamped vectors if NeighborMax stays a 3x3 search.
+    std::fill(scene.begin(), scene.end(), Pixel{0, 1, 0, 1});
+    std::fill(motion.begin(), motion.end(), Pixel{0, 0, 0, 0});
+    for (unsigned y = 128; y < 256; ++y) for (unsigned x = 600; x < 616; ++x) {
+      scene[y * WIDTH + x] = {1, 0, 0, 1};
+      motion[y * WIDTH + x] = {1024.f / WIDTH, 0, 0, 0};
+      depth[y * WIDTH + x] = {1.f, 0, 0, 0};
+    }
+    run();
+    std::cout << "distant_silhouette_coverage=" << result[192 * WIDTH + 380][0] << '\n';
+    Require(result[192 * WIDTH + 380][0] > .005f, "Long moving silhouette did not reach distant tiles");
+    Require(result[32 * WIDTH + 380][0] == 0.f, "Horizontal object motion leaked vertically");
+
+    // Long background streaks still cannot smear a stationary near character.
+    for (unsigned y = 0; y < HEIGHT; ++y) for (unsigned x = 0; x < WIDTH; ++x) {
+      bool foreground = x >= 320 && x < 448;
+      scene[y * WIDTH + x] = foreground ? Pixel{float((x + y) % 2) * 4, 0, 0, 1} : Pixel{0, float(x % 2) * 4, 0, 1};
+      motion[y * WIDTH + x] = {foreground ? 0.f : 960.f / WIDTH, 0, 0, 0};
+      depth[y * WIDTH + x] = {foreground ? 1.f : .1f, 0, 0, 0};
+    }
+    run();
+    for (unsigned y = 0; y < HEIGHT; ++y) for (unsigned x = 320; x < 448; ++x)
+      for (unsigned channel = 0; channel < 3; ++channel)
+        Require(std::abs(result[y * WIDTH + x][channel] - scene[y * WIDTH + x][channel]) < 1e-4f, "Long background motion smeared stationary foreground");
+
+    // Viewport clipping must preserve signed HDR constants even when motion
+    // crosses the entire image. Include axis-parallel and diagonal segments.
+    std::fill(scene.begin(), scene.end(), Pixel{-.25f, 3.f, 16.f, .7f});
+    std::fill(depth.begin(), depth.end(), Pixel{.1f, 0, 0, 0});
+    for (Pixel velocity : {Pixel{10, 0, 0, 0}, Pixel{0, -10, 0, 0}, Pixel{-10, 10, 0, 0}}) {
+      std::fill(motion.begin(), motion.end(), velocity);
+      run();
+      for (const auto& pixel : result) for (unsigned channel = 0; channel < 3; ++channel)
+        Require(std::abs(pixel[channel] - scene[0][channel]) < 1e-4f, "Clipped long shutter changed constant HDR");
+    }
+    parameters.velocity_x = parameters.velocity_y = 0.f;
+    run();
+    Require(result == scene, "Zero shutter did not disable long motion blur");
     std::cout << "PASS " << cases << " three-pass GPU cases, " << cases * WIDTH * HEIGHT << " output pixels\n";
   } catch (const std::exception& error) {
     std::cerr << "FAIL " << error.what() << '\n';

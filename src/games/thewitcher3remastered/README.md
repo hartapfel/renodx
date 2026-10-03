@@ -182,13 +182,17 @@ neighboring motion directions reconstruct moving silhouettes while protecting
 stationary foregrounds. The filter follows the McGuire/Guertin reconstruction
 approach; references and executable checks are in `tests/README.md`.
 
-The mod's Shutter Angle controls exposure independently of native intensity:
-180 degrees integrates half a rendered frame, and 0 is a sharp copy. Motion is
+The mod's Motion Blur Intensity uses 0-100 independently of native intensity:
+50 (default) is the previous 180-degree shutter, 0 is off, and 100 doubles the
+strength. Saved shutter values are converted to the new scale automatically
+without overwriting an existing intensity setting. Motion is
 already a per-frame UV displacement, so no second frame-duration multiplier is
 applied. At the same movement speed, higher rendered FPS produces shorter blur.
-Samples controls the maximum gather budget (default 64, range 16-128); shorter
-motion uses fewer taps. The maximum radius is 32 output pixels. Color is never
-downsampled by this filter, though native motion/depth can be lower resolution.
+Samples controls the gather budget at a 32-pixel radius (default 64, range
+16-128); longer visible trails automatically use more taps, up to 1024, while
+shorter motion uses fewer. Valid motion has no fixed pixel-radius clamp. Only
+the gather interval is clipped to the viewport. Color is never downsampled by
+this filter, though native motion/depth can be lower resolution.
 
 The original preparation/filter dispatches still run; their results are unused
 when reconstruction succeeds. Missing required bindings retain the native
@@ -198,7 +202,7 @@ timing, hidden surface recovery and hardware performance are not established by
 the offline tests.
 
 Validation: strict SM6.6 compilation and the Clang Release addon build pass.
-The GPU reference harness checks 17 cases / 423,793 pixels, including signed HDR,
+The GPU reference harness now checks 26 cases / 7,697,690 pixels, including signed HDR,
 stationary identity, one-pixel detail, 30/60/120/240 FPS shutter scaling, thin
 lights, static foregrounds, moving silhouette coverage and camera pans across
 depth discontinuities. A separate runtime
@@ -207,8 +211,8 @@ without DevKit. Both native resolve baselines pass 600 differential cases each.
 After the resource-tracker initialization fix, the user confirmed successful
 loading, 0/180-degree shutter response, stationary Geralt remaining clear during
 camera orbit and unchanged Enhanced blur at native intensity 1 versus 10.
-A repeated live FPS comparison confirmed substantially shorter blur at higher
-FPS; the user also reported good visual quality at both frame rates.
+Earlier visual FPS comparisons were inconclusive after further user testing;
+see the measured follow-up below. The user reported good visual quality.
 DevKit verified full-resolution 3840x2160 color and 2560x1440 motion/depth in the
 intensity-10 scene. At a 30 FPS cap, the user reported roughly unchanged GPU
 usage versus Native; isolated GPU timestamps have not been measured.
@@ -223,3 +227,71 @@ is resolved during strong camera panning.
 
 Resolution-change coverage and isolated GPU timing remain untested. Scratch evidence:
 `tmp/thewitcher3remastered/motion-blur/`.
+
+
+#### Frame-rate scaling investigation
+
+With frame generation off, the measured comparison was 30 FPS versus a
+CPU-limited 40-45 FPS with the cap removed, not 180 FPS. The camera reprojection
+matrix's distance from identity fell to 0.673 times its 30 FPS value; median
+motion over the sampled image fell to 0.711 times its earlier value. Both are
+consistent with the expected 0.667-0.750 interval for per-frame displacement.
+These are corroborating measurements, not an exact timing calibration: the
+running character occupied different scene positions, FPS was user-reported,
+and resource readbacks are not frozen to the matrix snapshot.
+
+During a subsequent strong camera pan, 84.2% of sampled pixels exceeded the
+fixed 32-pixel radius limit. Median displacement was 248.5 output pixels,
+requesting a 62.1-pixel radius at 180 degrees, then clamping to 32. This ceiling
+can hide frame-rate scaling when both rates reach it. The 3x3 NeighborMax over
+32-pixel tiles depends on this bound; raising the radius also requires extending
+neighbor coverage and checking the sample budget. This prompted the correction
+described below.
+
+Unreal's [MotionBlurTargetFPS](https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/Engine/Engine/FPostProcessSettings/MotionBlurTargetFPS?application_version=5.5)
+uses zero for actual-frame-rate-dependent exposure. A positive target instead
+normalizes exposure to a fixed frame rate. With true per-frame motion, Witcher's
+180-degree shutter radius is already `0.25 * velocityUV * outputSize`; an extra
+frame-duration multiplier would double-apply frame-rate scaling. Offline FPS
+tests exercise this formula with synthetic per-frame vectors; they do not prove
+the game's timing convention by themselves.
+
+
+#### Unclamped shutter reconstruction
+
+The replacement now preserves the complete finite per-frame motion instead of
+clamping its radius to 32 output pixels. TileMax uses a shared 128-pixel tile
+size; NeighborMax searches the coarse frame grid and tests whether each tile's
+shutter segment can intersect the receiving tile. This permits moving objects
+to contribute beyond immediate neighbors. Tile resources use 32-bit floats so
+large finite motion does not overflow the reduction buffers.
+
+The full-resolution gather clips its two sampling intervals to the visible
+image, retains the original motion lengths in its coverage/occlusion weights,
+and scales sample density with the visible trail. Differently clipped axis
+intervals receive proportional integration weights. Work is limited to 1024
+taps for extreme motion; this limits sampling quality rather than trail length.
+No additional FPS multiplier or native-intensity dependency is introduced.
+
+All 26 GPU cases pass, including shutter radii of 240/120/40 pixels for fixed
+movement at 30/60/180 FPS. Measured impulse spreads are 127.994/62.745/20.917 pixels
+(the analytical box references are 138.564/69.282/23.094). One-pixel HDR trails
+remain continuous, distant foreground coverage reaches beyond the old 3x3
+neighborhood, and stationary-foreground/common-camera-motion protections pass.
+Reintroducing only the 32-pixel clamp fails the long-trail reference; restoring
+only a 3x3 neighborhood fails distant silhouette coverage. Strict compilation
+of all four private SM6.6 shaders and the runtime initialization test pass.
+
+Long trails require additional GPU work. Hardware performance and appearance
+must be checked in the rebuilt addon: use Enhanced mode, native intensity 10,
+Intensity 50 and Samples 64; compare strong camera pans at actual 30 and
+60+ FPS, stationary Geralt, moving objects, thin lights, and viewport edges.
+Verify zero shutter remains sharp. Release build target: thewitcher3remastered.
+
+
+The user rebuilt and relaunched the Release addon, then confirmed the result
+looks much better. All four embedded private shader binaries match fresh
+compilation with the Release flags, and ReShade registered this addon in the
+new game session. DevKit was disabled for that session, so fresh GPU timing
+and post-fix resource captures were not collected. Hardware performance under
+long trails remains unmeasured.

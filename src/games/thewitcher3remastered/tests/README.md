@@ -6,8 +6,11 @@ full-resolution reconstruction at `0x866E78BC` or intensity-10 `0x2B7AF9F0`.
 Missing inputs fall back to the native dispatch. Gameplay loading, the 0/180-degree
 shutter response, stationary-character protection and unchanged blur at native
 intensity 1 versus 10 were confirmed after the resource-tracker initialization
-fix. A repeated live comparison also confirmed shorter blur at higher FPS and
-good visual quality at both rates. GPU usage was reported roughly unchanged at
+fix. Earlier visual FPS comparisons were inconclusive after further testing.
+A measured 30 versus CPU-limited 40-45 FPS comparison is consistent with
+per-frame motion scaling; a strong-pan capture separately found 84.2% of sampled
+pixels hitting the fixed 32-pixel radius ceiling. See the mod README for the
+measurements and their limitations. GPU usage was reported roughly unchanged at
 a 30 FPS cap; isolated GPU timing and broader scene coverage remain untested.
 
 `motion_blur.cpp` runs the same HLSL on D3D11 WARP (compiled as `cs_5_0`) to check
@@ -18,8 +21,9 @@ gives separate surfaces identical screen motion, then varies their depths:
 their output must match the equal-depth reconstruction. Before the correction,
 this produced up to 0.351 error and an artificially sharp foreground edge;
 motion-aware occlusion weighting eliminates that difference without changing
-the stationary-foreground test. All 17 cases / 423,793 pixels pass, and the user
-confirmed the correction in-game after rebuilding. Shipping compilation uses
+the stationary-foreground test. All 26 cases / 7,697,690 pixels pass. The user
+confirmed the earlier camera-edge correction and the improved unclamped
+revision in-game after rebuilding. Isolated GPU timing remains unmeasured. Shipping compilation uses
 `cs_6_6` with strict diagnostics. These tests do not establish game velocity
 units, resource lifetime safety, native-intensity independence, or GPU cost.
 
@@ -53,3 +57,15 @@ For true per-frame UV displacement, a 180-degree shutter has half-width
 `0.25 * velocityUV * outputSize`. Frame-rate dependence is already in displacement;
 multiplying by frame duration again would incorrectly apply it twice. The game
 input must be measured before this convention is used at runtime.
+
+
+The long-trail regression uses 240/120/40-pixel shutter radii for fixed movement
+at 30/60/180 FPS: all exceeded the former 32-pixel ceiling. It compares impulse
+spread with an analytical box shutter and requires continuous one-pixel HDR
+trails. Additional cases check a moving silhouette reaching beyond a 3x3 tile
+neighborhood, stationary foreground protection during long background motion,
+axis-parallel/diagonal viewport clipping, HDR constants, and zero shutter.
+Mutation checks in tmp/thewitcher3remastered/motion-blur/ceiling-regression/
+confirm separate failures when restoring either the clamp or the limited
+neighbor search. These synthetic tests establish filter behavior, not live
+engine timing or hardware performance.
