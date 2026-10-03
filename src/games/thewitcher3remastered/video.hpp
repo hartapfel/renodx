@@ -170,6 +170,9 @@ inline void OnResetCommand(command_list* cmd) {
   if (auto* data = cmd->get_private_data<CommandData>()) *data = {};
 }
 inline void Use(DWORD reason) {
+  // Shader injection does not initialize render-target tracking unless it
+  // owns a swapchain shader. Video redirection needs it even without DevKit.
+  renodx::utils::swapchain::Use(reason);
 #define WITCHER_VIDEO_EVENT(event, callback)                       \
   if (reason == DLL_PROCESS_ATTACH)                               \
     reshade::register_event<reshade::addon_event::event>(callback); \
