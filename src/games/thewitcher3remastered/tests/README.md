@@ -1,4 +1,29 @@
-# Motion blur validation
+# Mod validation
+
+## Native night lighting
+
+`night_lighting.cpp` exercises the native view and constant callbacks against
+independent references of the audited renderer stores. Its 180 cases cover
+raster/shared directional colors, fog, haze, sky, clouds and native water
+color/ambient/diffuse constants across clock fade
+endpoints and weather weights, including the captured storm's residual skylight.
+It checks RGB-only edits, exact neutral/daytime identity, invalid time, weather
+independence and skylight baseline restoration/rebasing. Zero skylight must reach
+exactly zero at full night even when weather retains a nonzero day weight.
+Two whole-buffer comparisons verify cloud isolation, untouched moon/star colors
+and alpha, and midday identity. Water checks preserve all other global-buffer
+bytes, including Fresnel/caustics/foam fields. Removed grass/moon/grading controls have no runtime
+backing state. The harness does not establish the live hook ABI, engine time
+semantics, or broad scene coverage.
+
+From an x64 Visual Studio developer shell:
+
+```powershell
+clang-cl /std:c++20 /EHsc /O2 /MT /DNOMINMAX /Iexternal/Detours/include src/games/thewitcher3remastered/tests/night_lighting.cpp /Fe:tmp/witcher-night-test.exe /Fo:tmp/witcher-night-test.obj /link external/Detours/lib.X64/detours.lib
+./tmp/witcher-night-test.exe
+```
+
+## Motion blur
 
 The four `0xF3B1000*` shaders are private compute passes, not game shader hashes.
 `motion_blur.hpp` captures depth at `0x9F1C32F1` and runs TileMax, NeighborMax and
@@ -120,3 +145,10 @@ bin/fxc.exe /nologo /T cs_5_0 /E main /Ges /WX /O3 /Fo tmp/witcher-video-hdr/fg.
 clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered/tests/video_hdr.cpp /Fe:tmp/witcher-video-hdr/check.exe /Fo:tmp/witcher-video-hdr/check.obj /link d3d11.lib
 ./tmp/witcher-video-hdr/check.exe tmp/witcher-video-hdr/normal.cso tmp/witcher-video-hdr/fg.cso
 ```
+
+Night Sky Brightness also covers b12 c249/c278, the two native colors added
+by 3B15DAAB after its main sky/fog calculation. The night-lighting harness
+includes them in the 180 clock/intensity/weather cases and checks whole-buffer
+sky-only isolation at midnight and midday, preserving alpha, moon colors, fog
+and cloud base colors. The shared c278 distant-cloud tint intentionally follows
+the sky control. Runtime horizon verification remains necessary after rebuilding.

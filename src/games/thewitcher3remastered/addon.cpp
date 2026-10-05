@@ -9,6 +9,7 @@
 #define DEBUG_LEVEL_0
 
 #include <algorithm>
+#include <bit>
 #include <vector>
 
 #include <deps/imgui/imgui.h>
@@ -25,6 +26,7 @@
 #include "./shared.h"
 #include "./motion_blur.hpp"
 #include "./video.hpp"
+#include "./night_lighting.hpp"
 
 namespace {
 
@@ -104,6 +106,10 @@ bool ShouldInjectPostProcessLayout(std::span<const reshade::api::pipeline_layout
 
 bool IsPsychoV() {
   return shader_injection.tone_map_type == 1.f;
+}
+
+bool IsNightLightingEnabled() {
+  return IsPsychoV() && witcher::night::lighting_enabled == 1.f && witcher::night::Supported();
 }
 
 // Settings::Write clears only this percentage field; neighboring flags and
@@ -378,7 +384,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "PsychoVConeResponseExponent",
         .binding = &shader_injection.psychov_cone_response_exponent,
-        .default_value = 1.16f,
+        .default_value = 1.f,
         .label = "Cone Response Exponent",
         .section = "PsychoV30",
         .tooltip = "Sets the cone response exponent. 1.0 is the uncalibrated neutral baseline.",
@@ -442,7 +448,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "PsychoVCompression",
         .binding = &shader_injection.psychov_compression,
-        .default_value = 0.95f,
+        .default_value = 0.f,
         .label = "Compression (0 = Auto)",
         .section = "PsychoV30",
         .tooltip = "0 selects PsychoV-30 automatic compression. Positive values set the response power directly.",
@@ -648,15 +654,195 @@ renodx::utils::settings::Settings settings = {
         .packed_values = {0u, WITCHER_FLAG_VIDEO_AUTO_HDR},
         .label = "Video AutoHDR",
         .section = "Video",
-        .tooltip = "Expands SDR videos to HDR using BT.2446 Method A, as in Ezio Trilogy. Game Brightness controls the image; Peak Brightness sets the highlight limit. Off keeps SDR video at Game Brightness. Subtitles still use UI Brightness.",
+        .tooltip = "Expands SDR videos to HDR using BT.2446 Method A.",
         .labels = {"Off", "On"},
         .is_enabled = []() { return IsPsychoV(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GameplayCameraLightStrength",
+        .binding = &witcher::night::camera_strength,
+        .default_value = 50.f,
+        .label = "Gameplay Camera Light",
+        .section = "Gameplay Lighting",
+        .tooltip = "Player-following camera light, all day. 0 is off, 50 is native, 100 doubles it. Preserves cutscene lights and torches. Works without a separate lighting mod.",
+        .max = 100.f,
+        .format = "%.0f",
+        .is_enabled = []() { return IsPsychoV() && witcher::night::Supported() && witcher::night::camera_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightLightingEnabled",
+        .binding = &witcher::night::lighting_enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .label = "Enable Night Lighting",
+        .section = "Night Lighting",
+        .tooltip = "Enables the night sliders. Off restores native lighting and keeps your slider values.",
+        .labels = {"Off", "On"},
+        .is_enabled = []() { return IsPsychoV() && witcher::night::Supported(); },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::TEXT,
+        .label = "Adjusts environmental light during the selected hours with smooth fades. Times use the 24-hour clock and can cross midnight. Local lights stay unchanged. Intensity: 0 = off, 50 = native, 100 = double.",
+        .section = "Night Lighting",
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightDarkeningStart",
+        .binding = &witcher::night::darkening_start,
+        .default_value = 20.f,
+        .label = "Darkening Start",
+        .section = "Night Lighting",
+        .tooltip = "Time when darkening begins fading in.",
+        .max = 24.f,
+        .format = "%.1f h",
+        .is_enabled = IsNightLightingEnabled,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightFullDarknessStart",
+        .binding = &witcher::night::full_darkness_start,
+        .default_value = 23.f,
+        .label = "Full Darkness Start",
+        .section = "Night Lighting",
+        .tooltip = "Time when the night sliders reach full strength.",
+        .max = 24.f,
+        .format = "%.1f h",
+        .is_enabled = IsNightLightingEnabled,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightFadeOutStart",
+        .binding = &witcher::night::fade_out_start,
+        .default_value = 3.5f,
+        .label = "Fade-out Start",
+        .section = "Night Lighting",
+        .tooltip = "Time when darkening begins fading back to native lighting.",
+        .max = 24.f,
+        .format = "%.1f h",
+        .is_enabled = IsNightLightingEnabled,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightDarkeningEnd",
+        .binding = &witcher::night::darkening_end,
+        .default_value = 6.f,
+        .label = "Darkening End",
+        .section = "Night Lighting",
+        .tooltip = "Time when native lighting is fully restored.",
+        .max = 24.f,
+        .format = "%.1f h",
+        .is_enabled = IsNightLightingEnabled,
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::TEXT,
+        .label = "Choose Start, Full Darkness, Fade-out, then End in that order within one day. Overrides are inactive until the times form a valid schedule.",
+        .section = "Night Lighting",
+        .is_visible = []() { return IsPsychoV() && witcher::night::lighting_enabled == 1.f && witcher::night::NightSchedule() == 0; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightSkyStrength",
+        .binding = &witcher::night::sky_strength,
+        .default_value = 1.f,
+        .label = "Night Skylight",
+        .section = "Night Lighting",
+        .tooltip = "Skylight and outdoor environment-probe illumination and reflections.",
+        .max = 100.f,
+        .format = "%.0f",
+        .is_enabled = IsNightLightingEnabled,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightDirectStrength",
+        .binding = &witcher::night::direct_strength,
+        .default_value = 5.f,
+        .label = "Night Direct Light",
+        .section = "Night Lighting",
+        .tooltip = "Direct directional light from the environment, including grass illumination.",
+        .max = 100.f,
+        .format = "%.0f",
+        .is_enabled = IsNightLightingEnabled,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightFogStrength",
+        .binding = &witcher::night::fog_strength,
+        .default_value = 15.f,
+        .label = "Night Directional Fog",
+        .section = "Night Lighting",
+        .tooltip = "Brightness of directional and custom fog colors. Preserves fog density.",
+        .max = 100.f,
+        .format = "%.0f",
+        .is_enabled = IsNightLightingEnabled,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightHazeStrength",
+        .binding = &witcher::night::haze_strength,
+        .default_value = 5.f,
+        .label = "Night Aerial Haze",
+        .section = "Night Lighting",
+        .tooltip = "Brightness of aerial haze and distance fog. Preserves atmospheric extinction.",
+        .max = 100.f,
+        .format = "%.0f",
+        .is_enabled = IsNightLightingEnabled,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightVisibleSkyStrength",
+        .binding = &witcher::night::visible_sky_strength,
+        .default_value = 5.f,
+        .label = "Night Sky Brightness",
+        .section = "Night Lighting",
+        .tooltip = "Visible sky, horizon glow and horizon tint on distant clouds. Preserves the moon and stars.",
+        .max = 100.f,
+        .format = "%.0f",
+        .is_enabled = IsNightLightingEnabled,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightCloudStrength",
+        .binding = &witcher::night::cloud_strength,
+        .default_value = 10.f,
+        .label = "Night Clouds",
+        .section = "Night Lighting",
+        .tooltip = "Cloud brightness and cloud/smoke volume glow. Preserves coverage.",
+        .max = 100.f,
+        .format = "%.0f",
+        .is_enabled = IsNightLightingEnabled,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightWaterStrength",
+        .binding = &witcher::night::water_strength,
+        .default_value = 0.f,
+        .label = "Night Water Lighting",
+        .section = "Night Lighting",
+        .tooltip = "Water base color and ambient/diffuse fill. Preserves reflections, foam and local lights.",
+        .max = 100.f,
+        .format = "%.0f",
+        .is_enabled = IsNightLightingEnabled,
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Reset All",
         .section = "Options",
+        .group = "button-line-1",
         .on_change = []() { renodx::utils::settings::ResetSettings(); },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
+        .label = "Recommended",
+        .section = "Options",
+        .group = "button-line-2",
+        .tooltip = "Recommended setting for slightly increased contrast.",
+        .tint = 0xFF5F5F,
+        .is_enabled = []() { return IsPsychoV(); },
+        .on_change = []() {
+          for (const auto* setting : settings) {
+            if (setting->section != "Tone Mapping"
+                && setting->section != "Color Grading"
+                && setting->section != "PsychoV30") continue;
+            if (setting->key == "ToneMapType"
+                || setting->key == "ToneMapGameNits"
+                || setting->key == "ToneMapUINits") continue;
+            renodx::utils::settings::UpdateSetting(setting->key, setting->default_value);
+          }
+          renodx::utils::settings::UpdateSettings({
+              {"ColorGradeHighlightContrast", 58.f},
+              {"ColorGradeShadowContrast", 58.f},
+              {"PsychoVCompression", 0.95f},
+          });
+        },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
@@ -754,12 +940,51 @@ void OnPresetOff() {
       {"VideoBT709", 0.f},
       {"VideoAutoHDR", 0.f},
       {"FxDepthBlur", 50.f},
+      {"NightSkyStrength", 50.f},
+      {"NightLightingEnabled", 0.f},
+      {"NightDarkeningStart", 18.f},
+      {"NightFullDarknessStart", 20.f},
+      {"NightFadeOutStart", 4.f},
+      {"NightDarkeningEnd", 6.f},
+      {"NightDirectStrength", 50.f},
+      {"NightFogStrength", 50.f},
+      {"NightHazeStrength", 50.f},
+      {"NightVisibleSkyStrength", 50.f},
+      {"NightWaterStrength", 50.f},
+      {"NightCloudStrength", 50.f},
+      {"GameplayCameraLightStrength", 50.f},
       {"FxSunShaftStrength", 50.f},
       {"FxLensDirt", 50.f},
       {"FxBloomStrength", 50.f},
       {"FxVignetteStrength", 50.f},
       {"FxVignetteBlackFloor", 0.f},
   });
+}
+
+void OnPresent(reshade::api::command_queue*, reshade::api::swapchain*, const reshade::api::rect*,
+               const reshade::api::rect*, uint32_t, const reshade::api::rect*) {
+  witcher::night::Update(IsPsychoV());
+  // Some cloud materials reuse the moon's color group or carry a separate
+  // material tint. Scale those inputs only in their cloud shaders, preserving
+  // the moon and the CPU-scaled main cloud group. Use the same night clock.
+  const float cloud = 1.f + (witcher::night::cloud_multiplier.load(std::memory_order_relaxed) - 1.f)
+                               * witcher::night::night_weight.load(std::memory_order_relaxed);
+  shader_injection.mode_flags = std::bit_cast<float>(
+      (std::bit_cast<uint32_t>(shader_injection.mode_flags) & ~WITCHER_NIGHT_CLOUD_MASK)
+      | ((1u + static_cast<uint32_t>(std::round(std::clamp(cloud, 0.f, 2.f) * 200.f)))
+         << WITCHER_NIGHT_CLOUD_SHIFT));
+  static bool reported = false;
+  if (witcher::night::attempted && !reported) {
+    reshade::log::message(witcher::night::installed ? reshade::log::level::info : reshade::log::level::warning,
+                         witcher::night::installed ? "[RenoDX Witcher] Native night-lighting controls installed."
+                                                   : "[RenoDX Witcher] Native night-lighting controls unavailable; native lighting preserved.");
+    if (witcher::night::installed) {
+      reshade::log::message(witcher::night::camera_supported ? reshade::log::level::info : reshade::log::level::warning,
+                           witcher::night::camera_supported ? "[RenoDX Witcher] Gameplay camera-light intensity control installed."
+                                                            : "[RenoDX Witcher] Gameplay camera-light intensity control unavailable; native camera lighting preserved.");
+    }
+    reported = true;
+  }
 }
 
 void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
@@ -838,6 +1063,18 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
           custom_shader.on_inject = [](auto*) { return false; };
           continue;
         }
+        if (hash == 0xE6A77B56 || hash == 0x8DBF022F || hash == 0xEAAAC84D || hash == 0x1C12BED7 || hash == 0x1B63829B
+            || hash == 0xD2C88922 || hash == 0x02320E1A) {
+          // New irradiance and RT sky-ray sources skip legacy environment weights.
+          // Uses only native b12 padding written by the guarded night hook.
+          custom_shader.on_replace = [](auto*) {
+            return IsPsychoV() && witcher::night::installed
+                   && witcher::night::sky_multiplier.load(std::memory_order_relaxed) != 1.f
+                   && witcher::night::night_weight.load(std::memory_order_relaxed) > 0.f;
+          };
+          custom_shader.on_inject = [](auto*) { return false; };
+          continue;
+        }
         if (hash == 0x3650C210) {
           // The native sharpening dispatch becomes a copy only in custom mode.
           // It uses native bindings exclusively; never extend/inject its layout.
@@ -871,8 +1108,11 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
         }};
       }
       reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
+      reshade::register_event<reshade::addon_event::present>(OnPresent);
       break;
     case DLL_PROCESS_DETACH:
+      if (witcher::night::installed) witcher::night::Update(false);
+      reshade::unregister_event<reshade::addon_event::present>(OnPresent);
       reshade::unregister_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
       reshade::unregister_addon(h_module);
       break;

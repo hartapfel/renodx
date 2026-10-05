@@ -14,6 +14,10 @@
 #define WITCHER_CONTRAST_HIGHLIGHTS_SHIFT 7u
 #define WITCHER_CONTRAST_SHADOWS_SHIFT 14u
 #define WITCHER_FLAG_VIDEO_AUTO_HDR (1u << 21)
+// Runtime cloud multiplier: 0 is an older addon/uninitialized payload;
+// 1..401 represent 0..2 in 0.005 steps. Preserve the 120-byte root payload.
+#define WITCHER_NIGHT_CLOUD_SHIFT 22u
+#define WITCHER_NIGHT_CLOUD_MASK (511u << WITCHER_NIGHT_CLOUD_SHIFT)
 
 // Four independent integer percentages leave one root DWORD for the movie SRV.
 #define WITCHER_EFFECT_BLUR_SHIFT 0u
