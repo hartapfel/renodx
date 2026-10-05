@@ -381,3 +381,408 @@ the standalone launch log confirms this addon initializes render-target tracking
 and both the decoder and HDR output replacements are active. The user's separate
 crash comparison found that disabling W3Clouds stopped the crashes; that addon
 is outside this fix.
+
+
+### Native night lighting controls (2026-10-04)
+
+Enable Night Lighting defaults Off. With it On, 0 removes the selected
+contribution, 50 is native and 100 doubles it. Turning the master Off retains
+slider values and restores native lighting. Vanilla and Preset Off also
+restore native values. The controls
+require executable 5.0.0.1044392 (timestamp 0x6ABD8695, image size 0x63F8000);
+audited native instructions and CVar descriptors guard installation. Unknown
+executables keep native behavior. Hooks install atomically after a non-neutral
+setting is selected and pin the addon for renderer worker-thread lifetime safety.
+
+| Control | Renderer contribution |
+| --- | --- |
+| Night Skylight | Native PTSkyImpact plus outdoor environment-probe ambient/reflection weights |
+| Night Direct Light | Environment directional-light RGB in raster and shared/PT view constants |
+| Night Directional Fog | Front/middle/back and custom fog radiance; density and extinction stay native |
+| Night Aerial Haze | Aerial and custom distance-fog radiance; extinction stays native |
+| Night Sky Brightness | Visible sky, sun/moon sky colors and the additional directional horizon gradient, independently of skylight |
+| Night Clouds | Native cloud colors and artificial fill/minimum lighting in cloud and smoke volumes; coverage stays native |
+| Night Water Lighting | Native water base color and ambient/diffuse fill, separately from reflection inputs |
+
+All night controls use the normalized game time cached in evaluated sun-color
+curves, rather than the weather-dependent day-weight. Their smooth fade spans
+18:00-20:00 and 04:00-06:00; 20:00-04:00 is full strength, 06:00-18:00 is
+unchanged. This is a fixed clock window, not a regional sunset calculation.
+PsychoV user grading, vignette, exposure/brightness compensation, and physical
+local-light intensity remain independent. Star colors, the visible moon, and
+cloud coverage stay native. Clouds can retain atmospheric light from the separate fog/haze controls. These settings scale native
+environment intensity; the cloud material still applies its nonlinear conversion.
+
+`night_lighting.hpp` edits freshly constructed renderer data, not shared assets:
+
+- Environment builder 0x1C27730: cached directional-light colors EFE0/EFF0/F000
+  become view +0x280/+0x290/+0x2A0. Its environment clock also feeds Night Skylight.
+- Raster direct constants builder 0x1C68A40: mapped output at renderer +0x690;
+  native b13 c1/c61/c62 RGB are scaled after construction.
+- Shared constants builder 0x1BDE2D0: b12 c39-c41 fog, c45-c47 aerial colors,
+  c189/c191 custom fog and override colors, c194 distance-fog color, and
+  c195-c202 visible sky RGB. Alpha, shape, density,
+  directions, projection matrices and local-light data remain unchanged.
+
+The shared builder also converts evaluated environment color groups at +0x3FD0
+through native getters 0x231A260/0x231A510 into b12 c232 onward. Night Clouds
+scales c244-c248 (FX_Sky through FX_SkySunset), consumed by A35EA14D (main
+clouds) and 2AF34748 (background layers). Custom0/c277 (the visible moon),
+FX_SkyRain/c249 and Custom1/c278 now follow Night Sky Brightness. Shader
+3B15DAAB adds `lerp(c278.rgb, c249.rgb, direction) * horizonMask` after its
+main sky/fog calculation, so leaving these groups native caused a bright blue
+horizon even with the main sky at zero. Only RGB is scaled by the existing
+clock fade; alpha and the separate star cubemap term remain unchanged.
+Custom1 also supplies the distant-cloud tint in B7D286D5, so that shared sky
+tint follows Sky Brightness. Cloud base colors still follow Night Clouds.
+Alternate weather materials B7D286D5 and 683213A3 bypass parts of those groups.
+Their replacements in `lighting/` scale, respectively, the cloud-only use of
+c277 and the native b2 c2.xyz material tint, before atmospheric blending.
+This preserves the visible moon and cloud coverage. The runtime clock-faded
+multiplier occupies bits 22-30 of `mode_flags`; no root-layout or payload growth
+is required. An absent payload or Vanilla tone mapper leaves these inputs native.
+
+Night Water Lighting hooks GlobalShaderConsts construction at 0x1C75C60, with
+its entry and water-copy instructions checked against the supported executable.
+The input context points to the evaluated environment at +0. Environment +D70
+(waterColor RGB), +D88 (waterAmbientScale) and +D8C (waterDiffuseScale) become
+b0 c11.xyz and c12.zw. Only those five floats are scaled, using the same clock
+fade as Night Direct Light. This targets the base tint/fill seen in harbor water
+shader C60F2B46; Fresnel, caustics, foam, wave data, reflection textures and local
+light inputs are not edited. The native water shader also uses its fill amount
+in compositing weights, so this is not a guarantee of identical reflected pixel
+brightness. Fog, foam and reflections can remain visible with the control at 0.
+The original DXIL and native builder assembly are preserved under
+tmp/thewitcher3remastered/night/water/. Shader replacement is not needed.
+
+Darker Nights' 100% override was traced against 0% in the same night location.
+Its authored sunColor alpha becomes zero and cached global-light RGB EFE0 becomes
+zero (versus approximately 9.91/14.81/22.18 at 0%). The three zeroed b12 c39-c41
+colors are directional fog, not direct light. Its sky/color-balance changes are
+separate; the RenoDX sliders expose contribution controls rather than copying
+that entire environment asset or its unrelated effect settings. Captures and
+assembly are preserved under tmp/thewitcher3remastered/night/lighting/.
+
+The skylight CVar preserves/rebases its native baseline without compounding.
+A storm capture found the old weather-based night fade left 6.6% of the native
+skylight at strength 0 (PTSkyImpact 0.112375 from baseline 1.7). A reversible
+zero-skylight probe removed that residual ground/character illumination; the
+paired captures included the meditation overlay. Skylight now uses the same
+clock fade as the other controls. Syntax and 180 regression cases pass; the
+Release revision builds successfully and contains both alternate cloud shaders;
+a combined gameplay comparison after relaunch is still required.
+GPU readback also found c189/c191 custom fog RGB nonzero with all existing
+fog/sky controls at zero. The fullscreen fog shader 73E21194 and sky/cloud
+vertices blend this color over the zeroed directional fog. The native builder
+sources it from environment +3660 or its alternate override at +7FF0. These
+RGB inputs now follow Night Directional Fog, preserving their amount/shape.
+Darker Nights zeros this same custom fog color in the captured environment.
+Grass scaling, PTMoonImpact/PTSunImpact overrides, night grading, and visible-moon
+scaling are removed. The global Scene Grading sliders bind directly to the shader
+settings again. Old saved keys for the removed controls are ignored.
+PTDirectLightImpact and PTGameLightsScale remain untouched because they also
+control actual local lights. Night controls do not install a fake-light CVar override. Gameplay camera fill has a separate all-day slider.
+
+Validation: C++ syntax checking passes with nine existing shared-header warnings.
+The harness passes 180 renderer/water/skylight cases, including weather independence,
+clock fade endpoints, RGB-only edits, exact neutral/daytime identity, invalid time
+and reset/rebasing. Two additional whole-buffer checks verify cloud isolation and
+daytime identity, including untouched moon colors and alpha. Sky-only isolation checks cover
+the additional horizon groups while preserving fog and cloud base colors. Water checks
+also verify all other global constants are byte-identical and invalid time is
+neutral. The cloud/night controls were subsequently reported working by the
+user, including the water extension after rebuilding.
+Both alternate-cloud native baselines pass strict ps_6_6 compilation and 360
+synthetic DXIL differential cases each. Their edited production shaders pass
+720 cases each against the original with only the intended input scaled,
+including night/day fades, Vanilla and absent-payload guards; alpha is unchanged.
+Largest normalized error is below 4e-7. Live cloud-only captures still contain
+custom blue atmospheric light, so combined visual validation requires the new
+fog/skylight hooks. Evidence: tmp/thewitcher3remastered/night/storm/.
+The user's earlier Release rebuild loaded successfully; read-only process inspection
+confirmed all three hooks targeted that addon, clock night weight 1, and direct/fog
+multipliers 0 with those sliders at zero. With Darker Nights at 0%, the user
+confirmed Night Direct Light 50 -> 0 removes the excessive directional grass
+lighting while preserving torch/local lights. Broad visual/daytime/cutscene
+coverage and independent fog/haze/sky/cloud comparisons remain manual checks.
+
+Manual checks: with Darker Nights at 0% (or disabled), compare each new slider at
+0/50/100 while holding the camera still at night. In particular, Night Direct
+Light at 0 should remove the excessive clear-night directional grass lighting.
+Compare Night Water Lighting at 50 and 0 in the harbor: base water tint/fill
+should darken while reflected lights remain visible. Retest with a torch/candle
+visible, and at midday: local illumination and full
+daytime must remain unchanged. Confirm the removed sliders are absent and global
+Scene Grading responds normally. For HDR captures, 0x382CDBDB is exposed linear scene color;
+0x8F5737B5 RTV0 is final PQ in the captured FG path. Build only target
+`thewitcher3remastered` using `clang-x64-release`, with the game closed.
+
+Horizon follow-up (2026-10-05): the native renderer extension passes C++
+syntax checking and the 180 regression cases, plus whole-buffer sky-only
+night/day checks. The original 3B15DAAB DXIL is archived in scratch; DevKit
+decompilation reports Unexpected goto, and no reconstructed HLSL is shipped.
+Temporary native-DXIL probes were restored. Even a black-output probe did not
+change the captured image despite DevKit reporting activation, so live
+replacement results are not evidence for this extension. Verify the native
+hook after a Release rebuild: Night Sky Brightness 0/50/100 must control the
+blue horizon, with the moon/stars retained and midday unchanged. Evidence:
+`tmp/thewitcher3remastered/night/horizon/`.
+
+Cloud/smoke volumes (2026-10-05): 093DCC92 draws the low animated cloud;
+95CC19A8 is its matching two-output smoke variant. The user confirmed that
+bypassing 95CC19A8 removes the two tall chimney plumes. The earlier CEE2035A
+minimum-lighting-floor adjustment does not target those plumes.
+
+Both confirmed variants share lighting/cloud_material.hlsli. Night Clouds
+scales their complete material radiance before the native fog blend. Scaling
+only the unlit component left a bright blue contribution from native vertex
+lighting; the corrected 093DCC92 replacement removes that residual in the live
+comparison. Opacity and the smoke variant's secondary coverage output remain
+unchanged. This is a brightness control for the whole cloud/smoke material,
+including its light response; it does not edit other fire/light-source shaders.
+Fog and haze remain under their separate controls.
+
+The existing packed Night Clouds factor uses the CPU clock fade: fully active
+20:00-04:00, smooth transitions 18:00-20:00 and 04:00-06:00, identity 06:00-18:00.
+50 is native and 100 doubles material radiance at full night. Vanilla, absent
+injection and missing runtime night data retain native behavior. No extra
+payload fields, native hooks or broader pipeline-layout injection are needed.
+
+The native 95CC19A8 baseline passes strict ps_6_6 compilation, matching input/
+output signatures, resource bindings and every DXIL intrinsic count, plus
+360 finite differential cases. Both edited cloud/smoke shaders pass strict
+compilation and 720 differential cases each, including fades, neutral/daytime,
+missing payload and Vanilla. Alpha and all secondary coverage channels match
+exactly; maximum normalized color error is below 2e-8. The compiled production
+wrappers are byte-identical to the tested shared implementation. Unmodified
+baselines and hashes are preserved under native/lighting/; scratch captures
+and checks are in tmp/thewitcher3remastered/night/volumes/recheck/.
+
+The low-cloud correction was verified live behind the unchanged pause menu.
+The new smoke shader requires an addon rebuild to enter the draw-time replacement
+filter; its brightness response still needs a post-rebuild visual check. Test
+Night Clouds at 0/50/100 in the same view, retaining nearby flames, opacity and
+the independent fog contribution. Compare midday and Vanilla for native behavior.
+
+Non-PT skylight extension (2026-10-05): the deferred E6A77B56 lighting pass
+uses b12 c184.xy for outdoor probe ambient and c185.xy for its reflection
+weights. The shared native builder at RVA 1BDE2D0 resolves these from
+environment +1A2C/+1A4C/+1A6C/+1A8C. Night Skylight now scales those freshly
+built weights with the existing clock fade, preserving c184.zw direct-light
+enables, c185.z distance scaling and point/spot-light buffers. The common
+builder also publishes the night clock without depending on a PT frame.
+No additional shader registrations or root-layout injection are needed.
+
+The 180 native-hook cases cover the added fields, neutral/daytime identity
+and stale-clock replacement; skylight-only whole-buffer checks preserve all
+unrelated data. Addon syntax validation passes. Release rebuild and live
+Raster/RT/PT comparisons remain pending: test 0/50/100 at midnight with a
+torch, compare midday, and repeat after switching renderers and on cold start.
+This extension does not yet establish coverage of RT-specific GI paths.
+
+
+New-probe Raster/RT skylight (2026-10-05): E6A77B56 selects a newer
+ambient algorithm with b0 c9.x and samples the t8 irradiance atlas without
+using c184.xy. Its replacement scales only that branch's final ambient
+RGB. Direct/point/spot lights, the legacy ambient branch, reflection logic,
+and light-list output are retained. The native builder carries a tagged
+clock-faded factor in zeroed b12 c185.w padding, with its native store
+verified alongside the executable fingerprint. No compute layout expansion.
+Neutral settings and daytime retain native constants and native shader.
+
+Strict cs_6_6 compilation, 360 native/baseline comparisons, 2880 edited
+comparisons and 180 native-hook cases pass. The shader checks use synthetic
+single-lane execution, including a culled point light; they do not prove
+GPU group synchronization or all material/shadow permutations. The Release
+addon was tested live: original and unchanged baseline look equivalent, and
+Night Skylight removes the deferred fill. The user confirmed that Geralt's
+gear still receives torch light correctly. Separate forward materials and
+late reflections retain some illumination; complete Raster/RT coverage is
+not yet established. Repeat 0/50/100, midday and PT after further changes.
+
+Forward new-probe extension: 8DBF022F and EAAAC84D select the corresponding
+new irradiance branch using b12 c226.x. They now apply the same tagged,
+clock-faded factor to that branch's ambient RGB before AO/output assembly.
+The old weighted branch, direct lighting, reflection terms, coverage and
+all five EAAAC84D render targets retain their native calculations. These
+shaders also use only native bindings, with injection explicitly disabled.
+Strict ps_6_6 compilation, matching input/output signatures and resources,
+320 native/baseline cases and 2560 edited cases pass. The synthetic cases
+include old/new irradiance, EON, material-output routing, probe colors and
+an empty/one-point-light list; they are not exhaustive shadow validation.
+Rebuild the Release target `thewitcher3remastered`, confirm both embedded
+hashes, then compare head/hair to gear at Night Skylight 0/50 with and without
+a torch. Verify midday and Vanilla retain native behavior. The user rebuilt and verified that these additions plus the reflection
+fallback correction remove the remaining environment sheen in the tested
+view. Transparent hair retained a separate ambient contribution.
+
+
+Reflection fallback extension (2026-10-05): bypassing BF66A39B removed the
+remaining foliage sheen in the user's Raster/RT view. Its primary reflection
+input is produced by 1C12BED7, temporally filtered and passed through the
+reflection denoiser before composition. The secondary input measured zero.
+1C12BED7 now scales the sky/environment-probe fallback with Night Skylight
+before it is blended with traced screen-space scene radiance. The scene-hit
+weight and hit radiance remain unchanged, so this does not multiply the whole
+reflection image. It uses the same native tag and no injected binding.
+Strict compilation, identical resources and 8x8x1 thread dimensions, 180
+native/baseline cases and 1440 edited cases pass; 60 cases contain partial or
+full scene hits. Reflections of local lights remain mathematically unchanged
+where a scene hit supplies them. Baked probe content is intentionally part of
+the environmental control, including any baked local light in those probes.
+The user restored Draw, rebuilt and confirmed that the environment now looks
+correct in the tested view; white hair remained as a separate issue. Broader
+0/50/100, midday, Vanilla, Raster/RT/PT and weather comparisons are still
+useful; this capture does not establish every alternative shader variant.
+
+
+Transparent hair extension (2026-10-05): the user confirmed that disabling
+1B63829B removes Geralt's hair. Its b12 c226.x new-irradiance branch takes
+ambient light from vertex inputs and bypasses the legacy skylight weights.
+The replacement applies Night Skylight to that ambient RGB before AO and
+color/fog composition, using the same night-only tag in native b12 c185.w.
+It leaves local/direct lighting, existing reflection weights, coverage and
+alpha calculations intact and does not extend the pipeline layout.
+The native baseline passes 160 exact synthetic comparisons; 1280 edited
+comparisons check ambient-only scaling through tint/fog, and 36 alpha checks
+preserve discard/coverage. Strict ps_6_6 compilation, all 18 bindings, all
+signatures, cbuffer sizes and sample/load/output/discard counts match.
+These checks are not exhaustive material/shadow or GPU validation. Rebuild
+the Release addon, verify the 1B63829B embed, then compare Night Skylight
+0/50 on hair with and without a torch; also verify midday and Vanilla.
+The user rebuilt and confirmed the hair correction works flawlessly: Night
+Skylight 0 removes the white ambient glow and torch illumination remains.
+This establishes the tested Raster view, not complete RT coverage. The next
+task is to identify and cover the corresponding RT-specific lighting paths.
+
+
+RT sky-source extension (2026-10-05): the captured RT frame updates GI rays
+with D2C88922 and shades reflection rays with 02320E1A. Their procedural/
+cubemap sky bypasses the existing environment weights. Night Skylight now
+scales sky misses in D2C88922 before they enter the temporal GI probes, and
+the sky-miss input in 02320E1A before native fog. Both shaders also scale
+their separate constant environmental fill (b0 c4.y). Dynamic probe hit
+radiance, local-light lists/accumulation, directional colors, emissive hits,
+screen-hit copies, fog extinction and output alpha remain unchanged. Avoid
+scaling the entire RT probe: it carries bounced local lights and feeds later
+GI updates. Its existing sky history must settle after changing the slider.
+
+Both replacements use only the native b12 c185.w tag and the same conditional
+registration as the Raster ambient shaders, with injection disabled. Native,
+neutral/daytime or absent tags preserve the original behavior. Original
+decompilations and SHA-256 hashes are archived under native/lighting/.
+Two generic DXIL decompiler repairs were needed: raw cbuffer aliases must
+replace reflected fields rather than overlap them, and resource-array indices
+must subtract the binding-range base. The latter was caught by a dynamic
+lookup reading slot 69 instead of native slot 35. Regenerating the four
+previous forward/reflection/hair baselines with their original flatten options
+leaves their archives identical. The existing Raster/PT shader edits and
+native hooks were not changed.
+
+Strict cs_6_6 compilation, native bindings, cbuffer sizes and compute thread
+dimensions match. Synthetic differential execution passes 720 native/baseline
+cases and 5760 edited comparisons against native DXIL with only its sky/fill
+inputs changed; sampled texture coordinates match. Lit scene hits remain
+unchanged at zero Skylight. These are single-lane synthetic tests, not exhaustive
+GPU or temporal-history validation. Evidence: tmp/thewitcher3remastered/night/rt/.
+
+The user rebuilt the Release addon at 12:00 and reported that the RT scene
+works perfectly with Darker Nights disabled and all night sliders at zero.
+DevKit confirmed D2C88922 and 02320E1A as addon shaders, with no disk shaders
+or Draw bypass, in the relaunched process. Both compiled embeds are present
+in that addon. Broader 0/50/100, torch, midday, Vanilla and Raster/PT regression
+checks remain useful; this confirms the tested RT scene, not every variant.
+
+Build target thewitcher3remastered with clang-x64-release while the game is
+closed; inspect embeds 0xD2C88922 and 0x02320E1A. A live replacement marked
+activated did not execute for the unregistered RT hash in the earlier addon.
+A later constant-buffer diagnostic coincided with the game exiting; its scratch
+binaries were overwritten with original/production shaders and are not part
+of this addon. The relaunched session has no live diagnostic replacements.
+
+
+## Gameplay camera light
+
+PsychoV exposes Gameplay Lighting > Gameplay Camera Light. Default 0 removes
+player-following camera fill; 50 is native, 100 doubles native intensity. It
+applies all day, independently of the night controls. Vanilla/Preset Off
+restores native intensity. This hooks the game directly and works with No
+Artificial Player Light uninstalled. The original executable initializes
+DisableAll/Big/SmallCameraLights to false (8FA27/8FA77/8FAC7); that mod only
+changes these existing engine switches through scripts. It supplies no code or
+lighting data required by RenoDX. If kept installed, its disable switches still
+take precedence. Weather/interior fades are preserved.
+
+The guarded native 35CA60 builder creates fresh renderer light entries. Its
+only native callers are 1C6A6A8 and 1C6A7A4 inside 1C6A2E0. That renderer
+builds type 1 from gameplayLight0; other types are scripted/story-scene lights.
+Match both gameplay inputs relative to the view matrix (environment +10):
+evaluated +F418/+F448 and curves +5150/+5220. Scale only output RGB +30/+34/+38,
+leaving radius, position, attenuation, flags and shadow data unchanged. The
+parent builder subsequently applies native fades/PT impacts/disable switches.
+Shared assets and native CVars are untouched. Executable identity, helper
+entry, gameplay sources, RGB stores and both call sites are checked before
+installing this optional Detours hook. A camera signature mismatch leaves
+the existing night controls available.
+
+Validation: addon C++ syntax check and native harness pass (64 camera cases,
+including both gameplay lights, all four camera types, failed builds, repeated
+frames, daytime and reset; 180 existing night cases). Live flags in the current
+scene were DisableAll/Big/SmallCameraLights = false; helper entry bytes match
+the disk executable. The user rebuilt the Release addon at 12:26:52 and restarted it; ReShade.log
+confirms the camera hook installed at 12:27:08. Visual slider response and
+renderer/cutscene regression checks remain to be confirmed in game.
+Build target: thewitcher3remastered, preset clang-x64-release. After restarting,
+check the camera-control install message in ReShade.log, compare 0/50/100 in
+gameplay and rotate the camera around Geralt. Check midday, interiors, a torch
+and a dialogue/cutscene; compare Raster/RT/PT and Vanilla/Preset Off.
+
+
+## Night lighting master switch
+
+Enable Night Lighting is an opt-in toggle (default Off). On activates the
+seven night sliders; Off disables their UI and restores native view/CB colors,
+PT skylight impact, cloud-material input and RT sky tagging. Saved slider
+values are retained. The camera-light slider stays independent. Preset Off
+also switches these overrides off. A brief section description explains the
+night clock/fades and 0/50/100 mapping once; individual hints name each effect.
+
+Validation: native harness verifies byte-identical fresh native outputs with
+the master Off at midnight and every slider saved at zero, restored skylight
+CVar baseline, reactivation with saved values, and camera independence. The
+existing 180 night cases and 64 camera cases pass. Manual check: switch On/Off
+at night, check clouds and RT reflections, then remove No Artificial Player
+Light and compare Gameplay Camera Light 0/50/100 after restarting.
+
+Release build clang-x64-release/thewitcher3remastered succeeded. The installed
+mods directory now has no No Artificial Player Light folder or script
+references; native camera intensity has no dependency on its scripts/menu.
+Visual verification after launching this rebuild remains pending.
+
+
+## Configurable darkening hours
+
+The night section now exposes Darkening Start (18), Full Darkness Start (20),
+Fade-out Start (4) and Darkening End (6). Times are 24-hour decimal hours
+(e.g. 18.5 = 18:30), can cross midnight, and apply to all seven night controls
+in Raster/RT/PT, including native skylight impacts, cloud inputs and RT sky
+tagging. Outside the selected interval, native lighting is preserved. The
+master toggle and independent camera control retain their behavior.
+
+A complete schedule is validated/published atomically from the UI thread;
+renderer workers use the same packed minute offsets. The four events must
+run forward from Start within one day; invalid edits produce a brief UI
+message and neutral lighting until fixed. Equal adjacent times allow instant
+fades or a zero-length full-strength plateau; equal Start/End is invalid.
+The existing smoothstep fade now follows the selected fade durations.
+
+Validation: 78 schedule/renderer cases cover both fades crossing midnight,
+a daytime interval, decimal hours, 0/24 equivalence, zero-length fades, invalid
+inputs and native identity outside the interval. Existing 180 night and 64
+camera cases still pass; invalid edits also restore native impacts while the
+master is On. After restarting, test a custom schedule through meditation
+and confirm the master Off still preserves the native lighting.
+
+The clang-x64-release/thewitcher3remastered addon build succeeded and the
+artifact contains all four schedule settings. In-game custom-hour validation
+remains pending after restart.
