@@ -1063,7 +1063,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
           custom_shader.on_inject = [](auto*) { return false; };
           continue;
         }
-        if (hash == 0xE6A77B56 || hash == 0x8DBF022F || hash == 0xEAAAC84D || hash == 0x1C12BED7 || hash == 0x1B63829B
+        if (hash == 0xE6A77B56 || hash == 0x8DBF022F || hash == 0xEAAAC84D || hash == 0x1C12BED7 || hash == 0x1B63829B || hash == 0x56511D80
             || hash == 0xD2C88922 || hash == 0x02320E1A) {
           // New irradiance and RT sky-ray sources skip legacy environment weights.
           // Uses only native b12 padding written by the guarded night hook.

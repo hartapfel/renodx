@@ -786,3 +786,20 @@ and confirm the master Off still preserves the native lighting.
 The clang-x64-release/thewitcher3remastered addon build succeeded and the
 artifact contains all four schedule settings. In-game custom-hour validation
 remains pending after restart.
+
+
+## HairWorks night skylight
+
+HairWorks pixel shader 56511D80 now applies Night Skylight to its new-irradiance
+ambient branch, which bypassed the native environment weights. It uses existing
+b12 c185.w padding; no shader bindings or root layouts are added. Local/direct
+light, reflection weights, hair coverage, normals and motion outputs are preserved.
+Native/neutral tags and the legacy ambient branch retain their original behavior.
+
+The original baseline is archived under native/lighting/. Strict compilation,
+native resource/signature/CB-size checks, 160 native-baseline comparisons and
+2560 synthetic ambient-delta/MRT/alpha/motion comparisons passed across both
+addons' tag formats. The user rebuilt the HDR addon and confirmed the fix in
+the affected rasterized HairWorks night scene. Further regression checks:
+compare hair/beard at Night Skylight 0/50/100, with a torch, with night lighting
+disabled, and at midday. Also compare HairWorks off.
