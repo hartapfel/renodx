@@ -477,9 +477,29 @@ vertices blend this color over the zeroed directional fog. The native builder
 sources it from environment +3660 or its alternate override at +7FF0. These
 RGB inputs now follow Night Directional Fog, preserving their amount/shape.
 Darker Nights zeros this same custom fog color in the captured environment.
-Grass scaling, PTMoonImpact/PTSunImpact overrides, night grading, and visible-moon
-scaling are removed. The global Scene Grading sliders bind directly to the shader
-settings again. Old saved keys for the removed controls are ignored.
+Grass scaling, PTMoonImpact/PTSunImpact overrides, and visible-moon scaling
+are removed. Old saved keys for the removed controls are ignored.
+Night Color Grading Luminance and Night Color Grading Chroma independently
+control the native analytic post-LUT grade across the scene. Luminance controls
+its brightness/contrast response; Chroma controls its tint/saturation response
+at the chosen luminance. Both use the night schedule and Enable Night Lighting.
+100 preserves the global Color Grading Strength; 0 removes that component at
+full night weight. Equal values reproduce the former coupled slider. Existing
+saved values migrate to both controls without replacing separately saved values.
+Night luminance defaults to 100 and chroma to 0; Preset Off restores both to 100.
+Daytime, invalid schedules, unavailable hooks, Vanilla and disabling night
+lighting preserve global grading. LUTs, vignette and lighting stay independent.
+Both strengths fit in the existing 120-byte shader payload, with 15-bit precision
+when they differ. Equal strengths retain the original float representation.
+No extra shader binding, root-signature extension or tonemapper change is added.
+The native clock is installed even when grading is the only night override.
+All five post-grade variants pass strict ps_6_6 compilation. Synthetic DXIL
+execution passes 1290 coupled-grade comparisons and 1032 independent luminance/
+chromaticity checks, including black, near-black, HDR, signed wide-gamut input
+and native black-level offsets. Evidence: tmp/thewitcher3remastered/foliage-night/.
+Verify Luminance/Chroma 100/100, 0/0, 100/0 and 0/100 on the affected scene,
+both fades, midday, night lighting Off and Vanilla after rebuilding. Captured
+grading exaggerates the tint; it does not prove all foliage tint comes from it.
 PTDirectLightImpact and PTGameLightsScale remain untouched because they also
 control actual local lights. Night controls do not install a fake-light CVar override. Gameplay camera fill has a separate all-day slider.
 
@@ -803,3 +823,11 @@ addons' tag formats. The user rebuilt the HDR addon and confirmed the fix in
 the affected rasterized HairWorks night scene. Further regression checks:
 compare hair/beard at Night Skylight 0/50/100, with a torch, with night lighting
 disabled, and at midday. Also compare HairWorks off.
+
+Night preset defaults: Soft Nights enables night lighting with hours 20:00,
+23:00, 03:30 and 06:00; skylight 5, direct 15, fog 15, haze 5, sky 5,
+clouds 15, water 0, night grading luminance 100 and chroma 0. Dark Nights
+uses skylight 1, direct 5 and clouds 10; its other
+values match Soft Nights. Both buttons
+leave gameplay camera lighting unchanged. Existing saved settings are preserved;
+use Soft Nights or Reset All to adopt the new defaults.

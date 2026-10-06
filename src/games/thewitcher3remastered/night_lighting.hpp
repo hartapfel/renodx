@@ -388,11 +388,12 @@ inline bool Install() {
   return installed;
 }
 
-inline void Update(bool enabled) {
+inline void Update(bool enabled, bool require_clock = false) {
   const uint64_t schedule = NightSchedule();
   night_schedule.store(schedule, std::memory_order_relaxed);
   const bool night_enabled = enabled && lighting_enabled == 1.f && schedule != 0;
-  if (!installed && (!night_enabled || (sky_strength == 50.f && direct_strength == 50.f
+  if (!installed && !(night_enabled && require_clock)
+      && (!night_enabled || (sky_strength == 50.f && direct_strength == 50.f
       && fog_strength == 50.f && haze_strength == 50.f
       && visible_sky_strength == 50.f && cloud_strength == 50.f && water_strength == 50.f))
       && (!enabled || camera_strength == 50.f)) return;

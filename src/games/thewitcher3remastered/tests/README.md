@@ -12,7 +12,7 @@ independence and skylight baseline restoration/rebasing. Zero skylight must reac
 exactly zero at full night even when weather retains a nonzero day weight.
 Two whole-buffer comparisons verify cloud isolation, untouched moon/star colors
 and alpha, and midday identity. Water checks preserve all other global-buffer
-bytes, including Fresnel/caustics/foam fields. Removed grass/moon/grading controls have no runtime
+bytes, including Fresnel/caustics/foam fields. Removed grass/moon controls have no runtime
 backing state. The harness does not establish the live hook ABI, engine time
 semantics, or broad scene coverage.
 

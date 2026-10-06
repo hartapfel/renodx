@@ -25,6 +25,13 @@
 #define WITCHER_EFFECT_LENS_SHIFT 14u
 #define WITCHER_EFFECT_BLOOM_SHIFT 21u
 
+// Unequal grade strengths share the existing DWORD. The tagged negative
+// float is finite; ordinary nonnegative payloads keep the legacy strength.
+#define WITCHER_GRADE_SPLIT_TAG 0x80000000u
+#define WITCHER_GRADE_SPLIT_MASK 0xc0000000u
+#define WITCHER_GRADE_STRENGTH_MASK 32767u
+#define WITCHER_GRADE_CHROMA_SHIFT 15u
+
 struct ShaderInjectData {
   float peak_white_nits;
   float diffuse_white_nits;
@@ -109,7 +116,14 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_GAMUT_UNCLAMP WITCHER_MODE_FLAG(WITCHER_FLAG_GAMUT_UNCLAMP)
 #define CUSTOM_LUT_STRENGTH shader_injection.custom_lut_strength
 #define CUSTOM_LUT_SCALING shader_injection.custom_lut_scaling
-#define CUSTOM_COLOR_GRADING shader_injection.custom_color_grading
+float WitcherColorGradeStrength(uint shift) {
+  uint packed = asuint(shader_injection.custom_color_grading);
+  return (packed & WITCHER_GRADE_SPLIT_MASK) == WITCHER_GRADE_SPLIT_TAG
+      ? float((packed >> shift) & WITCHER_GRADE_STRENGTH_MASK) / float(WITCHER_GRADE_STRENGTH_MASK)
+      : shader_injection.custom_color_grading;
+}
+#define CUSTOM_COLOR_GRADING_LUMINANCE WitcherColorGradeStrength(0u)
+#define CUSTOM_COLOR_GRADING_CHROMA WitcherColorGradeStrength(WITCHER_GRADE_CHROMA_SHIFT)
 #define CUSTOM_VIDEO_AUTO_HDR WITCHER_MODE_FLAG(WITCHER_FLAG_VIDEO_AUTO_HDR)
 
 #define WITCHER_EFFECT_STRENGTH(shift) (float((asuint(shader_injection.effect_strengths) >> (shift)) & 127u) * 0.02f)

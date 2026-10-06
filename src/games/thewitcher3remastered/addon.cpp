@@ -41,6 +41,9 @@ ShaderInjectData shader_injection;
 // Compute replacement selection is CPU-only; it needs no additional root data.
 float motion_blur_mode = 1.f;
 float video_bt709 = 1.f;
+float color_grading_strength = 1.f;
+float night_color_grading_luminance = 1.f;
+float night_color_grading_chroma = 1.f;
 bool fired_on_init_swapchain = false;
 
 // The post-processing shaders use pixel-visible b3 and b12 in space0.
@@ -227,7 +230,7 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeStrength",
-        .binding = &shader_injection.custom_color_grading,
+        .binding = &color_grading_strength,
         .default_value = 100.f,
         .label = "Color Grading Strength",
         .section = "Scene Grading",
@@ -686,6 +689,46 @@ renodx::utils::settings::Settings settings = {
         .section = "Night Lighting",
     },
     new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
+        .label = "Dark Nights",
+        .section = "Night Lighting",
+        .group = "night-lighting-presets",
+        .tooltip = "Applies the darker night lighting preset.",
+        .is_enabled = []() { return IsPsychoV() && witcher::night::Supported(); },
+        .on_change = []() {
+          renodx::utils::settings::UpdateSettings({
+              {"NightLightingEnabled", 1.f},
+              {"NightDarkeningStart", 20.f},
+              {"NightFullDarknessStart", 23.f},
+              {"NightFadeOutStart", 3.5f},
+              {"NightDarkeningEnd", 6.f},
+              {"NightSkyStrength", 1.f},
+              {"NightDirectStrength", 5.f},
+              {"NightFogStrength", 15.f},
+              {"NightHazeStrength", 5.f},
+              {"NightVisibleSkyStrength", 5.f},
+              {"NightCloudStrength", 10.f},
+              {"NightWaterStrength", 0.f},
+              {"NightColorGradeLuminance", 100.f},
+              {"NightColorGradeChroma", 0.f},
+          });
+        },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
+        .label = "Soft Nights",
+        .section = "Night Lighting",
+        .group = "night-lighting-presets",
+        .tooltip = "Restores the default softer night lighting settings.",
+        .is_enabled = []() { return IsPsychoV() && witcher::night::Supported(); },
+        .on_change = []() {
+          for (const auto* setting : settings) {
+            if (setting->section != "Night Lighting" || setting->key.empty()) continue;
+            renodx::utils::settings::UpdateSetting(setting->key, setting->default_value);
+          }
+        },
+    },
+    new renodx::utils::settings::Setting{
         .key = "NightDarkeningStart",
         .binding = &witcher::night::darkening_start,
         .default_value = 20.f,
@@ -738,7 +781,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "NightSkyStrength",
         .binding = &witcher::night::sky_strength,
-        .default_value = 1.f,
+        .default_value = 5.f,
         .label = "Night Skylight",
         .section = "Night Lighting",
         .tooltip = "Skylight and outdoor environment-probe illumination and reflections.",
@@ -749,7 +792,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "NightDirectStrength",
         .binding = &witcher::night::direct_strength,
-        .default_value = 5.f,
+        .default_value = 15.f,
         .label = "Night Direct Light",
         .section = "Night Lighting",
         .tooltip = "Direct directional light from the environment, including grass illumination.",
@@ -793,7 +836,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "NightCloudStrength",
         .binding = &witcher::night::cloud_strength,
-        .default_value = 10.f,
+        .default_value = 15.f,
         .label = "Night Clouds",
         .section = "Night Lighting",
         .tooltip = "Cloud brightness and cloud/smoke volume glow. Preserves coverage.",
@@ -811,6 +854,30 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .format = "%.0f",
         .is_enabled = IsNightLightingEnabled,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightColorGradeLuminance",
+        .binding = &night_color_grading_luminance,
+        .default_value = 100.f,
+        .label = "Night Color Grading Luminance",
+        .section = "Night Lighting",
+        .tooltip = "Night grade's brightness and contrast curve. 0 removes it; 100 keeps the normal strength.",
+        .max = 100.f,
+        .format = "%.0f",
+        .is_enabled = IsNightLightingEnabled,
+        .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightColorGradeChroma",
+        .binding = &night_color_grading_chroma,
+        .default_value = 0.f,
+        .label = "Night Color Grading Chroma",
+        .section = "Night Lighting",
+        .tooltip = "Night grade's colour tint and saturation. 0 removes it; 100 keeps the normal strength.",
+        .max = 100.f,
+        .format = "%.0f",
+        .is_enabled = IsNightLightingEnabled,
+        .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
@@ -942,6 +1009,8 @@ void OnPresetOff() {
       {"FxDepthBlur", 50.f},
       {"NightSkyStrength", 50.f},
       {"NightLightingEnabled", 0.f},
+      {"NightColorGradeLuminance", 100.f},
+      {"NightColorGradeChroma", 100.f},
       {"NightDarkeningStart", 18.f},
       {"NightFullDarknessStart", 20.f},
       {"NightFadeOutStart", 4.f},
@@ -963,7 +1032,22 @@ void OnPresetOff() {
 
 void OnPresent(reshade::api::command_queue*, reshade::api::swapchain*, const reshade::api::rect*,
                const reshade::api::rect*, uint32_t, const reshade::api::rect*) {
-  witcher::night::Update(IsPsychoV());
+  witcher::night::Update(IsPsychoV(), night_color_grading_luminance != 1.f || night_color_grading_chroma != 1.f);
+  const float grade_weight = IsNightLightingEnabled() && witcher::night::installed
+                                && witcher::night::NightSchedule() != 0
+      ? std::clamp(witcher::night::night_weight.load(std::memory_order_relaxed), 0.f, 1.f)
+      : 0.f;
+  // Use the existing grade payload; no extra shader binding or root data.
+  const float grade_luminance = color_grading_strength
+      * (1.f + (night_color_grading_luminance - 1.f) * grade_weight);
+  const float grade_chroma = color_grading_strength
+      * (1.f + (night_color_grading_chroma - 1.f) * grade_weight);
+  shader_injection.custom_color_grading = grade_luminance == grade_chroma
+      ? grade_luminance
+      : std::bit_cast<float>(WITCHER_GRADE_SPLIT_TAG
+          | static_cast<uint32_t>(std::round(std::clamp(grade_luminance, 0.f, 1.f) * WITCHER_GRADE_STRENGTH_MASK))
+          | (static_cast<uint32_t>(std::round(std::clamp(grade_chroma, 0.f, 1.f) * WITCHER_GRADE_STRENGTH_MASK))
+             << WITCHER_GRADE_CHROMA_SHIFT));
   // Some cloud materials reuse the moon's color group or carry a separate
   // material tint. Scale those inputs only in their cloud shaders, preserving
   // the moon and the CPU-scaled main cloud group. Use the same night clock.
@@ -1026,6 +1110,15 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
         if (!reshade::get_config_value(nullptr, section.c_str(), "FxMotionIntensity", value)
             && reshade::get_config_value(nullptr, section.c_str(), "FxMotionShutterAngle", value)) {
           reshade::set_config_value(nullptr, section.c_str(), "FxMotionIntensity", std::clamp(value / 3.6f, 0.f, 100.f));
+        }
+        // Preserve each profile's former coupled night-grade setting.
+        if (reshade::get_config_value(nullptr, section.c_str(), "NightColorGradeStrength", value)) {
+          for (const char* key : {"NightColorGradeLuminance", "NightColorGradeChroma"}) {
+            float saved = 0.f;
+            if (!reshade::get_config_value(nullptr, section.c_str(), key, saved)) {
+              reshade::set_config_value(nullptr, section.c_str(), key, std::clamp(value, 0.f, 100.f));
+            }
+          }
         }
       }
 
@@ -1121,6 +1214,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
   witcher::motion::Use(fdw_reason);
   witcher::video::Use(fdw_reason);
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
+  if (fdw_reason == DLL_PROCESS_ATTACH) shader_injection.custom_color_grading = color_grading_strength;
   renodx::utils::random::Use(fdw_reason, {&shader_injection.random_seed});
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
   return TRUE;
