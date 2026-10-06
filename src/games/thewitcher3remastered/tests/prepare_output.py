@@ -1,14 +1,14 @@
 """Adapt both real output shaders to CS5.0 for the D3D11 WARP harness.
 
 Only register spaces, entry-point plumbing and the select spelling change.
-All production decoding, composition and PQ arithmetic remains intact.
+All production composition and PQ arithmetic remains intact.
 Run from the repository root with a scratch output directory argument.
 """
 from pathlib import Path
 import sys
 
 root = Path.cwd()
-mod = root / "src/games/thewitcher3remastered"
+mod = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else root / "src/games/thewitcher3remastered"
 dest = Path(sys.argv[1]).resolve()
 for source in mod.rglob("*"):
     if not source.is_file() or source.suffix not in (".h", ".hlsl", ".hlsli"):

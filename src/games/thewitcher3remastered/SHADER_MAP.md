@@ -279,8 +279,8 @@ The CPU toggle chooses the original shader when Off, requiring no additional
 root binding. Only this matching decoder was found in the available dump.
 
 
-Video separation: video.hpp redirects only 0x7EF4001F in PsychoV mode to an
-owned RGBA8 layer. output.hlsli/video.hlsli feed this layer to both 0x8F5737B5
-and 0x496222DA at t0/space51. AutoHDR and Game Brightness apply before UI
-composition and final PQ encode. The original 8-bit UI target retains subtitles
-and HUD; their brightness does not affect video. No native resources are upgraded.
+Conversion-only restoration: 0x7EF4001F uses its original textures, samplers,
+render target and blend state. No movie redirection, extra SRV, AutoHDR or
+descriptor tracking is present. Native normal/FG movie and UI composition
+remain in place. The correction is independent of scene tone mapping;
+Preset Off restores the native decoder.

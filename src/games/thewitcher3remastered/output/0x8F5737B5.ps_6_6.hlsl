@@ -94,8 +94,6 @@ OutputSignature main(
   bool _30 = (CustomPixelConsts_112.x > 0.0f);
   uint _34 = uint(CustomPixelConsts_112.w);
   float4 _78 = t1.Load(int3(_18, _19, 0));
-  float4 video_frame = WitcherUsePsychoV30() ? WitcherReadVideo(float2(_18, _19)) : 0.f;
-  float combined_ui_alpha = _78.w + video_frame.a * (1.f - _78.w);
   float4 _85 = t0.SampleLevel(s1, float2(TEXCOORD.x, TEXCOORD.y), 0.0f);
   // RenoDX: preserve the native display adjustment and secondary SDR output
   // on a proxy. Reconstruct scene HDR before the primary HDR/UI composition.
@@ -443,22 +441,17 @@ OutputSignature main(
   float _302 = exp2(_299);
   float _303 = exp2(_300);
   float _304 = exp2(_301);
-  // Keep the secondary SDR output complete, with video below the UI.
-  float3 video_sdr_scene = float3(_302, _303, _304);
-  if (WitcherUsePsychoV30()) {
-    video_sdr_scene = lerp(video_sdr_scene, pow(video_frame.rgb, CustomPixelConsts_032.x), video_frame.a);
-  }
-  float _305 = _293 - video_sdr_scene.x;
-  float _306 = _294 - video_sdr_scene.y;
-  float _307 = _295 - video_sdr_scene.z;
-  float _308 = combined_ui_alpha - _85.w;
+  float _305 = _293 - _302;
+  float _306 = _294 - _303;
+  float _307 = _295 - _304;
+  float _308 = _78.w - _85.w;
   float _309 = _305 * _78.w;
   float _310 = _306 * _78.w;
   float _311 = _307 * _78.w;
-  float _312 = _308 * combined_ui_alpha;
-  float _313 = _309 + video_sdr_scene.x;
-  float _314 = _310 + video_sdr_scene.y;
-  float _315 = _311 + video_sdr_scene.z;
+  float _312 = _308 * _78.w;
+  float _313 = _309 + _302;
+  float _314 = _310 + _303;
+  float _315 = _311 + _304;
   float _316 = _312 + _85.w;
   float _317 = log2(_313);
   float _318 = log2(_314);
@@ -2203,22 +2196,16 @@ OutputSignature main(
     _1890 = _1145;
     _1891 = _1146;
   }
-  if (WitcherUsePsychoV30()) {
-    float3 video_composite = WitcherCompositeVideo(float3(_1889, _1890, _1891), float2(_18, _19), CustomPixelConsts_032.x);
-    _1889 = video_composite.x;
-    _1890 = video_composite.y;
-    _1891 = video_composite.z;
-  }
   bool _1892 = (_1101 == 0);
   if (!_1892) {
     float _1894 = _1174 - _1889;
     float _1895 = _1175 - _1890;
     float _1896 = _1176 - _1891;
-    float _1897 = combined_ui_alpha + -1.0f;
+    float _1897 = _78.w + -1.0f;
     float _1898 = _1894 * _78.w;
     float _1899 = _1895 * _78.w;
     float _1900 = _1896 * _78.w;
-    float _1901 = _1897 * combined_ui_alpha;
+    float _1901 = _1897 * _78.w;
     float _1902 = _1898 + _1889;
     float _1903 = _1899 + _1890;
     float _1904 = _1900 + _1891;

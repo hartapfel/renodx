@@ -101,9 +101,33 @@ float3 WitcherApplyPsychoVOutputExtensions(
   mapped_bt709 = renodx::math::Select(isinf(mapped_bt709), 0.f.xxx, mapped_bt709);
 
   if (RENODX_TONE_MAP_SATURATION == 1.f
+      && WITCHER_NIGHT_SATURATION_DELTA == 0.f
       && RENODX_TONE_MAP_HIGHLIGHT_SATURATION == 1.f
       && RENODX_TONE_MAP_BLOWOUT == 0.f) {
     return mapped_bt709;
+  }
+
+  float saturation = RENODX_TONE_MAP_SATURATION;
+  if (WITCHER_NIGHT_SATURATION_DELTA != 0.f) {
+    // Select displayed hues before saturation, using signed linear BT.709.
+    // Saved night grass/fern ROIs span roughly 135..214 degrees in OKLCh.
+    // Yellow and blue shoulders are weaker to retain warm lights and blues.
+    const float3 lab = renodx::color::oklab::from::BT709(mapped_bt709);
+    const float relative_chroma = length(lab.yz) / max(lab.x, 1e-6f);
+    if (relative_chroma > 0.02f) {
+      float hue = atan2(lab.z, lab.y) * (180.f / 3.141592653589793f);
+      if (hue < 0.f) hue += 360.f;
+      const float warm_weight = 0.35f * smoothstep(85.f, 110.f, hue)
+          + 0.65f * smoothstep(110.f, 135.f, hue);
+      const float cool_weight = 1.f - 0.65f * smoothstep(220.f, 250.f, hue)
+          - 0.35f * smoothstep(250.f, 275.f, hue);
+      const float hue_weight = saturate(warm_weight * cool_weight)
+          * smoothstep(0.02f, 0.06f, relative_chroma);
+      saturation *= 1.f + WITCHER_NIGHT_SATURATION_DELTA * hue_weight;
+    }
+    if (saturation == 1.f
+        && RENODX_TONE_MAP_HIGHLIGHT_SATURATION == 1.f
+        && RENODX_TONE_MAP_BLOWOUT == 0.f) return mapped_bt709;
   }
 
   // Grade in the actual display gamut: valid BT.2020 can have signed BT.709
@@ -112,7 +136,6 @@ float3 WitcherApplyPsychoVOutputExtensions(
   const bool use_bt2020 = RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE != 0.f;
   float3 target = use_bt2020 ? renodx::color::bt2020::from::BT709(mapped_bt709) : mapped_bt709;
   const float luminance = use_bt2020 ? renodx::color::y::from::BT2020(target) : renodx::color::y::from::BT709(target);
-  float saturation = RENODX_TONE_MAP_SATURATION;
 
   if (RENODX_TONE_MAP_BLOWOUT != 0.f) {
     const float percent_hdr_container = saturate(
@@ -130,7 +153,7 @@ float3 WitcherApplyPsychoVOutputExtensions(
   }
 
   const float3 chroma = target - luminance;
-  if (saturation > 1.f) {
+  if (saturation > 1.f && RENODX_PSYCHOV_GAMUT_COMPRESSION != 0.f) {
     const float peak = RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f);
     const float3 limit = renodx::math::DivideSafe(
         renodx::math::Select(chroma > 0.f, (peak - luminance).xxx, (-luminance).xxx),
@@ -140,7 +163,8 @@ float3 WitcherApplyPsychoVOutputExtensions(
     const float boost = saturation - 1.f;
     // Unit slope at neutral; asymptotically approaches the available chroma
     // headroom instead of pinning a channel to zero or the display peak.
-    saturation = 1.f + headroom * (boost / (headroom + boost));
+    saturation = lerp(saturation, 1.f + headroom * (boost / (headroom + boost)),
+                      RENODX_PSYCHOV_GAMUT_COMPRESSION);
   }
   target = luminance + chroma * saturation;
   return use_bt2020 ? renodx::color::bt709::from::BT2020(target) : target;

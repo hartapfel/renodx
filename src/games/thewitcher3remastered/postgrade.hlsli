@@ -7,18 +7,17 @@ float3 WitcherApplyPostGrade(float3 scene, float vignette_mask) {
   WitcherGradeState state = WitcherPrepareGrade(scene);
   float exponent = max(CustomPixelConsts_128.x, 1e-6f);
   float3 color = pow(state.neutral_sdr, exponent);
-  color = pow(max(color * CustomPixelConsts_224.x + CustomPixelConsts_224.y, 0.f),
-              CustomPixelConsts_224.z);
+  color = WitcherSignedPow(color * CustomPixelConsts_224.x + CustomPixelConsts_224.y,
+                          CustomPixelConsts_224.z);
   float luma = dot(color, float3(0.299f, 0.587f, 0.114f));
   float shadow = saturate((luma - CustomPixelConsts_160.x) * CustomPixelConsts_160.y);
   float highlight = saturate((luma - CustomPixelConsts_160.z) * CustomPixelConsts_160.w);
   float4 grade = lerp(CustomPixelConsts_192, CustomPixelConsts_176, shadow);
   grade = lerp(grade, CustomPixelConsts_208, highlight);
-  color = pow(max(color, 0.f), 2.2f);
+  color = WitcherSignedPow(color, 2.2f);
   color = lerp(renodx::color::y::from::BT709(color).xxx, color, grade.w) * grade.rgb;
-  // The old mod's CustomGammaEncode preserves signed channels in wide mode.
-  // These can be valid BT.2020 colors represented using BT.709 primaries.
-  if (CUSTOM_GAMUT_UNCLAMP == 0.f) color = max(color, 0.f);
+  // Day/night grades may produce valid wide-gamut colours with negative
+  // BT.709 channels. Only the final tonemapper chooses the display gamut.
   color = WitcherSignedPow(color, 1.f / 2.2f) * CustomPixelConsts_144.rgb;
 
   // Decode signed values for the native luminance-dependent vignette mask;

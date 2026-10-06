@@ -2,7 +2,6 @@
 #define SRC_GAMES_THEWITCHER3REMASTERED_LUTSAMPLING_HLSLI_
 
 #include "./common.hlsli"
-#include "../../shaders/lut.hlsl"
 
 // Native 64-slice LUTs use an 8x8 tiled atlas, with nonstandard cell offsets.
 // Preserve the original mod's addressing rather than treating this as a strip.
@@ -26,7 +25,7 @@ float3 WitcherSampleLUTGamma(float3 color, Texture2D<float4> lut, SamplerState l
 float3 WitcherSampleLUT(float3 neutral_sdr, Texture2D<float4> lut, SamplerState lut_sampler) {
   float3 gamma_color = renodx::color::gamma::Encode(neutral_sdr);
   float3 sampled = WitcherSampleLUTGamma(gamma_color, lut, lut_sampler);
-  float3 linear_color = renodx::color::gamma::Decode(abs(sampled));
+  float3 linear_color = renodx::color::gamma::DecodeSafe(sampled);
   if (CUSTOM_LUT_SCALING == 0.f) return linear_color;
 
   float3 black = WitcherSampleLUTGamma(0.f.xxx, lut, lut_sampler);
@@ -36,10 +35,18 @@ float3 WitcherSampleLUT(float3 neutral_sdr, Texture2D<float4> lut, SamplerState 
   // Constant black/white LUTs have no recoverable range; avoid Unclamp's
   // zero-length shadow/highlight divisions while retaining their native grade.
   if (mid_average <= 1e-6f || mid_average >= 1.f - 1e-6f) return linear_color;
-  return renodx::lut::RecolorUnclamped(
-      linear_color,
-      renodx::color::gamma::Decode(renodx::lut::Unclamp(sampled, black, mid, white, gamma_color)),
-      CUSTOM_LUT_SCALING);
+  // Extend the LUT's levels without a channel floor or a display-gamut
+  // projection. Shared Unclamp/RecolorUnclamped impose those limits; here
+  // PsychoV's selected gamut/strength must remain the only gamut mapping.
+  float3 floor_remove = black * max(0.f, mid_average - renodx::math::Max(gamma_color)) / mid_average;
+  float3 ceiling_add = (1.f - min(1.f, white))
+      * (max(0.f, renodx::math::Min(gamma_color) - mid_average) / (1.f - mid_average));
+  float3 original_perceptual = renodx::color::oklab::from::BT709(linear_color);
+  float3 extended_perceptual = renodx::color::oklab::from::BT709(
+      renodx::color::gamma::DecodeSafe(sampled - floor_remove + ceiling_add));
+  // Retain the LUT's hue/chroma while restoring its perceptual lightness.
+  original_perceptual.x = lerp(original_perceptual.x, max(extended_perceptual.x, 0.f), CUSTOM_LUT_SCALING);
+  return renodx::color::bt709::from::OkLab(original_perceptual);
 }
 
 #endif

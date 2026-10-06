@@ -1,5 +1,50 @@
 # Mod validation
 
+## Addon callback cleanup
+
+`addon_runtime.cpp` loads the real Release DLL in a minimal ReShade host. It
+checks that saved CPU/motion/AutoHDR settings are ignored, descriptor heap and
+motion/movie binding events are absent, the single shared HDR shader reset
+callback remains, HDR events register, and detach removes all callbacks.
+No game or GPU callbacks are invoked.
+
+From an x64 Visual Studio developer shell at the repository root:
+
+```powershell
+clang-cl /std:c++20 /EHsc /O2 /MT /DNDEBUG /DNOMINMAX /DWIN32=1 /Iexternal/reshade src/games/thewitcher3remastered/tests/addon_runtime.cpp /Fe:tmp/addon-runtime.exe /Fo:tmp/addon-runtime.obj
+./tmp/addon-runtime.exe ./build/Release/renodx-thewitcher3remastered.addon64
+```
+
+See `../CPU_PERFORMANCE.md` for the profiling findings and runtime checks.
+
+## Native scene/UI output composition
+
+`prepare_output.py` adapts the actual normal/FG pixel entry points to CS5.0 for
+D3D11 WARP, changing register spaces and entry-point plumbing only. An optional
+second argument selects a separate source checkout for before/after checks.
+`output_composition.cpp` accepts four compiled shaders: before normal, before
+FG, after normal and after FG. It binds a transparent texture at the former
+movie slot, matching gameplay and native movie/UI composition.
+
+The cleanup regression checks 324 configurations across Vanilla/PsychoV,
+peak/game/UI brightness, gamut target, grayscale/colour scene ramps and UI
+opacity. All 663,552 output pixels match exactly; primary/secondary parity and
+the native FG coverage mask also pass. These checks do not verify game resource
+lifetimes, native decoder playback or hardware frame time.
+
+```powershell
+python src/games/thewitcher3remastered/tests/prepare_output.py tmp/output-after
+python src/games/thewitcher3remastered/tests/prepare_output.py tmp/output-before <before-source-folder>
+foreach ($stage in 'before', 'after') {
+  foreach ($id in '8F5737B5', '496222DA') {
+    bin/fxc.exe /nologo /T cs_5_0 /E main /Ges /WX /O3 /Fo "tmp/$stage-$id.cso" "tmp/output-$stage/output/0x$id.ps_6_6.hlsl"
+    if ($LASTEXITCODE) { throw 'Output compilation failed' }
+  }
+}
+clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered/tests/output_composition.cpp /Fe:tmp/output-composition.exe /Fo:tmp/output-composition.obj /link d3d11.lib
+./tmp/output-composition.exe tmp/before-8F5737B5.cso tmp/before-496222DA.cso tmp/after-8F5737B5.cso tmp/after-496222DA.cso
+```
+
 ## Native night lighting
 
 `night_lighting.cpp` exercises the native view and constant callbacks against
@@ -23,132 +68,131 @@ clang-cl /std:c++20 /EHsc /O2 /MT /DNOMINMAX /Iexternal/Detours/include src/game
 ./tmp/witcher-night-test.exe
 ```
 
-## Motion blur
-
-The four `0xF3B1000*` shaders are private compute passes, not game shader hashes.
-`motion_blur.hpp` captures depth at `0x9F1C32F1` and runs TileMax, NeighborMax and
-full-resolution reconstruction at `0x866E78BC` or intensity-10 `0x2B7AF9F0`.
-Missing inputs fall back to the native dispatch. Gameplay loading, the 0/180-degree
-shutter response, stationary-character protection and unchanged blur at native
-intensity 1 versus 10 were confirmed after the resource-tracker initialization
-fix. Earlier visual FPS comparisons were inconclusive after further testing.
-A measured 30 versus CPU-limited 40-45 FPS comparison is consistent with
-per-frame motion scaling; a strong-pan capture separately found 84.2% of sampled
-pixels hitting the fixed 32-pixel radius ceiling. See the mod README for the
-measurements and their limitations. GPU usage was reported roughly unchanged at
-a 30 FPS cap; isolated GPU timing and broader scene coverage remain untested.
-
-`motion_blur.cpp` runs the same HLSL on D3D11 WARP (compiled as `cs_5_0`) to check
-stationary identity, signed HDR preservation, full-resolution one-pixel detail,
-30/60/120/240 FPS shutter response, static-foreground occlusion, and moving-edge
-coverage against an analytical temporal reference. The camera-pan regression
-gives separate surfaces identical screen motion, then varies their depths:
-their output must match the equal-depth reconstruction. Before the correction,
-this produced up to 0.351 error and an artificially sharp foreground edge;
-motion-aware occlusion weighting eliminates that difference without changing
-the stationary-foreground test. All 26 cases / 7,697,690 pixels pass. The user
-confirmed the earlier camera-edge correction and the improved unclamped
-revision in-game after rebuilding. Isolated GPU timing remains unmeasured. Shipping compilation uses
-`cs_6_6` with strict diagnostics. These tests do not establish game velocity
-units, resource lifetime safety, native-intensity independence, or GPU cost.
-
-From an x64 Visual Studio developer shell at the repository root:
-
-```powershell
-foreach ($id in 'F3B10000','F3B10001','F3B10002') {
-  ./bin/fxc.exe /nologo /T cs_5_0 /E main /Ges /WX /O3 /Fo "tmp/$id.cso" "src/games/thewitcher3remastered/effects/0x$id.cs_6_6.hlsl"
-}
-clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered/tests/motion_blur.cpp /Fe:tmp/witcher-motion-test.exe /Fo:tmp/witcher-motion-test.obj /link d3d11.lib
-./tmp/witcher-motion-test.exe tmp/F3B10000.cso tmp/F3B10001.cso tmp/F3B10002.cso
-```
-
-`motion_runtime.cpp` checks the real module attach/detach path with a minimal
-ReShade event host. It verifies that resource tracking is initialized before
-the lookup used by the compute replacement, then checks detach and reattach.
-This reproduces the missing-dependency condition behind the loading/enabling
-crashes without launching the game. It does not simulate D3D12 execution.
-
-```powershell
-clang-cl /std:c++20 /EHsc /O2 /MT /DNOMINMAX /DWIN32=1 /Iexternal/reshade /Iexternal/gtl/include /Iexternal/Detours/include /Iexternal/json/include /Iexternal/frozen/include src/games/thewitcher3remastered/tests/motion_runtime.cpp /Fe:tmp/witcher-motion-runtime-test.exe /Fo:tmp/witcher-motion-runtime-test.obj
-./tmp/witcher-motion-runtime-test.exe
-```
-
-Algorithm references:
-
-- [McGuire et al., A Reconstruction Filter for Plausible Motion Blur (2012)](https://casual-effects.com/research/McGuire2012Blur/index.html): full-resolution color/depth/velocity, TileMax/NeighborMax and depth-aware reconstruction.
-- [Guertin et al., A Fast and Stable Feature-Aware Motion Blur Filter (2013 report)](https://research.nvidia.com/sites/default/files/pubs/2013-11_A-Fast-and/Guertin2013MotionBlur-small.pdf): local and dominant directions, relative depth weighting, feature alignment and tile-boundary treatment.
-
-For true per-frame UV displacement, a 180-degree shutter has half-width
-`0.25 * velocityUV * outputSize`. Frame-rate dependence is already in displacement;
-multiplying by frame duration again would incorrectly apply it twice. The game
-input must be measured before this convention is used at runtime.
-
-
-The long-trail regression uses 240/120/40-pixel shutter radii for fixed movement
-at 30/60/180 FPS: all exceeded the former 32-pixel ceiling. It compares impulse
-spread with an analytical box shutter and requires continuous one-pixel HDR
-trails. Additional cases check a moving silhouette reaching beyond a 3x3 tile
-neighborhood, stationary foreground protection during long background motion,
-axis-parallel/diagonal viewport clipping, HDR constants, and zero shutter.
-Mutation checks in tmp/thewitcher3remastered/motion-blur/ceiling-regression/
-confirm separate failures when restoring either the clamp or the limited
-neighbor search. These synthetic tests establish filter behavior, not live
-engine timing or hardware performance.
-
-
-## Video color decoding
-
-`video.cpp` accepts three ps_5_0 binaries: the mechanically transcoded original
-SM5.1 video decoder, its compiled decompiler baseline, and the production
-BT.709 replacement. The shader's static t0-t2/s0-s2 binding ranges and executable
-operations survive this profile conversion; the native archive README records
-the decompilation workaround. The harness uses a matching vertex signature and
-D3D11 WARP to compare 589,824 pixels across three opacity values, full code-range
-YCbCr combinations, and independently encoded black/white/grey/color bars.
-It checks the baseline against native bytecode and BT.709 against the coding
-equations in ITU-R BT.709-6, sections 3.2-3.4. Maximum errors are 0, 3.36e-7 and
-1.20e-7 respectively; alpha matches exactly. Shipping compilation is ps_5_1.
-
-Build the harness from an x64 Visual Studio developer shell:
-
-```powershell
-bin/fxc.exe /nologo /T ps_5_0 /E main /Ges /WX /O3 /Fo tmp/video-baseline.cso src/games/thewitcher3remastered/native/video/0x7EF4001F.ps_5_1.hlsl.original
-bin/fxc.exe /nologo /T ps_5_0 /E main /Ges /WX /O3 /Fo tmp/video-bt709.cso src/games/thewitcher3remastered/video/0x7EF4001F.ps_5_1.hlsl
-clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered/tests/video.cpp /Fe:tmp/video-test.exe /Fo:tmp/video-test.obj /link d3d11.lib d3dcompiler.lib
-./tmp/video-test.exe tmp/thewitcher3remastered/video/video-sm50.shdr tmp/video-baseline.cso tmp/video-bt709.cso
-```
-
-
-## Video brightness and AutoHDR
-
-`prepare_video_hdr.py` copies the production shaders into a scratch directory,
-remaps b13/space50 to b13 and t0/space51 to t3 for D3D11, and wraps the actual
-normal/FG pixel entry points as compute shaders. `video_hdr.cpp` exercises the
-whole output pipeline, including PQ encoding and both secondary outputs.
-No production arithmetic is replaced by a test model.
-
-The 972 configurations cover three peak/game/UI brightness values, both video
-modes and gamut targets, grayscale/color ramps, and transparent/partial/opaque
-video and UI. Checks include independent video/UI brightness, black/white
-endpoints, linear fades, gray ordering (within 0.02-nit native PQ roundoff),
-normal/FG primary and secondary parity, scene-only isolation and the combined
-FG video/UI coverage mask. 995,328 pixel outputs pass; maximum endpoint error
-is 0.236 nit, with exact output parity. These are software-GPU checks, not a
-substitute for verifying playback, callbacks, resource lifetime and gameplay.
-
-From an x64 Visual Studio developer shell:
-
-```powershell
-python src/games/thewitcher3remastered/tests/prepare_video_hdr.py tmp/witcher-video-hdr
-bin/fxc.exe /nologo /T cs_5_0 /E main /Ges /WX /O3 /Fo tmp/witcher-video-hdr/normal.cso tmp/witcher-video-hdr/output/0x8F5737B5.ps_6_6.hlsl
-bin/fxc.exe /nologo /T cs_5_0 /E main /Ges /WX /O3 /Fo tmp/witcher-video-hdr/fg.cso tmp/witcher-video-hdr/output/0x496222DA.ps_6_6.hlsl
-clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered/tests/video_hdr.cpp /Fe:tmp/witcher-video-hdr/check.exe /Fo:tmp/witcher-video-hdr/check.obj /link d3d11.lib
-./tmp/witcher-video-hdr/check.exe tmp/witcher-video-hdr/normal.cso tmp/witcher-video-hdr/fg.cso
-```
-
 Night Sky Brightness also covers b12 c249/c278, the two native colors added
 by 3B15DAAB after its main sky/fog calculation. The night-lighting harness
 includes them in the 180 clock/intensity/weather cases and checks whole-buffer
 sky-only isolation at midnight and midday, preserving alpha, moon colors, fog
 and cloud base colors. The shared c278 distant-cloud tint intentionally follows
 the sky control. Runtime horizon verification remains necessary after rebuilding.
+
+## Selective night vegetation saturation
+
+The saved `NightSaturation` key now controls green/cyan scene hues, with
+gentler yellow/blue shoulders. The shader multiplies global saturation by
+`1 + night_saturation_delta * hue_weight`; the CPU delta is
+`(night_saturation - 1) * night_weight`. The master/schedule/hook guards give
+zero weight outside the selected hours, with the master Off, invalid times
+or Vanilla. Defaults, both presets and Preset Off remain 100. UI composition
+follows this scene-only operation; global saturation remains independent.
+The neutral delta is zero and the C++/HLSL payload is 124 bytes (31 DWORDs).
+Root-layout eligibility uses its actual size; no new binding tracker is added.
+
+Hue selection uses OKLab from signed display-linear BT.709/D65. Its OKLCh
+weights are 0 at 85 degrees, 0.35 at 110, 1 from 135 to 220, 0.35 at 250,
+and 0 from 275 onward, with smoothstep transitions. Relative chroma C/L
+fades the selection between 0.02 and 0.06 to avoid unstable neutral hues.
+Saturation preserves linear display luminance and uses the existing soft
+gamut headroom limit for increases, weighted by PsychoV’s selected gamut compression strength. This is colour selection, not a material
+mask: matching water, clothing, sky and other objects can also respond.
+
+Research: [CD Projekt's environment artist](https://80.lv/articles/world-building-of-witcher-3)
+describes separate foliage libraries for Novigrad, Skellige and Toussaint;
+there is no documented universal vegetation hue interval. Our saved HDR10
+night capture was PQ-decoded in BT.2020 then converted to signed linear
+BT.709 before measuring manually selected grass/fern regions. The 5th/50th/
+95th OKLCh hue percentiles were 135/151/199 (left grass), 138/148/177 (right
+grass) and 146/168/214 (ferns). These are scene-specific measurements, not
+coverage proof for every biome/weather. Yellow/blue shoulders are deliberate
+extensions for regional foliage and cooler night lighting.
+
+Scratch evidence: `tmp/thewitcher3remastered/night-selective-saturation/`.
+It includes ROI coordinates, EXR-domain analysis, CSV hue distributions,
+graphs and actual production HLSL WARP harnesses. After restarting, compare
+100/50/0 and 200 in the affected foliage scene; check warm lights, skin,
+coloured UI, night fades, daylight, master Off and both display gamut targets.
+Set Night Color Grading Chroma to 0 to verify independence. Live appearance
+and other regions/weather require in-game verification.
+
+Validation: all 32 CRC-addressed production shaders compile strictly and the
+clang-x64-release/thewitcher3remastered build passes. Neutral output matches
+the previous version exactly across 324 configurations / 663,552 pixels.
+Active-slider normal/FG testing passes 1,296 configurations / 1,327,104 pixels
+for luminance, UI, Vanilla, FG parity and coverage. Direct production-extension
+hue sweeps pass 160 configurations / 163,840 pixels across BT.709/BT.2020,
+HDR levels, global saturation and night strength. They verify finite in-gamut
+output, luminance preservation, full green/cyan desaturation, weaker yellow/
+blue coverage and warm/pink/neutral isolation. Maximum selection-weight slope
+is 0.039 per measured OKLCh degree. The real Release DLL callback cleanup
+test passes; these tests do not measure live frame time.
+
+## Unclamped LUTs, day/night grading and PsychoV
+
+`prepare_gamut.py` adapts all three actual LUT consumers and five post-grade
+variants to CS5.0. Its second argument is a snapshot of the mod before the
+change. `gamut.cpp` executes those before/after shaders through D3D11 WARP:
+
+```powershell
+python src/games/thewitcher3remastered/tests/prepare_gamut.py tmp/gamut-check <before-source-folder>
+clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered/tests/gamut.cpp /Fe:tmp/gamut-check/gamut.exe /Fo:tmp/gamut-check/gamut.obj /link d3d11.lib
+./tmp/gamut-check/gamut.exe tmp/gamut-check
+```
+
+The October 6 unclamping checks pass 4,098 configurations: exact Vanilla
+and nonnegative-source PsychoV parity; zero/half/full grade contribution;
+finite identity, lifted, constant, tinted and signed LUTs; signed wide-gamut
+output through every LUT variant; independent vignette darkening; reversible
+HDR proxy identity (maximum normalized error 6.34e-7); BT.2020 colours outside
+BT.709 surviving PsychoV; zero/half/full gamut projection; and full selected
+gamut/peak containment across both targets, hue shift, cone exponent, anchors,
+automatic/manual compression, global saturation and night vegetation saturation.
+PsychoV works in signed linear BT.709 coordinates, which does not limit its
+colour gamut to BT.709. The bounded LUT proxy is reversed before tonemapping.
+
+The same scratch folder records actual normal/FG wide-colour output testing
+(324 configurations / 663,552 pixels), neutral scene/UI comparisons (maximum
+PQ-domain error 8.23e-6), and active night-saturation composition testing
+(1,296 configurations / 1,327,104 pixels). Vanilla, opaque UI, normal/FG parity
+and FG coverage remain unchanged. All 32 production shaders compile with
+strict DXC flags; the Release build and real-addon callback test pass.
+These checks use synthetic inputs, not every game-authored LUT/environment.
+
+Evidence and the pre-change snapshot:
+`tmp/thewitcher3remastered/gamut-unclamped-20261006/`.
+After restarting, compare daytime and night scenes, candle highlights and
+foliage at each display target and gamut strength 0/0.5/1. Check LUT/environment
+transitions, night luminance/chroma controls, UI and frame generation.
+Projection Off still has the final HDR10 container's nonnegative/peak limits.
+
+## Continuous signed cone response
+
+The same gamut harness now checks triplets on either side of all three LMS
+zero planes across 17 intensity levels. Use the pre-fix mod snapshot at
+`tmp/thewitcher3remastered/gamut-unclamped-20261006/output-after` as the
+baseline with the commands above. An additional 270 configurations cover
+BT.709/BT.2020, projection 0/0.5/1, Hue Shift 0/50/100, cone exponents
+0.5/0.8/1/1.2/2 and automatic/manual response compression. The maximum step
+for a 1e-6 cone perturbation is 0.000311 of display peak, within the 0.001
+bound; black, finite signed output and full-target containment also pass.
+The existing 4,098 configurations pass, with exact positive-source parity.
+
+The saved paused candle input and native compositor constants were replayed
+through the production output shader with film grain disabled. The previous
+curve reproduces the internal pink bands; the continuous response smooths
+them at cone exponent 1.0 and Hue Shift 0/100. Scratch captures and the
+comparison image are under `tmp/thewitcher3remastered/candles-20261006/`.
+This is offline shader validation; the rebuilt addon still needs a restart
+and visual confirmation in the same cutscene. All 32 production shaders
+compile with strict DXC flags and the Release addon callback test passes.
+
+## BT.709 video conversion only
+
+`video.cpp` is restored from fcb3cbc9 and checks only the decoder shader.
+The production shader compiles strictly as ps_5_1 and as ps_5_0 for WARP.
+Using the archived native-equivalent SM5.0 bytecode and audited baseline,
+589,824 pixels pass including code-range sweeps, limited-range black/white,
+BT.709 colour bars and opacity 0/0.37/1. Maximum BT.709 reference error is
+3.36e-7. Reflection shows only native t0-t2 and s0-s2, with no cbuffer.
+The Release build embeds 0x7EF4001F and its callback test still verifies
+absent movie/descriptor tracking. After restart, test the Video toggle on
+intro/loading movies, subtitles, fades and Frame Generation; native movie
+composition is retained and no AutoHDR expansion is applied.
