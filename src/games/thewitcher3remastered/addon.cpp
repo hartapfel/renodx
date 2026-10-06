@@ -865,6 +865,7 @@ renodx::utils::settings::Settings settings = {
           renodx::utils::settings::UpdateSettings({
               {"ColorGradeHighlightContrast", 58.f},
               {"ColorGradeShadowContrast", 58.f},
+              {"PsychoVCompression", 0.95f},
           });
         },
     },
