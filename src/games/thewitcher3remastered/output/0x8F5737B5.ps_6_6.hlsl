@@ -1359,9 +1359,12 @@ OutputSignature main(
   float _1138 = _1135 - _1119;
   float _1139 = _1136 - _1122;
   float _1140 = _1137 - _1125;
-  float _1141 = _1138 * CustomPixelConsts_000.z;
-  float _1142 = _1139 * CustomPixelConsts_000.z;
-  float _1143 = _1140 * CustomPixelConsts_000.z;
+  // Ignore the game's HDR Saturation matrix blend in the custom pipeline,
+  // including UI and the FG scene-only output. Vanilla retains its setting.
+  float native_hdr_saturation = WitcherUsePsychoV30() ? 0.f : CustomPixelConsts_000.z;
+  float _1141 = _1138 * native_hdr_saturation;
+  float _1142 = _1139 * native_hdr_saturation;
+  float _1143 = _1140 * native_hdr_saturation;
   float _1144 = _1141 + _1119;
   float _1145 = _1142 + _1122;
   float _1146 = _1143 + _1125;
@@ -1398,9 +1401,9 @@ OutputSignature main(
   float _1168 = _1165 - _1149;
   float _1169 = _1166 - _1152;
   float _1170 = _1167 - _1155;
-  float _1171 = _1168 * CustomPixelConsts_000.z;
-  float _1172 = _1169 * CustomPixelConsts_000.z;
-  float _1173 = _1170 * CustomPixelConsts_000.z;
+  float _1171 = _1168 * native_hdr_saturation;
+  float _1172 = _1169 * native_hdr_saturation;
+  float _1173 = _1170 * native_hdr_saturation;
   float _1174 = _1171 + _1149;
   float _1175 = _1172 + _1152;
   float _1176 = _1173 + _1155;

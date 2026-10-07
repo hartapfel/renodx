@@ -1,8 +1,8 @@
 #ifndef SRC_GAMES_THEWITCHER3REMASTERED_POSTGRADE_HLSLI_
 #define SRC_GAMES_THEWITCHER3REMASTERED_POSTGRADE_HLSLI_
 
-// Included after native cb3 declarations. All five post-grade variants use
-// these same constants; only their vignette mask and preceding CA differ.
+// Included after native cb3 declarations. Gameplay and Photo Mode use the
+// same grade constants; their vignette masks and preceding effects differ.
 float3 WitcherApplyPostGrade(float3 scene, float vignette_mask) {
   WitcherGradeState state = WitcherPrepareGrade(scene);
   float exponent = max(CustomPixelConsts_128.x, 1e-6f);

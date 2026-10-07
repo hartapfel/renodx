@@ -196,3 +196,27 @@ The Release build embeds 0x7EF4001F and its callback test still verifies
 absent movie/descriptor tracking. After restart, test the Video toggle on
 intro/loading movies, subtitles, fades and Frame Generation; native movie
 composition is retained and no AutoHDR expansion is applied.
+
+
+## Photo Mode and native HDR saturation
+
+`photomode.cpp` executes the original decompiled Photo Mode shader and the
+production `0x6DDA5B7B` through WARP compute wrappers. The wrappers only change
+register spaces/entry-point plumbing. It checks 162 exposure, contrast,
+saturation, temperature and night-grade combinations, Vanilla preservation,
+finite signed HDR, exact source alpha, linear exposure scaling and independent
+chroma-only grading luminance. Compile the host with clang-cl /std:c++20 /EHsc
+/O2 /MT and link d3d11.lib; pass the original/production CS5.0 bytecode paths.
+
+`output_composition.cpp` accepts an optional fifth argument `hdr-saturation`.
+It sweeps 0/0.5/1 with the display matrix captured from the game across 972
+configurations / 1,990,656 output pixels. Custom normal/FG scene and UI outputs
+are invariant; Vanilla matches the previous output, normal/FG composition
+agrees, and the FG UI coverage remains unchanged. Before/after differences
+under active native saturation are intentional. Existing invocation without
+that argument retains the neutral parity test.
+
+Live Photo Mode inspection confirmed unclamped grading and visible scene/UI.
+After a Release rebuild, verify both night-grade controls and vegetation
+saturation in Photo Mode, the Photo Mode filter/exposure/vignette controls,
+native HDR Saturation independence, and gameplay with FG on/off.

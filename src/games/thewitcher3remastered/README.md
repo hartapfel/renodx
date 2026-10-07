@@ -648,3 +648,16 @@ zero caused internal flame bands after wide-gamut grading. Positive-cone
 contrast, adaptation anchors and selected-gamut projection are preserved.
 After restarting, compare the paused candle scene at Cone Response Exponent
 1.0 and Hue Shift 0/100, then check other emissive colours and both gamut targets.
+
+
+Photo Mode uses the same unclamped HDR grading and night luminance/chroma
+controls as gameplay. Its exposure, contrast, white balance, saturation,
+grain and vignette remain available; HDR highlights and signed colours reach
+PsychoV before the separate Photo Mode UI is composited. The game's HDR
+Saturation setting is ignored under PsychoV, including UI and Frame Generation
+outputs. Vanilla retains the game's saturation adjustment.
+
+After rebuilding `thewitcher3remastered` in `clang-x64-release`, compare gameplay
+and Photo Mode at night with the UI visible, vary both night grading controls
+and vegetation saturation, then check Photo Mode exposure/filter controls.
+Changing the game's HDR Saturation must have no effect under PsychoV.

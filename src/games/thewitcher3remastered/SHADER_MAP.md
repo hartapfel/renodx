@@ -284,3 +284,34 @@ render target and blend state. No movie redirection, extra SRV, AutoHDR or
 descriptor tracking is present. Native normal/FG movie and UI composition
 remain in place. The correction is independent of scene tone mapping;
 Preset Off restores the native decoder.
+
+
+## Photo Mode and native HDR Saturation (2026-10-07)
+
+Photo Mode draw 4250 uses `0x6DDA5B7B`: t0 linear HDR scene, s1, b3 (400
+bytes), the existing TEXCOORD0/TEXCOORD2 inputs, and source-alpha preservation.
+It applies exposure/contrast/white balance/saturation (c18), simplex grain
+(c19), then the same c8-c15 artistic grading and an offset radial vignette
+(c7.w). Its exposure/contrast/saturation and final grading clamp RGB to 0..1.
+The new PsychoV branch retains signed RGB through Photo Mode controls and
+uses `WitcherApplyPostGrade`; the original path remains for Vanilla.
+The existing LUT `0x2F2D0992`, exposure `0x382CDBDB`, DOF `0x4B0ABFCA`,
+bloom/flare and output `0x8F5737B5` remain in this captured path. The newly
+inspected DOF preparation `0x29754CAF` writes unbounded RGB and bounded depth
+weights, so it requires no HDR clamp removal. The UI is separately RGBA8,
+while scene intermediates are RGBA16F. No resource upgrade is needed.
+
+An actual game-slider A/B changed only output b3.c0.z from 0 to 1, confirming
+the game's HDR Saturation controls the native c4-c6 display matrix blend.
+PsychoV bypasses that blend for scene, UI and FG scene-only output; Vanilla
+uses the original value. This is separate from the Photo Mode saturation
+control and the artistic day/night tint/saturation in post-grading.
+
+Live readbacks before/after prove the new shader is executing: grading input
+reached RGB 125.5, original output was limited to 1, and the modified output
+reached RGB 9.5234 with negative channels preserved. PQ output reached 0.7517
+(approximately 1000 nits), with scene and Photo Mode UI rendering together.
+These are live resource reads from an animated scene, not pixel-exact pairs.
+The original decompilation compiled strictly; DXIL signatures/bindings/400-byte
+cbuffer match, as do sampling, branches, phi/select and intrinsic counts.
+Source/dump evidence is under `tmp/thewitcher3remastered/photomode-20261007`.

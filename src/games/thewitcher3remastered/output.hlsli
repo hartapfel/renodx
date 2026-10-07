@@ -5,7 +5,7 @@
 #include "../../shaders/effects.hlsl"
 
 // Shared by normal presentation and both frame-generation HDR outputs.
-// Input already includes the native display matrix, in linear BT.2020.
+// Input is linear BT.2020; the native HDR saturation matrix is bypassed.
 // Apply the scene response once, then grain, before UI and PQ encoding.
 float3 WitcherToneMapOutput(float3 scene_bt2020, float2 uv) {
   float3 mapped_bt2020 = renodx::color::bt2020::from::BT709(
