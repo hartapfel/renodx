@@ -220,3 +220,22 @@ Live Photo Mode inspection confirmed unclamped grading and visible scene/UI.
 After a Release rebuild, verify both night-grade controls and vegetation
 saturation in Photo Mode, the Photo Mode filter/exposure/vignette controls,
 native HDR Saturation independence, and gameplay with FG on/off.
+
+
+## FSR Frame Generation output
+
+`prepare_output.py` also adapts the three-target `0x9F54CB3F` compositor and
+its shared include. `output_composition.cpp` accepts `fsr` to compare all
+three FSR outputs against `0x496222DA`, while ignoring the absent fourth
+UI-alpha target. It passes 972 configurations, including signed wide-gamut
+inputs, UI opacity/white, Vanilla/PsychoV, both gamut targets, native HDR
+saturation and display peaks. `fsr-native` limits the comparison to Vanilla;
+486 configurations match the original decompiled shaders exactly. The
+existing normal/four-target output regression passes 324 configurations with
+zero difference after sharing the implementation. Both production variants
+compile strictly as ps_6_6 with their correct output signatures.
+
+Evidence: `tmp/thewitcher3remastered/fsr-20261007/`. After restarting with the
+Release addon, compare the same scene with FSR Frame Generation off/on:
+highlight detail and peak, white pixelation, UI, night controls and native
+HDR Saturation independence. Also check DLSS Frame Generation and Vanilla.

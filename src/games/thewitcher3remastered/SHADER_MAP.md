@@ -315,3 +315,21 @@ These are live resource reads from an animated scene, not pixel-exact pairs.
 The original decompilation compiled strictly; DXIL signatures/bindings/400-byte
 cbuffer match, as do sampling, branches, phi/select and intrinsic counts.
 Source/dump evidence is under `tmp/thewitcher3remastered/photomode-20261007`.
+
+
+## FSR Frame Generation compositor (2026-10-07)
+
+The full created-shader dump includes `0x9F54CB3F` (ps_6_6). Its native
+decompilation matches `0x496222DA` exactly except for removal of SV_Target3:
+target 0 is presented HDR, target 1 is the secondary SDR composite, and target
+2 is HUD-less HDR with alpha 1. It retains t0-t2, s1, b3 (400 bytes), b12
+(5456 bytes), SV_Position and TEXCOORD0. Leaving this variant native applies
+SDR clipping and native HDR expansion to the extended scene proxy.
+
+Both variants include `output/frame_generation.hlsli`, with only the fourth
+UI coverage output conditional. PsychoV restores the signed scene and maps
+both HDR outputs before PQ encoding; Vanilla and the secondary SDR output
+retain their native processing. No FSR SDK shader, resource format or CPU
+descriptor tracking is changed. Evidence is under
+`tmp/thewitcher3remastered/fsr-20261007/`; runtime confirmation with FSR
+Frame Generation enabled is still required.

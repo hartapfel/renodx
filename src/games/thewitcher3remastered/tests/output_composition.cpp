@@ -1,7 +1,8 @@
 /* Copyright (C) 2026 Hartapfel
  * SPDX-License-Identifier: MIT
  */
-// Compares production normal/FG output; optionally sweeps native HDR saturation.
+// Compares production normal/FG output; optionally sweeps native HDR saturation
+// or verifies the three shared FSR outputs against the four-target compositor.
 // The former movie texture is transparent, matching gameplay and native UI composition.
 #define NOMINMAX
 #include <d3d11.h>
@@ -25,8 +26,10 @@ void Check(HRESULT result) { if (FAILED(result)) throw std::runtime_error("D3D f
 void Require(bool pass, const char* reason) { if (!pass) throw std::runtime_error(reason); }
 int main(int argc, char** argv) {
   try {
-    Require(argc == 5 || (argc == 6 && std::string(argv[5]) == "hdr-saturation"),
-            "Expected normal/FG shaders before and after, optionally hdr-saturation");
+    Require(argc == 5 || (argc == 6 && (std::string(argv[5]) == "hdr-saturation" || std::string(argv[5]) == "fsr" || std::string(argv[5]) == "fsr-native")),
+            "Expected normal/FG shaders before and after, optionally hdr-saturation, fsr or fsr-native");
+    const bool fsr_test = argc == 6 && std::string(argv[5]).starts_with("fsr");
+    const bool native_test = argc == 6 && std::string(argv[5]) == "fsr-native";
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
     Check(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0,
@@ -51,7 +54,7 @@ int main(int argc, char** argv) {
     native[0] = 203; native[3] = 1000; native[8] = 2.2f; native[10] = 1 / 2.2f;
     native[11] = .18f; native[14] = 32; native[15] = 16;
     native[16] = native[21] = native[26] = 1;
-    const bool saturation_test = argc == 6 && std::string(argv[5]) == "hdr-saturation";
+    const bool saturation_test = argc == 6;
     if (saturation_test) {
       const float matrix[] = {1.4023422f, -.37857088f, -.01947296f, 0,
           -.06701347f, 1.08590949f, -.01053586f, 0,
@@ -102,6 +105,7 @@ int main(int argc, char** argv) {
     for (float peak : {400.f, 1000.f, 4000.f}) for (float game : {80.f, 203.f, 500.f})
     for (unsigned mode : {0u, 1u}) for (unsigned gamut : {0u, 1u})
     for (float ui_opacity : {0.f, .25f, 1.f}) for (float ui_white : {80.f, 203.f, 500.f}) {
+      if (native_test && mode != 0) continue;
       std::vector<Pixel> neutral[2];
       for (float native_saturation : {0.f, .5f, 1.f}) {
         if (!saturation_test && native_saturation != 0.f) continue;
@@ -115,6 +119,9 @@ int main(int argc, char** argv) {
           float ramp = float(i % 256) / 255.f;
           scene[i] = i < 256 ? Pixel{ramp * 3, ramp * 3, ramp * 3, 1}
                             : Pixel{ramp * 3, (1 - ramp) * 3, .13f, 1};
+          if (fsr_test && mode == 1 && i >= 384) {
+            scene[i] = {ramp * 5, (1 - ramp) * 3 - .3f, -.2f, 1};
+          }
           ui[i] = {.7f, .4f, .1f, ui_opacity};
         }
         context->UpdateSubresource(textures[0].Get(), 0, nullptr, scene.data(), 32 * sizeof(Pixel), 0);
@@ -131,6 +138,7 @@ int main(int argc, char** argv) {
         }
         for (unsigned i = 0; i < PIXELS * 4; ++i) for (unsigned c = 0; c < 4; ++c) {
           for (unsigned pass = 0; pass < 2; ++pass) {
+            if (fsr_test && pass == 1 && i % 4 == 3) continue;
             float a = values[pass][i][c], b = values[pass + 2][i][c];
             Require(std::isfinite(a) && std::isfinite(b), "Nonfinite scene/UI output");
             worst = std::max(worst, std::abs(a - b));
@@ -142,7 +150,7 @@ int main(int argc, char** argv) {
             }
           }
           if (i % 4 < 2) Require(std::abs(values[2][i][c] - values[3][i][c]) < 2e-5, "Normal/FG primary or secondary mismatch");
-          if (i % 4 == 3) Require(std::abs(values[3][i][c] - ui_opacity) < 1e-6, "Wrong native FG UI mask");
+          if (!fsr_test && i % 4 == 3) Require(std::abs(values[3][i][c] - ui_opacity) < 1e-6, "Wrong native FG UI mask");
         }
         if (native_saturation == 0.f) {
           neutral[0] = values[2];

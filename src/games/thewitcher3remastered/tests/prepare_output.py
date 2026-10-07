@@ -1,4 +1,4 @@
-"""Adapt both real output shaders to CS5.0 for the D3D11 WARP harness.
+"""Adapt the real output shaders to CS5.0 for the D3D11 WARP harness.
 
 Only register spaces, entry-point plumbing and the select spelling change.
 All production composition and PQ arithmetic remains intact.
@@ -21,6 +21,7 @@ for source in mod.rglob("*"):
     if source.parent.name == "output":
         text = "#pragma warning(disable:3571)\n#define select(c,a,b) ((c)?(a):(b))\n" + text
         text = text.replace("OutputSignature main(", "OutputSignature PixelMain(")
+    if source.parent.name == "output" and source.suffix == ".hlsl":
         text += """
 RWStructuredBuffer<float4> results : register(u0);
 [numthreads(64,1,1)]
@@ -31,8 +32,9 @@ void main(uint3 id : SV_DispatchThreadID) {
   results[i * 4] = o.SV_Target;
   results[i * 4 + 1] = o.SV_Target_1;
 """
-        if source.name.startswith("0x496222DA"):
-            text += "  results[i * 4 + 2] = o.SV_Target_2;\n  results[i * 4 + 3] = o.SV_Target_3;\n"
+        if source.name.startswith(("0x496222DA", "0x9F54CB3F")):
+            text += "  results[i * 4 + 2] = o.SV_Target_2;\n"
+            text += "  results[i * 4 + 3] = o.SV_Target_3;\n" if source.name.startswith("0x496222DA") else "  results[i * 4 + 3] = 0;\n"
         else:
             text += "  results[i * 4 + 2] = 0;\n  results[i * 4 + 3] = 0;\n"
         text += "}\n"

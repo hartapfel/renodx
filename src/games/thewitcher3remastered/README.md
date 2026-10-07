@@ -60,6 +60,7 @@ Shared helpers and the C++ settings/injection code stay at the mod root. The fin
 | [postprocess/0xAD02BAB3.ps_6_6.hlsl](./postprocess/0xAD02BAB3.ps_6_6.hlsl) | Selects native or RenoDX CA sampling, preserves grade, vignette and levels, reconstructs the graded HDR signal and preserves signed gamma-shaped transport. |
 | [output/0x8F5737B5.ps_6_6.hlsl](./output/0x8F5737B5.ps_6_6.hlsl) | Retains native display adjustment, overlay dimming, regional input, and secondary SDR composite. Restores scene HDR, retains the regional scene contribution and native colour matrix, applies PsychoV once, then scales/composites UI separately and writes PQ. |
 | [output/0x496222DA.ps_6_6.hlsl](./output/0x496222DA.ps_6_6.hlsl) | Four-target frame-generation compositor: applies the same processing to presentation and separately maps the scene-only HDR output. Preserves the secondary composite and UI mask. |
+| [output/0x9F54CB3F.ps_6_6.hlsl](./output/0x9F54CB3F.ps_6_6.hlsl) | Three-target FSR Frame Generation compositor: shares the same HDR processing, secondary composite and HUD-less output, without a fourth UI mask target. |
 
 `common.hlsli` holds the tone mapper, grading extensions, and reversible proxy helpers. Regular and highlight saturation operate after PsychoV in its selected display gamut, preserving linear luminance and chroma direction. Positive saturation boosts approach the available chroma headroom smoothly; Blowout shares the bounded desaturation path. PsychoV receives neutral LMS purity so raising regular Saturation cannot push its response onto a hard gamut boundary. PsychoV receives the preserved exposed scene after grading, before UI composition; it does not reconstruct HDR from final SDR. Its BT.2020 result is represented in linear BT.709 and can contain negative channels. The LUT/presentation proxies accommodate those channels without raw SDR clipping.
 
@@ -86,7 +87,7 @@ cmake --preset clang-x64
 cmake --build --preset clang-x64-release --target thewitcher3remastered
 ```
 
-Output: `build/Release/renodx-thewitcher3remastered.addon64`. `build/thewitcher3remastered.include/embed/shaders.h` must contain the 33 active shader hashes, including video decoder 0x7EF4001F; removed motion reconstruction passes must remain absent. Do not rebuild while this addon is loaded by the game.
+Output: `build/Release/renodx-thewitcher3remastered.addon64`. `build/thewitcher3remastered.include/embed/shaders.h` must contain the 35 active shader hashes, including video decoder 0x7EF4001F and FSR compositor 0x9F54CB3F; removed motion reconstruction passes must remain absent. Do not rebuild while this addon is loaded by the game.
 
 Completed verification:
 
