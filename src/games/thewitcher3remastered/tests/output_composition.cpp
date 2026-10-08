@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
       context->CSSetShaderResources(i, 1, views[i].GetAddressOf());
       context->UpdateSubresource(textures[i].Get(), 0, nullptr, black.data(), 32 * sizeof(Pixel), 0);
     }
-    struct { ShaderInjectData data; float padding[1]; } settings = {};
+    struct { ShaderInjectData data; float padding[2]; } settings = {};
     static_assert(sizeof(settings) == 128);
     auto& p = settings.data;
     p.tone_map_type = 1;

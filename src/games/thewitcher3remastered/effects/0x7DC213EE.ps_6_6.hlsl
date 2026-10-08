@@ -90,7 +90,7 @@ float4 main(
   SV_Target.y = _94;
   SV_Target.z = _95;
   SV_Target.w = 0.0f;
-  // Native ONE/ONE blend adds this RGB before exposure. Preserve zero alpha.
+  // Native ONE/ONE blend adds the filtered effect RGB. Preserve zero alpha.
   if (WitcherUsePsychoV30()) SV_Target.rgb *= CUSTOM_BLOOM_STRENGTH;
   return SV_Target;
 }

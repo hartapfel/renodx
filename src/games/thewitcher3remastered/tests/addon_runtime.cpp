@@ -28,7 +28,9 @@ extern "C" __declspec(dllexport) void ReShadeGetBasePath(char* path, size_t* siz
 }
 extern "C" __declspec(dllexport) bool ReShadeGetConfigValue(void*, reshade::api::effect_runtime*, const char* section, const char* key, char* value, size_t* size) {
   if (std::strcmp(section, "renodx")) return false;
-  if (std::strcmp(key, "CpuPerformanceMode") && std::strcmp(key, "FxMotionBlurMode")
+  if (std::strncmp(key, "Night", 5) && std::strcmp(key, "GameplayCameraLightStrength")
+      && std::strcmp(key, "CutsceneCameraLightStrength") && std::strcmp(key, "MoonSize")
+      && std::strcmp(key, "CpuPerformanceMode") && std::strcmp(key, "FxMotionBlurMode")
       && std::strcmp(key, "FxMotionIntensity") && std::strcmp(key, "FxMotionShutterAngle")
       && std::strcmp(key, "FxMotionSamples")
       && std::strcmp(key, "VideoAutoHDR")) return false;
@@ -70,5 +72,5 @@ int main(int argc, char** argv) {
     if (!has_event(event)) return 5;
   }
   if (!FreeLibrary(module) || !callbacks.empty()) return 6;
-  std::puts("PASS: real Release addon ignores removed settings, has no motion/movie/descriptor tracking callbacks, retains HDR events and detaches cleanly");
+  std::puts("PASS: real Release addon ignores removed lighting/motion/movie settings, has no motion/movie/descriptor tracking callbacks, retains HDR events and detaches cleanly");
 }

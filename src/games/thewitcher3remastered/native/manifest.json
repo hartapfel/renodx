@@ -380,5 +380,38 @@
     "inputs_outputs_bindings_match": true,
     "baseline_gpu_pixels": 196608,
     "baseline_max_error": 0
+  },
+  {
+    "shader": "0x0BF2A7DC.ps_6_6",
+    "original_sha256": "ed6d9c2e82a90cc59d5b7c5f56cb7af63dd4ca0fb7f3dd81c5e18523be5e46fe",
+    "hlsl_sha256": "107d33ed5a47cf9055dbdba84476ab81e49d919c84787fc5aa9255506934f38e",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400",
+      "5456"
+    ],
+    "differential_cases": 720,
+    "max_scaled_error": 0.0,
+    "original_blocks_visited": 12,
+    "original_blocks_total": 12,
+    "path": "effects/0x0BF2A7DC.ps_6_6.hlsl.original"
+  },
+  {
+    "shader": "0x2BF760E2.ps_6_6",
+    "original_sha256": "79e0f4641f945d9b0948d7bdcaa860ec2510c1c4e2ed5a42324c3d424d7ca7de",
+    "hlsl_sha256": "cf19cc276b183836a25207310a744e8d629b8f5de820cddb56b32d53ee501d13",
+    "strict_compile": "passed",
+    "inputs_outputs_bindings_match": true,
+    "intrinsic_count_differences": {},
+    "recompiled_cbuffer_sizes": [
+      "400"
+    ],
+    "differential_cases": 720,
+    "original_blocks_visited": 3,
+    "original_blocks_total": 3,
+    "max_scaled_error": 0.0,
+    "path": "postprocess/0x2BF760E2.ps_6_6.hlsl.original"
   }
 ]

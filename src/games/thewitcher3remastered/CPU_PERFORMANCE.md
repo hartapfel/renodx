@@ -1,13 +1,12 @@
 # CPU performance
 
-The HDR addon uses a 124-byte root-constant payload, cached replacement
-PSOs and native night-lighting hooks. It does not capture or read back the
+The HDR addon uses a 120-byte root-constant payload, cached replacement
+PSOs and no native lighting hooks. It does not capture or read back the
 game's constant buffers or wait for the GPU each frame. Initial replacement
 PSO creation can still cause first-use hitches. Release builds no longer
 force debug logging.
-Night Vegetation Saturation adds one scalar night delta to the existing
-display-gamut grade (124-byte payload). Hue selection runs only while that
-delta is nonzero. It adds no textures, descriptor tracking or event callbacks.
+Night lighting and selective saturation are owned by the separate
+[Witcher 3 Darker Nights addon](../thewitcher3remastered-darkernights/README.md).
 
 Enhanced motion blur and Video AutoHDR have been removed after profiling
 identified descriptor-copy/update mutex contention across rendering workers.
@@ -23,8 +22,7 @@ existing UI composition path, including the Frame Generation coverage mask.
 Only the BT.709 decoder correction and its VideoBT709 toggle are restored;
 AutoHDR remains removed. Previously
 saved motion/video/CPU-mode values are ignored; no CPU Performance Mode remains.
-HDR tone mapping, grading, effects, UI brightness and night/gameplay lighting
-controls remain available. Other addons can still register their own tracking.
+HDR tone mapping, grading, effects and UI brightness controls remain available. Other addons can still register their own tracking.
 
 Validation: clang-x64-release/thewitcher3remastered builds successfully. A test
 loading the real Release DLL verifies absent tracking events, ignored removed

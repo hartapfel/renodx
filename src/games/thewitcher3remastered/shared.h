@@ -13,23 +13,11 @@
 // Split contrast percentages share unused bits with the boolean/mode flags.
 #define WITCHER_CONTRAST_HIGHLIGHTS_SHIFT 7u
 #define WITCHER_CONTRAST_SHADOWS_SHIFT 14u
-// Runtime cloud multiplier: 0 is an older addon/uninitialized payload;
-// 1..401 represent 0..2 in 0.005 steps.
-#define WITCHER_NIGHT_CLOUD_SHIFT 22u
-#define WITCHER_NIGHT_CLOUD_MASK (511u << WITCHER_NIGHT_CLOUD_SHIFT)
-
 // Pack four independent effect percentages into one root DWORD.
 #define WITCHER_EFFECT_BLUR_SHIFT 0u
 #define WITCHER_EFFECT_SHAFTS_SHIFT 7u
 #define WITCHER_EFFECT_LENS_SHIFT 14u
 #define WITCHER_EFFECT_BLOOM_SHIFT 21u
-
-// Unequal grade strengths share the existing DWORD. The tagged negative
-// float is finite; ordinary nonnegative payloads keep the legacy strength.
-#define WITCHER_GRADE_SPLIT_TAG 0x80000000u
-#define WITCHER_GRADE_SPLIT_MASK 0xc0000000u
-#define WITCHER_GRADE_STRENGTH_MASK 32767u
-#define WITCHER_GRADE_CHROMA_SHIFT 15u
 
 struct ShaderInjectData {
   float peak_white_nits;
@@ -67,12 +55,10 @@ struct ShaderInjectData {
   float custom_lut_scaling;
   float custom_color_grading;
   float effect_strengths;
-  // Zero is neutral; effective night slider delta already includes the fade.
-  float night_saturation_delta;
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 124);
+static_assert(sizeof(ShaderInjectData) == 120);
 #else
 // DX12 injection binding, paired with addon.cpp; native buffers use space0.
 cbuffer shader_injection : register(b13, space50) {
@@ -91,7 +77,6 @@ cbuffer shader_injection : register(b13, space50) {
 #define RENODX_TONE_MAP_CONTRAST_HIGHLIGHTS (float((asuint(shader_injection.mode_flags) >> WITCHER_CONTRAST_HIGHLIGHTS_SHIFT) & 127u) * 0.02f)
 #define RENODX_TONE_MAP_CONTRAST_SHADOWS (float((asuint(shader_injection.mode_flags) >> WITCHER_CONTRAST_SHADOWS_SHIFT) & 127u) * 0.02f)
 #define RENODX_TONE_MAP_SATURATION shader_injection.tone_map_saturation
-#define WITCHER_NIGHT_SATURATION_DELTA shader_injection.night_saturation_delta
 #define RENODX_TONE_MAP_HIGHLIGHT_SATURATION shader_injection.tone_map_highlight_saturation
 #define RENODX_TONE_MAP_BLOWOUT shader_injection.tone_map_blowout
 #define RENODX_TONE_MAP_FLARE shader_injection.tone_map_flare
@@ -117,14 +102,7 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_NATIVE_BRIGHTNESS_DARKEN_ONLY WITCHER_MODE_FLAG(WITCHER_FLAG_NATIVE_BRIGHTNESS_DARKEN_ONLY)
 #define CUSTOM_LUT_STRENGTH shader_injection.custom_lut_strength
 #define CUSTOM_LUT_SCALING shader_injection.custom_lut_scaling
-float WitcherColorGradeStrength(uint shift) {
-  uint packed = asuint(shader_injection.custom_color_grading);
-  return (packed & WITCHER_GRADE_SPLIT_MASK) == WITCHER_GRADE_SPLIT_TAG
-      ? float((packed >> shift) & WITCHER_GRADE_STRENGTH_MASK) / float(WITCHER_GRADE_STRENGTH_MASK)
-      : shader_injection.custom_color_grading;
-}
-#define CUSTOM_COLOR_GRADING_LUMINANCE WitcherColorGradeStrength(0u)
-#define CUSTOM_COLOR_GRADING_CHROMA WitcherColorGradeStrength(WITCHER_GRADE_CHROMA_SHIFT)
+#define CUSTOM_COLOR_GRADING shader_injection.custom_color_grading
 
 #define WITCHER_EFFECT_STRENGTH(shift) (float((asuint(shader_injection.effect_strengths) >> (shift)) & 127u) * 0.02f)
 #define CUSTOM_BLUR_STRENGTH WITCHER_EFFECT_STRENGTH(WITCHER_EFFECT_BLUR_SHIFT)

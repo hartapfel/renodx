@@ -381,7 +381,7 @@ static void OnDestroyDevice(reshade::api::device* device) {
   s << reinterpret_cast<uintptr_t>(device);
   s << ")";
   reshade::log::message(reshade::log::level::info, s.str().c_str());
-  device->destroy_private_data<DeviceData>();
+  renodx::utils::data::Delete<DeviceData>(device);
 }
 
 static bool MergeVulkanDescriptorParameters(

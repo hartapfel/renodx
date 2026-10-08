@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
     float native[100] = {};
     struct {
       ShaderInjectData data;
-      float pad;
+      float pad[2];
     } settings = {};
     static_assert(sizeof(settings) == 128);
     auto& p = settings.data;
@@ -350,8 +350,7 @@ int main(int argc, char** argv) {
           for (float cone : {.8f, 1.f, 1.2f})
             for (float anchor : {.1f, .18f, .35f})
               for (float compression : {0.f, 1.f})
-                for (float saturation : {.5f, 1.f, 2.f})
-                  for (float night : {-1.f, 0.f, 1.f}) {
+                for (float saturation : {.5f, 1.f, 2.f}) {
                     initialize(0);
                     p.peak_white_nits = peak;
                     p.psychov_hue_shift = hue;
@@ -359,7 +358,6 @@ int main(int argc, char** argv) {
                     p.psychov_adaptation_anchor = anchor;
                     p.psychov_compression = compression;
                     p.tone_map_saturation = saturation;
-                    p.night_saturation_delta = night;
                     uint32_t flags = (target ? WITCHER_FLAG_GAMUT_TARGET : 0u) | (50u << 7) | (50u << 14);
                     std::memcpy(&p.mode_flags, &flags, 4);
                     auto value = run(1, 0);

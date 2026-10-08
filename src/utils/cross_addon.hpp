@@ -353,7 +353,7 @@ class Shared {
     if (control != nullptr) return control;
 
     auto slot = platform::OpenProcessSharedSlot<internal::ControlBlock<Data>>(
-        __uuidof(Data),
+        data::GetUuid<Data>(),
         [](internal::ControlBlock<Data>*& control) {
           if (control != nullptr) return;
 

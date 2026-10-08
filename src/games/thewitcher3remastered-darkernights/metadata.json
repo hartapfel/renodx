@@ -1,0 +1,37 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/gh/clshortfuse/renodx/renodx-metadata-schema.json",
+  "id": "thewitcher3remastered-darkernights",
+  "title": "Darker Nights - Remastered",
+  "variant": "Darker Nights",
+  "summary": "Standalone night lighting, night grading, camera-light and moon-size controls for DX12.",
+  "status": "experimental",
+  "maintainers": [
+    "Hartapfel"
+  ],
+  "notes": [
+    "Works with SDR or native HDR, rasterized lighting, ray tracing and path tracing.",
+    "Can run alongside an HDR addon without lighting overrides. Remove Artificial Player Lights and avoid duplicate night-lighting hooks.",
+    "Native hooks validate both the previous remastered renderer layout and the October 8 updated layout."
+  ],
+  "deploy": {
+    "steam_appid": 292030,
+    "game_exe": "witcher3.exe",
+    "process_name": "witcher3.exe",
+    "api": "d3d12",
+    "architecture": [
+      "x64"
+    ],
+    "reshade_preferred_name": "dxgi.dll"
+  },
+  "games": [
+    {
+      "title": "The Witcher 3 - Remastered",
+      "variant": "Darker Nights",
+      "deploy": {
+        "steam_appid": 292030,
+        "game_exe": "witcher3.exe",
+        "process_name": "witcher3.exe"
+      }
+    }
+  ]
+}

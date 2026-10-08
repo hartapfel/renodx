@@ -30,17 +30,7 @@ float3 WitcherApplyPostGrade(float3 scene, float vignette_mask) {
   // Contribution is blended in linear space, as in CustomColorGrading in the
   // old mod. Include native output levels, but keep vignette independent.
   float3 graded = WitcherSignedPow(color, rcp(exponent));
-  float luminance_strength = CUSTOM_COLOR_GRADING_LUMINANCE;
-  float chroma_strength = CUSTOM_COLOR_GRADING_CHROMA;
-  color = lerp(state.neutral_sdr, graded, chroma_strength);
-  if (luminance_strength != chroma_strength) {
-    // Keep the chosen chromaticity while independently blending luminance.
-    // Equal strengths retain the previous linear RGB blend exactly.
-    float target_y = lerp(renodx::color::y::from::BT709(state.neutral_sdr),
-                          renodx::color::y::from::BT709(graded), luminance_strength);
-    float color_y = renodx::color::y::from::BT709(color);
-    color = color_y > 0.f ? color * (target_y / color_y) : target_y.xxx;
-  }
+  color = lerp(state.neutral_sdr, graded, CUSTOM_COLOR_GRADING);
   color = WitcherSignedPow(color, exponent);
   if (CUSTOM_VIGNETTE_BLACK_FLOOR == 0.f) {
     // The native affine levels transform commutes with its vignette blend.

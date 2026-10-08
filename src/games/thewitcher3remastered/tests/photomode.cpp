@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
     native[68] = native[69] = .5f;
     native[75] = 6550;
     native[77] = 1; native[78] = 32; native[79] = 16;
-    struct { ShaderInjectData data; float pad; } settings = {};
+    struct { ShaderInjectData data; float pad[2]; } settings = {};
     settings.data.peak_white_nits = 1000;
     settings.data.diffuse_white_nits = 203;
     settings.data.custom_color_grading = 1;
@@ -129,20 +129,6 @@ int main(int argc, char** argv) {
     for (unsigned i = 0; i < 512; ++i) for (unsigned k = 0; k < 3; ++k) {
       Require(std::abs(doubled[i][k] - neutral[i][k] * std::pow(2.f, 1.f/2.2f)) < 2e-5f,
               "Photo Mode exposure no longer scales linear HDR");
-    }
-    native[72] = 1;
-    settings.data.custom_color_grading = std::bit_cast<float>(WITCHER_GRADE_SPLIT_TAG
-        | (WITCHER_GRADE_STRENGTH_MASK << WITCHER_GRADE_CHROMA_SHIFT));
-    auto chroma_only = run(1);
-    for (unsigned i = 0; i < 512; ++i) {
-      float neutral_y = 0, graded_y = 0;
-      const float weights[] = {.2126f, .7152f, .0722f};
-      for (unsigned k = 0; k < 3; ++k) {
-        neutral_y += weights[k] * std::copysign(std::pow(std::abs(neutral[i][k]), 2.2f), neutral[i][k]);
-        graded_y += weights[k] * std::copysign(std::pow(std::abs(chroma_only[i][k]), 2.2f), chroma_only[i][k]);
-      }
-      Require(std::abs(neutral_y - graded_y) < 2e-5f * std::max(1.f, std::abs(neutral_y)),
-              "Photo Mode chroma-only night grading changed luminance");
     }
     std::cout << "PASS " << cases << " Photo Mode cases; Vanilla, alpha, finite signed HDR and exposure\n";
   } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; }

@@ -3,7 +3,7 @@
 ## Addon callback cleanup
 
 `addon_runtime.cpp` loads the real Release DLL in a minimal ReShade host. It
-checks that saved CPU/motion/AutoHDR settings are ignored, descriptor heap and
+checks that saved lighting/CPU/motion/AutoHDR settings are ignored, descriptor heap and
 motion/movie binding events are absent, the single shared HDR shader reset
 callback remains, HDR events register, and detach removes all callbacks.
 No game or GPU callbacks are invoked.
@@ -45,85 +45,9 @@ clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered/tests/output_c
 ./tmp/output-composition.exe tmp/before-8F5737B5.cso tmp/before-496222DA.cso tmp/after-8F5737B5.cso tmp/after-496222DA.cso
 ```
 
-## Native night lighting
-
-`night_lighting.cpp` exercises the native view and constant callbacks against
-independent references of the audited renderer stores. Its 180 cases cover
-raster/shared directional colors, fog, haze, sky, clouds and native water
-color/ambient/diffuse constants across clock fade
-endpoints and weather weights, including the captured storm's residual skylight.
-It checks RGB-only edits, exact neutral/daytime identity, invalid time, weather
-independence and skylight baseline restoration/rebasing. Zero skylight must reach
-exactly zero at full night even when weather retains a nonzero day weight.
-Two whole-buffer comparisons verify cloud isolation, untouched moon/star colors
-and alpha, and midday identity. Water checks preserve all other global-buffer
-bytes, including Fresnel/caustics/foam fields. Removed grass/moon controls have no runtime
-backing state. The harness does not establish the live hook ABI, engine time
-semantics, or broad scene coverage.
-
-From an x64 Visual Studio developer shell:
-
-```powershell
-clang-cl /std:c++20 /EHsc /O2 /MT /DNOMINMAX /Iexternal/Detours/include src/games/thewitcher3remastered/tests/night_lighting.cpp /Fe:tmp/witcher-night-test.exe /Fo:tmp/witcher-night-test.obj /link external/Detours/lib.X64/detours.lib
-./tmp/witcher-night-test.exe
-```
-
-Night Sky Brightness also covers b12 c249/c278, the two native colors added
-by 3B15DAAB after its main sky/fog calculation. The night-lighting harness
-includes them in the 180 clock/intensity/weather cases and checks whole-buffer
-sky-only isolation at midnight and midday, preserving alpha, moon colors, fog
-and cloud base colors. The shared c278 distant-cloud tint intentionally follows
-the sky control. Runtime horizon verification remains necessary after rebuilding.
-
-## Selective night vegetation saturation
-
-The saved `NightSaturation` key now controls green/cyan scene hues, with
-gentler yellow/blue shoulders. The shader multiplies global saturation by
-`1 + night_saturation_delta * hue_weight`; the CPU delta is
-`(night_saturation - 1) * night_weight`. The master/schedule/hook guards give
-zero weight outside the selected hours, with the master Off, invalid times
-or Vanilla. Defaults, both presets and Preset Off remain 100. UI composition
-follows this scene-only operation; global saturation remains independent.
-The neutral delta is zero and the C++/HLSL payload is 124 bytes (31 DWORDs).
-Root-layout eligibility uses its actual size; no new binding tracker is added.
-
-Hue selection uses OKLab from signed display-linear BT.709/D65. Its OKLCh
-weights are 0 at 85 degrees, 0.35 at 110, 1 from 135 to 220, 0.35 at 250,
-and 0 from 275 onward, with smoothstep transitions. Relative chroma C/L
-fades the selection between 0.02 and 0.06 to avoid unstable neutral hues.
-Saturation preserves linear display luminance and uses the existing soft
-gamut headroom limit for increases, weighted by PsychoV’s selected gamut compression strength. This is colour selection, not a material
-mask: matching water, clothing, sky and other objects can also respond.
-
-Research: [CD Projekt's environment artist](https://80.lv/articles/world-building-of-witcher-3)
-describes separate foliage libraries for Novigrad, Skellige and Toussaint;
-there is no documented universal vegetation hue interval. Our saved HDR10
-night capture was PQ-decoded in BT.2020 then converted to signed linear
-BT.709 before measuring manually selected grass/fern regions. The 5th/50th/
-95th OKLCh hue percentiles were 135/151/199 (left grass), 138/148/177 (right
-grass) and 146/168/214 (ferns). These are scene-specific measurements, not
-coverage proof for every biome/weather. Yellow/blue shoulders are deliberate
-extensions for regional foliage and cooler night lighting.
-
-Scratch evidence: `tmp/thewitcher3remastered/night-selective-saturation/`.
-It includes ROI coordinates, EXR-domain analysis, CSV hue distributions,
-graphs and actual production HLSL WARP harnesses. After restarting, compare
-100/50/0 and 200 in the affected foliage scene; check warm lights, skin,
-coloured UI, night fades, daylight, master Off and both display gamut targets.
-Set Night Color Grading Chroma to 0 to verify independence. Live appearance
-and other regions/weather require in-game verification.
-
-Validation: all 32 CRC-addressed production shaders compile strictly and the
-clang-x64-release/thewitcher3remastered build passes. Neutral output matches
-the previous version exactly across 324 configurations / 663,552 pixels.
-Active-slider normal/FG testing passes 1,296 configurations / 1,327,104 pixels
-for luminance, UI, Vanilla, FG parity and coverage. Direct production-extension
-hue sweeps pass 160 configurations / 163,840 pixels across BT.709/BT.2020,
-HDR levels, global saturation and night strength. They verify finite in-gamut
-output, luminance preservation, full green/cyan desaturation, weaker yellow/
-blue coverage and warm/pink/neutral isolation. Maximum selection-weight slope
-is 0.039 per measured OKLCh degree. The real Release DLL callback cleanup
-test passes; these tests do not measure live frame time.
+Night lighting, camera lights and selective saturation are owned and tested by
+[Darker Nights](../../thewitcher3remastered-darkernights/tests/README.md). The HDR addon reads
+none of their settings and installs none of their native hooks.
 
 ## Unclamped LUTs, day/night grading and PsychoV
 
@@ -144,16 +68,21 @@ output through every LUT variant; independent vignette darkening; reversible
 HDR proxy identity (maximum normalized error 6.34e-7); BT.2020 colours outside
 BT.709 surviving PsychoV; zero/half/full gamut projection; and full selected
 gamut/peak containment across both targets, hue shift, cone exponent, anchors,
-automatic/manual compression, global saturation and night vegetation saturation.
+automatic/manual compression and global saturation.
 PsychoV works in signed linear BT.709 coordinates, which does not limit its
 colour gamut to BT.709. The bounded LUT proxy is reversed before tonemapping.
 
 The same scratch folder records actual normal/FG wide-colour output testing
 (324 configurations / 663,552 pixels), neutral scene/UI comparisons (maximum
-PQ-domain error 8.23e-6), and active night-saturation composition testing
-(1,296 configurations / 1,327,104 pixels). Vanilla, opaque UI, normal/FG parity
-and FG coverage remain unchanged. All 32 production shaders compile with
-strict DXC flags; the Release build and real-addon callback test pass.
+PQ-domain error 8.23e-6). Vanilla, opaque UI, normal/FG parity
+and FG coverage remain unchanged.
+
+The HDR/lighting split was checked with both Release DLLs and both load orders,
+using this HDR addon and the installed third-party HDR addon. Standalone grading
+pass routing, native lighting, saved presets and teardown/reload all pass. The
+HDR output comparison matches the pre-split version exactly across 324 normal/FG
+cases and 972 FSR cases; 972 HDR-saturation bypass cases and 162 Photo Mode cases
+also pass. The 22 HDR shader replacements and both Release targets build.
 These checks use synthetic inputs, not every game-authored LUT/environment.
 
 Evidence and the pre-change snapshot:
@@ -204,8 +133,7 @@ composition is retained and no AutoHDR expansion is applied.
 production `0x6DDA5B7B` through WARP compute wrappers. The wrappers only change
 register spaces/entry-point plumbing. It checks 162 exposure, contrast,
 saturation, temperature and night-grade combinations, Vanilla preservation,
-finite signed HDR, exact source alpha, linear exposure scaling and independent
-chroma-only grading luminance. Compile the host with clang-cl /std:c++20 /EHsc
+finite signed HDR, exact source alpha and linear exposure scaling. Compile the host with clang-cl /std:c++20 /EHsc
 /O2 /MT and link d3d11.lib; pass the original/production CS5.0 bytecode paths.
 
 `output_composition.cpp` accepts an optional fifth argument `hdr-saturation`.
@@ -217,8 +145,7 @@ under active native saturation are intentional. Existing invocation without
 that argument retains the neutral parity test.
 
 Live Photo Mode inspection confirmed unclamped grading and visible scene/UI.
-After a Release rebuild, verify both night-grade controls and vegetation
-saturation in Photo Mode, the Photo Mode filter/exposure/vignette controls,
+After a Release rebuild, verify the Photo Mode filter/exposure/vignette controls,
 native HDR Saturation independence, and gameplay with FG on/off.
 
 
@@ -237,5 +164,5 @@ compile strictly as ps_6_6 with their correct output signatures.
 
 Evidence: `tmp/thewitcher3remastered/fsr-20261007/`. After restarting with the
 Release addon, compare the same scene with FSR Frame Generation off/on:
-highlight detail and peak, white pixelation, UI, night controls and native
+highlight detail and peak, white pixelation, UI and native
 HDR Saturation independence. Also check DLSS Frame Generation and Vanilla.

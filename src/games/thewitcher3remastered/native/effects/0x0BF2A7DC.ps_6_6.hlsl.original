@@ -1,0 +1,187 @@
+struct ShaderCommonEnvProbeParams {
+  float ShaderCommonEnvProbeParams_000;
+  float3 ShaderCommonEnvProbeParams_004;
+  float3 ShaderCommonEnvProbeParams_016;
+  row_major float4x4 ShaderCommonEnvProbeParams_028;
+  float4 ShaderCommonEnvProbeParams_092;
+  row_major float4x4 ShaderCommonEnvProbeParams_108;
+  int ShaderCommonEnvProbeParams_172;
+};
+
+struct ShaderCullingEnvProbeParams {
+  row_major float4x3 ShaderCullingEnvProbeParams_000;
+  float3 ShaderCullingEnvProbeParams_048;
+  int ShaderCullingEnvProbeParams_060;
+};
+
+struct ShaderWorldTear {
+  float4 ShaderWorldTear_000;
+  float4 ShaderWorldTear_016;
+  float ShaderWorldTear_032;
+  float ShaderWorldTear_036;
+  float ShaderWorldTear_040;
+  float ShaderWorldTear_044;
+};
+
+struct ShaderWorldTearArray {
+  int ShaderWorldTearArray_000;
+  float ShaderWorldTearArray_004;
+  float ShaderWorldTearArray_008;
+  float ShaderWorldTearArray_012;
+  ShaderWorldTear ShaderWorldTearArray_016[10];
+};
+
+struct ShaderWorldTearConstants {
+  int4 ShaderWorldTearConstants_000[16];
+};
+
+
+Texture2D<float4> t0 : register(t0);
+
+Texture2D<float4> t1 : register(t1);
+
+Texture2D<float4> t2 : register(t2);
+
+cbuffer cb3 : register(b3) {
+  float4 CustomPixelConsts_000 : packoffset(c000.x);
+  float4 CustomPixelConsts_016 : packoffset(c001.x);
+  float4 CustomPixelConsts_032 : packoffset(c002.x);
+  float4 CustomPixelConsts_048 : packoffset(c003.x);
+  float4 CustomPixelConsts_064 : packoffset(c004.x);
+  float4 CustomPixelConsts_080 : packoffset(c005.x);
+  float4 CustomPixelConsts_096 : packoffset(c006.x);
+  float4 CustomPixelConsts_112 : packoffset(c007.x);
+  float4 CustomPixelConsts_128 : packoffset(c008.x);
+  float4 CustomPixelConsts_144 : packoffset(c009.x);
+  float4 CustomPixelConsts_160 : packoffset(c010.x);
+  float4 CustomPixelConsts_176 : packoffset(c011.x);
+  float4 CustomPixelConsts_192 : packoffset(c012.x);
+  float4 CustomPixelConsts_208 : packoffset(c013.x);
+  float4 CustomPixelConsts_224 : packoffset(c014.x);
+  float4 CustomPixelConsts_240 : packoffset(c015.x);
+  float4 CustomPixelConsts_256 : packoffset(c016.x);
+  float4 CustomPixelConsts_272 : packoffset(c017.x);
+  float4 CustomPixelConsts_288 : packoffset(c018.x);
+  float4 CustomPixelConsts_304 : packoffset(c019.x);
+  float4 CustomPixelConsts_320 : packoffset(c020.x);
+  row_major float4x4 CustomPixelConsts_336 : packoffset(c021.x);
+};
+
+cbuffer cb12 : register(b12) {
+  float cb12_022x : packoffset(c022.x);
+  float cb12_022y : packoffset(c022.y);
+  float cb12_287x : packoffset(c287.x);
+  uint cb12_padding : packoffset(c340.w);
+};
+
+SamplerState s0 : register(s0);
+
+float4 main(
+  noperspective float4 SV_Position : SV_Position
+) : SV_Target {
+  float4 SV_Target = 0;
+  float _40 = (CustomPixelConsts_016.x * ((float((int)((int)((uint)(int(SV_Position.x)) - (uint)(int(CustomPixelConsts_064.z))))) + 0.5f) / CustomPixelConsts_048.x)) + float((int)(int(CustomPixelConsts_064.x)));
+  float _41 = (CustomPixelConsts_016.y * ((float((int)((int)((uint)(int(SV_Position.y)) - (uint)(int(CustomPixelConsts_064.w))))) + 0.5f) / CustomPixelConsts_048.y)) + float((int)(int(CustomPixelConsts_064.y)));
+  float _52 = (CustomPixelConsts_080.x + 0.5f) / CustomPixelConsts_000.x;
+  float _53 = (CustomPixelConsts_080.y + 0.5f) / CustomPixelConsts_000.y;
+  float _58 = (CustomPixelConsts_080.z + 0.5f) / CustomPixelConsts_000.x;
+  float _59 = (CustomPixelConsts_080.w + 0.5f) / CustomPixelConsts_000.y;
+  float _66 = min(max(((_40 + -1.0f) / CustomPixelConsts_000.x), _52), _58);
+  float _67 = min(max(((_41 + -1.0f) / CustomPixelConsts_000.y), _53), _59);
+  float4 _70 = t0.SampleLevel(s0, float2(_66, _67), 0.0f);
+  float _77 = min(max(((_40 + 1.0f) / CustomPixelConsts_000.x), _52), _58);
+  float4 _78 = t0.SampleLevel(s0, float2(_77, _67), 0.0f);
+  float _88 = min(max(((_41 + 1.0f) / CustomPixelConsts_000.y), _53), _59);
+  float4 _89 = t0.SampleLevel(s0, float2(_66, _88), 0.0f);
+  float4 _96 = t0.SampleLevel(s0, float2(_77, _88), 0.0f);
+  float _100 = ((_78.x + _70.x) + _89.x) + _96.x;
+  float _101 = ((_78.y + _70.y) + _89.y) + _96.y;
+  float _102 = ((_78.z + _70.z) + _89.z) + _96.z;
+  bool _111 = (((abs(_101 * 0.25f) + abs(_100 * 0.25f)) + abs(_102 * 0.25f)) > 1.0000000116860974e-07f);
+  float _115 = select(_111, (_100 * 0.2500000298023224f), 0.0f);
+  float _116 = select(_111, (_101 * 0.2500000298023224f), 0.0f);
+  float _117 = select(_111, (_102 * 0.2500000298023224f), 0.0f);
+  float _125 = dot(float3(_115, _116, _117), float3(CustomPixelConsts_144.x, CustomPixelConsts_144.y, CustomPixelConsts_144.z));
+  float _135 = ((exp2(log2(max((_125 / CustomPixelConsts_096.y), 9.999999974752427e-07f)) * CustomPixelConsts_096.z) * CustomPixelConsts_096.y) / max(_125, 9.999999974752427e-07f)) * CustomPixelConsts_096.w;
+  float _136 = _135 * _115;
+  float _137 = _135 * _116;
+  float _138 = _135 * _117;
+  float4 _146 = t1.Load(int3((int)(uint(cb12_287x * _40)), (int)(uint(cb12_287x * _41)), 0));
+  float _178;
+  float _179;
+  float _180;
+  float _206;
+  float _207;
+  float _208;
+  [branch]
+  if (!(!(((cb12_022x * _146.x) + cb12_022y) >= 1.0f))) {
+    if (CustomPixelConsts_112.z > 0.0f) {
+      float _159 = dot(float3(_136, _137, _138), float3(CustomPixelConsts_144.x, CustomPixelConsts_144.y, CustomPixelConsts_144.z));
+      if (_159 > CustomPixelConsts_112.z) {
+        float _162 = CustomPixelConsts_112.z / _159;
+        _178 = (_162 * _136);
+        _179 = (_162 * _137);
+        _180 = (_162 * _138);
+      } else {
+        _178 = _136;
+        _179 = _137;
+        _180 = _138;
+      }
+    } else {
+      _178 = _136;
+      _179 = _137;
+      _180 = _138;
+    }
+  } else {
+    if (CustomPixelConsts_112.w > 0.0f) {
+      float _170 = dot(float3(_136, _137, _138), float3(CustomPixelConsts_144.x, CustomPixelConsts_144.y, CustomPixelConsts_144.z));
+      if (_170 > CustomPixelConsts_112.w) {
+        float _173 = CustomPixelConsts_112.w / _170;
+        _178 = (_173 * _136);
+        _179 = (_173 * _137);
+        _180 = (_173 * _138);
+      } else {
+        _178 = _136;
+        _179 = _137;
+        _180 = _138;
+      }
+    } else {
+      _178 = _136;
+      _179 = _137;
+      _180 = _138;
+    }
+  }
+  [branch]
+  if (CustomPixelConsts_112.y > 0.0f) {
+    float4 _185 = t2.GatherRed(s0, float2((_40 / CustomPixelConsts_000.x), (_41 / CustomPixelConsts_000.y)));
+    if ((int)(_185.w < 0.0010000000474974513f) || ((int)((int)(_185.z < 0.0010000000474974513f) || ((int)((int)(_185.x < 0.0010000000474974513f) || (int)(_185.y < 0.0010000000474974513f)))))) {
+      float _198 = dot(float3(_178, _179, _180), float3(CustomPixelConsts_144.x, CustomPixelConsts_144.y, CustomPixelConsts_144.z));
+      if (_198 > CustomPixelConsts_112.y) {
+        float _201 = CustomPixelConsts_112.y / _198;
+        _206 = (_201 * _178);
+        _207 = (_201 * _179);
+        _208 = (_201 * _180);
+      } else {
+        _206 = _178;
+        _207 = _179;
+        _208 = _180;
+      }
+    } else {
+      _206 = _178;
+      _207 = _179;
+      _208 = _180;
+    }
+  } else {
+    _206 = _178;
+    _207 = _179;
+    _208 = _180;
+  }
+  float _209 = dot(float3(CustomPixelConsts_144.x, CustomPixelConsts_144.y, CustomPixelConsts_144.z), float3(_206, _207, _208));
+  float _213 = max(0.0f, (_209 - CustomPixelConsts_128.x));
+  float _223 = (min(CustomPixelConsts_112.x, (saturate(CustomPixelConsts_128.y * _213) * _213)) / max(9.999999747378752e-05f, _209)) * CustomPixelConsts_096.x;
+  SV_Target.x = (_223 * _206);
+  SV_Target.y = (_223 * _207);
+  SV_Target.z = (_223 * _208);
+  SV_Target.w = 0.0f;
+  return SV_Target;
+}

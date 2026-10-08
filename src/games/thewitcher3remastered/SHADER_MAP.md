@@ -333,3 +333,52 @@ retain their native processing. No FSR SDK shader, resource format or CPU
 descriptor tracking is changed. Evidence is under
 `tmp/thewitcher3remastered/fsr-20261007/`; runtime confirmation with FSR
 Frame Generation enabled is still required.
+
+
+## Bloom extraction after exposure (2026-10-08)
+
+The updated gameplay/Photo Mode capture places `0x382CDBDB` exposure and
+native tonemapping before `0x0BF2A7DC` bloom extraction. Previous captures
+placed bloom before that pass, despite retaining the same shader hashes.
+PsychoV bypasses the native curve, exposing bloom's nonlinear extraction to
+unbounded HDR scene values. The final PsychoV mapping still follows bloom,
+LUTs and Photo Mode grading.
+
+`effects/0x0BF2A7DC.ps_6_6.hlsl` evaluates native extraction on the existing
+reversible gamut/N2 proxy and restores signed chromaticity only. Retaining
+the bounded effect intensity avoids re-amplifying the extracted light.
+Native four-tap sampling, depth/mask caps, threshold,
+soft knee and alpha zero remain. Bloom Strength is applied once by the
+existing final additive composite. Vanilla and invalid injection use the
+original extraction. This adds shader arithmetic and the existing injection
+binding; no CPU tracking, new resource, filtering pass or draw is added.
+
+Strict DXC compilation passes. Original and recompiled native contracts and
+intrinsic counts match; 720 differential cases cover all 12 original blocks
+with zero error, including forced Vanilla and inactive injection. HDR tests
+cover 241 monotonic grey samples and 35 colour/range combinations, including
+signed wide-gamut RGB and black. Scratch evidence is under
+`tmp/thewitcher3remastered/bloom-20261008/`. Rebuilt runtime confirmation
+remains required because the live comparison was inconclusive.
+
+
+## Textured vignette / chromatic-aberration grade (2026-10-08)
+
+The affected gameplay scene uses LUT `0x2F2D0992` at draw 7969, followed by
+previously uncovered pixel shader `0x2BF760E2` at draw 7970 (vertex shader
+`0x5237FE3A`). Its native channel floors discard signed BT.709 working values
+and its post-LUT colour grade bypasses the Color Grading Strength control.
+The scene source and destination are RGBA16F; t2 is an R8 vignette mask.
+No additional LUT or scene-resource format upgrade is needed in this chain.
+
+The replacement retains native chromatic-aberration sampling and textured
+vignette, and uses the existing shared HDR post-grade, CA and sharpening
+controls. Color Grading Strength is independent of LUT Grading Strength and
+vignette strength. Signed HDR reaches the existing final PsychoV/PQ output;
+Vanilla keeps the original grade. Native signatures, interpolation, bindings,
+400-byte cbuffer and intrinsic counts match the recompiled baseline. All 720
+differential cases and all three native blocks pass with zero error. WARP
+checks verify Vanilla parity, alpha, grade bypass/half strength, finite HDR,
+signed wide-gamut output and vignette independence. Evidence is under
+`tmp/thewitcher3remastered/grading-20261008/`. Rebuilt visual validation
+remains required.

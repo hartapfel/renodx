@@ -101,35 +101,12 @@ float3 WitcherApplyPsychoVOutputExtensions(
   mapped_bt709 = renodx::math::Select(isinf(mapped_bt709), 0.f.xxx, mapped_bt709);
 
   if (RENODX_TONE_MAP_SATURATION == 1.f
-      && WITCHER_NIGHT_SATURATION_DELTA == 0.f
       && RENODX_TONE_MAP_HIGHLIGHT_SATURATION == 1.f
       && RENODX_TONE_MAP_BLOWOUT == 0.f) {
     return mapped_bt709;
   }
 
   float saturation = RENODX_TONE_MAP_SATURATION;
-  if (WITCHER_NIGHT_SATURATION_DELTA != 0.f) {
-    // Select displayed hues before saturation, using signed linear BT.709.
-    // Saved night grass/fern ROIs span roughly 135..214 degrees in OKLCh.
-    // Yellow and blue shoulders are weaker to retain warm lights and blues.
-    const float3 lab = renodx::color::oklab::from::BT709(mapped_bt709);
-    const float relative_chroma = length(lab.yz) / max(lab.x, 1e-6f);
-    if (relative_chroma > 0.02f) {
-      float hue = atan2(lab.z, lab.y) * (180.f / 3.141592653589793f);
-      if (hue < 0.f) hue += 360.f;
-      const float warm_weight = 0.35f * smoothstep(85.f, 110.f, hue)
-          + 0.65f * smoothstep(110.f, 135.f, hue);
-      const float cool_weight = 1.f - 0.65f * smoothstep(220.f, 250.f, hue)
-          - 0.35f * smoothstep(250.f, 275.f, hue);
-      const float hue_weight = saturate(warm_weight * cool_weight)
-          * smoothstep(0.02f, 0.06f, relative_chroma);
-      saturation *= 1.f + WITCHER_NIGHT_SATURATION_DELTA * hue_weight;
-    }
-    if (saturation == 1.f
-        && RENODX_TONE_MAP_HIGHLIGHT_SATURATION == 1.f
-        && RENODX_TONE_MAP_BLOWOUT == 0.f) return mapped_bt709;
-  }
-
   // Grade in the actual display gamut: valid BT.2020 can have signed BT.709
   // components. Preserve luminance and chroma direction rather than clipping
   // independent channels after an unbounded saturation adjustment.

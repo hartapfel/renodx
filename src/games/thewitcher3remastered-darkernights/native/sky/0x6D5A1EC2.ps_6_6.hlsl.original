@@ -1,0 +1,110 @@
+struct ShaderCommonEnvProbeParams {
+  float ShaderCommonEnvProbeParams_000;
+  float3 ShaderCommonEnvProbeParams_004;
+  float3 ShaderCommonEnvProbeParams_016;
+  row_major float4x4 ShaderCommonEnvProbeParams_028;
+  float4 ShaderCommonEnvProbeParams_092;
+  row_major float4x4 ShaderCommonEnvProbeParams_108;
+  int ShaderCommonEnvProbeParams_172;
+};
+
+struct ShaderCullingEnvProbeParams {
+  row_major float4x3 ShaderCullingEnvProbeParams_000;
+  float3 ShaderCullingEnvProbeParams_048;
+  int ShaderCullingEnvProbeParams_060;
+};
+
+struct ShaderWorldTear {
+  float4 ShaderWorldTear_000;
+  float4 ShaderWorldTear_016;
+  float ShaderWorldTear_032;
+  float ShaderWorldTear_036;
+  float ShaderWorldTear_040;
+  float ShaderWorldTear_044;
+};
+
+struct ShaderWorldTearArray {
+  int ShaderWorldTearArray_000;
+  float ShaderWorldTearArray_004;
+  float ShaderWorldTearArray_008;
+  float ShaderWorldTearArray_012;
+  ShaderWorldTear ShaderWorldTearArray_016[10];
+};
+
+struct ShaderWorldTearConstants {
+  int4 ShaderWorldTearConstants_000[16];
+};
+
+
+Texture2D<float4> t0 : register(t0);
+
+cbuffer cb0 : register(b0) {
+  float4 GlobalShaderConsts_000 : packoffset(c000.x);
+  float4 GlobalShaderConsts_016 : packoffset(c001.x);
+  float4 GlobalShaderConsts_032 : packoffset(c002.x);
+  float4 GlobalShaderConsts_048 : packoffset(c003.x);
+  float4 GlobalShaderConsts_064 : packoffset(c004.x);
+  float4 GlobalShaderConsts_080 : packoffset(c005.x);
+  float4 GlobalShaderConsts_096 : packoffset(c006.x);
+  float4 GlobalShaderConsts_112 : packoffset(c007.x);
+  float4 GlobalShaderConsts_128 : packoffset(c008.x);
+  float4 GlobalShaderConsts_144 : packoffset(c009.x);
+  float4 GlobalShaderConsts_160 : packoffset(c010.x);
+  float4 GlobalShaderConsts_176 : packoffset(c011.x);
+  float4 GlobalShaderConsts_192 : packoffset(c012.x);
+  float4 GlobalShaderConsts_208 : packoffset(c013.x);
+  float4 GlobalShaderConsts_224 : packoffset(c014.x);
+  float4 GlobalShaderConsts_240 : packoffset(c015.x);
+};
+
+cbuffer cb2 : register(b2) {
+  float4 FrequentPixelConsts_000 : packoffset(c000.x);
+  float4 FrequentPixelConsts_016 : packoffset(c001.x);
+  float4 FrequentPixelConsts_032 : packoffset(c002.x);
+  float4 FrequentPixelConsts_048 : packoffset(c003.x);
+  float4 FrequentPixelConsts_064 : packoffset(c004.x);
+  float4 FrequentPixelConsts_080 : packoffset(c005.x);
+  float4 FrequentPixelConsts_096 : packoffset(c006.x);
+  row_major float4x4 FrequentPixelConsts_112 : packoffset(c007.x);
+  row_major float4x4 FrequentPixelConsts_176 : packoffset(c011.x);
+  float4 FrequentPixelConsts_240 : packoffset(c015.x);
+  float4 FrequentPixelConsts_256 : packoffset(c016.x);
+  float4 FrequentPixelConsts_272 : packoffset(c017.x);
+  float4 FrequentPixelConsts_288 : packoffset(c018.x);
+};
+
+cbuffer cb12 : register(b12) {
+  float cb12_277x : packoffset(c277.x);
+  float cb12_277y : packoffset(c277.y);
+  float cb12_277z : packoffset(c277.z);
+  uint cb12_padding : packoffset(c340.w);
+};
+
+SamplerState s0 : register(s0);
+
+float4 main(
+  linear float4 TEXCOORD : TEXCOORD,
+  linear float4 TEXCOORD_1 : TEXCOORD1,
+  linear float4 TEXCOORD_2 : TEXCOORD2,
+  linear float4 TEXCOORD_3 : TEXCOORD3,
+  linear float3 TEXCOORD_4 : TEXCOORD4
+) : SV_Target {
+  float4 SV_Target = 0;
+  float4 _26 = t0.Sample(s0, float2((TEXCOORD_2.x - GlobalShaderConsts_000.w), TEXCOORD_2.y));
+  float4 _33 = t0.Sample(s0, float2((TEXCOORD_2.x - GlobalShaderConsts_000.w), TEXCOORD_2.y));
+  float _40 = (_33.x + -0.5f) * 2.0f;
+  float _41 = (_33.y + -0.5f) * 2.0f;
+  float _42 = (_33.z + -0.5f) * 2.0f;
+  float _44 = rsqrt(dot(float3(_40, _41, _42), float3(_40, _41, _42)));
+  float _45 = _40 * _44;
+  float _46 = _41 * _44;
+  float _47 = _42 * _44;
+  float _68 = ((GlobalShaderConsts_000.y * 0.033863864839076996f) + GlobalShaderConsts_000.w) * 6.283185005187988f;
+  float _87 = FrequentPixelConsts_032.w * saturate(1.0f - TEXCOORD_1.w);
+  float _88 = (pow(_26.w, 2.200000047683716f)) * saturate(dot(float3((((_45 * TEXCOORD_4.x) + (_46 * TEXCOORD_3.x)) + (_47 * TEXCOORD_2.z)), (((_45 * TEXCOORD_4.y) + (_46 * TEXCOORD_3.y)) + (_47 * TEXCOORD_2.w)), (((_45 * TEXCOORD_4.z) + (_46 * TEXCOORD_3.z)) + (_47 * TEXCOORD_3.w))), float3(cos(_68), sin(_68), 0.0f)));
+  SV_Target.x = (((_88 * cb12_277x) * FrequentPixelConsts_032.x) * _87);
+  SV_Target.y = (((_88 * cb12_277y) * FrequentPixelConsts_032.y) * _87);
+  SV_Target.z = (((_88 * cb12_277z) * FrequentPixelConsts_032.z) * _87);
+  SV_Target.w = 0.0f;
+  return SV_Target;
+}

@@ -64,12 +64,12 @@ struct __declspec(uuid("f8805bac-a932-49ef-b0c9-e4db1a8b33fc")) CommandListData 
 
 static void OnDestroyCommandList(reshade::api::command_list* cmd_list) {
   if (!shared.data->capture_push_descriptors) return;
-  cmd_list->destroy_private_data<CommandListData>();
+  data::Delete<CommandListData>(cmd_list);
 }
 
 static void OnInitCommandList(reshade::api::command_list* cmd_list) {
   if (!shared.data->capture_push_descriptors) return;
-  cmd_list->create_private_data<CommandListData>();
+  data::Create<CommandListData>(cmd_list);
 }
 
 static void OnInitResource(
@@ -195,7 +195,7 @@ static void OnPushDescriptors(
     const reshade::api::descriptor_table_update& update) {
   if (update.type != reshade::api::descriptor_type::constant_buffer) return;
   if (!shared.data->capture_push_descriptors) return;
-  auto* cmd_list_data = cmd_list->get_private_data<CommandListData>();
+  auto* cmd_list_data = data::Get<CommandListData>(cmd_list);
   if (cmd_list_data == nullptr) return;
 
   renodx::utils::pipeline_layout::GetPipelineLayoutData(layout, [&](const auto* layout_data) {
@@ -322,7 +322,7 @@ static bool RevertBufferRange(
     uint32_t dx_register_index,
     uint32_t dx_register_space = 0,
     reshade::api::shader_stage stage = reshade::api::shader_stage::pixel) {
-  auto* cmd_list_data = cmd_list->get_private_data<CommandListData>();
+  auto* cmd_list_data = data::Get<CommandListData>(cmd_list);
   if (cmd_list_data == nullptr) {
     reshade::log::message(reshade::log::level::warning, "Could not find command list data.");
     return false;

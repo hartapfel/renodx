@@ -1,0 +1,113 @@
+#include "../common.hlsli"
+#include "../chromatic_aberration.hlsli"
+
+Texture2D<float4> t0 : register(t0);
+
+Texture2D<float4> t2 : register(t2);
+
+cbuffer cb3 : register(b3) {
+  float4 CustomPixelConsts_000 : packoffset(c000.x);
+  float4 CustomPixelConsts_016 : packoffset(c001.x);
+  float4 CustomPixelConsts_032 : packoffset(c002.x);
+  float4 CustomPixelConsts_048 : packoffset(c003.x);
+  float4 CustomPixelConsts_064 : packoffset(c004.x);
+  float4 CustomPixelConsts_080 : packoffset(c005.x);
+  float4 CustomPixelConsts_096 : packoffset(c006.x);
+  float4 CustomPixelConsts_112 : packoffset(c007.x);
+  float4 CustomPixelConsts_128 : packoffset(c008.x);
+  float4 CustomPixelConsts_144 : packoffset(c009.x);
+  float4 CustomPixelConsts_160 : packoffset(c010.x);
+  float4 CustomPixelConsts_176 : packoffset(c011.x);
+  float4 CustomPixelConsts_192 : packoffset(c012.x);
+  float4 CustomPixelConsts_208 : packoffset(c013.x);
+  float4 CustomPixelConsts_224 : packoffset(c014.x);
+  float4 CustomPixelConsts_240 : packoffset(c015.x);
+  float4 CustomPixelConsts_256 : packoffset(c016.x);
+  float4 CustomPixelConsts_272 : packoffset(c017.x);
+  float4 CustomPixelConsts_288 : packoffset(c018.x);
+  float4 CustomPixelConsts_304 : packoffset(c019.x);
+  float4 CustomPixelConsts_320 : packoffset(c020.x);
+  row_major float4x4 CustomPixelConsts_336 : packoffset(c021.x);
+};
+
+SamplerState s1 : register(s1);
+
+SamplerState s2 : register(s2);
+
+#include "../postgrade.hlsli"
+
+float4 main(
+  noperspective float4 SV_Position : SV_Position,
+  linear float2 TEXCOORD : TEXCOORD,
+  linear float2 TEXCOORD_2 : TEXCOORD2
+) : SV_Target {
+  float4 SV_Target = 0;
+  float _19 = (TEXCOORD.x - CustomPixelConsts_272.x) / CustomPixelConsts_272.x;
+  float _20 = (TEXCOORD.y - CustomPixelConsts_272.y) / CustomPixelConsts_272.y;
+  float _24 = sqrt((_20 * _20) + (_19 * _19));
+  float _27 = saturate((_24 - CustomPixelConsts_256.y) * CustomPixelConsts_256.z);
+  float4 _30 = t0.SampleLevel(s1, float2(TEXCOORD.x, TEXCOORD.y), 0.0f);
+  uint width = 0, height = 0;
+  const bool use_rcas = WitcherUsePsychoV30() && CUSTOM_SHARPENING_MODE != 0.f && CUSTOM_SHARPENING > 0.f;
+  if (use_rcas) {
+    t0.GetDimensions(width, height);
+    _30.rgb = WitcherSampleFringe(t0, TEXCOORD, uint2(width, height));
+  }
+  float _61;
+  float _62;
+  [branch]
+  if (WitcherUsePsychoV30() && CUSTOM_CA_MODE != 0.f) {
+    t0.GetDimensions(width, height);
+    _30.rgb = WitcherApplyChromaticAberration(_30.rgb, t0, TEXCOORD, uint2(width, height));
+    _61 = _30.x;
+    _62 = _30.y;
+  } else if (_27 > 0.0f) {
+    float _45 = ((_27 * _27) * CustomPixelConsts_256.x) * min(max((1.0f / _24), -3.4028234663852886e+38f), 3.4028234663852886e+38f);
+    float _47 = (_19 * CustomPixelConsts_272.z) * _45;
+    float _49 = (_20 * CustomPixelConsts_272.w) * _45;
+    float4 _54 = t0.SampleLevel(s1, float2((TEXCOORD.x - (_47 * 2.0f)), (TEXCOORD.y - (_49 * 2.0f))), 0.0f);
+    float4 _58 = t0.SampleLevel(s1, float2((TEXCOORD.x - _47), (TEXCOORD.y - _49)), 0.0f);
+    if (use_rcas) {
+      _54.rgb = WitcherSampleFringe(t0, float2(TEXCOORD.x - _47 * 2.f, TEXCOORD.y - _49 * 2.f), uint2(width, height));
+      _58.rgb = WitcherSampleFringe(t0, float2(TEXCOORD.x - _47, TEXCOORD.y - _49), uint2(width, height));
+    }
+    _61 = _54.x;
+    _62 = _58.y;
+  } else {
+    _61 = _30.x;
+    _62 = _30.y;
+  }
+  // RenoDX: this variant uses the native vignette texture after CA sampling.
+  // Keep signed HDR through the shared grade; its strength remains independent
+  // from the LUT contribution and vignette controls.
+  if (WitcherUsePsychoV30()) {
+    return float4(WitcherApplyPostGrade(float3(_61, _62, _30.z),
+        t2.Sample(s2, TEXCOORD_2).x), _30.w);
+  }
+  float _96 = exp2(log2(max(0.0f, ((CustomPixelConsts_224.x * exp2(log2(abs(_61)) * CustomPixelConsts_128.x)) + CustomPixelConsts_224.y))) * CustomPixelConsts_224.z);
+  float _97 = exp2(log2(max(0.0f, ((CustomPixelConsts_224.x * exp2(log2(abs(_62)) * CustomPixelConsts_128.x)) + CustomPixelConsts_224.y))) * CustomPixelConsts_224.z);
+  float _98 = exp2(log2(max(0.0f, ((CustomPixelConsts_224.x * exp2(log2(abs(_30.z)) * CustomPixelConsts_128.x)) + CustomPixelConsts_224.y))) * CustomPixelConsts_224.z);
+  float _99 = dot(float3(0.29899999499320984f, 0.5870000123977661f, 0.11400000005960464f), float3(_96, _97, _98));
+  float _105 = saturate((_99 - CustomPixelConsts_160.x) * CustomPixelConsts_160.y);
+  float _110 = saturate((_99 - CustomPixelConsts_160.z) * CustomPixelConsts_160.w);
+  float _120 = exp2(log2(max(0.0f, _96)) * 2.200000047683716f);
+  float _121 = exp2(log2(max(0.0f, _97)) * 2.200000047683716f);
+  float _122 = exp2(log2(max(0.0f, _98)) * 2.200000047683716f);
+  float _123 = dot(float3(0.2125999927520752f, 0.7152000069618225f, 0.0722000002861023f), float3(_120, _121, _122));
+  float _142 = ((CustomPixelConsts_176.x - CustomPixelConsts_192.x) * _105) + CustomPixelConsts_192.x;
+  float _143 = ((CustomPixelConsts_176.y - CustomPixelConsts_192.y) * _105) + CustomPixelConsts_192.y;
+  float _144 = ((CustomPixelConsts_176.z - CustomPixelConsts_192.z) * _105) + CustomPixelConsts_192.z;
+  float _145 = ((CustomPixelConsts_176.w - CustomPixelConsts_192.w) * _105) + CustomPixelConsts_192.w;
+  float _162 = ((CustomPixelConsts_208.w - _145) * _110) + _145;
+  float _191 = CustomPixelConsts_144.x * exp2(log2(max(0.0f, (((_162 * (_120 - _123)) + _123) * (lerp(_142, CustomPixelConsts_208.x, _110))))) * 0.4545454680919647f);
+  float _192 = CustomPixelConsts_144.y * exp2(log2(max(0.0f, (((_162 * (_121 - _123)) + _123) * (lerp(_143, CustomPixelConsts_208.y, _110))))) * 0.4545454680919647f);
+  float _193 = CustomPixelConsts_144.z * exp2(log2(max(0.0f, (((_162 * (_122 - _123)) + _123) * (lerp(_144, CustomPixelConsts_208.z, _110))))) * 0.4545454680919647f);
+  float4 _196 = t2.Sample(s2, float2(TEXCOORD_2.x, TEXCOORD_2.y));
+  float _217 = saturate((CustomPixelConsts_096.w * _196.x) * saturate(1.0f - dot(float3((pow(_191, 2.200000047683716f)), (pow(_192, 2.200000047683716f)), (pow(_193, 2.200000047683716f))), float3(CustomPixelConsts_096.x, CustomPixelConsts_096.y, CustomPixelConsts_096.z))));
+  float _234 = CustomPixelConsts_240.y - CustomPixelConsts_240.x;
+  SV_Target.x = (((lerp(_191, CustomPixelConsts_112.x, _217)) * _234) + CustomPixelConsts_240.x);
+  SV_Target.y = (((lerp(_192, CustomPixelConsts_112.y, _217)) * _234) + CustomPixelConsts_240.x);
+  SV_Target.z = (((lerp(_193, CustomPixelConsts_112.z, _217)) * _234) + CustomPixelConsts_240.x);
+  SV_Target.w = _30.w;
+  return SV_Target;
+}
