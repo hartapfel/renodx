@@ -1,0 +1,9 @@
+#ifndef WITCHER_NATIVE_BLOOM_SHARED_H_
+#define WITCHER_NATIVE_BLOOM_SHARED_H_
+
+// Two 192-byte records: scene bloom and masked sunshafts, addressed by root UAV.
+#define WITCHER_BLOOM_REFERENCE_STRIDE 192u
+#define WITCHER_BLOOM_REFERENCE_BYTES (2u * WITCHER_BLOOM_REFERENCE_STRIDE)
+#define WITCHER_BLOOM_REFERENCE_TAG 173.f
+
+#endif

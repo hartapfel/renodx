@@ -1,4 +1,4 @@
-#include "../common.hlsli"
+#include "../native_bloom.hlsli"
 
 struct ShaderCommonEnvProbeParams {
   float ShaderCommonEnvProbeParams_000;
@@ -97,6 +97,20 @@ float4 main(
   float _81 = _78 * _15.z;
   float _82 = dot(float3(0.2125999927520752f, 0.7152000069618225f, 0.0722000002861023f), float3(_79, _80, _81));
   float _83 = abs(_82);
+  // Snapshot the real native adaptation response before b3 is reused by bloom.
+  // Only the first fullscreen pixel evaluates the second exposure here.
+  if (WitcherUsePsychoV30() && all(uint2(SV_Position.xy) == uint2(0, 0))) {
+    float second_white = CustomPixelConsts_272.x * 11.199999809265137f;
+    float second_adaptation = max(min(max(_12.x, CustomPixelConsts_144.y), CustomPixelConsts_144.z), 9.999999747378752e-05f);
+    float second_exposure = CustomPixelConsts_272.x /
+        (exp2(log2(second_adaptation / second_white) * CustomPixelConsts_272.z) * second_white);
+    WitcherNativeCurve first_curve = {CustomPixelConsts_064, CustomPixelConsts_112,
+        CustomPixelConsts_128, CustomPixelConsts_256, CustomPixelConsts_304};
+    WitcherNativeCurve second_curve = {CustomPixelConsts_144, CustomPixelConsts_176,
+        CustomPixelConsts_192, CustomPixelConsts_272, CustomPixelConsts_320};
+    WitcherCaptureBloomReference(SV_Position.xy, first_curve, second_curve, _78,
+                                second_exposure, CustomPixelConsts_208.x, cb12_221w);
+  }
   const bool compensate_brightness = WitcherUsePsychoV30() && CUSTOM_NATIVE_BRIGHTNESS_COMPENSATION != 0.f;
   if (compensate_brightness) _79 = _80 = _81 = 0.18f;
   float _187;

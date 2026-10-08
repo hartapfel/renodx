@@ -26,6 +26,7 @@
 #include "../../utils/settings.hpp"
 #include "../../utils/swapchain.hpp"
 #include "./shared.h"
+#include "./native_bloom.hpp"
 
 namespace {
 
@@ -66,7 +67,12 @@ bool ShouldInjectPostProcessLayout(std::span<const reshade::api::pipeline_layout
         break;
       case pipeline_layout_param_type::push_descriptors:
         inspect_range(param.push_descriptors);
-        root_dwords += 2;
+        // The native bloom buffer is our own injected root UAV. Reserve its
+        // two DWORDs below, both before creation and after layout injection.
+        if (param.push_descriptors.type != descriptor_type::buffer_unordered_access_view
+            || param.push_descriptors.dx_register_space != 50
+            || param.push_descriptors.dx_register_index != 0
+            || param.push_descriptors.count != 1) root_dwords += 2;
         break;
       case pipeline_layout_param_type::descriptor_table:
         for (uint32_t i = 0; i < param.descriptor_table.count; ++i) {
@@ -93,11 +99,11 @@ bool ShouldInjectPostProcessLayout(std::span<const reshade::api::pipeline_layout
   }
 
   // Never let the shared injection path truncate the complete settings payload.
-  return has_b3 && has_b12 && root_dwords <= 64 - sizeof(ShaderInjectData) / sizeof(float);
+  return has_b3 && has_b12 && root_dwords <= 64 - sizeof(ShaderInjectData) / sizeof(float) - 2;
 }
 
 bool IsPsychoV() {
-  return shader_injection.tone_map_type == 1.f;
+  return renodx::utils::bitwise::HasFlag(shader_injection.mode_flags, WITCHER_FLAG_PSYCHOV);
 }
 
 // Settings::Write clears only this percentage field; neighboring flags and
@@ -121,9 +127,10 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapType",
-        .binding = &shader_injection.tone_map_type,
+        .binding = &shader_injection.mode_flags,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
+        .packed_values = {0u, WITCHER_FLAG_PSYCHOV},
         .can_reset = false,
         .label = "Tone Mapper",
         .section = "Tone Mapping",
@@ -592,7 +599,7 @@ renodx::utils::settings::Settings settings = {
         .group = "button-line-1",
         .on_change = []() { renodx::utils::settings::ResetSettings(); },
     },
-/*     new renodx::utils::settings::Setting{
+    new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Recommended",
         .section = "Options",
@@ -611,12 +618,12 @@ renodx::utils::settings::Settings settings = {
             renodx::utils::settings::UpdateSetting(setting->key, setting->default_value);
           }
           renodx::utils::settings::UpdateSettings({
-              {"ColorGradeHighlightContrast", 58.f},
-              {"ColorGradeShadowContrast", 58.f},
-              {"PsychoVCompression", 0.95f},
+              {"ColorGradeShadows", 80.f},
+              {"PsychoVConeResponseExponent", 1.3f},
+              {"PsychoVCompression", 0.64f},
           });
         },
-    }, */
+    },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
         .label = "Use the game's native HDR output. Vanilla restores the native HDR pipeline.",
@@ -791,6 +798,16 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
                  && details->injection_index >= 0 && details->injection_register_index == 13;
         };
       }
+      // A 384-byte root UAV carries the real native exposure/curve response
+      // between the exposure and extraction draws, without heap tracking.
+      for (const auto hash : {0x382CDBDBu, 0x724E225Fu, 0x0BF2A7DCu}) {
+        auto& shader = custom_shaders.at(hash);
+        shader.views.push_back({.type = reshade::api::descriptor_type::buffer_unordered_access_view,
+                                .slot = 0, .space = 50, .get_view = &witcher::bloom::GetReference});
+        if (hash != 0x0BF2A7DCu) shader.on_draw = &witcher::bloom::BeginCapture;
+        shader.on_drawn = hash == 0x0BF2A7DCu ? &witcher::bloom::FinishExtraction : &witcher::bloom::FinishCapture;
+      }
+      custom_shaders.at(0x1132ADF9u).on_drawn = &witcher::bloom::MarkShafts;
       reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
       reshade::register_event<reshade::addon_event::present>(OnPresent);
       reshade::log::message(reshade::log::level::info,
@@ -809,6 +826,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
     shader_injection.tone_map_saturation = color_grading_saturation;
   }
   renodx::utils::random::Use(fdw_reason, {&shader_injection.random_seed});
+  witcher::bloom::Use(fdw_reason);
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
   return TRUE;
 }

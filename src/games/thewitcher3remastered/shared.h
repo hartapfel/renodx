@@ -7,7 +7,7 @@
 #define WITCHER_FLAG_SHARPENING (1u << 2)
 #define WITCHER_FLAG_VIGNETTE_BLACK (1u << 3)
 #define WITCHER_FLAG_NATIVE_BRIGHTNESS (1u << 4)
-// Bit 5 is retired; keep the remaining packed settings in their existing slots.
+#define WITCHER_FLAG_PSYCHOV (1u << 5)
 #define WITCHER_FLAG_NATIVE_BRIGHTNESS_DARKEN_ONLY (1u << 6)
 
 // Split contrast percentages share unused bits with the boolean/mode flags.
@@ -22,7 +22,6 @@
 struct ShaderInjectData {
   float peak_white_nits;
   float diffuse_white_nits;
-  float tone_map_type;
   float tone_map_exposure;
 
   float tone_map_gamma;
@@ -58,7 +57,8 @@ struct ShaderInjectData {
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 120);
+// The captured post-process layout uses 33 DWORDs; reserve two for bloom.
+static_assert(sizeof(ShaderInjectData) == 116);
 #else
 // DX12 injection binding, paired with addon.cpp; native buffers use space0.
 cbuffer shader_injection : register(b13, space50) {
@@ -68,7 +68,7 @@ cbuffer shader_injection : register(b13, space50) {
 #define RENODX_PEAK_WHITE_NITS shader_injection.peak_white_nits
 #define RENODX_DIFFUSE_WHITE_NITS shader_injection.diffuse_white_nits
 #define RENODX_GRAPHICS_WHITE_NITS shader_injection.graphics_white_nits
-#define RENODX_TONE_MAP_TYPE shader_injection.tone_map_type
+#define RENODX_TONE_MAP_TYPE WITCHER_MODE_FLAG(WITCHER_FLAG_PSYCHOV)
 #define RENODX_TONE_MAP_EXPOSURE shader_injection.tone_map_exposure
 #define RENODX_TONE_MAP_GAMMA shader_injection.tone_map_gamma
 #define RENODX_TONE_MAP_HIGHLIGHTS shader_injection.tone_map_highlights

@@ -1,11 +1,33 @@
 # Mod validation
 
+## Post-process root layout and packed tone mapper
+
+The native bloom root UAV needs two DWORDs. `root_layout.cpp` reproduces the
+captured main layout (ten root CBVs and thirteen descriptor tables), verifying
+that the 29-DWORD settings payload fits exactly at 64 DWORDs. It checks rejection
+of oversized/incompatible layouts and initialization with our own bindings.
+The production selector retains its saved/UI values 0/1; 4,608 writes verify
+that it preserves all neighboring mode and contrast fields.
+`prepare_layout.py` extracts the actual predicate and setting instead of
+maintaining a duplicate implementation.
+
+```powershell
+python src/games/thewitcher3remastered/tests/prepare_layout.py tmp/witcher-layout
+clang-cl /std:c++20 /EHsc /O2 /MT /DNOMINMAX /DWIN32=1 /Iexternal/reshade /Itmp/witcher-layout src/games/thewitcher3remastered/tests/root_layout.cpp /Fe:tmp/witcher-layout/check.exe /Fo:tmp/witcher-layout/check.obj
+./tmp/witcher-layout/check.exe
+```
+
+`output_composition.cpp` also accepts `legacy-injection`: before shaders receive
+the former 30-DWORD payload, while after shaders receive the packed payload.
+All 324 configurations / 663,552 normal/FG output pixels match exactly.
+After rebuilding, the user confirmed PsychoV and its controls function again.
+
 ## Addon callback cleanup
 
 `addon_runtime.cpp` loads the real Release DLL in a minimal ReShade host. It
 checks that saved lighting/CPU/motion/AutoHDR settings are ignored, descriptor heap and
-motion/movie binding events are absent, the single shared HDR shader reset
-callback remains, HDR events register, and detach removes all callbacks.
+motion/movie binding events are absent, the shared HDR shader and native bloom buffer reset
+callbacks remain, HDR events register, and detach removes all callbacks.
 No game or GPU callbacks are invoked.
 
 From an x64 Visual Studio developer shell at the repository root:

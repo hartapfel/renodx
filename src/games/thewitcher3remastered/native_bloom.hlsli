@@ -1,114 +1,35 @@
-#include "../native_bloom.hlsli"
+#ifndef WITCHER_NATIVE_BLOOM_HLSLI_
+#define WITCHER_NATIVE_BLOOM_HLSLI_
 
-struct ShaderCommonEnvProbeParams {
-  float ShaderCommonEnvProbeParams_000;
-  float3 ShaderCommonEnvProbeParams_004;
-  float3 ShaderCommonEnvProbeParams_016;
-  row_major float4x4 ShaderCommonEnvProbeParams_028;
-  float4 ShaderCommonEnvProbeParams_092;
-  row_major float4x4 ShaderCommonEnvProbeParams_108;
-  int ShaderCommonEnvProbeParams_172;
+#include "./common.hlsli"
+#include "./native_bloom_shared.h"
+
+struct WitcherNativeCurve {
+  float4 mode;
+  float4 curve_a;
+  float4 curve_b;
+  float4 exposure;
+  float4 color;
 };
 
-struct ShaderCullingEnvProbeParams {
-  row_major float4x3 ShaderCullingEnvProbeParams_000;
-  float3 ShaderCullingEnvProbeParams_048;
-  int ShaderCullingEnvProbeParams_060;
+struct WitcherBloomReference {
+  WitcherNativeCurve first;
+  WitcherNativeCurve second;
+  // Native exposure gains, environment blend, transported HDR exposure gain.
+  float4 exposure_state;
+  // Native response selector, validity tag, reserved, masked-source flag.
+  float4 state;
 };
 
-struct ShaderWorldTear {
-  float4 ShaderWorldTear_000;
-  float4 ShaderWorldTear_016;
-  float ShaderWorldTear_032;
-  float ShaderWorldTear_036;
-  float ShaderWorldTear_040;
-  float ShaderWorldTear_044;
-};
+RWStructuredBuffer<WitcherBloomReference> witcher_bloom_reference : register(u0, space50);
 
-struct ShaderWorldTearArray {
-  int ShaderWorldTearArray_000;
-  float ShaderWorldTearArray_004;
-  float ShaderWorldTearArray_008;
-  float ShaderWorldTearArray_012;
-  ShaderWorldTear ShaderWorldTearArray_016[10];
-};
-
-struct ShaderWorldTearConstants {
-  int4 ShaderWorldTearConstants_000[16];
-};
-
-
-Texture2D<float4> t0 : register(t0);
-
-Texture2D<float4> t1 : register(t1);
-
-cbuffer cb3 : register(b3) {
-  float4 CustomPixelConsts_000 : packoffset(c000.x);
-  float4 CustomPixelConsts_016 : packoffset(c001.x);
-  float4 CustomPixelConsts_032 : packoffset(c002.x);
-  float4 CustomPixelConsts_048 : packoffset(c003.x);
-  float4 CustomPixelConsts_064 : packoffset(c004.x);
-  float4 CustomPixelConsts_080 : packoffset(c005.x);
-  float4 CustomPixelConsts_096 : packoffset(c006.x);
-  float4 CustomPixelConsts_112 : packoffset(c007.x);
-  float4 CustomPixelConsts_128 : packoffset(c008.x);
-  float4 CustomPixelConsts_144 : packoffset(c009.x);
-  float4 CustomPixelConsts_160 : packoffset(c010.x);
-  float4 CustomPixelConsts_176 : packoffset(c011.x);
-  float4 CustomPixelConsts_192 : packoffset(c012.x);
-  float4 CustomPixelConsts_208 : packoffset(c013.x);
-  float4 CustomPixelConsts_224 : packoffset(c014.x);
-  float4 CustomPixelConsts_240 : packoffset(c015.x);
-  float4 CustomPixelConsts_256 : packoffset(c016.x);
-  float4 CustomPixelConsts_272 : packoffset(c017.x);
-  float4 CustomPixelConsts_288 : packoffset(c018.x);
-  float4 CustomPixelConsts_304 : packoffset(c019.x);
-  float4 CustomPixelConsts_320 : packoffset(c020.x);
-  row_major float4x4 CustomPixelConsts_336 : packoffset(c021.x);
-};
-
-cbuffer cb12 : register(b12) {
-  float cb12_221w : packoffset(c221.w);
-  uint cb12_padding : packoffset(c340.w);
-};
-
-float4 main(
-  noperspective float4 SV_Position : SV_Position
-) : SV_Target {
-  float4 SV_Target = 0;
-  uint _8 = uint(SV_Position.x);
-  uint _9 = uint(SV_Position.y);
-  float4 _11 = t1.Load(int3(0, 0, 0));
-  float4 _14 = t0.Load(int3(_8, _9, 0));
-  uint _26 = uint(CustomPixelConsts_064.x);
-  float _43 = CustomPixelConsts_256.x * 11.199999809265137f;
-  float _44 = max(_11.x, CustomPixelConsts_064.y);
-  float _45 = min(_44, CustomPixelConsts_064.z);
-  float _46 = max(_45, 9.999999747378752e-05f);
-  float _47 = _46 / _43;
-  float _48 = log2(_47);
-  float _49 = _48 * CustomPixelConsts_256.z;
-  float _50 = exp2(_49);
-  float _51 = _50 * _43;
-  float _52 = CustomPixelConsts_256.x / _51;
-  float _53 = _52 * _14.x;
-  float _54 = _52 * _14.y;
-  float _55 = _52 * _14.z;
-  float _56 = dot(float3(0.2125999927520752f, 0.7152000069618225f, 0.0722000002861023f), float3(_53, _54, _55));
-  float _57 = abs(_56);
-  WitcherNativeCurve native_curve = {CustomPixelConsts_064, CustomPixelConsts_112,
-      CustomPixelConsts_128, CustomPixelConsts_256, CustomPixelConsts_304};
-  WitcherCaptureBloomReference(SV_Position.xy, native_curve, native_curve, _52, _52, 0.f, cb12_221w);
-  // RenoDX: preserve exposed HDR through the later grade/effect passes.
-  // PsychoV runs after those passes, immediately before UI composition.
-  const bool compensate_brightness = WitcherUsePsychoV30() && CUSTOM_NATIVE_BRIGHTNESS_COMPENSATION != 0.f;
-  if (WitcherUsePsychoV30() && !compensate_brightness) {
-    return float4(_53, _54, _55, _57);
-  }
-  if (compensate_brightness) {
-    // Run the unchanged native curve on reference grey, not the HDR scene.
-    _53 = _54 = _55 = 0.18f;
-  }
+// Unchanged native curve arithmetic from 0x382CDBDB. Both environment states
+// in 0x724E225F use this same curve with their own coefficients.
+float3 WitcherEvaluateNativeCurve(float3 exposed, WitcherNativeCurve curve, float native_response) {
+  uint _26 = uint(curve.mode.x);
+  float _53 = exposed.r;
+  float _54 = exposed.g;
+  float _55 = exposed.b;
   float _162;
   float _179;
   float _195;
@@ -153,9 +74,9 @@ float4 main(
       break;
     }
     case 1: {
-      float _111 = CustomPixelConsts_128.w * 0.0009765625f;
+      float _111 = curve.curve_b.w * 0.0009765625f;
       float _112 = log2(_111);
-      float _113 = CustomPixelConsts_128.w * 90.5096664428711f;
+      float _113 = curve.curve_b.w * 90.5096664428711f;
       float _114 = log2(_113);
       float _115 = _53 * 0.8424790501594543f;
       float _116 = mad(_54, 0.07843360304832458f, _115);
@@ -182,12 +103,12 @@ float4 main(
       float _137 = _133 / _136;
       float _138 = _134 / _136;
       float _139 = _135 / _136;
-      bool _142 = (cb12_221w > 0.0f);
+      bool _142 = (native_response > 0.0f);
       [branch]
       if (_142) {
-        float _144 = -1.0f / CustomPixelConsts_256.w;
-        float _145 = 1.0f - CustomPixelConsts_304.w;
-        float _146 = _145 * CustomPixelConsts_304.x;
+        float _144 = -1.0f / curve.exposure.w;
+        float _145 = 1.0f - curve.color.w;
+        float _146 = _145 * curve.color.x;
         float _147 = _146 * 2.0f;
         bool _148 = (_147 == 0.0f);
         if (!_148) {
@@ -199,7 +120,7 @@ float4 main(
           float _155 = float((int)(_154));
           float _156 = abs(_147);
           float _157 = log2(_156);
-          float _158 = _157 * CustomPixelConsts_256.w;
+          float _158 = _157 * curve.exposure.w;
           float _159 = exp2(_158);
           float _160 = _159 * _155;
           _162 = _160;
@@ -217,7 +138,7 @@ float4 main(
           float _171 = float((int)(_170));
           float _172 = abs(_146);
           float _173 = log2(_172);
-          float _174 = CustomPixelConsts_256.w * _173;
+          float _174 = curve.exposure.w * _173;
           float _175 = -0.0f - _174;
           float _176 = exp2(_175);
           float _177 = _176 * _171;
@@ -243,10 +164,10 @@ float4 main(
         } else {
           _195 = 0.0f;
         }
-        float _196 = _137 - CustomPixelConsts_304.w;
-        float _197 = _196 * CustomPixelConsts_304.x;
+        float _196 = _137 - curve.color.w;
+        float _197 = _196 * curve.color.x;
         float _198 = _197 / _195;
-        float _199 = 1.0f / CustomPixelConsts_256.w;
+        float _199 = 1.0f / curve.exposure.w;
         bool _200 = (_198 == 0.0f);
         if (!_200) {
           bool _202 = (_198 > 0.0f);
@@ -257,7 +178,7 @@ float4 main(
           float _207 = float((int)(_206));
           float _208 = abs(_198);
           float _209 = log2(_208);
-          float _210 = _209 * CustomPixelConsts_256.w;
+          float _210 = _209 * curve.exposure.w;
           float _211 = exp2(_210);
           float _212 = _211 * _207;
           _214 = _212;
@@ -283,8 +204,8 @@ float4 main(
           _230 = 0.0f;
         }
         float _231 = _198 / _230;
-        float _232 = -1.0f / CustomPixelConsts_304.y;
-        float _233 = CustomPixelConsts_304.x * CustomPixelConsts_304.w;
+        float _232 = -1.0f / curve.color.y;
+        float _233 = curve.color.x * curve.color.w;
         float _234 = _233 * 2.0f;
         bool _235 = (_234 == 0.0f);
         if (!_235) {
@@ -296,7 +217,7 @@ float4 main(
           float _242 = float((int)(_241));
           float _243 = abs(_234);
           float _244 = log2(_243);
-          float _245 = _244 * CustomPixelConsts_304.y;
+          float _245 = _244 * curve.color.y;
           float _246 = exp2(_245);
           float _247 = _246 * _242;
           _249 = _247;
@@ -314,7 +235,7 @@ float4 main(
           float _258 = float((int)(_257));
           float _259 = abs(_233);
           float _260 = log2(_259);
-          float _261 = CustomPixelConsts_304.y * _260;
+          float _261 = curve.color.y * _260;
           float _262 = -0.0f - _261;
           float _263 = exp2(_262);
           float _264 = _263 * _258;
@@ -340,11 +261,11 @@ float4 main(
         } else {
           _282 = 0.0f;
         }
-        float _283 = 1.0f - CustomPixelConsts_304.z;
+        float _283 = 1.0f - curve.color.z;
         float _284 = _282 * _283;
         float _285 = -0.0f - _284;
         float _286 = _197 / _285;
-        float _287 = 1.0f / CustomPixelConsts_304.y;
+        float _287 = 1.0f / curve.color.y;
         bool _288 = (_286 == 0.0f);
         if (!_288) {
           bool _290 = (_286 > 0.0f);
@@ -355,7 +276,7 @@ float4 main(
           float _295 = float((int)(_294));
           float _296 = abs(_286);
           float _297 = log2(_296);
-          float _298 = _297 * CustomPixelConsts_304.y;
+          float _298 = _297 * curve.color.y;
           float _299 = exp2(_298);
           float _300 = _299 * _295;
           _302 = _300;
@@ -381,7 +302,7 @@ float4 main(
           _318 = 0.0f;
         }
         float _319 = _286 / _318;
-        bool _320 = (_137 >= CustomPixelConsts_304.w);
+        bool _320 = (_137 >= curve.color.w);
         float _321 = _231 * _195;
         float _322 = _284 * _319;
         float _323 = -0.0f - _322;
@@ -396,7 +317,7 @@ float4 main(
           float _332 = float((int)(_331));
           float _333 = abs(_147);
           float _334 = log2(_333);
-          float _335 = _334 * CustomPixelConsts_256.w;
+          float _335 = _334 * curve.exposure.w;
           float _336 = exp2(_335);
           float _337 = _336 * _332;
           _339 = _337;
@@ -413,7 +334,7 @@ float4 main(
           float _347 = float((int)(_346));
           float _348 = abs(_146);
           float _349 = log2(_348);
-          float _350 = CustomPixelConsts_256.w * _349;
+          float _350 = curve.exposure.w * _349;
           float _351 = -0.0f - _350;
           float _352 = exp2(_351);
           float _353 = _352 * _347;
@@ -439,8 +360,8 @@ float4 main(
         } else {
           _371 = 0.0f;
         }
-        float _372 = _138 - CustomPixelConsts_304.w;
-        float _373 = _372 * CustomPixelConsts_304.x;
+        float _372 = _138 - curve.color.w;
+        float _373 = _372 * curve.color.x;
         float _374 = _373 / _371;
         bool _375 = (_374 == 0.0f);
         if (!_375) {
@@ -452,7 +373,7 @@ float4 main(
           float _382 = float((int)(_381));
           float _383 = abs(_374);
           float _384 = log2(_383);
-          float _385 = _384 * CustomPixelConsts_256.w;
+          float _385 = _384 * curve.exposure.w;
           float _386 = exp2(_385);
           float _387 = _386 * _382;
           _389 = _387;
@@ -487,7 +408,7 @@ float4 main(
           float _413 = float((int)(_412));
           float _414 = abs(_234);
           float _415 = log2(_414);
-          float _416 = _415 * CustomPixelConsts_304.y;
+          float _416 = _415 * curve.color.y;
           float _417 = exp2(_416);
           float _418 = _417 * _413;
           float _419 = _418 + -1.0f;
@@ -504,7 +425,7 @@ float4 main(
           float _428 = float((int)(_427));
           float _429 = abs(_233);
           float _430 = log2(_429);
-          float _431 = CustomPixelConsts_304.y * _430;
+          float _431 = curve.color.y * _430;
           float _432 = -0.0f - _431;
           float _433 = exp2(_432);
           float _434 = _433 * _428;
@@ -543,7 +464,7 @@ float4 main(
           float _463 = float((int)(_462));
           float _464 = abs(_455);
           float _465 = log2(_464);
-          float _466 = _465 * CustomPixelConsts_304.y;
+          float _466 = _465 * curve.color.y;
           float _467 = exp2(_466);
           float _468 = _467 * _463;
           float _469 = _468 + 1.0f;
@@ -569,7 +490,7 @@ float4 main(
           _486 = 0.0f;
         }
         float _487 = _455 / _486;
-        bool _488 = (_138 >= CustomPixelConsts_304.w);
+        bool _488 = (_138 >= curve.color.w);
         float _489 = _406 * _371;
         float _490 = _453 * _487;
         float _491 = -0.0f - _490;
@@ -584,7 +505,7 @@ float4 main(
           float _500 = float((int)(_499));
           float _501 = abs(_147);
           float _502 = log2(_501);
-          float _503 = _502 * CustomPixelConsts_256.w;
+          float _503 = _502 * curve.exposure.w;
           float _504 = exp2(_503);
           float _505 = _504 * _500;
           float _506 = _505 + -1.0f;
@@ -601,7 +522,7 @@ float4 main(
           float _515 = float((int)(_514));
           float _516 = abs(_146);
           float _517 = log2(_516);
-          float _518 = CustomPixelConsts_256.w * _517;
+          float _518 = curve.exposure.w * _517;
           float _519 = -0.0f - _518;
           float _520 = exp2(_519);
           float _521 = _520 * _515;
@@ -627,8 +548,8 @@ float4 main(
         } else {
           _539 = 0.0f;
         }
-        float _540 = _139 - CustomPixelConsts_304.w;
-        float _541 = _540 * CustomPixelConsts_304.x;
+        float _540 = _139 - curve.color.w;
+        float _541 = _540 * curve.color.x;
         float _542 = _541 / _539;
         bool _543 = (_542 == 0.0f);
         if (!_543) {
@@ -640,7 +561,7 @@ float4 main(
           float _550 = float((int)(_549));
           float _551 = abs(_542);
           float _552 = log2(_551);
-          float _553 = _552 * CustomPixelConsts_256.w;
+          float _553 = _552 * curve.exposure.w;
           float _554 = exp2(_553);
           float _555 = _554 * _550;
           float _556 = _555 + 1.0f;
@@ -675,7 +596,7 @@ float4 main(
           float _581 = float((int)(_580));
           float _582 = abs(_234);
           float _583 = log2(_582);
-          float _584 = _583 * CustomPixelConsts_304.y;
+          float _584 = _583 * curve.color.y;
           float _585 = exp2(_584);
           float _586 = _585 * _581;
           float _587 = _586 + -1.0f;
@@ -692,7 +613,7 @@ float4 main(
           float _596 = float((int)(_595));
           float _597 = abs(_233);
           float _598 = log2(_597);
-          float _599 = CustomPixelConsts_304.y * _598;
+          float _599 = curve.color.y * _598;
           float _600 = -0.0f - _599;
           float _601 = exp2(_600);
           float _602 = _601 * _596;
@@ -731,7 +652,7 @@ float4 main(
           float _631 = float((int)(_630));
           float _632 = abs(_623);
           float _633 = log2(_632);
-          float _634 = _633 * CustomPixelConsts_304.y;
+          float _634 = _633 * curve.color.y;
           float _635 = exp2(_634);
           float _636 = _635 * _631;
           float _637 = _636 + 1.0f;
@@ -757,7 +678,7 @@ float4 main(
           _654 = 0.0f;
         }
         float _655 = _623 / _654;
-        bool _656 = (_139 >= CustomPixelConsts_304.w);
+        bool _656 = (_139 >= curve.color.w);
         float _657 = _574 * _539;
         float _658 = _621 * _655;
         float _659 = -0.0f - _658;
@@ -816,15 +737,15 @@ float4 main(
         _710 = _700;
         _711 = _707;
       }
-      float _712 = _709 * CustomPixelConsts_112.x;
-      float _713 = _710 * CustomPixelConsts_112.y;
-      float _714 = _711 * CustomPixelConsts_112.z;
+      float _712 = _709 * curve.curve_a.x;
+      float _713 = _710 * curve.curve_a.y;
+      float _714 = _711 * curve.curve_a.z;
       float _715 = log2(_712);
       float _716 = log2(_713);
       float _717 = log2(_714);
-      float _718 = _715 * CustomPixelConsts_128.x;
-      float _719 = _716 * CustomPixelConsts_128.y;
-      float _720 = _717 * CustomPixelConsts_128.z;
+      float _718 = _715 * curve.curve_b.x;
+      float _719 = _716 * curve.curve_b.y;
+      float _720 = _717 * curve.curve_b.z;
       float _721 = exp2(_718);
       float _722 = exp2(_719);
       float _723 = exp2(_720);
@@ -832,9 +753,9 @@ float4 main(
       float _725 = _721 - _724;
       float _726 = _722 - _724;
       float _727 = _723 - _724;
-      float _728 = _725 * CustomPixelConsts_112.w;
-      float _729 = _726 * CustomPixelConsts_112.w;
-      float _730 = _727 * CustomPixelConsts_112.w;
+      float _728 = _725 * curve.curve_a.w;
+      float _729 = _726 * curve.curve_a.w;
+      float _730 = _727 * curve.curve_a.w;
       float _731 = _728 + _724;
       float _732 = _729 + _724;
       float _733 = _730 + _724;
@@ -868,48 +789,48 @@ float4 main(
       break;
     }
     default: {
-      float _59 = _53 * CustomPixelConsts_112.x;
-      float _60 = _54 * CustomPixelConsts_112.x;
-      float _61 = _55 * CustomPixelConsts_112.x;
-      float _62 = CustomPixelConsts_112.z * CustomPixelConsts_112.y;
+      float _59 = _53 * curve.curve_a.x;
+      float _60 = _54 * curve.curve_a.x;
+      float _61 = _55 * curve.curve_a.x;
+      float _62 = curve.curve_a.z * curve.curve_a.y;
       float _63 = _59 + _62;
       float _64 = _60 + _62;
       float _65 = _61 + _62;
       float _66 = _63 * _53;
       float _67 = _64 * _54;
       float _68 = _65 * _55;
-      float _69 = CustomPixelConsts_128.x * CustomPixelConsts_128.y;
+      float _69 = curve.curve_b.x * curve.curve_b.y;
       float _70 = _66 + _69;
       float _71 = _67 + _69;
       float _72 = _68 + _69;
-      float _73 = _59 + CustomPixelConsts_112.y;
-      float _74 = _60 + CustomPixelConsts_112.y;
-      float _75 = _61 + CustomPixelConsts_112.y;
+      float _73 = _59 + curve.curve_a.y;
+      float _74 = _60 + curve.curve_a.y;
+      float _75 = _61 + curve.curve_a.y;
       float _76 = _73 * _53;
       float _77 = _74 * _54;
       float _78 = _75 * _55;
-      float _79 = CustomPixelConsts_128.x * CustomPixelConsts_128.z;
+      float _79 = curve.curve_b.x * curve.curve_b.z;
       float _80 = _76 + _79;
       float _81 = _77 + _79;
       float _82 = _78 + _79;
       float _83 = _70 / _80;
       float _84 = _71 / _81;
       float _85 = _72 / _82;
-      float _86 = CustomPixelConsts_128.y / CustomPixelConsts_128.z;
+      float _86 = curve.curve_b.y / curve.curve_b.z;
       float _87 = _83 - _86;
       float _88 = _84 - _86;
       float _89 = _85 - _86;
       float _90 = max(0.0f, _87);
       float _91 = max(0.0f, _88);
       float _92 = max(0.0f, _89);
-      float _93 = _90 * CustomPixelConsts_256.y;
-      float _94 = _91 * CustomPixelConsts_256.y;
-      float _95 = _92 * CustomPixelConsts_256.y;
-      float _96 = CustomPixelConsts_112.x * 11.199999809265137f;
+      float _93 = _90 * curve.exposure.y;
+      float _94 = _91 * curve.exposure.y;
+      float _95 = _92 * curve.exposure.y;
+      float _96 = curve.curve_a.x * 11.199999809265137f;
       float _97 = _96 + _62;
       float _98 = _97 * 11.199999809265137f;
       float _99 = _98 + _69;
-      float _100 = _96 + CustomPixelConsts_112.y;
+      float _100 = _96 + curve.curve_a.y;
       float _101 = _100 * 11.199999809265137f;
       float _102 = _101 + _79;
       float _103 = _99 / _102;
@@ -924,12 +845,46 @@ float4 main(
       break;
     }
   }
-  SV_Target.x = _759;
-  SV_Target.y = _760;
-  SV_Target.z = _761;
-  SV_Target.w = _57;
-  if (compensate_brightness) {
-    SV_Target.rgb = (_14.rgb * _52) * WitcherNativeBrightnessScale(SV_Target.rgb);
-  }
-  return SV_Target;
+  return float3(_759, _760, _761);
 }
+
+// Only the first fullscreen pixel writes the record. No CPU buffer mapping,
+// descriptor history, scene readback, or extra full-resolution render target.
+void WitcherCaptureBloomReference(float2 position, WitcherNativeCurve first,
+                                 WitcherNativeCurve second, float exposure_first,
+                                 float exposure_second, float blend, float native_response) {
+  if (!WitcherUsePsychoV30() || any(uint2(position) != uint2(0, 0))) return;
+  float gain_first = exposure_first;
+  float gain_second = exposure_second;
+  if (CUSTOM_NATIVE_BRIGHTNESS_COMPENSATION != 0.f) {
+    gain_first *= WitcherNativeBrightnessScale(WitcherEvaluateNativeCurve(0.18f.xxx, first, native_response));
+    gain_second *= WitcherNativeBrightnessScale(WitcherEvaluateNativeCurve(0.18f.xxx, second, native_response));
+  }
+  WitcherBloomReference reference;
+  reference.first = first;
+  reference.second = second;
+  reference.exposure_state = float4(exposure_first, exposure_second, blend,
+                                   gain_first + blend * (gain_second - gain_first));
+  reference.state = float4(native_response, WITCHER_BLOOM_REFERENCE_TAG, 0.f, 0.f);
+  witcher_bloom_reference[0] = reference;
+  // The addon selects this second record for the masked sunshaft extraction.
+  reference.state.w = 1.f;
+  witcher_bloom_reference[1] = reference;
+}
+
+float3 WitcherNativeBloomSample(float3 transported_hdr, WitcherBloomReference reference) {
+  // The sunshaft mask removes non-sky pixels before extraction. Preserve that
+  // exact zero even when the selected native curve has a lifted black level.
+  if (reference.state.w != 0.f && all(transported_hdr == 0.f)) return 0.f.xxx;
+  float source_strength = reference.state.w != 0.f ? CUSTOM_SHAFTS_STRENGTH : 1.f;
+  if (source_strength <= 0.f) return 0.f.xxx;
+  float3 source = transported_hdr / (reference.exposure_state.w * source_strength);
+  float3 first = WitcherEvaluateNativeCurve(source * reference.exposure_state.x,
+                                           reference.first, reference.state.x);
+  if (reference.exposure_state.z == 0.f) return first * source_strength;
+  float3 second = WitcherEvaluateNativeCurve(source * reference.exposure_state.y,
+                                            reference.second, reference.state.x);
+  return (first + reference.exposure_state.z * (second - first)) * source_strength;
+}
+
+#endif

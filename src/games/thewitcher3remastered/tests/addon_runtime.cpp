@@ -62,10 +62,10 @@ int main(int argc, char** argv) {
                            reshade::addon_event::push_constants, reshade::addon_event::bind_render_targets_and_depth_stencil}) {
     if (has_event(event)) { std::printf("FAIL: unexpected tracking event %u\n", unsigned(event)); return 4; }
   }
-  // The shared HDR shader state still requires its single reset callback.
+  // The shared shader state and native bloom GPU buffer each reset once.
   unsigned resets = 0;
   for (const auto& registration : callbacks) if (registration.first == reshade::addon_event::reset_command_list) ++resets;
-  if (resets != 1) return 7;
+  if (resets != 2) return 7;
   for (const auto event : {reshade::addon_event::bind_pipeline, reshade::addon_event::draw,
                            reshade::addon_event::create_pipeline_layout, reshade::addon_event::present,
                            reshade::addon_event::init_swapchain}) {

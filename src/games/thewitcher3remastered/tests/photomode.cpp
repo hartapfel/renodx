@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
     native[68] = native[69] = .5f;
     native[75] = 6550;
     native[77] = 1; native[78] = 32; native[79] = 16;
-    struct { ShaderInjectData data; float pad[2]; } settings = {};
+    struct { ShaderInjectData data; float pad[3]; } settings = {};
     settings.data.peak_white_nits = 1000;
     settings.data.diffuse_white_nits = 203;
     settings.data.custom_color_grading = 1;
@@ -110,12 +110,12 @@ int main(int argc, char** argv) {
         native[offset + 2] = night_grade ? .6f : 1.f;
         native[offset + 3] = night_grade ? 1.5f : 1.f;
       }
-      settings.data.tone_map_type = 0;
+      settings.data.mode_flags = std::bit_cast<float>(std::bit_cast<uint32_t>(settings.data.mode_flags) & ~WITCHER_FLAG_PSYCHOV);
       auto original = run(0), vanilla = run(1);
       for (unsigned i = 0; i < 512; ++i) for (unsigned k = 0; k < 4; ++k) {
         Require(std::abs(original[i][k] - vanilla[i][k]) < 2e-5f, "Vanilla Photo Mode changed");
       }
-      settings.data.tone_map_type = 1;
+      settings.data.mode_flags = std::bit_cast<float>(std::bit_cast<uint32_t>(settings.data.mode_flags) | WITCHER_FLAG_PSYCHOV);
       run(1);
       ++cases;
     }

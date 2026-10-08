@@ -1,4 +1,4 @@
-#include "../common.hlsli"
+#include "../native_bloom.hlsli"
 
 struct ShaderCommonEnvProbeParams {
   float ShaderCommonEnvProbeParams_000;
@@ -96,6 +96,21 @@ float4 main(
   float _88 = min(max(((_41 + 1.0f) / CustomPixelConsts_000.y), _53), _59);
   float4 _89 = t0.SampleLevel(s0, float2(_66, _88), 0.0f);
   float4 _96 = t0.SampleLevel(s0, float2(_77, _88), 0.0f);
+  // Evaluate each source tap through the captured native curve before the
+  // native four-tap average. Do not impose an SDR-white ceiling or restore
+  // HDR range into the extracted effect. The main scene remains unbounded.
+  bool native_reference_valid = false;
+  if (WitcherUsePsychoV30()) {
+    WitcherBloomReference reference = witcher_bloom_reference[0];
+    native_reference_valid = reference.state.y == WITCHER_BLOOM_REFERENCE_TAG
+        && reference.exposure_state.w > 1e-20f && isfinite(reference.exposure_state.w);
+    if (native_reference_valid) {
+      _70.rgb = WitcherNativeBloomSample(_70.rgb, reference);
+      _78.rgb = WitcherNativeBloomSample(_78.rgb, reference);
+      _89.rgb = WitcherNativeBloomSample(_89.rgb, reference);
+      _96.rgb = WitcherNativeBloomSample(_96.rgb, reference);
+    }
+  }
   float _100 = ((_78.x + _70.x) + _89.x) + _96.x;
   float _101 = ((_78.y + _70.y) + _89.y) + _96.y;
   float _102 = ((_78.z + _70.z) + _89.z) + _96.z;
@@ -103,11 +118,10 @@ float4 main(
   float _115 = select(_111, (_100 * 0.2500000298023224f), 0.0f);
   float _116 = select(_111, (_101 * 0.2500000298023224f), 0.0f);
   float _117 = select(_111, (_102 * 0.2500000298023224f), 0.0f);
-  // Bloom now follows the native exposure/tonemap pass. PsychoV leaves that
-  // scene unbounded: evaluate extraction on a bounded reference and retain
-  // that effect intensity. This pass also extracts the masked sunshafts.
+  // A missing exposure capture falls back to the previous safe reference.
+  // Valid captures retain the native curve's actual range and chromaticity.
   WitcherGradeState bloom_reference = {float3(_115, _116, _117), 1.f, 1.f};
-  if (WitcherUsePsychoV30()) {
+  if (WitcherUsePsychoV30() && !native_reference_valid) {
     bloom_reference = WitcherPrepareGrade(float3(_115, _116, _117));
     _115 = bloom_reference.neutral_sdr.r;
     _116 = bloom_reference.neutral_sdr.g;

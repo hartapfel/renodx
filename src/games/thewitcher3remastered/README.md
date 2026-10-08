@@ -75,9 +75,9 @@ Shared helpers and the C++ settings/injection code stay at the mod root. The fin
 
 The effect order matches Ghost of Tsushima: **RCAS -> CA -> perceptual grain**. RCAS and CA run at Witcher's full-resolution native post-process stage before final PsychoV mapping, so their scene highlights still roll off through PsychoV. Grain runs after PsychoV in display-linear BT.2020 at destination UVs, with scene white = 1, the same 0â€“0.03 strength and per-present random seed as GoT. UI is composed afterward. This uses Witcher's existing stages rather than GoT's separate post-upscale pass; sharpening and CA never sample grained pixels.
 
-`test30.hlsl` is the game-local Ghost of Tsushima PsychoV-30 core. `output.hlsli` shares PsychoV and perceptual grain between regular presentation and both frame-generation HDR outputs. `lutsampling.hlsli` retains the native tiled LUT addressing and shares the original mod's range restoration across all three LUT variants. `postgrade.hlsli` shares signed grading and vignette handling across all five post-grade variants. `shared.h` is the 120-byte C++/HLSL payload at `b13, space50`; native resources remain in space0. CMake embeds twenty CRC-addressed replacements automatically. No swapchain/resource upgrades were added: the inspected scene targets are RGBA16F and output is already HDR10.
+`test30.hlsl` is the game-local Ghost of Tsushima PsychoV-30 core. `output.hlsli` shares PsychoV and perceptual grain between regular presentation and both frame-generation HDR outputs. `lutsampling.hlsli` retains the native tiled LUT addressing and shares the original mod's range restoration across all three LUT variants. `postgrade.hlsli` shares signed grading and vignette handling across all five post-grade variants. `shared.h` is the 116-byte C++/HLSL payload at `b13, space50`; native resources remain in space0. CMake embeds twenty CRC-addressed replacements automatically. No swapchain/resource upgrades were added: the inspected scene targets are RGBA16F and output is already HDR10.
 
-Settings injection is restricted to DX12 layouts exposing pixel-visible native `b3` and `b12` in space0 with room for the full 30-DWORD payload. Native push-constant layouts and incompatible layouts are left alone. Pixel replacement is deferred until draw time and requires a valid injection layout; the compute copy explicitly disables injection. Layout cloning is disabled after it caused a level-loading crash. Boolean controls and the three-way brightness-compensation selector use the settings framework's packed flags, freeing space for LUT/grade contribution controls. The native 33-DWORD layout now uses 63 available DWORDs. The three effect percentages share one packed DWORD, with seven bits per integer percentage. Preserve this budget when extending settings; the packed flags use bitwise float storage, not numeric float conversion.
+Settings injection is restricted to DX12 layouts exposing pixel-visible native `b3` and `b12` in space0 with room for the full 29-DWORD payload. Native push-constant layouts and incompatible layouts are left alone. Pixel replacement is deferred until draw time and requires a valid injection layout; the compute copy explicitly disables injection. Layout cloning is disabled after it caused a level-loading crash. Boolean controls and the three-way brightness-compensation selector use the settings framework's packed flags, freeing space for LUT/grade contribution controls. The native 33-DWORD layout plus 29 settings DWORDs and two native-bloom root-UAV DWORDs uses the full 64-DWORD budget. The Vanilla/PsychoV selector shares flag bit 5; its saved values remain 0/1. The three effect percentages share one packed DWORD, with seven bits per integer percentage. Preserve this budget when extending settings; the packed flags use bitwise float storage, not numeric float conversion.
 
 ## Native baselines
 
@@ -178,7 +178,7 @@ The replacement Blur passes 360 synthetic comparisons against the old mod's shad
 
 Highlight Contrast and Shadow Contrast appear in Advanced Color Grading with PsychoV-30 selected. Each uses 0–100, default/reset 50, mapped to an exponent multiplier of 0–2. The appropriate multiplier above/below gamma-adjusted 18% scene luminance multiplies overall Contrast, matching the split-contrast math in `re9requiem` and `007firstlight`. Grading scales RGB by a luminance ratio before PsychoV's finite response, keeping the grey pivot, signed colour ratios, and final peak rolloff. Exposure, existing Highlights/Shadows, and the PsychoV response retain their current order. Both controls at 50 preserve previous rendering.
 
-The percentages occupy bits 7–13 and 14–20 of `mode_flags`. Existing flags and the effect percentages retain their fields; payload/root-layout size remains 120 bytes/30 DWORDs. Preset Off resets both to 50. Regular and both frame-generation HDR branches use the same helper, with UI composed afterward.
+The percentages occupy bits 7–13 and 14–20 of `mode_flags`. Existing flags and the effect percentages retain their fields; payload/root-layout size is 116 bytes/29 DWORDs. Preset Off resets both to 50. Regular and both frame-generation HDR branches use the same helper, with UI composed afterward.
 
 The `clang-x64-release` build of `thewitcher3remastered` passes and produces `build/Release/renodx-thewitcher3remastered.addon64`. All 19 production shaders also pass strict DXC compilation and addon C++ syntax validation. WARP tests cover 882 configurations/451,584 samples across BT.709/BT.2020 targets, 400/1000/4000-nit peaks, both full slider ranges and three overall contrast settings: independent regions, fixed grey/black, monotonic greys, signed colour/reference agreement, and bounded display gamut/peak. All 18 neutral comparisons preserve previous shader output exactly. Maximum normalized reference error is below 4.2e-6. Packing checks cover 232,704 contrast transitions and 3,257,856 flag writes; 12 layout checks still pass. Evidence: `tmp/thewitcher3remastered/split-contrast/`. After rebuilding, verify the controls separately in a bright outdoor scene and a dark interior, then reset both to 50.
 
@@ -223,15 +223,22 @@ Changing the game's HDR Saturation must have no effect under PsychoV.
 
 
 
-Bloom extraction now uses a bounded reference to control its nonlinear gain,
-and keeps that effect intensity bounded before filtering and final PsychoV.
-The same extraction serves sunshafts; signed chromaticity is restored,
-without restoring the HDR range that previously amplified both effects.
-This addresses the updated game's post-exposure bloom order without clipping
-the main scene or adding CPU tracking. Vanilla retains native extraction.
-After building `thewitcher3remastered` with `clang-x64-release`, compare Bloom
-Strength at 0/50/100 in the affected scene and check saturated emissive lights,
-lens dirt, gameplay and Photo Mode. Rebuilt runtime validation is pending.
+Bloom extraction uses the active native exposure and tone curve as its
+reference, including both environment states and their transition blend.
+The exposure pass captures those parameters in a small GPU buffer; extraction
+evaluates the four source taps through the native curve before averaging.
+There is no fixed ceiling at 1. Native thresholds, knee, caps and filters remain
+unchanged, while the main HDR scene reaches PsychoV without that tone curve.
+Masked sunshafts use the same reference and retain their mask/strength control.
+Missing captures or zero exposure gain retain the previous safe bounded fallback.
+No CPU readback or descriptor heap tracking is added.
+
+This reconstructs the native curve at extraction: intervening DOF has already
+filtered the HDR source, so nonlinear native tonemapping and DOF are not exactly
+commutative. It is not a duplicated native DOF render chain. After rebuilding,
+check bloom/sunshafts at 0/50/100, environment transitions, saturated emissives,
+Photo Mode DOF, and Vanilla. Native curve and GPU handoff checks pass; visual
+validation of the rebuilt addon remains pending.
 
 
 The textured-vignette/chromatic-aberration post-grade variant `0x2BF760E2`

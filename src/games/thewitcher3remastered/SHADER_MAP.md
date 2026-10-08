@@ -344,14 +344,36 @@ PsychoV bypasses the native curve, exposing bloom's nonlinear extraction to
 unbounded HDR scene values. The final PsychoV mapping still follows bloom,
 LUTs and Photo Mode grading.
 
-`effects/0x0BF2A7DC.ps_6_6.hlsl` evaluates native extraction on the existing
-reversible gamut/N2 proxy and restores signed chromaticity only. Retaining
-the bounded effect intensity avoids re-amplifying the extracted light.
-Native four-tap sampling, depth/mask caps, threshold,
-soft knee and alpha zero remain. Bloom Strength is applied once by the
-existing final additive composite. Vanilla and invalid injection use the
-original extraction. This adds shader arithmetic and the existing injection
-binding; no CPU tracking, new resource, filtering pass or draw is added.
+`native_bloom.hlsli` copies the native curve arithmetic from the archived
+`0x382CDBDB` baseline. `0x382CDBDB` and `0x724E225F` snapshot both native
+curve states, actual adaptation/exposure gains and environment blend in a
+384-byte GPU root UAV at u0/space50. Extraction reconstructs each HDR source
+sample through that curve before the native four-tap average. It undoes the
+existing scalar brightness compensation only for this effect reference.
+Native output above 1 is retained. The main scene and alpha are unchanged.
+
+The second record handles `0x1132ADF9`'s masked source: exact mask zero stays
+zero, and source strength is undone/reapplied around the curve once. The addon
+selects that record for the immediately following extraction, then returns to
+the scene record. Command-list reset clears validity via a 384-byte GPU copy;
+a UAV barrier orders exposure writes before extraction reads. There is no
+scene readback, descriptor heap history, extra scene texture or extra draw.
+Root eligibility reserves the additional two DWORDs and rejects overflow.
+
+Native thresholds, power gain, depth/mask caps, soft knee, filters and alpha
+zero remain. Missing captures and zero/invalid exposure gain use the previous
+bounded fallback. Vanilla retains original extraction. Reconstruction follows
+HDR DOF/sampling; it does not duplicate native tonemapping before those filters,
+so nonlinear ordering can differ in blurred/high-contrast regions. Validate
+Photo Mode DOF, gameplay, environment transitions and Bloom/Sunshafts 0/50/100.
+
+2,160 native/Vanilla differential cases pass exactly. WARP validates capture,
+transition, brightness compensation, source masks and strength over 2,700
+configurations/1,382,400 pixels, including output above 1 and safe zero-gain
+fallback. Main HDR/alpha match the previous version. Maximum normalized
+reference error is 1.55e-6. All 24 production shaders compile strictly. Evidence:
+`tmp/thewitcher3remastered/native-bloom/`. In-game visual confirmation remains
+pending.
 
 Strict DXC compilation passes. Original and recompiled native contracts and
 intrinsic counts match; 720 differential cases cover all 12 original blocks

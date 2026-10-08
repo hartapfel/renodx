@@ -93,10 +93,11 @@ int main(int argc, char** argv) {
     float native[100] = {};
     struct {
       ShaderInjectData data;
-      float pad[2];
+      float pad[3];
     } settings = {};
     static_assert(sizeof(settings) == 128);
     auto& p = settings.data;
+    bool psychov = true;
     auto initialize = [&](int variant) {
       std::fill(std::begin(native), std::end(native), 0.f);
       settings = {};
@@ -135,7 +136,7 @@ int main(int argc, char** argv) {
       }
       p.peak_white_nits = 1000;
       p.diffuse_white_nits = 203;
-      p.tone_map_type = 1;
+      psychov = true;
       p.tone_map_exposure = p.tone_map_gamma = p.tone_map_highlights = p.tone_map_shadows = 1;
       p.tone_map_contrast = p.tone_map_saturation = p.tone_map_highlight_saturation = 1;
       p.psychov_cone_response_exponent = p.psychov_gamut_compression = 1;
@@ -147,6 +148,10 @@ int main(int argc, char** argv) {
       p.vignette_strength = variant % 2;
     };
     auto run = [&](int mode, int shader) {
+      uint32_t flags;
+      std::memcpy(&flags, &p.mode_flags, sizeof(flags));
+      flags = (flags & ~WITCHER_FLAG_PSYCHOV) | (psychov ? WITCHER_FLAG_PSYCHOV : 0u);
+      std::memcpy(&p.mode_flags, &flags, sizeof(flags));
       c->UpdateSubresource(cb3.Get(), 0, nullptr, native, 0, 0);
       c->UpdateSubresource(cb13.Get(), 0, nullptr, &settings, 0, 0);
       c->CSSetShader(shaders[mode][shader].Get(), nullptr, 0);
@@ -171,7 +176,7 @@ int main(int argc, char** argv) {
         for (int variant = 0; variant < 6; variant++)
           for (int vanilla = 0; vanilla < 2; vanilla++) {
             initialize(variant);
-            p.tone_map_type = vanilla ? 0 : 1;
+            psychov = !vanilla;
             auto before = run(0, j), after = run(1, j);
             for (int i = 0; i < 512; i++)
               for (int k = 0; k < 3; k++) {
