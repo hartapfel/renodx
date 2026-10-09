@@ -18,6 +18,7 @@
 
 #include "./shared.h"
 #include "./night_grading.hpp"
+#include "./night_exposure.hpp"
 
 namespace witcher::night {
 
@@ -43,6 +44,9 @@ inline float cutscene_strength = 50.f;
 inline float moon_size = 100.f;
 inline std::atomic<float> moon_multiplier = 1.f;
 inline bool moon_supported = false;
+inline float sun_size = 100.f;
+inline std::atomic<float> sun_multiplier = 1.f;
+inline bool sun_supported = false;
 
 // The renderer constructs a per-view environment. Change that copy, never
 // the shared environment asset.
@@ -67,6 +71,7 @@ inline bool camera_supported = false;
 inline std::atomic<float> cutscene_multiplier = 1.f;
 inline bool cutscene_supported = false;
 inline std::atomic<float> night_weight = 0.f;
+inline uintptr_t constants_image_base = 0;
 inline std::atomic<float> sky_multiplier = 1.f;
 inline std::atomic<float> direct_multiplier = 1.f, fog_multiplier = 1.f;
 inline std::atomic<float> haze_multiplier = 1.f, visible_sky_multiplier = 1.f;
@@ -202,12 +207,30 @@ inline void CommonConstantsHook(const void* context, void* output) {
   // injection and native impacts do not retain a stale PT-frame night weight.
   night_weight.store(weight, std::memory_order_relaxed);
   auto* constants = static_cast<unsigned char*>(output);
+  // b12 c204.x is the native procedural sun glow's angular falloff exponent,
+  // uploaded from environment +391C. Its lobe width scales with 1/sqrt(p).
+  // Change only its width, at every hour, preserving peak radiance, direction,
+  // the moon lobe (c205), horizon grading and directional scene lighting.
+  const float sun = sun_multiplier.load(std::memory_order_relaxed);
+  if (sun_supported && sun != 1.f) {
+    float exponent;
+    std::memcpy(&exponent, constants + 0xcc0, sizeof(exponent));
+    exponent /= sun * sun;
+    if (std::isfinite(exponent) && exponent > 0.f) {
+      std::memcpy(constants + 0xcc0, &exponent, sizeof(exponent));
+    }
+    // The separate sun mesh consumes this tagged size from zeroed c206.w.
+    // Audited qword clear at common +17A8 covers c206.zw; preserve .z.
+    const uint32_t tag = WITCHER_SUN_TAG
+        | static_cast<uint32_t>(std::round(sun * WITCHER_CELESTIAL_FACTOR_SCALE));
+    std::memcpy(constants + 0xcec, &tag, sizeof(tag));
+  }
   // Native c37.w is zeroed at RVA 1BDEC49. None of the 3968 dumped
   // shaders consume it. Only the moon vertex replacement reads this marker.
   const float moon = moon_multiplier.load(std::memory_order_relaxed);
   if (moon_supported && moon != 1.f) {
     const uint32_t tag = WITCHER_MOON_TAG
-        | static_cast<uint32_t>(std::round(moon * WITCHER_MOON_FACTOR_SCALE));
+        | static_cast<uint32_t>(std::round(moon * WITCHER_CELESTIAL_FACTOR_SCALE));
     std::memcpy(constants + 0x25c, &tag, sizeof(tag));
   }
   // b12 c184.xy/c185.xy: native environment-probe ambient/reflection
@@ -344,14 +367,26 @@ inline bool CameraLightHook(void* output, const void* matrix, const void* evalua
 }
 
 inline void GradeConstantsHook(uint32_t first, const float* values, uint32_t count) {
-  if (count == 1 && values != nullptr && first >= 29 && first <= 35) {
+  if (count == 1 && values != nullptr && (first == 20 || first == 24 || (first >= 29 && first <= 35))) {
+    const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress()) - constants_image_base;
+    // Slot 20 is reused by many draws. Reject unrelated uploads before any
+    // copies, atomics or transcendental rate math; no descriptor tracking.
+    if ((first == 20 && (!exposure::supported || caller != exposure::rate_caller))
+        || (first == 24 && !exposure::supported)) {
+      grading::set_pixel_constants(first, values, count);
+      return;
+    }
+    const float weight = night_weight.load(std::memory_order_relaxed);
+    if (weight == 0.f) {
+      grading::set_pixel_constants(first, values, count);
+      return;
+    }
     float adjusted[4];
     std::memcpy(adjusted, values, sizeof(adjusted));
-    if (grading::AdjustConstants(first, adjusted,
-                                 reinterpret_cast<uintptr_t>(_ReturnAddress()) - grading::image_base,
-                                 night_weight.load(std::memory_order_relaxed),
+    if (exposure::AdjustConstants(first, adjusted, caller, weight)
+        || (grading::supported && grading::AdjustConstants(first, adjusted, caller, weight,
                                  grading::luminance.load(std::memory_order_relaxed),
-                                 grading::chroma.load(std::memory_order_relaxed))) {
+                                 grading::chroma.load(std::memory_order_relaxed)))) {
       grading::set_pixel_constants(first, adjusted, count);
       return;
     }
@@ -510,6 +545,13 @@ inline bool ValidateImage(const unsigned char* image) {
     constexpr unsigned char common_zero[] = {0x45,0x33,0xe4};
     moon_supported = !std::memcmp(image + layout.common + 0x979, moon_padding_store, sizeof(moon_padding_store))
         && !std::memcmp(image + layout.common + 0x4d5, common_zero, sizeof(common_zero));
+    constexpr unsigned char sun_exponent_read[] = {0x8b,0x83,0x1c,0x39,0x00,0x00};
+    constexpr unsigned char sun_exponent_store[] = {0x41,0x89,0x87,0xc0,0x0c,0x00,0x00};
+    constexpr unsigned char sun_padding_store[] = {0x4d,0x89,0xa7,0xe8,0x0c,0x00,0x00};
+    sun_supported = !std::memcmp(image + layout.common + 0x1725, sun_exponent_read, sizeof(sun_exponent_read))
+        && !std::memcmp(image + layout.common + 0x1746, sun_exponent_store, sizeof(sun_exponent_store))
+        && !std::memcmp(image + layout.common + 0x17a8, sun_padding_store, sizeof(sun_padding_store))
+        && !std::memcmp(image + layout.common + 0x4d5, common_zero, sizeof(common_zero));
     // Optional camera hook: a different build must not disable the existing
     // night controls just because its camera-light implementation changed.
     constexpr unsigned char camera_prefix[] = {
@@ -541,6 +583,12 @@ inline bool ValidateImage(const unsigned char* image) {
         && !std::memcmp(image + layout.direct + 0x1c04, scene_light_base, sizeof(scene_light_base));
     if (camera_supported) build_camera_light = reinterpret_cast<BuildCameraLight>(const_cast<unsigned char*>(image) + layout.camera);
     grading::supported = grading::Validate(const_cast<unsigned char*>(image), layout.pixel_constants, layout.grade_caller_offset);
+    exposure::Validate(image, pe->OptionalHeader.SizeOfImage, layout.environment,
+                       layout.pixel_constants, layout.grade_caller_offset);
+    constants_image_base = reinterpret_cast<uintptr_t>(image);
+    if (grading::supported || exposure::supported) {
+      grading::set_pixel_constants = reinterpret_cast<grading::SetPixelConstants>(const_cast<unsigned char*>(image) + layout.pixel_constants);
+    }
     sky_impact.Initialize(reinterpret_cast<float*>(const_cast<unsigned char*>(image) + layout.sky_impact));
     active_layout = &layout;
     return true;
@@ -587,7 +635,7 @@ inline bool Install() {
     if (valid) valid = DetourAttach(reinterpret_cast<void**>(&build_global_constants), reinterpret_cast<void*>(&GlobalConstantsHook)) == NO_ERROR;
     if (valid && water_sky_supported) valid = DetourAttach(reinterpret_cast<void**>(&build_sky_constants), reinterpret_cast<void*>(&SkyConstantsHook)) == NO_ERROR;
     if (valid && camera_supported) valid = DetourAttach(reinterpret_cast<void**>(&build_camera_light), reinterpret_cast<void*>(&CameraLightHook)) == NO_ERROR;
-    if (valid && grading::supported) valid = DetourAttach(reinterpret_cast<void**>(&grading::set_pixel_constants), reinterpret_cast<void*>(&GradeConstantsHook)) == NO_ERROR;
+    if (valid && (grading::supported || exposure::supported)) valid = DetourAttach(reinterpret_cast<void**>(&grading::set_pixel_constants), reinterpret_cast<void*>(&GradeConstantsHook)) == NO_ERROR;
     if (valid) installed = DetourTransactionCommit() == NO_ERROR;
     else DetourTransactionAbort();
   }
@@ -602,6 +650,7 @@ inline void Update(bool enabled) {
   const uint64_t schedule = NightSchedule();
   night_schedule.store(schedule, std::memory_order_relaxed);
   const bool night_enabled = enabled && lighting_enabled == 1.f && schedule != 0;
+  exposure::Update(night_enabled);
   grading::luminance.store(night_enabled && std::isfinite(grading::luminance_strength)
                               ? std::clamp(grading::luminance_strength / 100.f, 0.f, 1.f) : 1.f,
                           std::memory_order_relaxed);
@@ -613,6 +662,12 @@ inline void Update(bool enabled) {
       && visible_sky_strength == 50.f && cloud_strength == 50.f && rain_strength == 50.f && water_strength == 50.f))
       && (!enabled || (camera_strength == 50.f && cutscene_strength == 50.f))
       && (!enabled || moon_size == 100.f)
+      && (!enabled || sun_size == 100.f)
+      && (exposure::fixed_reference.load(std::memory_order_relaxed) == 0.f
+          && exposure::brightening_scale.load(std::memory_order_relaxed) == 1.f
+          && exposure::darkening_scale.load(std::memory_order_relaxed) == 1.f
+          && exposure::darkening_range.load(std::memory_order_relaxed) == 1.f
+          && exposure::brightening_range.load(std::memory_order_relaxed) == 1.f)
       && (!night_enabled || (grading::luminance.load(std::memory_order_relaxed) == 1.f
                             && grading::chroma.load(std::memory_order_relaxed) == 1.f
                             && grading::saturation_strength == 100.f))) return;
@@ -620,6 +675,9 @@ inline void Update(bool enabled) {
   moon_multiplier.store(enabled && moon_supported && std::isfinite(moon_size)
                             ? std::clamp(moon_size / 100.f, 0.01f, 5.f) : 1.f,
                         std::memory_order_relaxed);
+  sun_multiplier.store(enabled && sun_supported && std::isfinite(sun_size)
+                           ? std::clamp(sun_size / 100.f, 0.01f, 5.f) : 1.f,
+                       std::memory_order_relaxed);
   camera_multiplier.store(enabled && std::isfinite(camera_strength) ? std::clamp(camera_strength / 50.f, 0.f, 2.f) : 1.f,
                           std::memory_order_relaxed);
   cutscene_multiplier.store(enabled && std::isfinite(cutscene_strength) ? std::clamp(cutscene_strength / 50.f, 0.f, 2.f) : 1.f,

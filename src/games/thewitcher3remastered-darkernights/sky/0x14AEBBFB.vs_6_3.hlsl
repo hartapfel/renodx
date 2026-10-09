@@ -1,7 +1,7 @@
 /* Copyright (C) 2026 Hartapfel
  * SPDX-License-Identifier: MIT
  */
-#include "moon.hlsli"
+#include "celestial.hlsli"
 
 struct ShaderCommonEnvProbeParams {
   float ShaderCommonEnvProbeParams_000;
@@ -159,8 +159,8 @@ OutputSignature main(
   float _43 = (POSITION.y * FrequentVertexConsts_128.y) + FrequentVertexConsts_144.y;
   float _44 = (POSITION.z * FrequentVertexConsts_128.z) + FrequentVertexConsts_144.z;
   // Resize around the packed bounding-box centre; preserve phase/UVs.
-  float3 moon_position = ScaleMoonPosition(float3(_42, _43, _44),
-      FrequentVertexConsts_128.xyz, FrequentVertexConsts_144.xyz, moon_size_bits);
+  float3 moon_position = ScaleCelestialPosition(float3(_42, _43, _44),
+      FrequentVertexConsts_128.xyz, FrequentVertexConsts_144.xyz, moon_size_bits, WITCHER_MOON_TAG);
   _42 = moon_position.x;
   _43 = moon_position.y;
   _44 = moon_position.z;

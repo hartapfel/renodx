@@ -1,5 +1,42 @@
 # Native lighting validation
 
+## Night exposure
+
+`night_exposure.cpp` checks 4514 cases: directional speed changes against a
+separately evaluated continuous-time response at 30/60/120/240 FPS, native
+identity, master/daytime restoration, clock fades, both exposure states during
+environment transitions, fixed metering independence from measured luminance,
+independent brightening/darkening limits in exposure stops, native zero/negative
+metering floors, ranges above/below the reference, preserved native endpoints,
+independence from adaptation speed, and invalid-input/caller guards. The exposure tests preserve all curve-selector
+and metadata components. No shader, root layout or descriptor tracker is added.
+
+```powershell
+clang-cl /std:c++20 /EHsc /O2 /MT /DNOMINMAX src/games/thewitcher3remastered-darkernights/tests/night_exposure.cpp /Fe:tmp/darker-nights-exposure.exe /Fo:tmp/darker-nights-exposure.obj
+./tmp/darker-nights-exposure.exe
+```
+
+The updated executable detection test validates the actual speed upload and
+all three primary/transition metering uploads. Changed exposure instructions
+disable only exposure controls; the lighting and grading validators remain
+usable. The current executable passes 82 detection cases. The rate upload is
+found once within the audited lighting-renderer region and its call target is
+checked; nothing is scanned per frame. Existing build profiles retain their
+original lighting checks.
+
+The preset host also checks all seven exposure values are restored from saved
+profiles, Soft Nights restores Enabled + Native, and visibility follows Off /
+Enabled and Native / Smoothed / Custom. These CPU tests do not verify the live
+detour or final image. After rebuilding and restarting, test the Night Exposure
+section standalone and with HDR: move the camera between dark and bright areas
+in Native/Smoothed/Custom, check each custom rate separately at 1/100/200,
+compare both limits independently at 0/10/100, then select Off and adjust
+Fixed Luminance. Check daytime, schedule fades,
+invalid schedules, the night master, Preset Off, weather transitions, Photo
+Mode, saved profiles, and forced camera-cut exposure resets. Smoothed/Custom
+preserve native forced resets; fixed metering removes measured-luminance
+dependence at full night even on those frames.
+
 `night_lighting.cpp` exercises this addon's own native callbacks against audited
 renderer stores. The 794 cases cover environmental RGB and clock fades,
 midnight/daytime identity, invalid schedules, skylight restoration/rebasing,
@@ -233,3 +270,22 @@ standalone alone and alongside HDR. Compare Water Lighting at zero with a real
 local light reflected on the water, then compare Skylight 0/50/100. Check daytime, both Off switches, saved
 profiles and both preset buttons. Other regions/weather variants may need
 additional rain hashes if they use different materials.
+
+Sun Size uses the native common-constant builder's `b12 c204.x` sun falloff
+exponent, guarded by the audited environment `+391C` read and `+CC0` store.
+The live Toussaint sky test confirmed that multiplying this exponent by four
+shrinks the glow without moving it. The separate sun mesh uses vertex shader
+`0xE1C4426E`, restricted to pixel shader `0xE46451D5`; it reads a tagged scale
+from native `b12 c206.w` padding. All 3969 dumped shaders leave this component
+unused, and the optional executable checks guard its qword clear and zero source.
+Isolated live testing shrank both layers at 1% and confirmed that restoring only
+the native mesh brings the bright disk back. The mesh can read the existing b12
+binding at size 5456; no new root constants or descriptor uploads are introduced.
+Native tests cover 41 size/range/invalid-value cases at midnight, dawn, noon and
+dusk, preservation of every other common-buffer byte, Off restoration, and
+sun-only hook installation. Executable tests reject changed optional sun
+instructions while retaining other lighting controls. Preset tests cover saved
+Sun Size, Preset Off's native size and independence from the night buttons.
+The rebuilt Release addon passes both CPU coexistence load orders, and the user
+confirmed the disk and glow now scale correctly with HDR and Darker Nights
+loaded together at 1%.

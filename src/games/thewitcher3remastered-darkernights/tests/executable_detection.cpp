@@ -61,6 +61,7 @@ int main(int argc, char** argv) {
   assert(witcher::night::ValidateImage(image.data()));
   assert(witcher::night::camera_supported && witcher::night::cutscene_supported && witcher::night::grading::supported);
   assert(witcher::night::moon_supported);
+  assert(witcher::night::sun_supported);
   assert(witcher::night::rain_supported);
   assert(witcher::night::water_sky_supported && witcher::night::build_sky_constants);
   const unsigned sky_builder = static_cast<unsigned>(reinterpret_cast<uintptr_t>(witcher::night::build_sky_constants)
@@ -188,6 +189,13 @@ int main(int argc, char** argv) {
     image[offset] ^= 1;
     ++cases;
   }
+  for (unsigned offset : {layout.common + 0x1725u, layout.common + 0x1746u,
+                          layout.common + 0x17a8u, layout.common + 0x4d5u}) {
+    image[offset] ^= 1;
+    assert(witcher::night::ValidateImage(image.data()) && !witcher::night::sun_supported);
+    image[offset] ^= 1;
+    ++cases;
+  }
   image[layout.pixel_constants] ^= 1;
   assert(witcher::night::ValidateImage(image.data()) && !witcher::night::grading::supported);
   image[layout.pixel_constants] ^= 1;
@@ -200,6 +208,26 @@ int main(int argc, char** argv) {
     ++cases;
   }
   assert(witcher::night::ValidateImage(image.data()));
+  if (layout.grade_caller_offset == -0x1620) {
+    assert(witcher::night::exposure::supported && witcher::night::exposure::rate_caller == 0x1c147a9);
+    std::vector<uintptr_t> exposure_stores{witcher::night::exposure::rate_caller - 0x22,
+                                         witcher::night::exposure::rate_caller - 4};
+    for (unsigned i = 0; i < 3; ++i) {
+      const uintptr_t caller = int64_t(witcher::night::exposure::limit_uploads[i].second) + layout.grade_caller_offset;
+      exposure_stores.push_back(caller - 4);
+      exposure_stores.push_back(caller - (i == 0 ? 0x3b : i == 1 ? 0x38 : 0x3f));
+    }
+    for (auto address : exposure_stores) {
+      image[address] ^= 1;
+      assert(witcher::night::ValidateImage(image.data()) && !witcher::night::exposure::supported
+             && witcher::night::grading::supported);
+      image[address] ^= 1;
+      ++cases;
+    }
+    assert(witcher::night::ValidateImage(image.data()) && witcher::night::exposure::supported);
+    std::printf("Exposure upload validation passed: rates %llX, primary/transition metering and optional rejection guards.\n",
+                static_cast<unsigned long long>(witcher::night::exposure::rate_caller));
+  }
   assert(!witcher::night::ValidateImage(nullptr));
   ++cases;
   std::printf("Passed %u executable detection cases (environment RVA %X): metadata flexibility, bounds, signatures, CVar and optional hooks.\n", cases, layout.environment);

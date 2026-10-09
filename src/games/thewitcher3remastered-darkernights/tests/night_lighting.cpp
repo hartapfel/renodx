@@ -33,6 +33,7 @@ std::array<unsigned char, 0xf700> environment;
 std::array<unsigned char, 0x590> output;
 std::array<unsigned char, 0x18> input;
 std::array<unsigned char, 0x1550> common_output;
+float sun_exponent = 1024.f;
 std::array<unsigned char, 0x430> direct_output;
 std::array<unsigned char, 0x6a0> renderer;
 std::array<unsigned char, 0x10> common_context;
@@ -73,6 +74,8 @@ void NativeCommonBuilder(const void*, void*) {
   // Captured directional fog colors; other native fields are sentinels to
   // detect any edits to density, projection matrices, alpha or other effects.
   common_output.fill(0x5a);
+  std::memcpy(common_output.data() + 0xcc0, &sun_exponent, sizeof(sun_exponent));
+  std::memset(common_output.data() + 0xce8, 0, sizeof(uint64_t)); // Native c206.zw clear.
   // Native zeroed c37.w padding; moon transport must preserve every other byte.
   std::memset(common_output.data() + 0x25c, 0, sizeof(uint32_t));
   // Audited native stores at 1BE00AE/1BE00CA/1BE0162/1BE017F.
@@ -635,6 +638,60 @@ int main() {
   witcher::night::camera_strength = std::numeric_limits<float>::quiet_NaN();
   witcher::night::Update(true);
   assert(witcher::night::camera_multiplier.load() == 1.f);
+  unsigned sun_cases = 0;
+  witcher::night::sun_supported = true;
+  for (float hour : {0.f, 6.f, 12.f, 18.f}) {
+    const float time = hour / 24.f;
+    std::memcpy(environment.data() + 0x15c0, &time, sizeof(time));
+    for (float size : {1.f, 50.f, 100.f, 200.f, 500.f, -1.f, 501.f,
+                       std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
+      witcher::night::sun_size = size;
+      witcher::night::Update(true); // Night master remains Off.
+      const float expected = std::isfinite(size) ? std::clamp(size / 100.f, 0.01f, 5.f) : 1.f;
+      assert(witcher::night::sun_multiplier.load() == expected);
+      NativeCommonBuilder(common_context.data(), common_output.data());
+      const auto original = common_output;
+      witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+      float exponent;
+      std::memcpy(&exponent, common_output.data() + 0xcc0, sizeof(exponent));
+      assert(exponent == sun_exponent / (expected * expected));
+      uint32_t bits;
+      std::memcpy(&bits, common_output.data() + 0xcec, sizeof(bits));
+      if (expected == 1.f) assert(bits == 0);
+      else {
+        assert((bits & 0xffff0000u) == 0x53550000u);
+        assert(std::abs(float(bits & 0xffffu) / 8192.f - expected) <= 0.5f / 8192.f);
+      }
+      std::memcpy(common_output.data() + 0xcc0, original.data() + 0xcc0, sizeof(exponent));
+      std::memcpy(common_output.data() + 0xcec, original.data() + 0xcec, sizeof(bits));
+      assert(common_output == original); // Moon, directions, lighting, fog and alpha survive.
+      witcher::night::Update(false);
+      assert(witcher::night::sun_multiplier.load() == 1.f);
+      witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+      assert(common_output == original);
+      ++sun_cases;
+    }
+  }
+  witcher::night::sun_size = 50.f;
+  witcher::night::Update(true);
+  for (float invalid : {0.f, -1.f, std::numeric_limits<float>::quiet_NaN(),
+                         std::numeric_limits<float>::infinity(), std::numeric_limits<float>::max()}) {
+    sun_exponent = invalid;
+    NativeCommonBuilder(common_context.data(), common_output.data());
+    const auto original = common_output;
+    witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+    uint32_t bits;
+    std::memcpy(&bits, common_output.data() + 0xcec, sizeof(bits));
+    assert(bits == (0x53550000u | 4096u)); // Mesh still scales if glow data is invalid.
+    std::memcpy(common_output.data() + 0xcec, original.data() + 0xcec, sizeof(bits));
+    assert(common_output == original);
+    ++sun_cases;
+  }
+  sun_exponent = 1024.f;
+  witcher::night::sun_supported = false;
+  witcher::night::Update(true);
+  assert(witcher::night::sun_multiplier.load() == 1.f);
+  witcher::night::sun_size = 100.f;
   unsigned moon_cases = 0;
   witcher::night::moon_supported = true;
   for (float hour : {0.f, 12.f}) {
@@ -690,6 +747,12 @@ int main() {
   witcher::night::Update(true);
   assert(witcher::night::attempted && !witcher::night::installed);
   std::printf("Moon size: %u day/night transport, isolation and restore cases passed.\n", moon_cases);
+  witcher::night::attempted = false;
+  witcher::night::moon_size = 100.f;
+  witcher::night::sun_size = 50.f;
+  witcher::night::Update(true);
+  assert(witcher::night::attempted && !witcher::night::installed);
+  std::printf("Sun size: %u all-hour width, isolation, invalid-input and restore cases passed.\n", sun_cases);
   std::printf("Camera lighting: %u gameplay/cutscene isolation and failed-build cases; independent controls and restore checks passed.\n", camera_cases);
   std::printf("Night schedule: %u custom-hour/cross-midnight/invalid/instant-fade cases passed.\n", schedule_cases);
   std::printf("Night lighting: %u renderer/water/skylight cases; master toggle, camera independence, restore/rebase checks passed.\n",

@@ -103,6 +103,55 @@ moon controls use the ranges described below:
 | Gameplay Camera Light | Player-following fill light throughout the day and night. |
 | Cutscene Camera Light | Artificial scene and dialogue camera fill, independent of the night schedule. |
 | Moon Size | Visible moon diameter from 1% to 500%; 100% is native, 50% halves it. |
+| Sun Size | Visible sun diameter from 1% to 500%; 100% is native. Active at every hour. |
+| Auto Exposure | Enabled uses adaptation; Off uses a fixed luminance reference during the night hours. Enabled is the default. |
+| Adaptation | Native (default), Smoothed, or Custom. Smoothed uses 35% brightening and 5% darkening speed, with both limits at 100%. |
+| Brightening / Darkening Speed | Custom only; 1-200% of each native speed, default 35% brightening and 5% darkening. 100% retains that direction's native response. |
+| Maximum Brightening | Custom only; 0-100% of native brightening beyond the 0.18 metering reference, default 100%. 0 prevents lift beyond that reference; 100 retains the native range. |
+| Maximum Darkening | Custom only; 0-100% of native darkening beyond the 0.18 metering reference, default 100%. 0 prevents further darkening beyond that reference; 100 retains the native range. |
+| Fixed Luminance | Off only; 0.001-10, default 0.18. Lower values brighten the image; higher values darken it. |
+
+**Night Exposure** follows Enable Night Lighting and the same clock fades.
+Native leaves exposure unchanged. Smoothed slows the native response, retaining
+both native exposure ranges; Custom exposes the two
+directional speeds and both limits.
+The rate adjustment retains the engine's frame-time compensation. The game's
+forced instant adaptation/reset events remain native.
+
+Maximum Darkening limits the upper metering luminance in both exposure states,
+including during environment transitions. The percentage scales the permitted
+darkening in exposure stops relative to a 0.18 luminance reference. It leaves
+automatic brightening below that reference unchanged, follows the clock fades,
+and does not multiply scene RGB or clip highlights. The native lower metering
+bound is reduced only when necessary to respect the darkening ceiling. Off uses
+Fixed Luminance instead; Native and the night master Off restore the original
+bounds exactly.
+
+Maximum Brightening adjusts the lower metering limit independently. Its
+percentage scales brightening in exposure stops relative to the same 0.18
+reference, using the shader's native 0.0001 metering floor when the authored
+minimum is zero or negative. Its default of 100% preserves the normal view.
+Both limits at 0% converge to the 0.18 reference at full night strength; both
+at 100% preserve the native metering bounds exactly. Speed remains independent
+of range, and Auto Exposure Off continues to use Fixed Luminance. The shared
+reference remains 0.18; a brightening limit controls scene lift, while the
+darkening limit controls exposure reductions when looking at a bright sky.
+
+With Auto Exposure Off, the first and second native metering limits converge
+to Fixed Luminance, removing dependence on measured scene brightness at full
+night strength. Daylight and clock fades retain or gradually restore automatic
+exposure. Lighting, weather transitions and artistic exposure parameters can
+still change the image. This is a fixed metering reference, not a frozen frame
+or a fixed display luminance in nits.
+
+The controls reuse the validated native constant-upload hook. Off keeps the
+normal dynamic tone-map shader and live adaptation history; no fixed-shader
+substitution, tone-map override, new bindings, readbacks, descriptor tracking
+or extra GPU pass is added. This preserves the HDR addon's existing shader
+routing and bloom exposure references. A foreign addon that ignores native
+metering parameters can bypass this control. Preset Off, the night master Off,
+daytime and invalid schedules restore native exposure. Values are saved per
+preset; Soft Nights resets exposure to Enabled + Native.
 
 Torches, ordinary local lights and the separate interior camera-light group retain
 their native behavior. Both camera sliders work independently of Enable Night
@@ -121,6 +170,24 @@ Off. The two night preset buttons leave moon size unchanged.
 
 Moon Size also covers Toussaint's alternate moon mesh in gameplay and Photo Mode.
 Both regional variants retain their authored texture and phase shading.
+
+**Sun Size** sits alongside Moon Size and also works independently of night
+lighting and its schedule. It scales both the sun mesh and the procedural glow's angular width,
+preserving its position, peak radiance, moon appearance and directional lighting.
+The glow scale uses the native falloff exponent (`b12 c204.x / scale²`),
+so the percentage is an approximation for the soft glow. The mesh scales around
+its native bounding-box center using a tagged size in zeroed `b12 c206.w` padding.
+It defaults to 100%,
+is saved per preset, and restores the native size with Preset Off. The two night
+preset buttons leave it unchanged. No additional shader bindings are required.
+
+To verify, compare Sun Size at 50%, 100%, 200% and 500% in gameplay and Photo
+Mode, including dawn/noon/dusk. Disable night lighting to confirm it remains
+active; select Preset Off to restore the original sun. Check that Moon Size and
+scene light directions remain independent. Live DevKit testing in Toussaint
+confirmed the glow shrinks, and an isolated DevKit test at 1% confirmed the
+separate mesh shrinks as well. The mesh replacement is restricted to vertex
+shader `0xE1C4426E` paired with sun pixel shader `0xE46451D5`.
 
 **Soft Nights** is the standalone default: night lighting enabled; fade in
 20:00 to 23:00, fade out 03:30 to 06:00; skylight 15, direct 15, fog 15, haze 5,

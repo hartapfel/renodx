@@ -287,6 +287,111 @@ renodx::utils::settings::Settings settings = {
         .is_enabled = IsNightLightingEnabled,
     },
     new renodx::utils::settings::Setting{
+        .key = "NightAutoExposureEnabled",
+        .binding = &witcher::night::exposure::enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .label = "Auto Exposure",
+        .section = "Night Exposure",
+        .tooltip = "Enabled adapts to scene brightness. Off uses Fixed Luminance.",
+        .labels = {"Off", "Enabled"},
+        .is_enabled = []() { return IsNightLightingEnabled() && witcher::night::exposure::supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::TEXT,
+        .label = "Exposure adjustments follow the night schedule. Native keeps the game's response; Smoothed slows it; Custom uses the speeds below.",
+        .section = "Night Exposure",
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureAdaptation",
+        .binding = &witcher::night::exposure::adaptation,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Adaptation",
+        .section = "Night Exposure",
+        .tooltip = "Smoothed uses 35% brightening and 5% darkening speed, with native ranges. Custom unlocks speeds and both limits.",
+        .labels = {"Native", "Smoothed", "Custom"},
+        .max = 2.f,
+        .is_enabled = []() { return IsNightLightingEnabled() && witcher::night::exposure::supported; },
+        .is_visible = []() { return witcher::night::exposure::enabled == 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureBrighteningSpeed",
+        .binding = &witcher::night::exposure::brightening_speed,
+        .default_value = witcher::night::exposure::smoothed_brightening_speed,
+        .label = "Brightening Speed",
+        .section = "Night Exposure",
+        .tooltip = "How quickly exposure lifts darker scenes. 100% = native; lower = slower.",
+        .min = 1.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return IsNightLightingEnabled() && witcher::night::exposure::supported; },
+        .is_visible = []() { return witcher::night::exposure::enabled == 1.f && witcher::night::exposure::adaptation == 2.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureDarkeningSpeed",
+        .binding = &witcher::night::exposure::darkening_speed,
+        .default_value = witcher::night::exposure::smoothed_darkening_speed,
+        .label = "Darkening Speed",
+        .section = "Night Exposure",
+        .tooltip = "How quickly exposure lowers brighter scenes. 100% = native; lower = slower.",
+        .min = 1.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return IsNightLightingEnabled() && witcher::night::exposure::supported; },
+        .is_visible = []() { return witcher::night::exposure::enabled == 1.f && witcher::night::exposure::adaptation == 2.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureMaximumBrightening",
+        .binding = &witcher::night::exposure::maximum_brightening,
+        .default_value = witcher::night::exposure::smoothed_maximum_brightening,
+        .label = "Maximum Brightening",
+        .section = "Night Exposure",
+        .tooltip = "Brightening beyond the 0.18 metering reference. 0% = none; 100% = native range.",
+        .max = 100.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return IsNightLightingEnabled() && witcher::night::exposure::supported; },
+        .is_visible = []() { return witcher::night::exposure::enabled == 1.f && witcher::night::exposure::adaptation == 2.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureMaximumDarkening",
+        .binding = &witcher::night::exposure::maximum_darkening,
+        .default_value = witcher::night::exposure::smoothed_maximum_darkening,
+        .label = "Maximum Darkening",
+        .section = "Night Exposure",
+        .tooltip = "Darkening beyond the 0.18 metering reference. 0% = none; 100% = native range.",
+        .max = 100.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return IsNightLightingEnabled() && witcher::night::exposure::supported; },
+        .is_visible = []() { return witcher::night::exposure::enabled == 1.f && witcher::night::exposure::adaptation == 2.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureFixedLuminance",
+        .binding = &witcher::night::exposure::fixed_luminance,
+        .default_value = 0.18f,
+        .label = "Fixed Luminance",
+        .section = "Night Exposure",
+        .tooltip = "Fixed exposure metering reference. Lower = brighter image; higher = darker.",
+        .min = 0.001f,
+        .max = 10.f,
+        .format = "%.3f",
+        .is_enabled = []() { return IsNightLightingEnabled() && witcher::night::exposure::supported; },
+        .is_visible = []() { return witcher::night::exposure::enabled == 0.f; },
+        .is_logarithmic = true,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "SunSize",
+        .binding = &witcher::night::sun_size,
+        .default_value = 100.f,
+        .label = "Sun Size",
+        .section = "Sky Appearance",
+        .tooltip = "Sun diameter at all hours: 100% = native, 50% = half, 500% = five times.",
+        .min = 1.f,
+        .max = 500.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return witcher::night::Supported() && witcher::night::sun_supported; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "MoonSize",
         .binding = &witcher::night::moon_size,
         .default_value = 50.f,
@@ -306,7 +411,7 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Times use a 24-hour clock and can cross midnight. Camera lights and moon size work independently of night lighting. Preset Off restores all native values.",
+        .label = "Times use a 24-hour clock and can cross midnight. Camera lights, sun size and moon size work independently of night lighting. Preset Off restores all native values.",
         .section = "Help & About",
     },
     new renodx::utils::settings::Setting{
@@ -373,6 +478,7 @@ void OnPresetOff() {
       {"GameplayCameraLightStrength", 50.f},
       {"CutsceneCameraLightStrength", 50.f},
       {"MoonSize", 100.f},
+      {"SunSize", 100.f},
       {"NightSaturation", 100.f},
   });
   witcher::night::vegetation::delta.store(0.f, std::memory_order_relaxed);
@@ -398,6 +504,9 @@ void OnPresent(reshade::api::command_queue*, reshade::api::swapchain*, const res
                            "[RenoDX Witcher Lighting] Gameplay camera-light control unavailable.");
     }
     if (witcher::night::installed) {
+      reshade::log::message(witcher::night::exposure::supported ? reshade::log::level::info : reshade::log::level::warning,
+                           witcher::night::exposure::supported ? "[RenoDX Witcher Lighting] Night exposure rate and metering controls available."
+                                                              : "[RenoDX Witcher Lighting] Night exposure controls unavailable; native exposure preserved.");
       reshade::log::message(witcher::night::water_sky_supported ? reshade::log::level::info : reshade::log::level::warning,
                            witcher::night::water_sky_supported ? "[RenoDX Witcher Lighting] Water sky contribution follows Skylight."
                                                                : "[RenoDX Witcher Lighting] Water sky contribution control unavailable.");
@@ -439,6 +548,13 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
                    && renodx::utils::shader::GetCurrentPixelShaderHash(
                           renodx::utils::shader::GetCurrentState(cmd_list))
                           == (hash == 0x680C44CE ? 0x6D5A1EC2 : 0xE446F231);
+          };
+        } else if (hash == 0xE1C4426E) {
+          shader.on_replace = [](auto* cmd_list) {
+            return witcher::night::installed && witcher::night::sun_supported
+                   && witcher::night::sun_multiplier.load(std::memory_order_relaxed) != 1.f
+                   && renodx::utils::shader::GetCurrentPixelShaderHash(
+                          renodx::utils::shader::GetCurrentState(cmd_list)) == 0xE46451D5;
           };
         } else if (hash == 0x04251B31) {
           shader.on_replace = [](auto* cmd_list) {
