@@ -1,14 +1,54 @@
 # Native lighting validation
 
+## All-day fog
+
+The native lighting host checks Fog Amount independently of the night master,
+at four clock values, with native/off/double density and invalid slider inputs.
+Whole-buffer comparisons verify that only geometry/sky density changes and that
+fresh uploads never accumulate scaling. A fog-only change requests hook
+installation. Preset tests cover saved Fog Amount values, Preset Off restoration
+and preservation by Soft Nights. Executable tests reject each changed density
+load/store independently without disabling the other controls.
+
+In the captured PT building, a temporary zero-density fog shader removed the
+indoor blue haze and outdoor distance fog, with no non-finite pixels. The test
+shader was unloaded. The actual Release native hook still needs a restart and
+standalone/HDR coexistence check at 0/50/100/200%, including sky fog, raster/RT,
+day/night and master Off. Authored smoke/cloud effects remain separate.
+
+`interior_fog.cpp` checks indoor fading, active/inactive underground profiles,
+ordinary buildings with global weather only, recognized building areas,
+unknown local areas, native cave flags, alternate-world selection and invalid
+or freed pointers. The native lighting host also checks 384 combinations of
+both density multipliers, indoor blending, cave exclusion and Off/support
+restoration against complete freshly built buffers. Interior-only settings
+request hook installation. Preset tests save the building value per profile;
+the optional executable checks independently reject all nine reader signatures.
+
+The Novigrad regression covers a recognized Dandelion interior overlapped by
+the regional `env_novigrad_city.env` area. This audited city layer is allowed;
+cave layers still veto it, unknown local layers remain excluded, and the
+outdoor/doorway blend remains unchanged. The live reader changed from 0 to 1
+in the affected building after this classification fix.
+
+Read-only inspection using the shipping reader returned 1 in the PT building
+and 0 in the cave. The basic indoor state alone included both; the cave was
+excluded by its active `env_novigrad_cave.env` profile. A custom cave lacking
+both an underground profile and the native cave flag remains indistinguishable
+from a building with ordinary global weather. After restarting, test Building
+Fog Amount at 0/50/100 in the building, through the doorway fade, outside and
+in a cave. Outdoor fog viewed through windows is intentionally affected.
+
 ## Night exposure
 
-`night_exposure.cpp` checks 4514 cases: directional speed changes against a
+`night_exposure.cpp` checks 4730 cases: directional speed changes against a
 separately evaluated continuous-time response at 30/60/120/240 FPS, native
 identity, master/daytime restoration, clock fades, both exposure states during
 environment transitions, fixed metering independence from measured luminance,
 independent brightening/darkening limits in exposure stops, native zero/negative
 metering floors, ranges above/below the reference, preserved native endpoints,
-independence from adaptation speed, and invalid-input/caller guards. The exposure tests preserve all curve-selector
+independence from adaptation speed, scheduled/all-day rates and metering,
+master-Off restoration, and invalid-input/caller guards. The exposure tests preserve all curve-selector
 and metadata components. No shader, root layout or descriptor tracker is added.
 
 ```powershell
@@ -24,14 +64,14 @@ found once within the audited lighting-renderer region and its call target is
 checked; nothing is scanned per frame. Existing build profiles retain their
 original lighting checks.
 
-The preset host also checks all seven exposure values are restored from saved
-profiles, Soft Nights restores Enabled + Native, and visibility follows Off /
+The preset host also checks all eight exposure values are restored from saved
+profiles, Soft Nights restores Enabled + Smoothed with All Day off, and visibility follows Off /
 Enabled and Native / Smoothed / Custom. These CPU tests do not verify the live
 detour or final image. After rebuilding and restarting, test the Night Exposure
 section standalone and with HDR: move the camera between dark and bright areas
 in Native/Smoothed/Custom, check each custom rate separately at 1/100/200,
 compare both limits independently at 0/10/100, then select Off and adjust
-Fixed Luminance. Check daytime, schedule fades,
+Fixed Luminance. Compare All Day On/Off in daylight and during schedule fades,
 invalid schedules, the night master, Preset Off, weather transitions, Photo
 Mode, saved profiles, and forced camera-cut exposure resets. Smoothed/Custom
 preserve native forced resets; fixed metering removes measured-luminance
@@ -179,6 +219,7 @@ the grading shader and uses observation only, with clean device teardown.
 These CPU checks do not establish rendered output after restarting the game.
 
 `preset_persistence.cpp` uses the same host and addon source. It checks startup
+restoration of the independent all-day exposure toggle and its preset reset,
 restoration of selections 0..3 and their profile values, Off's native reset,
 missing/invalid selection fallback, saving every selector change, and keeping
 the HDR addon's separate configuration untouched. It also invokes Soft Nights

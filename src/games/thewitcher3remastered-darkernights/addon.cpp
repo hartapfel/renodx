@@ -58,6 +58,28 @@ renodx::utils::settings::Settings settings = {
         .is_enabled = []() { return witcher::night::Supported() && witcher::night::cutscene_supported; },
     },
     new renodx::utils::settings::Setting{
+        .key = "FogAmount",
+        .binding = &witcher::night::fog_amount,
+        .default_value = 100.f,
+        .label = "Fog Amount",
+        .section = "Fog",
+        .tooltip = "Atmospheric fog density at all hours. 0% = off, 100% = native. Also affects distance haze; excludes cloud and smoke effects.",
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return witcher::night::Supported() && witcher::night::fog_density_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "BuildingFogAmount",
+        .binding = &witcher::night::interior_fog::amount,
+        .default_value = 100.f,
+        .label = "Building Fog Amount",
+        .section = "Fog",
+        .tooltip = "Additional fog density multiplier indoors, at all hours. 0% = off, 100% = unchanged. Also affects the view outside. Known underground and unrecognized local environments are excluded.",
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return witcher::night::Supported() && witcher::night::fog_density_supported && witcher::night::interior_fog::supported; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "NightLightingEnabled",
         .binding = &witcher::night::lighting_enabled,
         .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
@@ -121,7 +143,7 @@ renodx::utils::settings::Settings settings = {
               {"NightLightingEnabled", 1.f},
               {"NightRegionalNormalization", 1.f},
               {"NightWeatherNormalization", 1.f},
-              {"NightDarkeningStart", 20.f},
+              {"NightDarkeningStart", 18.f},
               {"NightFullDarknessStart", 23.f},
               {"NightFadeOutStart", 3.5f},
               {"NightDarkeningEnd", 6.f},
@@ -144,7 +166,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "NightDarkeningStart",
         .binding = &witcher::night::darkening_start,
-        .default_value = 20.f,
+        .default_value = 18.f,
         .label = "Darkening Start",
         .section = "Night Schedule",
         .tooltip = "Time when darkening begins fading in.",
@@ -324,6 +346,17 @@ renodx::utils::settings::Settings settings = {
         .is_enabled = IsNightLightingEnabled,
     },
     new renodx::utils::settings::Setting{
+        .key = "NightExposureAllDay",
+        .binding = &witcher::night::exposure::all_day,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .label = "Apply Exposure Overrides All Day",
+        .section = "Night Exposure",
+        .tooltip = "Applies exposure settings at all hours. Off follows the night schedule. Requires Enable Night Lighting.",
+        .labels = {"Off", "On"},
+        .is_enabled = []() { return IsNightLightingEnabled() && witcher::night::exposure::supported; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "NightAutoExposureEnabled",
         .binding = &witcher::night::exposure::enabled,
         .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
@@ -336,7 +369,7 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Exposure adjustments follow the night schedule. Native keeps the game's response; Smoothed slows it; Custom uses the speeds below.",
+        .label = "Exposure follows the night schedule unless All Day is enabled. Native keeps the game's response; Smoothed slows it; Custom unlocks speeds and limits.",
         .section = "Night Exposure",
     },
     new renodx::utils::settings::Setting{
@@ -516,6 +549,8 @@ void OnPresetOff() {
       {"CutsceneCameraLightStrength", 50.f},
       {"MoonSize", 100.f},
       {"SunSize", 100.f},
+      {"FogAmount", 100.f},
+      {"BuildingFogAmount", 100.f},
       {"NightSaturation", 100.f},
   });
   witcher::night::vegetation::delta.store(0.f, std::memory_order_relaxed);
@@ -541,6 +576,12 @@ void OnPresent(reshade::api::command_queue*, reshade::api::swapchain*, const res
                            "[RenoDX Witcher Lighting] Gameplay camera-light control unavailable.");
     }
     if (witcher::night::installed) {
+      reshade::log::message(witcher::night::interior_fog::supported ? reshade::log::level::info : reshade::log::level::warning,
+                           witcher::night::interior_fog::supported ? "[RenoDX Witcher Lighting] Building fog classification available; underground profiles and unknown local areas preserve native fog."
+                                                                 : "[RenoDX Witcher Lighting] Building fog classification unavailable; interior fog preserved.");
+      reshade::log::message(witcher::night::fog_density_supported ? reshade::log::level::info : reshade::log::level::warning,
+                           witcher::night::fog_density_supported ? "[RenoDX Witcher Lighting] All-day atmospheric fog density control available."
+                                                                : "[RenoDX Witcher Lighting] Fog density control unavailable; native fog preserved.");
       reshade::log::message(witcher::night::normalization::supported ? reshade::log::level::info : reshade::log::level::warning,
                            witcher::night::normalization::supported ? "[RenoDX Witcher Lighting] Regional night normalization available."
                                                                    : "[RenoDX Witcher Lighting] Region identification unavailable; native regional baselines preserved.");

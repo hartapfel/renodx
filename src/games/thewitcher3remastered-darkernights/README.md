@@ -160,14 +160,42 @@ moon controls use the ranges described below:
 | Cutscene Camera Light | Artificial scene and dialogue camera fill, independent of the night schedule. |
 | Moon Size | Visible moon diameter from 1% to 500%; 100% is native, 50% halves it. |
 | Sun Size | Visible sun diameter from 1% to 500%; 100% is native. Active at every hour. |
-| Auto Exposure | Enabled uses adaptation; Off uses a fixed luminance reference during the night hours. Enabled is the default. |
+| Fog Amount | Atmospheric fog density at every hour: 0% off, 100% native, 200% double density. Independent of night lighting. |
+| Building Fog Amount | Additional fog density multiplier indoors, at every hour: 0% off, 100% unchanged, 200% double. Excludes known underground environments. |
+| Apply Exposure Overrides All Day | On (default) applies exposure settings at every hour. Off follows the night schedule. Requires Enable Night Lighting. |
+| Auto Exposure | Enabled uses adaptation; Off uses a fixed luminance reference during the selected exposure period. Enabled is the default. |
 | Adaptation | Native (default), Smoothed, or Custom. Smoothed uses 35% brightening and 5% darkening speed, with both limits at 100%. |
 | Brightening / Darkening Speed | Custom only; 1-200% of each native speed, default 35% brightening and 5% darkening. 100% retains that direction's native response. |
 | Maximum Brightening | Custom only; 0-100% of native brightening beyond the 0.18 metering reference, default 100%. 0 prevents lift beyond that reference; 100 retains the native range. |
 | Maximum Darkening | Custom only; 0-100% of native darkening beyond the 0.18 metering reference, default 100%. 0 prevents further darkening beyond that reference; 100 retains the native range. |
 | Fixed Luminance | Off only; 0.001-10, default 0.18. Lower values brighten the image; higher values darken it. |
 
+**Fog Amount** is in its own Fog section. It multiplies freshly built native
+geometry/sky fog density, including distance haze, without changing fog colours,
+vertical falloff, local lights or exposure. It works with Enable Night Lighting
+off and during daylight; Preset Off restores 100%. Soft/Dark Nights leave it
+unchanged. Cloud, smoke and other authored particle effects remain separate.
+The control uses the existing native constant hook, with independently validated
+density loads/stores; no extra shader, buffer binding or GPU pass is added.
+The PT building scene was tested live at zero density with finite output.
+Raster/RT and combined-addon checks require the rebuilt addon.
+
+**Building Fog Amount** blends with the engine's indoor/outdoor state and
+multiplies Fog Amount. It also affects outdoor fog viewed through windows or
+doorways while indoors. Active cave, sewer, crypt and other recognized
+underground environment profiles exclude this override; unidentified local
+environment areas retain native fog. Ordinary buildings that keep only global
+weather profiles are included. A custom cave using only ordinary outdoor
+weather and no cave flag cannot be distinguished from those buildings.
+The current PT building and cave were checked against the actual state reader.
+The default is 100%; Preset Off restores it, and Soft/Dark Nights leave it alone.
+It shares the existing density hook, with world/profile reads on the present
+thread only and no reads when the setting is 100%.
+
 **Night Exposure** follows Enable Night Lighting and the same clock fades.
+Apply Exposure Overrides All Day bypasses the schedule for exposure alone,
+including adaptation speeds, limits and Fixed Luminance. Lighting and grading
+retain their night schedule. The toggle defaults On and is saved per preset.
 Native leaves exposure unchanged. Smoothed slows the native response, retaining
 both native exposure ranges; Custom exposes the two
 directional speeds and both limits.
@@ -195,8 +223,9 @@ darkening limit controls exposure reductions when looking at a bright sky.
 
 With Auto Exposure Off, the first and second native metering limits converge
 to Fixed Luminance, removing dependence on measured scene brightness at full
-night strength. Daylight and clock fades retain or gradually restore automatic
-exposure. Lighting, weather transitions and artistic exposure parameters can
+night strength, or at all hours with All Day enabled. Otherwise daylight and
+clock fades retain or gradually restore automatic exposure.
+Lighting, weather transitions and artistic exposure parameters can
 still change the image. This is a fixed metering reference, not a frozen frame
 or a fixed display luminance in nits.
 
@@ -205,9 +234,11 @@ normal dynamic tone-map shader and live adaptation history; no fixed-shader
 substitution, tone-map override, new bindings, readbacks, descriptor tracking
 or extra GPU pass is added. This preserves the HDR addon's existing shader
 routing and bloom exposure references. A foreign addon that ignores native
-metering parameters can bypass this control. Preset Off, the night master Off,
-daytime and invalid schedules restore native exposure. Values are saved per
-preset; Soft Nights resets exposure to Enabled + Native.
+metering parameters can bypass this control. Preset Off and the night master Off
+always restore native exposure. Daytime and invalid schedules restore native
+exposure unless All Day is enabled.
+Values are saved per preset; Soft Nights resets exposure to Enabled + Smoothed
+and turns All Day on.
 
 Torches, ordinary local lights and the separate interior camera-light group retain
 their native behavior. Both camera sliders work independently of Enable Night

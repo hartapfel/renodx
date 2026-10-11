@@ -199,6 +199,48 @@ int main() {
   enabled = 1.f;
   adaptation = 1.f;
   Update(true);
+  // All-day exposure overrides the clock fade, including daylight, but never
+  // the master switch. Rates, fixed metering and both custom limits agree.
+  for (float toggle : {0.f, 1.f}) for (bool active : {false, true}) {
+    all_day = toggle;
+    for (float auto_enabled : {0.f, 1.f}) for (float mode : {0.f, 1.f, 2.f}) {
+      enabled = auto_enabled;
+      adaptation = mode;
+      brightening_speed = 35.f;
+      darkening_speed = 5.f;
+      maximum_brightening = maximum_darkening = 25.f;
+      fixed_luminance = metering_anchor;
+      Update(active);
+      assert(all_day_active == (active && toggle == 1.f));
+      for (float clock_weight : {0.f, 0.5f, 1.f}) {
+        const float expected_weight = active && toggle == 1.f ? 1.f : clock_weight;
+        for (const auto& [slot, caller] : limit_uploads) {
+          caller_offset = 0;
+          auto limits = std::array{1.f, 0.01f, 2.f, 19.f};
+          auto expected = limits;
+          all_day_active = false;
+          const bool expected_changed = AdjustConstants(slot, expected.data(), caller, expected_weight);
+          all_day_active = active && toggle == 1.f;
+          assert(AdjustConstants(slot, limits.data(), caller, clock_weight) == expected_changed);
+          assert(limits == expected);
+          auto rates = native;
+          auto expected_rates = native;
+          all_day_active = false;
+          const bool expected_rate_change = AdjustConstants(20, expected_rates.data(), rate_caller, expected_weight);
+          all_day_active = active && toggle == 1.f;
+          assert(AdjustConstants(20, rates.data(), rate_caller, clock_weight) == expected_rate_change);
+          assert(rates == expected_rates);
+          if (!active || (auto_enabled == 1.f && mode == 0.f)) {
+            assert(limits == (std::array{1.f, 0.01f, 2.f, 19.f}) && rates == native);
+          }
+          ++cases;
+        }
+      }
+    }
+  }
+  all_day = 0.f;
+  enabled = adaptation = 1.f;
+  Update(true);
   // Unrelated callers, unsupported builds and invalid input never change data.
   for (auto caller : {uintptr_t{0}, rate_caller - 1, rate_caller + 1}) {
     values = native;

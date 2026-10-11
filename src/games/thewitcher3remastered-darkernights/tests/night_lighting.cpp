@@ -795,6 +795,30 @@ int main() {
   witcher::night::Update(true);
   assert(witcher::night::moon_multiplier.load() == 1.f);
   witcher::night::moon_size = 100.f;
+  // Exposure can ignore the schedule without enabling lighting or grading.
+  for (float all_day : {0.f, 1.f}) for (bool active : {false, true}) {
+    for (float master : {0.f, 1.f}) for (bool valid_schedule : {false, true}) {
+      witcher::night::exposure::all_day = all_day;
+      witcher::night::exposure::enabled = 0.f;
+      witcher::night::exposure::fixed_luminance = 0.18f;
+      witcher::night::lighting_enabled = master;
+      witcher::night::darkening_start = valid_schedule ? 18.f : -1.f;
+      witcher::night::night_weight = 0.f; // Daylight also takes the early hook path.
+      witcher::night::Update(active);
+      assert(witcher::night::exposure::all_day_active == (active && master == 1.f && all_day == 1.f));
+      assert(witcher::night::exposure::fixed_reference
+             == (active && master == 1.f && (valid_schedule || all_day == 1.f) ? 0.18f : 0.f));
+      if (!valid_schedule || !active || master == 0.f) {
+        assert(witcher::night::grading::luminance == 1.f && witcher::night::grading::chroma == 1.f);
+        assert(witcher::night::sky_multiplier == 1.f && witcher::night::direct_multiplier == 1.f);
+      }
+    }
+  }
+  witcher::night::darkening_start = 18.f;
+  witcher::night::lighting_enabled = 0.f;
+  witcher::night::exposure::all_day = 0.f;
+  witcher::night::exposure::enabled = 1.f;
+  witcher::night::Update(true);
   // A cutscene-only change must request hook installation even with neutral
   // gameplay and disabled night lighting. Fail safely before touching threads.
   witcher::night::installed = false;
@@ -818,6 +842,18 @@ int main() {
   witcher::night::Update(true);
   assert(witcher::night::attempted && !witcher::night::installed);
   std::printf("Sun size: %u all-hour width, isolation, invalid-input and restore cases passed.\n", sun_cases);
+  // Fog-only edits must install even with the night master disabled.
+  witcher::night::attempted = false;
+  witcher::night::sun_size = 100.f;
+  witcher::night::fog_amount = 0.f;
+  witcher::night::Update(true);
+  assert(witcher::night::attempted && !witcher::night::installed);
+  witcher::night::fog_amount = 100.f;
+  witcher::night::attempted = false;
+  witcher::night::interior_fog::amount = 0.f;
+  witcher::night::Update(true);
+  assert(witcher::night::attempted && !witcher::night::installed);
+  witcher::night::interior_fog::amount = 100.f;
   std::printf("Camera lighting: %u gameplay/cutscene isolation and failed-build cases; independent controls and restore checks passed.\n", camera_cases);
   std::printf("Night schedule: %u custom-hour/cross-midnight/invalid/instant-fade cases passed.\n", schedule_cases);
 
@@ -965,6 +1001,93 @@ int main() {
     norm::game_address = nullptr;
     norm::area_name = nullptr;
     std::printf("Region/weather normalization: %u weather/fade/slider/PT-raster cases; native byte restoration, world transitions and aliases passed.\n", cases);
+  }
+  // All-day fog changes density, not fog RGB or a screen-space brightness.
+  // Full-buffer comparisons also cover projection, local lights and padding.
+  witcher::night::installed = witcher::night::attempted = true;
+  witcher::night::lighting_enabled = 0.f;
+  witcher::night::camera_strength = witcher::night::cutscene_strength = 50.f;
+  witcher::night::moon_size = witcher::night::sun_size = 100.f;
+  witcher::night::fog_density_supported = true;
+  for (float time : {0.f, 0.25f, 0.5f, 0.9f}) {
+    std::memcpy(environment.data() + 0xdc4, &time, sizeof(time));
+    for (float amount : {0.f, 25.f, 50.f, 100.f, 150.f, 200.f, -1.f, 300.f,
+                         std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
+      witcher::night::fog_amount = amount;
+      for (bool supported : {false, true}) for (bool enabled : {false, true}) {
+        witcher::night::fog_density_supported = supported;
+        witcher::night::Update(enabled);
+        NativeCommonBuilder(nullptr, nullptr);
+        auto expected = common_output;
+        const float multiplier = enabled && supported && std::isfinite(amount)
+                                     ? std::clamp(amount / 100.f, 0.f, 2.f) : 1.f;
+        for (unsigned offset : {0x2b0u, 0x2c0u}) {
+          float value;
+          std::memcpy(&value, expected.data() + offset, sizeof(value));
+          value *= multiplier;
+          std::memcpy(expected.data() + offset, &value, sizeof(value));
+        }
+        witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+        assert(expected == common_output);
+        // Fresh native uploads prevent accumulation across frames.
+        witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+        assert(expected == common_output);
+      }
+    }
+  }
+  witcher::night::fog_amount = 100.f;
+  witcher::night::Update(false);
+  std::puts("All-day fog: density-only edits, clock/master independence, native/Off restoration, support guards and fresh uploads passed.");
+  {
+    namespace fog = witcher::night::interior_fog;
+    std::vector<unsigned char> game(0x16100), world(0x240), indoor(0x92460), records(0x15dd0);
+    std::array<unsigned char, 16> handle{};
+    const auto put = [](unsigned char* output, const auto& value) { std::memcpy(output, &value, sizeof(value)); };
+    const unsigned char* game_pointer = game.data();
+    put(game.data() + 0xf0, handle.data());
+    put(handle.data() + 8, world.data());
+    put(world.data() + 0x228, indoor.data());
+    put(indoor.data() + 0x1d2d0, records.data());
+    put(indoor.data() + 0x1d2d8, uint32_t{1});
+    put(records.data() + 0x15da8, 1.f);
+    fog::game_address = &game_pointer;
+    witcher::night::fog_density_supported = true;
+    unsigned cases = 0;
+    for (const char* path : {"environment\\definitions\\env_prologue\\env_prolog_colors_v1_b_sunset.env",
+                             "environment\\definitions\\env_novigrad\\env_novigrad_cave.env"}) {
+      put(records.data() + 0x15dac, path);
+      put(records.data() + 0x15db4, uint32_t(std::strlen(path) + 1));
+      for (float outside : {0.f, .5f, 1.f}) for (float global : {0.f, 50.f, 100.f, 200.f})
+        for (float local : {0.f, 50.f, 100.f, 200.f}) for (bool supported : {false, true})
+          for (bool enabled : {false, true}) {
+            fog::supported = supported;
+            put(indoor.data() + 0x92454, outside);
+            fog::amount = local;
+            witcher::night::fog_amount = global;
+            witcher::night::Update(enabled);
+            NativeCommonBuilder(nullptr, nullptr);
+            auto expected = common_output;
+            const bool building = std::string_view(path).find("cave") == std::string_view::npos;
+            const float gain = enabled ? global / 100.f * (1.f + (local / 100.f - 1.f)
+                                                           * (supported && building ? 1.f - outside : 0.f)) : 1.f;
+            for (unsigned offset : {0x2b0u, 0x2c0u}) {
+              float value;
+              std::memcpy(&value, expected.data() + offset, sizeof(value));
+              value *= gain;
+              put(expected.data() + offset, value);
+            }
+            witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+            assert(expected == common_output);
+            witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+            assert(expected == common_output);
+            ++cases;
+          }
+    }
+    fog::supported = false;
+    fog::game_address = nullptr;
+    fog::amount = witcher::night::fog_amount = 100.f;
+    witcher::night::Update(false);
+    std::printf("Building fog: %u combined-density, indoor-fade, cave exclusion, support/Off and fresh-upload cases passed.\n", cases);
   }
   std::printf("Night lighting: %u renderer/water/skylight cases; master toggle, camera independence, restore/rebase checks passed.\n",
               constants_cases);

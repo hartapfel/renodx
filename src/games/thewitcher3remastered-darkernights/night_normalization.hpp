@@ -131,15 +131,14 @@ inline uint32_t ReadArea() {
   return area;
 }
 
-inline bool ReadWeather(uint32_t* from, uint32_t* to, float* blend, uint64_t* amounts) {
+inline bool ReadEnvironment(const unsigned char* const* game_source, const unsigned char** result) {
   const unsigned char* game = nullptr;
   const unsigned char* handle = nullptr;
   const unsigned char* world = nullptr;
   const unsigned char* environment = nullptr;
-  const unsigned char* weather = nullptr;
   unsigned char started = 0;
   uint32_t active_world = 0;
-  if (!Read(game_address, &game) || !game || !Read(game + 0xfd3a, &started)) return false;
+  if (!Read(game_source, &game) || !game || !Read(game + 0xfd3a, &started)) return false;
   // Mirrors CR4Game's active-world selector. The second environment belongs
   // to a concurrently loading/alternate world; do not choose by non-nullness.
   if (started) {
@@ -147,7 +146,15 @@ inline bool ReadWeather(uint32_t* from, uint32_t* to, float* blend, uint64_t* am
         || !environment || !Read(environment + 0x7c, &active_world)) return false;
   }
   if (!Read(game + 0xf0, &handle) || !handle || !Read(handle + 8, &world) || !world
-      || !Read(world + (active_world ? 0x230 : 0x228), &environment) || !environment
+      || !Read(world + (active_world ? 0x230 : 0x228), &environment) || !environment) return false;
+  *result = environment;
+  return true;
+}
+
+inline bool ReadWeather(uint32_t* from, uint32_t* to, float* blend, uint64_t* amounts) {
+  const unsigned char* environment = nullptr;
+  const unsigned char* weather = nullptr;
+  if (!ReadEnvironment(game_address, &environment)
       || !Read(environment + 0x92270, &weather) || !weather) return false;
   // One bounded read for both weather records and the native remaining/duration
   // clock. Never retain its heap pointer across a world or weather transition.

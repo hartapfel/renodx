@@ -20,6 +20,7 @@
 #include "./night_grading.hpp"
 #include "./night_exposure.hpp"
 #include "./night_normalization.hpp"
+#include "./interior_fog.hpp"
 
 namespace witcher::night {
 
@@ -33,6 +34,9 @@ inline std::atomic<uint64_t> night_schedule = uint64_t{1080} | (uint64_t{120} <<
 inline float sky_strength = 50.f;
 inline float direct_strength = 50.f;
 inline float fog_strength = 50.f;
+inline float fog_amount = 100.f;
+inline std::atomic<float> fog_density_multiplier = 1.f;
+inline bool fog_density_supported = false;
 inline float haze_strength = 50.f;
 inline float visible_sky_strength = 50.f;
 inline float moon_strength = 50.f;
@@ -212,6 +216,18 @@ inline void CommonConstantsHook(const void* context, void* output) {
   // injection and native impacts do not retain a stale PT-frame night weight.
   night_weight.store(weight, std::memory_order_relaxed);
   auto* constants = static_cast<unsigned char*>(output);
+  // Native AllowFog gates these density coefficients before every consumer.
+  // Scale fresh values at all hours, leaving colours and vertical shape native.
+  const float fog_density = fog_density_multiplier.load(std::memory_order_relaxed);
+  if (fog_density_supported && fog_density != 1.f) {
+    for (unsigned offset : {0x2b0u, 0x2c0u}) {
+      float value;
+      std::memcpy(&value, constants + offset, sizeof(value));
+      if (!std::isfinite(value) || value < 0.f) continue;
+      value *= fog_density;
+      if (std::isfinite(value)) std::memcpy(constants + offset, &value, sizeof(value));
+    }
+  }
   const auto calibration = normalization::GetCalibration();
   // b12 c204.x is the native procedural sun glow's angular falloff exponent,
   // uploaded from environment +391C. Its lobe width scales with 1/sqrt(p).
@@ -391,7 +407,7 @@ inline void GradeConstantsHook(uint32_t first, const float* values, uint32_t cou
       return;
     }
     const float weight = night_weight.load(std::memory_order_relaxed);
-    if (weight == 0.f) {
+    if (weight == 0.f && !exposure::all_day_active.load(std::memory_order_relaxed)) {
       grading::set_pixel_constants(first, values, count);
       return;
     }
@@ -496,6 +512,16 @@ inline bool ValidateImage(const unsigned char* image) {
     direct_constants_offset = layout.direct_buffer_offset;
     build_common_constants = reinterpret_cast<BuildConstants>(const_cast<unsigned char*>(image) + layout.common);
     build_global_constants = reinterpret_cast<BuildConstants>(const_cast<unsigned char*>(image) + layout.global);
+    // Optional: validate both native density inputs and their scalar stores.
+    // Changed fog code must leave the existing lighting controls available.
+    constexpr unsigned char density_read[] = {0xc5,0xfa,0x10,0x83,0xec,0x34,0x00,0x00};
+    constexpr unsigned char density_store[] = {0xc4,0xc1,0x7a,0x11,0x87,0xb0,0x02,0x00,0x00};
+    constexpr unsigned char sky_density_read[] = {0xc5,0xfa,0x10,0x93,0x8c,0x35,0x00,0x00};
+    constexpr unsigned char sky_density_store[] = {0xc4,0xc1,0x7a,0x11,0x8f,0xc0,0x02,0x00,0x00};
+    fog_density_supported = !std::memcmp(image + layout.common + 0xb4e, density_read, sizeof(density_read))
+        && !std::memcmp(image + layout.common + 0xb5f, density_store, sizeof(density_store))
+        && !std::memcmp(image + layout.common + 0xbe1, sky_density_read, sizeof(sky_density_read))
+        && !std::memcmp(image + layout.common + 0xc1d, sky_density_store, sizeof(sky_density_store));
     // Decode the existing per-view builder call, rather than guessing an RVA
     // for older executables. A changed sky builder leaves core controls usable.
     water_sky_supported = false;
@@ -600,6 +626,7 @@ inline bool ValidateImage(const unsigned char* image) {
     exposure::Validate(image, pe->OptionalHeader.SizeOfImage, layout.environment,
                        layout.pixel_constants, layout.grade_caller_offset);
     normalization::Validate(image, pe->OptionalHeader.SizeOfImage);
+    interior_fog::Validate(image, pe->OptionalHeader.SizeOfImage);
     constants_image_base = reinterpret_cast<uintptr_t>(image);
     if (grading::supported || exposure::supported) {
       grading::set_pixel_constants = reinterpret_cast<grading::SetPixelConstants>(const_cast<unsigned char*>(image) + layout.pixel_constants);
@@ -665,7 +692,7 @@ inline void Update(bool enabled) {
   const uint64_t schedule = NightSchedule();
   night_schedule.store(schedule, std::memory_order_relaxed);
   const bool night_enabled = enabled && lighting_enabled == 1.f && schedule != 0;
-  exposure::Update(night_enabled);
+  exposure::Update(enabled && lighting_enabled == 1.f && (schedule != 0 || exposure::all_day == 1.f));
   grading::luminance.store(night_enabled && std::isfinite(grading::luminance_strength)
                               ? std::clamp(grading::luminance_strength / 100.f, 0.f, 1.f) : 1.f,
                           std::memory_order_relaxed);
@@ -678,6 +705,8 @@ inline void Update(bool enabled) {
       && (!enabled || (camera_strength == 50.f && cutscene_strength == 50.f))
       && (!enabled || moon_size == 100.f)
       && (!enabled || sun_size == 100.f)
+      && (!enabled || !std::isfinite(fog_amount) || fog_amount == 100.f)
+      && (!enabled || !std::isfinite(interior_fog::amount) || interior_fog::amount == 100.f)
       && (exposure::fixed_reference.load(std::memory_order_relaxed) == 0.f
           && exposure::brightening_scale.load(std::memory_order_relaxed) == 1.f
           && exposure::darkening_scale.load(std::memory_order_relaxed) == 1.f
@@ -687,6 +716,12 @@ inline void Update(bool enabled) {
                             && grading::chroma.load(std::memory_order_relaxed) == 1.f
                             && grading::saturation_strength == 100.f))) return;
   if (!Install()) return;
+  float fog_density = enabled && fog_density_supported && std::isfinite(fog_amount)
+                          ? std::clamp(fog_amount / 100.f, 0.f, 2.f) : 1.f;
+  if (enabled && fog_density_supported && std::isfinite(interior_fog::amount) && interior_fog::amount != 100.f) {
+    fog_density *= 1.f + (std::clamp(interior_fog::amount / 100.f, 0.f, 2.f) - 1.f) * interior_fog::BuildingWeight();
+  }
+  fog_density_multiplier.store(fog_density, std::memory_order_relaxed);
   normalization::Update(night_enabled);
   moon_multiplier.store(enabled && moon_supported && std::isfinite(moon_size)
                             ? std::clamp(moon_size / 100.f, 0.01f, 5.f) : 1.f,

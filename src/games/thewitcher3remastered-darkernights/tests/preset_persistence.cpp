@@ -20,7 +20,10 @@ int main(int argc, char** argv) {
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightMoonStrength"}] = std::to_string(i * 15);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "MoonSize"}] = std::to_string(i * 30);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "SunSize"}] = std::to_string(i * 50);
+    configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "FogAmount"}] = std::to_string(i * 25);
+    configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "BuildingFogAmount"}] = std::to_string(i * 20);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightAutoExposureEnabled"}] = i == 2 ? "0" : "1";
+    configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightExposureAllDay"}] = i == 2 ? "1" : "0";
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightExposureAdaptation"}] = std::to_string(i - 1);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightExposureBrighteningSpeed"}] = std::to_string(i * 20);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightExposureDarkeningSpeed"}] = std::to_string(i * 30);
@@ -39,14 +42,19 @@ int main(int argc, char** argv) {
         || witcher::night::cutscene_strength != 50.f
         || witcher::night::moon_size != 100.f
         || witcher::night::sun_size != 100.f
+        || witcher::night::fog_amount != 100.f
+        || witcher::night::interior_fog::amount != 100.f
         || witcher::night::grading::saturation_strength != 100.f) return 4;
   } else if (witcher::night::grading::saturation_strength != expected * 25.f
              || witcher::night::rain_strength != expected * 10.f
              || witcher::night::moon_strength != expected * 15.f
              || witcher::night::cutscene_strength != expected * 20.f
              || witcher::night::moon_size != expected * 30.f
-             || witcher::night::sun_size != expected * 50.f) return 5;
+             || witcher::night::sun_size != expected * 50.f
+             || witcher::night::fog_amount != expected * 25.f
+             || witcher::night::interior_fog::amount != expected * 20.f) return 5;
   if (expected != 0 && (witcher::night::exposure::enabled != (expected == 2 ? 0.f : 1.f)
+      || witcher::night::exposure::all_day != (expected == 2 ? 1.f : 0.f)
       || witcher::night::exposure::adaptation != expected - 1.f
       || witcher::night::exposure::brightening_speed != expected * 20.f
       || witcher::night::exposure::darkening_speed != expected * 30.f
@@ -69,7 +77,8 @@ int main(int argc, char** argv) {
     }
   }
   renodx::utils::settings::UpdateSettings({{"GameplayCameraLightStrength", 13.f},
-                                        {"CutsceneCameraLightStrength", 23.f}, {"MoonSize", 250.f}, {"SunSize", 150.f}});
+                                        {"CutsceneCameraLightStrength", 23.f}, {"MoonSize", 250.f}, {"SunSize", 150.f},
+                                        {"FogAmount", 35.f}, {"BuildingFogAmount", 45.f}});
   for (const auto* setting : settings) {
     if (setting->label == "Soft Nights") setting->on_change();
   }
@@ -77,7 +86,10 @@ int main(int argc, char** argv) {
     if (setting->key.starts_with("Night") && setting->GetValue() != setting->default_value) return 8;
   }
   if (witcher::night::camera_strength != 13.f || witcher::night::cutscene_strength != 23.f
-      || witcher::night::moon_size != 250.f || witcher::night::sun_size != 150.f) return 9;
+      || witcher::night::moon_size != 250.f || witcher::night::sun_size != 150.f
+      || witcher::night::fog_amount != 35.f || witcher::night::interior_fog::amount != 45.f) return 9;
+  OnPresetOff();
+  if (witcher::night::fog_amount != 100.f || witcher::night::interior_fog::amount != 100.f) return 16;
   // Off exposes only the fixed reference. Enabled exposes Adaptation, and
   // its two speed sliders appear exclusively for Custom.
   for (float enabled : {0.f, 1.f}) for (float mode : {0.f, 1.f, 2.f}) {

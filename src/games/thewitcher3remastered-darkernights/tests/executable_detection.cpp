@@ -59,6 +59,24 @@ int main(int argc, char** argv) {
   auto* header = reinterpret_cast<IMAGE_NT_HEADERS64*>(image.data() + dos->e_lfanew);
   unsigned cases = 0;
   assert(witcher::night::ValidateImage(image.data()));
+  assert(witcher::night::fog_density_supported);
+  assert(witcher::night::interior_fog::supported);
+  for (unsigned address : {0x22b02e5u, 0x22b1fceu, 0x22b4adcu, 0x22b9582u, 0x22b959cu,
+                           0x22b95c6u, 0x22b9631u, 0x22b5701u, 0x22b1f7du}) {
+    image[address] ^= 1;
+    assert(witcher::night::ValidateImage(image.data()) && !witcher::night::interior_fog::supported);
+    image[address] ^= 1;
+    assert(witcher::night::ValidateImage(image.data()) && witcher::night::interior_fog::supported);
+    ++cases;
+  }
+  for (unsigned offset : {0xb4eu, 0xb5fu, 0xbe1u, 0xc1du}) {
+    const unsigned address = witcher::night::active_layout->common + offset;
+    image[address] ^= 1;
+    assert(witcher::night::ValidateImage(image.data()) && !witcher::night::fog_density_supported);
+    image[address] ^= 1;
+    assert(witcher::night::ValidateImage(image.data()) && witcher::night::fog_density_supported);
+    ++cases;
+  }
   assert(witcher::night::camera_supported && witcher::night::cutscene_supported && witcher::night::grading::supported);
   assert(witcher::night::normalization::supported);
   assert(witcher::night::normalization::weather_supported);

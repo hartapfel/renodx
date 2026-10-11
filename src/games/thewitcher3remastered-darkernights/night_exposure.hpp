@@ -14,6 +14,8 @@
 namespace witcher::night::exposure {
 
 inline float enabled = 1.f, adaptation = 0.f;
+inline float all_day = 0.f;
+inline std::atomic<bool> all_day_active = false;
 inline constexpr float metering_anchor = 0.18f;
 inline constexpr float smoothed_brightening_speed = 35.f, smoothed_darkening_speed = 5.f;
 inline constexpr float smoothed_maximum_darkening = 100.f, smoothed_maximum_brightening = 100.f;
@@ -57,12 +59,15 @@ inline void Update(bool active) {
   fixed_reference.store(reference, std::memory_order_relaxed);
   darkening_range.store(range, std::memory_order_relaxed);
   brightening_range.store(boost, std::memory_order_relaxed);
+  all_day_active.store(active && all_day == 1.f, std::memory_order_relaxed);
 }
 
-// Edit only fresh uploads at validated callers. Native/daytime paths are
+// Edit only fresh uploads at validated callers. Native/scheduled daytime paths are
 // byte-identical, and c4/c9.xw (curve selector and metadata) remain untouched.
 inline bool AdjustConstants(uint32_t first, float* values, uintptr_t caller, float weight) {
-  if (!supported || !std::isfinite(weight) || weight <= 0.f || weight > 1.f) return false;
+  if (!supported || !std::isfinite(weight) || weight < 0.f || weight > 1.f) return false;
+  if (all_day_active.load(std::memory_order_relaxed)) weight = 1.f;
+  if (weight == 0.f) return false;
   if (first == 20 && caller == rate_caller) {
     const float scales[] = {brightening_scale.load(std::memory_order_relaxed),
                             darkening_scale.load(std::memory_order_relaxed)};
