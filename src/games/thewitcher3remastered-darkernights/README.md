@@ -84,16 +84,72 @@ Atmosphere**, and grading under **Night Colour Grading**. **Camera Lighting** an
 **Sky Appearance** contain the independent camera and moon controls. Instructions,
 credits and donation buttons are under **Help & About** and **Community & Support**.
 
-Light intensity sliders use **0 = off, 50 = native, 100 = double**. Grading and
+**Normalize Regional Lighting** is On by default. It balances the ordinary
+outdoor night baselines of Novigrad/Velen, Skellige, Kaer Morhen, White Orchard,
+winter White Orchard and Toussaint before applying your sliders. Off retains
+the previous regional baselines. The choice is saved in each profile, and both
+night preset buttons enable normalization.
+
+Calibration uses the median clear-night authored values across the five main
+outdoor regions, with correction gains bounded to 0.25–4. Each region keeps the
+same regional correction through weather and local environment blends. Weather
+normalization below can additionally balance the weather relationship; colour,
+fog density and cloud coverage remain native. This balances lighting
+parameters; it does not force every camera view to the same measured brightness.
+Local/camera lights, moon brightness and native exposure remain separate. Vizima,
+Isle of Mists, spiral/quest worlds and unknown modded worlds retain their authored
+baselines. Daytime, the night master Off and Preset Off remove normalization.
+
+The region comes from the validated native map manager, read once per present.
+Renderer workers use a static calibration table. There are no asset scans,
+descriptor tracking or GPU readbacks. An unsupported region-identification
+layout disables only normalization and preserves the existing night controls.
+The factors apply to fresh direct light, probe scales, visible sky, fog/haze and
+cloud terms. PT sky radiance is normalized at its sky source; its impact multiplier
+and reflected sky are not normalized again. Native tone mapping and exposure
+response are not changed by this control.
+
+**Normalize Weather Lighting** is a separate toggle, On by default and saved per
+profile. Both night preset buttons enable it. It covers 40 ordinary region/weather
+combinations in the installed outdoor tables: clear, light/mid/heavy/dark clouds,
+grey skies, rain/storm, fog, snow and blizzard. Each weather's reference is the
+median authored night relationship to clear weather across regions that provide
+that state. Storm direct light and visible sky retain a reference at or below
+clear weather; snow bounce and fog brightness keep their weather relationships.
+States unique to one region retain their authored relationship rather than
+inventing a reference. Quest, unknown and mod-added weather retain their native
+weather relationship; the regional toggle still operates independently.
+
+The native weather manager supplies both transition endpoints, remaining time,
+duration and each endpoint's environment blend strength. Normalization follows
+that transition and partial/zero environment overrides, using a ratio of blended
+baselines rather than interpolating endpoint gains. The combined correction stays
+bounded to 0.25–4 and applies before the user intensities and night fade. Missing
+authored curves keep their native relationship. It uses the same direct, probe,
+sky, fog/haze and cloud consumers as regional normalization, without additionally
+scaling rain, moon, camera lights, real-light water reflections, grading or exposure.
+
+Weather state is read once per present with guarded reads; renderer workers use
+immutable calibration tables and one lock-free selection. No asset scans, resource
+tracking, readbacks or extra GPU pass is added. A mismatched weather layout disables
+only weather normalization. Turning both normalization toggles Off restores the
+previous native baselines. In-game comparison of storms, snow and weather transitions
+is still required; parameter calibration cannot guarantee identical screen brightness.
+
+Light intensity sliders use **0 = off, 50 = baseline, 100 = double**. With
+both normalization toggles Off, that baseline is native. Grading and
 moon controls use the ranges described below:
 
 | Control | Changes |
 |---|---|
+| Normalize Regional Lighting | On balances regional outdoor night baselines; Off preserves native regional differences. Weather differences remain. |
+| Normalize Weather Lighting | On balances each weather's regional night relationship; Off retains its native relationship. Weather types remain distinct. |
 | Skylight | Environmental illumination, outdoor probe fill and sky lighting/reflections on water. |
 | Direct Light | Directional environment lighting, including grass. |
 | Directional Fog | Directional/custom fog brightness, preserving density. |
 | Aerial Haze | Aerial and distance-fog brightness, preserving extinction. |
 | Sky Brightness | Visible sky and horizon glow, preserving moon/stars. |
+| Moon Brightness | Moon disk radiance only; follows the night schedule. 0 off, 50 native, 100 double. |
 | Cloud Brightness | Cloud and cloud/smoke volume brightness, preserving coverage. |
 | Rain Brightness | Falling rain streak brightness; weather intensity and wetness stay native. |
 | Water Lighting | Water color and ambient/diffuse fill, preserving reflected scene light/refraction/foam. |
@@ -161,6 +217,12 @@ lighting. Presets are stored under `renodx-darkernights-remastered`, separately
 from the HDR addon.
 The top-level Off / Preset #1 / #2 / #3 selection is also restored on the next
 launch. Missing or invalid saved selections start on Preset #1.
+
+**Moon Brightness** is in Night Atmosphere and follows Enable Night Lighting and
+its clock fades. It covers the regular and Toussaint moon materials, preserving
+size, texture, phase, fog and directional moonlight. Both night presets retain
+native brightness (50). It shares the existing moon marker in native constants
+and introduces no additional shader binding.
 
 **Moon Size** is in the Sky Appearance section and works independently of Enable Night
 Lighting and its clock schedule. It scales the moon mesh while preserving its
@@ -292,7 +354,8 @@ ReShade, other addons and personal configuration are not bundled.
 
 The generated `build/thewitcher3remastered-darkernights.include/embed/shaders.h` should
 contain the 13 lighting replacements in `lighting/`, both moon vertex variants
-(`0x14AEBBFB` and `0x680C44CE`) in `sky/`, and the independent helper
+(`0x14AEBBFB` and `0x680C44CE`) and their brightness pixel shaders
+(`0xE446F231` and `0x6D5A1EC2`) in `sky/`, and the independent helper
 compute shader `effects/0xF3B20000.cs_6_6.hlsl`. The helper is removed from the
 game-replacement map; seven native post-grade hashes and eleven audited HDR
 replacement hashes have observation callbacks only.

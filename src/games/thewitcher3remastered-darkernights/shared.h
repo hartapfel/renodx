@@ -8,10 +8,19 @@
 #define WITCHER_NIGHT_FACTOR_MASK 0x3FFFu
 #define WITCHER_NIGHT_SKY_SHIFT 14u
 #define WITCHER_NIGHT_FACTOR_SCALE 8191u
+// Normalized cloud gains need up to 8x. Use a distinct tag to preserve the
+// original precision/encoding exactly when normalization is Off.
+#define WITCHER_NORMALIZED_TAG 0xE0000000u
+#define WITCHER_NORMALIZED_FACTOR_SCALE 2047u
 
 // Independent celestial diameters in native b12 padding. No new root binding.
-// Moon: c37.w; sun mesh: c206.w. Each uses the same tagged 16-bit scale.
-#define WITCHER_MOON_TAG 0x4D4F0000u
+// Moon c37.w packs a 16-bit diameter and 10-bit brightness with a 6-bit tag.
+// Sun mesh c206.w retains its tagged 16-bit diameter.
+#define WITCHER_MOON_TAG 0x4C000000u
+#define WITCHER_MOON_TAG_MASK 0xFC000000u
+#define WITCHER_MOON_BRIGHTNESS_SHIFT 16u
+#define WITCHER_MOON_BRIGHTNESS_MASK 0x3FFu
+#define WITCHER_MOON_BRIGHTNESS_SCALE 511u
 #define WITCHER_SUN_TAG 0x53550000u
 #define WITCHER_CELESTIAL_TAG_MASK 0xFFFF0000u
 #define WITCHER_CELESTIAL_FACTOR_MASK 0xFFFFu

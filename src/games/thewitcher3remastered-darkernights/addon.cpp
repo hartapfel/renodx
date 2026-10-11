@@ -69,8 +69,30 @@ renodx::utils::settings::Settings settings = {
         .is_enabled = []() { return witcher::night::Supported(); },
     },
     new renodx::utils::settings::Setting{
+        .key = "NightRegionalNormalization",
+        .binding = &witcher::night::normalization::enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .label = "Normalize Regional Lighting",
+        .section = "Night Lighting",
+        .tooltip = "Balances regional night lighting before the sliders while retaining weather differences. Off keeps each region's native baseline.",
+        .labels = {"Off", "On"},
+        .is_enabled = []() { return IsNightLightingEnabled() && witcher::night::normalization::supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightWeatherNormalization",
+        .binding = &witcher::night::normalization::weather_enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .label = "Normalize Weather Lighting",
+        .section = "Night Lighting",
+        .tooltip = "Balances each weather state's night lighting before the sliders. Preserves weather mood and native transitions; Off keeps its native relationship.",
+        .labels = {"Off", "On"},
+        .is_enabled = []() { return IsNightLightingEnabled() && witcher::night::normalization::weather_supported; },
+    },
+    new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Smoothly adjusts nighttime light and colour during the hours below. Local lights stay native. Light intensity: 0 = off, 50 = native, 100 = double.",
+        .label = "Smoothly adjusts nighttime light and colour during the hours below. Local lights stay native. Light intensity: 0 = off, 50 = baseline, 100 = double. Normalization balances regional and weather baselines.",
         .section = "Night Lighting",
     },
     new renodx::utils::settings::Setting{
@@ -97,21 +119,25 @@ renodx::utils::settings::Settings settings = {
         .on_change = []() {
           renodx::utils::settings::UpdateSettings({
               {"NightLightingEnabled", 1.f},
+              {"NightRegionalNormalization", 1.f},
+              {"NightWeatherNormalization", 1.f},
               {"NightDarkeningStart", 20.f},
               {"NightFullDarknessStart", 23.f},
               {"NightFadeOutStart", 3.5f},
               {"NightDarkeningEnd", 6.f},
               {"NightSkyStrength", 5.f},
               {"NightDirectStrength", 5.f},
-              {"NightFogStrength", 5.f},
+              {"NightFogStrength", 1.f},
               {"NightHazeStrength", 5.f},
               {"NightVisibleSkyStrength", 5.f},
-              {"NightCloudStrength", 10.f},
-              {"NightRainStrength", 10.f},
+              {"NightMoonStrength", 15.f},
+              {"NightCloudStrength", 1.f},
+              {"NightRainStrength", 1.f},
               {"NightWaterStrength", 0.f},
               {"NightColorGradeLuminance", 100.f},
               {"NightColorGradeChroma", 100.f},
               {"NightSaturation", 50.f},
+              {"MoonSize", 30.f},
           });
         },
     },
@@ -199,6 +225,17 @@ renodx::utils::settings::Settings settings = {
         .is_enabled = IsNightLightingEnabled,
     },
     new renodx::utils::settings::Setting{
+        .key = "NightMoonStrength",
+        .binding = &witcher::night::moon_strength,
+        .default_value = 35.f,
+        .label = "Moon Brightness",
+        .section = "Night Atmosphere",
+        .tooltip = "Brightness of the moon disk. Preserves its size, phase and scene lighting.",
+        .max = 100.f,
+        .format = "%.0f",
+        .is_enabled = []() { return IsNightLightingEnabled() && witcher::night::moon_supported; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "NightFogStrength",
         .binding = &witcher::night::fog_strength,
         .default_value = 15.f,
@@ -212,7 +249,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "NightHazeStrength",
         .binding = &witcher::night::haze_strength,
-        .default_value = 5.f,
+        .default_value = 15.f,
         .label = "Aerial Haze",
         .section = "Night Atmosphere",
         .tooltip = "Brightness of aerial haze and distance fog. Preserves atmospheric extinction.",
@@ -223,7 +260,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "NightVisibleSkyStrength",
         .binding = &witcher::night::visible_sky_strength,
-        .default_value = 5.f,
+        .default_value = 15.f,
         .label = "Sky Brightness",
         .section = "Night Atmosphere",
         .tooltip = "Visible sky, horizon glow and horizon tint on distant clouds. Preserves the moon and stars.",
@@ -504,6 +541,12 @@ void OnPresent(reshade::api::command_queue*, reshade::api::swapchain*, const res
                            "[RenoDX Witcher Lighting] Gameplay camera-light control unavailable.");
     }
     if (witcher::night::installed) {
+      reshade::log::message(witcher::night::normalization::supported ? reshade::log::level::info : reshade::log::level::warning,
+                           witcher::night::normalization::supported ? "[RenoDX Witcher Lighting] Regional night normalization available."
+                                                                   : "[RenoDX Witcher Lighting] Region identification unavailable; native regional baselines preserved.");
+      reshade::log::message(witcher::night::normalization::weather_supported ? reshade::log::level::info : reshade::log::level::warning,
+                           witcher::night::normalization::weather_supported ? "[RenoDX Witcher Lighting] Weather night normalization available."
+                                                                           : "[RenoDX Witcher Lighting] Weather identification unavailable; native weather relationships preserved.");
       reshade::log::message(witcher::night::exposure::supported ? reshade::log::level::info : reshade::log::level::warning,
                            witcher::night::exposure::supported ? "[RenoDX Witcher Lighting] Night exposure rate and metering controls available."
                                                               : "[RenoDX Witcher Lighting] Night exposure controls unavailable; native exposure preserved.");
@@ -544,10 +587,21 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
         if (hash == 0x14AEBBFB || hash == 0x680C44CE) {
           shader.on_replace = [hash](auto* cmd_list) {
             return witcher::night::installed && witcher::night::moon_supported
-                   && witcher::night::moon_multiplier.load(std::memory_order_relaxed) != 1.f
+                   && (witcher::night::moon_multiplier.load(std::memory_order_relaxed) != 1.f
+                       || (witcher::night::moon_brightness_multiplier.load(std::memory_order_relaxed) != 1.f
+                           && witcher::night::night_weight.load(std::memory_order_relaxed) > 0.f))
                    && renodx::utils::shader::GetCurrentPixelShaderHash(
                           renodx::utils::shader::GetCurrentState(cmd_list))
                           == (hash == 0x680C44CE ? 0x6D5A1EC2 : 0xE446F231);
+          };
+        } else if (hash == 0xE446F231 || hash == 0x6D5A1EC2) {
+          shader.on_replace = [hash](auto* cmd_list) {
+            return witcher::night::installed && witcher::night::moon_supported
+                   && witcher::night::moon_brightness_multiplier.load(std::memory_order_relaxed) != 1.f
+                   && witcher::night::night_weight.load(std::memory_order_relaxed) > 0.f
+                   && renodx::utils::shader::GetCurrentVertexShaderHash(
+                          renodx::utils::shader::GetCurrentState(cmd_list))
+                          == (hash == 0x6D5A1EC2 ? 0x680C44CE : 0x14AEBBFB);
           };
         } else if (hash == 0xE1C4426E) {
           shader.on_replace = [](auto* cmd_list) {
@@ -575,7 +629,8 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
         } else {
           shader.on_replace = [](auto*) {
             return witcher::night::installed
-                   && witcher::night::cloud_multiplier.load(std::memory_order_relaxed) != 1.f
+                   && witcher::night::cloud_multiplier.load(std::memory_order_relaxed)
+                          * witcher::night::normalization::GetCalibration().cloud != 1.f
                    && witcher::night::night_weight.load(std::memory_order_relaxed) > 0.f;
           };
         }

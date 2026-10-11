@@ -19,6 +19,7 @@
 #include "./shared.h"
 #include "./night_grading.hpp"
 #include "./night_exposure.hpp"
+#include "./night_normalization.hpp"
 
 namespace witcher::night {
 
@@ -34,6 +35,8 @@ inline float direct_strength = 50.f;
 inline float fog_strength = 50.f;
 inline float haze_strength = 50.f;
 inline float visible_sky_strength = 50.f;
+inline float moon_strength = 50.f;
+inline std::atomic<float> moon_brightness_multiplier = 1.f;
 inline float cloud_strength = 50.f;
 inline float rain_strength = 50.f;
 inline bool rain_supported = false;
@@ -156,10 +159,11 @@ inline void BuildHook(void* output, const void* input) {
   const unsigned char* environment = nullptr;
   std::memcpy(&environment, static_cast<const unsigned char*>(input) + 0x10, sizeof(environment));
   const float clock_weight = ClockNightWeight(environment);
+  const auto calibration = normalization::GetCalibration();
   // Native cached global-light colors EFE0/EFF0/F000 -> 280/290/2A0.
   // Darker Nights zeros EFE0; this covers the PT/shared-view consumer.
   for (unsigned offset : {0x280u, 0x290u, 0x2a0u}) {
-    ScaleRGB(view + offset, direct_multiplier.load(std::memory_order_relaxed), clock_weight);
+    ScaleRGB(view + offset, direct_multiplier.load(std::memory_order_relaxed) * calibration.direct, clock_weight);
   }
   // Skylight must follow the same clock fade. The weather-authored day-weight
   // can stay above zero in deep night, leaving residual light at strength 0.
@@ -171,7 +175,8 @@ inline void DirectConstantsHook(void* renderer, const void* environment) {
   unsigned char* constants = nullptr;
   std::memcpy(&constants, static_cast<unsigned char*>(renderer) + direct_constants_offset, sizeof(constants));
   const float weight = ClockNightWeight(static_cast<const unsigned char*>(environment));
-  const float intensity = direct_multiplier.load(std::memory_order_relaxed);
+  const float intensity = direct_multiplier.load(std::memory_order_relaxed)
+      * normalization::GetCalibration().direct;
   // b13 c1/c61/c62: same native colors as the PT view, independent of its
   // constants upload. Do not touch the structured buffers of torch/local lights.
   for (unsigned offset : {0x10u, 0x3d0u, 0x3e0u}) ScaleRGB(constants + offset, intensity, weight);
@@ -207,6 +212,7 @@ inline void CommonConstantsHook(const void* context, void* output) {
   // injection and native impacts do not retain a stale PT-frame night weight.
   night_weight.store(weight, std::memory_order_relaxed);
   auto* constants = static_cast<unsigned char*>(output);
+  const auto calibration = normalization::GetCalibration();
   // b12 c204.x is the native procedural sun glow's angular falloff exponent,
   // uploaded from environment +391C. Its lobe width scales with 1/sqrt(p).
   // Change only its width, at every hour, preserving peak radiance, direction,
@@ -225,11 +231,14 @@ inline void CommonConstantsHook(const void* context, void* output) {
         | static_cast<uint32_t>(std::round(sun * WITCHER_CELESTIAL_FACTOR_SCALE));
     std::memcpy(constants + 0xcec, &tag, sizeof(tag));
   }
-  // Native c37.w is zeroed at RVA 1BDEC49. None of the 3968 dumped
-  // shaders consume it. Only the moon vertex replacement reads this marker.
+  // Native c37.w is zeroed by the validated common builder. The paired
+  // moon shaders carry both size and night-faded brightness in this marker.
   const float moon = moon_multiplier.load(std::memory_order_relaxed);
-  if (moon_supported && moon != 1.f) {
+  const float moon_brightness = 1.f + (moon_brightness_multiplier.load(std::memory_order_relaxed) - 1.f) * weight;
+  if (moon_supported && (moon != 1.f || moon_brightness != 1.f)) {
     const uint32_t tag = WITCHER_MOON_TAG
+        | (static_cast<uint32_t>(std::round(moon_brightness * WITCHER_MOON_BRIGHTNESS_SCALE))
+           << WITCHER_MOON_BRIGHTNESS_SHIFT)
         | static_cast<uint32_t>(std::round(moon * WITCHER_CELESTIAL_FACTOR_SCALE));
     std::memcpy(constants + 0x25c, &tag, sizeof(tag));
   }
@@ -239,9 +248,12 @@ inline void CommonConstantsHook(const void* context, void* output) {
   // of PTSkyImpact. Preserve c184.zw (direct diffuse/specular enables),
   // c185.z (distance scaling), and separate torch/point-light accumulation.
   const float sky_intensity = sky_multiplier.load(std::memory_order_relaxed);
-  if (sky_intensity != 1.f && weight != 0.f) {
-    const float multiplier = 1.f + (sky_intensity - 1.f) * weight;
-    for (unsigned offset : {0xb80u, 0xb84u, 0xb90u, 0xb94u}) {
+  if (weight != 0.f) {
+    for (const auto& [offset, gain] : {
+             std::pair{0xb80u, calibration.ambient_light}, std::pair{0xb84u, calibration.ambient_shadow},
+             std::pair{0xb90u, calibration.reflection_light}, std::pair{0xb94u, calibration.reflection_shadow}}) {
+      const float multiplier = 1.f + (sky_intensity * gain - 1.f) * weight;
+      if (multiplier == 1.f) continue;
       float value;
       std::memcpy(&value, constants + offset, sizeof(value));
       if (!std::isfinite(value)) continue;
@@ -251,13 +263,15 @@ inline void CommonConstantsHook(const void* context, void* output) {
   }
   // Native c185.w is zeroed padding (guarded store at RVA 1BE0142).
   // Transport both factors here; no added shader constants or root layouts.
-  const float cloud_intensity = cloud_multiplier.load(std::memory_order_relaxed);
+  const float cloud_intensity = cloud_multiplier.load(std::memory_order_relaxed) * calibration.cloud;
   if (weight != 0.f && (sky_intensity != 1.f || cloud_intensity != 1.f)) {
-    const uint32_t tag = WITCHER_NIGHT_TAG
+    const bool normalized = calibration.cloud != 1.f;
+    const unsigned factor_scale = normalized ? WITCHER_NORMALIZED_FACTOR_SCALE : WITCHER_NIGHT_FACTOR_SCALE;
+    const uint32_t tag = (normalized ? WITCHER_NORMALIZED_TAG : WITCHER_NIGHT_TAG)
         | (static_cast<uint32_t>(std::round(std::clamp(1.f + (sky_intensity - 1.f) * weight, 0.f, 2.f)
-                                           * WITCHER_NIGHT_FACTOR_SCALE)) << WITCHER_NIGHT_SKY_SHIFT)
-        | static_cast<uint32_t>(std::round(std::clamp(1.f + (cloud_intensity - 1.f) * weight, 0.f, 2.f)
-                                          * WITCHER_NIGHT_FACTOR_SCALE));
+                                           * factor_scale)) << WITCHER_NIGHT_SKY_SHIFT)
+        | static_cast<uint32_t>(std::round(std::clamp(1.f + (cloud_intensity - 1.f) * weight, 0.f, 8.f)
+                                          * factor_scale));
     std::memcpy(constants + 0xb9c, &tag, sizeof(tag));
   }
   // b12 c39-c41: directional fog front/middle/back; c189/c191: custom
@@ -265,24 +279,24 @@ inline void CommonConstantsHook(const void* context, void* output) {
   // in both scene and sky/material fog, and otherwise leaves a blue glow.
   // Keep extinction/density and c189.w/c191.w (amount), not just coverage.
   for (unsigned offset : {0x270u, 0x280u, 0x290u, 0xbd0u, 0xbf0u}) {
-    ScaleRGB(constants + offset, fog_multiplier.load(std::memory_order_relaxed), weight);
+    ScaleRGB(constants + offset, fog_multiplier.load(std::memory_order_relaxed) * calibration.fog, weight);
   }
   // b12 c45-c47: aerial colors; c194: custom distance-fog color.
   for (unsigned offset : {0x2d0u, 0x2e0u, 0x2f0u, 0xc20u}) {
-    ScaleRGB(constants + offset, haze_multiplier.load(std::memory_order_relaxed), weight);
+    ScaleRGB(constants + offset, haze_multiplier.load(std::memory_order_relaxed) * calibration.haze, weight);
   }
   // b12 c195-c202: base/horizon sky and sun/moon sky/horizon radiance.
   // Scale colors rather than saturated influence factors (c206) so the
   // entire sky can reach zero and 100 really doubles the native radiance.
   for (unsigned offset = 0xc30; offset <= 0xca0; offset += 0x10) {
-    ScaleRGB(constants + offset, visible_sky_multiplier.load(std::memory_order_relaxed), weight);
+    ScaleRGB(constants + offset, visible_sky_multiplier.load(std::memory_order_relaxed) * calibration.sky, weight);
   }
   // 3B15DAAB adds a separate directional horizon gradient after sky/fog:
   // lerp(Custom1/c278, FX_SkyRain/c249, direction) * horizon mask.
   // These native environment colors bypass c195-c202. Custom1 also tints
   // distant clouds in B7D286D5; keep that shared sky tint consistent.
   for (unsigned offset : {0xf90u, 0x1160u}) {
-    ScaleRGB(constants + offset, visible_sky_multiplier.load(std::memory_order_relaxed), weight);
+    ScaleRGB(constants + offset, visible_sky_multiplier.load(std::memory_order_relaxed) * calibration.sky, weight);
   }
   // Native color-group getter 231A260 -> conversion 3300C0 -> b12 c232+.
   // FX_Sky through FX_SkySunset (12-16) are the main/background cloud
@@ -290,7 +304,7 @@ inline void CommonConstantsHook(const void* context, void* output) {
   // these same environment curves. Preserve their separately authored alpha.
   // FX_SkyRain (17) and Custom1 (46) are handled by Sky Brightness above.
   for (unsigned offset = 0xf40; offset <= 0xf80; offset += 0x10) {
-    ScaleRGB(constants + offset, cloud_multiplier.load(std::memory_order_relaxed), weight);
+    ScaleRGB(constants + offset, cloud_intensity, weight);
   }
 }
 
@@ -585,6 +599,7 @@ inline bool ValidateImage(const unsigned char* image) {
     grading::supported = grading::Validate(const_cast<unsigned char*>(image), layout.pixel_constants, layout.grade_caller_offset);
     exposure::Validate(image, pe->OptionalHeader.SizeOfImage, layout.environment,
                        layout.pixel_constants, layout.grade_caller_offset);
+    normalization::Validate(image, pe->OptionalHeader.SizeOfImage);
     constants_image_base = reinterpret_cast<uintptr_t>(image);
     if (grading::supported || exposure::supported) {
       grading::set_pixel_constants = reinterpret_cast<grading::SetPixelConstants>(const_cast<unsigned char*>(image) + layout.pixel_constants);
@@ -657,9 +672,9 @@ inline void Update(bool enabled) {
   grading::chroma.store(night_enabled && std::isfinite(grading::chroma_strength)
                            ? std::clamp(grading::chroma_strength / 100.f, 0.f, 1.f) : 1.f,
                        std::memory_order_relaxed);
-  if (!installed && (!night_enabled || (sky_strength == 50.f && direct_strength == 50.f
+  if (!installed && (!night_enabled || ((normalization::enabled != 1.f && normalization::weather_enabled != 1.f) && sky_strength == 50.f && direct_strength == 50.f
       && fog_strength == 50.f && haze_strength == 50.f
-      && visible_sky_strength == 50.f && cloud_strength == 50.f && rain_strength == 50.f && water_strength == 50.f))
+      && visible_sky_strength == 50.f && moon_strength == 50.f && cloud_strength == 50.f && rain_strength == 50.f && water_strength == 50.f))
       && (!enabled || (camera_strength == 50.f && cutscene_strength == 50.f))
       && (!enabled || moon_size == 100.f)
       && (!enabled || sun_size == 100.f)
@@ -672,9 +687,13 @@ inline void Update(bool enabled) {
                             && grading::chroma.load(std::memory_order_relaxed) == 1.f
                             && grading::saturation_strength == 100.f))) return;
   if (!Install()) return;
+  normalization::Update(night_enabled);
   moon_multiplier.store(enabled && moon_supported && std::isfinite(moon_size)
                             ? std::clamp(moon_size / 100.f, 0.01f, 5.f) : 1.f,
                         std::memory_order_relaxed);
+  moon_brightness_multiplier.store(night_enabled && moon_supported && std::isfinite(moon_strength)
+                                      ? std::clamp(moon_strength / 50.f, 0.f, 2.f) : 1.f,
+                                  std::memory_order_relaxed);
   sun_multiplier.store(enabled && sun_supported && std::isfinite(sun_size)
                            ? std::clamp(sun_size / 100.f, 0.01f, 5.f) : 1.f,
                        std::memory_order_relaxed);

@@ -12,9 +12,12 @@ int main(int argc, char** argv) {
   if (std::strcmp(argv[1], "missing")) configuration[{"renodx-darkernights-remastered", "SelectedPreset"}] = argv[1];
   configuration[{"renodx", "SelectedPreset"}] = "3";
   for (unsigned i = 1; i <= 3; ++i) {
+    configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightWeatherNormalization"}] = i == 3 ? "0" : "1";
+    configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightRegionalNormalization"}] = i == 2 ? "0" : "1";
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightSaturation"}] = std::to_string(i * 25);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightRainStrength"}] = std::to_string(i * 10);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "CutsceneCameraLightStrength"}] = std::to_string(i * 20);
+    configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightMoonStrength"}] = std::to_string(i * 15);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "MoonSize"}] = std::to_string(i * 30);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "SunSize"}] = std::to_string(i * 50);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightAutoExposureEnabled"}] = i == 2 ? "0" : "1";
@@ -39,6 +42,7 @@ int main(int argc, char** argv) {
         || witcher::night::grading::saturation_strength != 100.f) return 4;
   } else if (witcher::night::grading::saturation_strength != expected * 25.f
              || witcher::night::rain_strength != expected * 10.f
+             || witcher::night::moon_strength != expected * 15.f
              || witcher::night::cutscene_strength != expected * 20.f
              || witcher::night::moon_size != expected * 30.f
              || witcher::night::sun_size != expected * 50.f) return 5;
@@ -49,6 +53,8 @@ int main(int argc, char** argv) {
       || witcher::night::exposure::maximum_darkening != expected * 15.f
       || witcher::night::exposure::maximum_brightening != expected * 25.f
       || std::abs(witcher::night::exposure::fixed_luminance - expected * 0.1f) > 1e-6f)) return 10;
+  if (expected != 0 && witcher::night::normalization::enabled != (expected == 2 ? 0.f : 1.f)) return 14;
+  if (expected != 0 && witcher::night::normalization::weather_enabled != (expected == 3 ? 0.f : 1.f)) return 15;
   for (int selection : {0, 1, 2, 3}) {
     renodx::utils::settings::preset_index = selection;
     for (auto& callback : renodx::utils::settings::on_preset_changed_callbacks) callback();

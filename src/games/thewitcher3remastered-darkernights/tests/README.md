@@ -46,6 +46,21 @@ and fixed-point error bounds across clock fades.
 They preserve other bytes, local/interior lights and alpha. They do not establish
 the live executable hook ABI or actual D3D12 shader execution.
 
+`night_weather.cpp` tests the guarded native current/alternate-world weather reader,
+40 installed region/weather combinations, partial environment overrides, transition
+endpoints, independent normalization toggles, master restore, unknown weather and
+invalid pointers. Its 1,200 cases check calibration separately from the renderer.
+`night_lighting.cpp` also exercises all weather endpoints alone and combined with
+regional normalization through the actual PT, raster and common-constant hooks,
+with 3,096 normalization/fade/intensity cases and whole-buffer isolation checks.
+Executable rejection tests disable only weather normalization when any audited
+weather signature changes; saved-profile tests include its independent toggle.
+
+```powershell
+clang-cl /std:c++20 /EHsc /O2 /MT /DNOMINMAX src/games/thewitcher3remastered-darkernights/tests/night_weather.cpp /Fe:tmp/darker-nights-weather.exe /Fo:tmp/darker-nights-weather.obj
+./tmp/darker-nights-weather.exe
+```
+
 From an x64 Visual Studio developer shell at the repository root:
 
 ```powershell

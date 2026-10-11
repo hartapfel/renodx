@@ -75,7 +75,7 @@ cbuffer cb2 : register(b2) {
 };
 
 cbuffer cb12 : register(b12) {
-  uint moon_size_bits : packoffset(c037.w);
+  uint moon_bits : packoffset(c037.w);
   float cb12_000x : packoffset(c000.x);
   float cb12_000y : packoffset(c000.y);
   float cb12_000z : packoffset(c000.z);
@@ -158,7 +158,7 @@ OutputSignature main(
   float _44 = (POSITION.z * FrequentVertexConsts_128.z) + FrequentVertexConsts_144.z;
   // Resize around the packed bounding-box centre; preserve phase/UVs.
   float3 moon_position = ScaleCelestialPosition(float3(_42, _43, _44),
-      FrequentVertexConsts_128.xyz, FrequentVertexConsts_144.xyz, moon_size_bits, WITCHER_MOON_TAG);
+      FrequentVertexConsts_128.xyz, FrequentVertexConsts_144.xyz, moon_bits, WITCHER_MOON_TAG, WITCHER_MOON_TAG_MASK);
   _42 = moon_position.x;
   _43 = moon_position.y;
   _44 = moon_position.z;
@@ -284,7 +284,7 @@ OutputSignature main(
     _584 = _531;
     _585 = _537;
   }
-  output_TEXCOORD.x = (lerp(cb12_046x, _341, _301));
+  output_TEXCOORD.x = MoonBrightness(moon_bits);
   output_TEXCOORD.y = (lerp(cb12_046y, _342, _301));
   output_TEXCOORD.z = (lerp(cb12_046z, _343, _301));
   output_TEXCOORD.w = (exp2(_501 * cb12_048x) * _499);

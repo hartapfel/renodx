@@ -60,6 +60,17 @@ int main(int argc, char** argv) {
   unsigned cases = 0;
   assert(witcher::night::ValidateImage(image.data()));
   assert(witcher::night::camera_supported && witcher::night::cutscene_supported && witcher::night::grading::supported);
+  assert(witcher::night::normalization::supported);
+  assert(witcher::night::normalization::weather_supported);
+  for (unsigned address : {0x1d76120u, 0x22b02e5u, 0x239bd64u, 0x239d4e8u, 0x239d57fu,
+                           0x239c2d4u, 0x23a0b0fu, 0x23a0b78u, 0x26b90a0u, 0x31c444u}) {
+    image[address] ^= 1;
+    assert(witcher::night::ValidateImage(image.data()) && witcher::night::normalization::supported
+           && !witcher::night::normalization::weather_supported);
+    image[address] ^= 1;
+    ++cases;
+  }
+  assert(witcher::night::ValidateImage(image.data()) && witcher::night::normalization::weather_supported);
   assert(witcher::night::moon_supported);
   assert(witcher::night::sun_supported);
   assert(witcher::night::rain_supported);
@@ -122,6 +133,14 @@ int main(int argc, char** argv) {
                           layout.global + 0x28eu, layout.global + 0x2f0u}) {
     image[offset] ^= 1;
     assert(!witcher::night::ValidateImage(image.data()));
+    image[offset] ^= 1;
+    ++cases;
+  }
+  // Region identification is optional: reject changed instructions without
+  // disabling any previously supported lighting/exposure control.
+  for (unsigned offset : {0x1d6f74eu, 0x1dd3250u, 0x1dec500u, 0x239bd20u, 0x1dec6b4u}) {
+    image[offset] ^= 1;
+    assert(witcher::night::ValidateImage(image.data()) && !witcher::night::normalization::supported);
     image[offset] ^= 1;
     ++cases;
   }

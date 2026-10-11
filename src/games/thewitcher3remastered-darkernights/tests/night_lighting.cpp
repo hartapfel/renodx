@@ -713,7 +713,8 @@ int main() {
       std::memcpy(&bits, common_output.data() + 0x25c, sizeof(bits));
       if (expected == 1.f) assert(bits == 0);
       else {
-        assert((bits & 0xffff0000u) == 0x4d4f0000u);
+        assert((bits & WITCHER_MOON_TAG_MASK) == WITCHER_MOON_TAG);
+        assert(((bits >> WITCHER_MOON_BRIGHTNESS_SHIFT) & WITCHER_MOON_BRIGHTNESS_MASK) == WITCHER_MOON_BRIGHTNESS_SCALE);
         assert(std::abs(float(bits & 0xffffu) / 8192.f - expected) <= 0.5f / 8192.f);
       }
       std::memcpy(common_output.data() + 0x25c, original.data() + 0x25c, sizeof(bits));
@@ -725,6 +726,70 @@ int main() {
       ++moon_cases;
     }
   }
+  // Brightness changes only the moon marker, follows the clock/master, and
+  // remains independent of moon diameter and every native lighting colour.
+  for (float* strength : {&witcher::night::sky_strength, &witcher::night::direct_strength,
+                          &witcher::night::fog_strength, &witcher::night::haze_strength,
+                          &witcher::night::visible_sky_strength, &witcher::night::cloud_strength,
+                          &witcher::night::rain_strength, &witcher::night::water_strength}) *strength = 50.f;
+  unsigned moon_brightness_cases = 0;
+  witcher::night::moon_size = 100.f;
+  witcher::night::lighting_enabled = 1.f;
+  for (float hour : {0.f, 5.f, 12.f, 19.f}) {
+    const float time = hour / 24.f;
+    std::memcpy(environment.data() + 0x15c0, &time, sizeof(time));
+    for (float strength : {0.f, 25.f, 50.f, 100.f, -1.f, 101.f,
+                           std::numeric_limits<float>::quiet_NaN(),
+                           std::numeric_limits<float>::infinity()}) {
+      witcher::night::moon_strength = strength;
+      witcher::night::Update(true);
+      const float intensity = std::isfinite(strength) ? std::clamp(strength / 50.f, 0.f, 2.f) : 1.f;
+      assert(witcher::night::moon_brightness_multiplier.load() == intensity);
+      const float expected = 1.f + (intensity - 1.f) * witcher::night::ClockNightWeight(environment.data());
+      NativeCommonBuilder(common_context.data(), common_output.data());
+      const auto original = common_output;
+      witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+      uint32_t bits;
+      std::memcpy(&bits, common_output.data() + 0x25c, sizeof(bits));
+      if (expected == 1.f) assert(bits == 0);
+      else {
+        assert((bits & WITCHER_MOON_TAG_MASK) == WITCHER_MOON_TAG);
+        assert((bits & WITCHER_CELESTIAL_FACTOR_MASK) == WITCHER_CELESTIAL_FACTOR_SCALE);
+        assert(std::abs(float((bits >> WITCHER_MOON_BRIGHTNESS_SHIFT) & WITCHER_MOON_BRIGHTNESS_MASK)
+                            / WITCHER_MOON_BRIGHTNESS_SCALE - expected) <= 0.5f / WITCHER_MOON_BRIGHTNESS_SCALE);
+      }
+      std::memcpy(common_output.data() + 0x25c, original.data() + 0x25c, sizeof(bits));
+      assert(common_output == original);
+      witcher::night::lighting_enabled = 0.f;
+      witcher::night::Update(true);
+      assert(witcher::night::moon_brightness_multiplier.load() == 1.f);
+      witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+      assert(common_output == original);
+      witcher::night::lighting_enabled = 1.f;
+      witcher::night::Update(false);
+      assert(witcher::night::moon_brightness_multiplier.load() == 1.f);
+      witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+      assert(common_output == original);
+      ++moon_brightness_cases;
+    }
+  }
+  // Non-native size and brightness must coexist in the same native padding.
+  std::memcpy(environment.data() + 0x15c0, &midnight, sizeof(midnight));
+  witcher::night::moon_size = 500.f;
+  witcher::night::moon_strength = 100.f;
+  witcher::night::Update(true);
+  witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+  uint32_t combined_moon_bits;
+  std::memcpy(&combined_moon_bits, common_output.data() + 0x25c, sizeof(combined_moon_bits));
+  assert((combined_moon_bits & WITCHER_CELESTIAL_FACTOR_MASK) == 5 * WITCHER_CELESTIAL_FACTOR_SCALE);
+  assert(((combined_moon_bits >> WITCHER_MOON_BRIGHTNESS_SHIFT) & WITCHER_MOON_BRIGHTNESS_MASK)
+          == 2 * WITCHER_MOON_BRIGHTNESS_SCALE);
+  witcher::night::moon_supported = false;
+  witcher::night::Update(true);
+  assert(witcher::night::moon_brightness_multiplier.load() == 1.f);
+  witcher::night::moon_strength = 50.f;
+  witcher::night::lighting_enabled = 0.f;
+  std::printf("Moon brightness: %u fade/master/restore/isolation cases and combined size passed.\n", moon_brightness_cases);
   witcher::night::moon_supported = false;
   witcher::night::moon_size = 50.f;
   witcher::night::Update(true);
@@ -755,6 +820,152 @@ int main() {
   std::printf("Sun size: %u all-hour width, isolation, invalid-input and restore cases passed.\n", sun_cases);
   std::printf("Camera lighting: %u gameplay/cutscene isolation and failed-build cases; independent controls and restore checks passed.\n", camera_cases);
   std::printf("Night schedule: %u custom-hour/cross-midnight/invalid/instant-fade cases passed.\n", schedule_cases);
+
+  // Audited GGame -> system slot 23 -> handle/object -> current-area CName.
+  // Exercise loading, aliases, world changes, toggle/master restore and the
+  // actual renderer hooks with a fresh native output on every call.
+  {
+    namespace norm = witcher::night::normalization;
+    std::array<unsigned char, 0xfdc8> game{};
+    std::array<unsigned char, 0xc0> systems{};
+    std::array<unsigned char, 16> handle{}, holder{};
+    std::array<unsigned char, 0x114> manager{};
+    const unsigned char* game_pointer = game.data();
+    const unsigned char* objects[] = {systems.data(), handle.data(), holder.data(), manager.data()};
+    const uint32_t count = 27;
+    std::memcpy(game.data() + 0xfdc0, &count, sizeof(count));
+    std::memcpy(game.data() + 0xfdb8, &objects[0], sizeof(void*));
+    std::memcpy(systems.data() + 0xb8, &objects[1], sizeof(void*));
+    std::memcpy(handle.data() + 8, &objects[2], sizeof(void*));
+    std::memcpy(holder.data() + 8, &objects[3], sizeof(void*));
+    norm::game_address = &game_pointer;
+    norm::supported = true;
+    norm::names_initialized = false;
+    norm::area_name = [](uint32_t* out, uint32_t index) -> uint32_t* { *out = 100 + index; return out; };
+    norm::enabled = 1.f;
+    norm::weather_enabled = 0.f;
+    witcher::night::direct_constants_offset = 0x690;
+    std::memcpy(renderer.data() + 0x690, &direct_pointer, sizeof(direct_pointer));
+    witcher::night::sun_multiplier = 1.f;
+    witcher::night::moon_multiplier = 1.f;
+    witcher::night::moon_brightness_multiplier = 1.f;
+    witcher::night::sky_multiplier = 1.f;
+    witcher::night::cloud_multiplier = 1.f;
+    NativeCommonBuilder(nullptr, nullptr);
+    const auto native_common = common_output;
+    unsigned cases = 0;
+    std::vector<std::pair<uint64_t, norm::Calibration>> profiles;
+    for (const auto& region : norm::regions)
+      profiles.emplace_back(8u | unsigned(&region - norm::regions + 1), region.lighting);
+    // Exercise the same actual consumers with each installed weather endpoint,
+    // both alone and combined with regional calibration. Separate reader tests
+    // cover intermediate/fractional/native weather states and teardown.
+    for (unsigned w = 0; w < std::size(norm::weather_profiles); ++w) {
+      for (unsigned r = 0; r < std::size(norm::regions); ++r) {
+        if (norm::regions[r].area_enum != norm::weather_profiles[w].region) continue;
+        for (uint64_t regional : {0u, 8u}) {
+          const uint64_t selection = (r + 1) | regional | (uint64_t(w + 1) << 4)
+              | (uint64_t(w + 1) << 10) | (uint64_t(255) << 48) | (uint64_t(255) << 56);
+          norm::current.store(selection);
+          profiles.emplace_back(selection, norm::GetCalibration());
+        }
+      }
+    }
+    for (const auto& [selection, gain] : profiles) {
+      const auto& region = norm::regions[(selection & 7u) - 1];
+      const uint32_t area = 100 + region.area_enum;
+      std::memcpy(manager.data() + 0x110, &area, sizeof(area));
+      norm::Update(true);
+      assert(norm::current.load() == (8u | unsigned(&region - norm::regions + 1)));
+      norm::current.store(selection);
+      for (const auto& [hour, weight] : {std::pair{0.f, 1.f}, std::pair{5.f, .5f}, std::pair{12.f, 0.f}}) {
+        const float time = hour / 24.f;
+        std::memcpy(environment.data() + 0x15c0, &time, sizeof(time));
+        for (float strength : {0.f, .3f, 1.f, 2.f}) {
+          witcher::night::direct_multiplier = strength;
+          witcher::night::fog_multiplier = strength;
+          witcher::night::haze_multiplier = strength;
+          witcher::night::visible_sky_multiplier = strength;
+          auto expected = native_common;
+          for (const auto& [offset, channel] : {
+                   std::pair{0x270u, gain.fog}, std::pair{0x280u, gain.fog}, std::pair{0x290u, gain.fog},
+                   std::pair{0xbd0u, gain.fog}, std::pair{0xbf0u, gain.fog},
+                   std::pair{0x2d0u, gain.haze}, std::pair{0x2e0u, gain.haze}, std::pair{0x2f0u, gain.haze},
+                   std::pair{0xc20u, gain.haze}, std::pair{0xc30u, gain.sky}, std::pair{0xc40u, gain.sky},
+                   std::pair{0xc50u, gain.sky}, std::pair{0xc60u, gain.sky}, std::pair{0xc70u, gain.sky},
+                   std::pair{0xc80u, gain.sky}, std::pair{0xc90u, gain.sky}, std::pair{0xca0u, gain.sky},
+                   std::pair{0xf90u, gain.sky}, std::pair{0x1160u, gain.sky}}) {
+            for (unsigned c = 0; c < 3; ++c) {
+              float value;
+              std::memcpy(&value, expected.data() + offset + c * 4, 4);
+              value *= 1.f + (strength * channel - 1.f) * weight;
+              std::memcpy(expected.data() + offset + c * 4, &value, 4);
+            }
+          }
+          for (const auto& [offset, channel] : {
+                   std::pair{0xb80u, gain.ambient_light}, std::pair{0xb84u, gain.ambient_shadow},
+                   std::pair{0xb90u, gain.reflection_light}, std::pair{0xb94u, gain.reflection_shadow}}) {
+            float value;
+            std::memcpy(&value, expected.data() + offset, 4);
+            value *= 1.f + (channel - 1.f) * weight;
+            std::memcpy(expected.data() + offset, &value, 4);
+          }
+          for (unsigned offset = 0xf40; offset <= 0xf80; offset += 0x10) for (unsigned c = 0; c < 3; ++c) {
+            float value;
+            std::memcpy(&value, expected.data() + offset + c * 4, 4);
+            value *= 1.f + (gain.cloud - 1.f) * weight;
+            std::memcpy(expected.data() + offset + c * 4, &value, 4);
+          }
+          witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+          uint32_t marker = 0;
+          std::memcpy(&marker, common_output.data() + 0xb9c, 4);
+          if (weight == 0.f || gain.cloud == 1.f) assert(marker == 0);
+          else {
+            assert((marker & WITCHER_NIGHT_TAG_MASK) == WITCHER_NORMALIZED_TAG);
+            assert(float((marker >> 14) & 0x3fffu) / 2047.f == 1.f);
+            assert(std::abs(float(marker & 0x3fffu) / 2047.f - (1.f + (gain.cloud - 1.f) * weight)) <= .5f / 2047.f);
+          }
+          std::memcpy(expected.data() + 0xb9c, &marker, 4);
+          assert(expected == common_output); // Includes alpha/density/directions/local-light sentinels.
+          if (weight == 0.f) assert(common_output == native_common);
+          for (float weather : {.1f, .5f, 1.f}) {
+            const float color[4] = {weather, weather * 2, weather * 3, .7f};
+            for (unsigned offset : {0xefe0u, 0xeff0u, 0xf000u}) std::memcpy(environment.data() + offset, color, 16);
+            witcher::night::BuildHook(output.data(), input.data());
+            witcher::night::DirectConstantsHook(renderer.data(), environment.data());
+            float pt[4], raster[4];
+            std::memcpy(pt, output.data() + 0x280, 16);
+            std::memcpy(raster, direct_output.data() + 0x10, 16);
+            assert(std::memcmp(pt, raster, 16) == 0);
+            assert(std::abs(pt[0] - weather * (1.f + (strength * gain.direct - 1.f) * weight)) < 1e-6f);
+            assert(pt[3] == .7f);
+            ++cases;
+          }
+        }
+      }
+      norm::enabled = 0.f;
+      norm::Update(true);
+      assert(norm::current.load() == 0);
+      norm::enabled = 1.f;
+      norm::Update(false);
+      assert(norm::current.load() == 0);
+    }
+    for (uint32_t area : {0u, 109u, 105u, 106u, 107u, 999u}) {
+      std::memcpy(manager.data() + 0x110, &area, sizeof(area));
+      norm::Update(true);
+      assert(norm::current.load() == (area == 109 ? 9u : 0u));
+    }
+    game_pointer = nullptr;
+    norm::Update(true);
+    assert(norm::current.load() == 0);
+    game_pointer = reinterpret_cast<const unsigned char*>(1);
+    norm::Update(true);
+    assert(norm::current.load() == 0); // Concurrent/invalid teardown is guarded.
+    norm::supported = false;
+    norm::game_address = nullptr;
+    norm::area_name = nullptr;
+    std::printf("Region/weather normalization: %u weather/fade/slider/PT-raster cases; native byte restoration, world transitions and aliases passed.\n", cases);
+  }
   std::printf("Night lighting: %u renderer/water/skylight cases; master toggle, camera independence, restore/rebase checks passed.\n",
               constants_cases);
 }
