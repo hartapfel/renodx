@@ -62,7 +62,9 @@ int main(int argc, char** argv) {
   assert(witcher::night::fog_density_supported);
   assert(witcher::night::interior_fog::supported);
   for (unsigned address : {0x22b02e5u, 0x22b1fceu, 0x22b4adcu, 0x22b9582u, 0x22b959cu,
-                           0x22b95c6u, 0x22b9631u, 0x22b5701u, 0x22b1f7du}) {
+                           0x22b95c6u, 0x22b9631u, 0x22b5701u, 0x22b1f7du,
+                           0x22b546fu, 0x22b545au, 0x22b5518u, 0x22b53e8u, 0x22b58d4u, 0x22b58deu,
+                           0x22b4f87u, 0x22b4f93u, 0x22b4fabu}) {
     image[address] ^= 1;
     assert(witcher::night::ValidateImage(image.data()) && !witcher::night::interior_fog::supported);
     image[address] ^= 1;

@@ -180,17 +180,28 @@ density loads/stores; no extra shader, buffer binding or GPU pass is added.
 The PT building scene was tested live at zero density with finite output.
 Raster/RT and combined-addon checks require the rebuilt addon.
 
-**Building Fog Amount** blends with the engine's indoor/outdoor state and
+**Building Fog Amount** follows the engine's indoor/outdoor state, with a
+soft, damped fade when entering or leaving a building (about 1.5 seconds for
+95% of an abrupt change), and
 multiplies Fog Amount. It also affects outdoor fog viewed through windows or
-doorways while indoors. Active cave, sewer, crypt and other recognized
-underground environment profiles exclude this override; unidentified local
-environment areas retain native fog. Ordinary buildings that keep only global
-weather profiles are included. A custom cave using only ordinary outdoor
+doorways while indoors. Environment profiles follow native priority and blend
+weights: a fully overridden sewer layer below a building no longer excludes
+that room. Recognized underground and unidentified local profiles retain their
+own contribution; the building override fades with mixed interior layers.
+The native weather suppression multiplier additionally gates the override:
+the captured Kaer Trolde balcony retains fog despite reporting fully indoors,
+while its enclosed room receives the override. This is an authored environment
+signal, not a geometric roof test or the current rain intensity. It
+uses a saturated classification weight: finite authored curve overshoots do
+not disable the override or amplify it beyond full interior strength. Buildings
+that keep only global weather profiles need native weather suppression to
+receive the override. A custom cave using only ordinary outdoor
 weather and no cave flag cannot be distinguished from those buildings.
 The current PT building and cave were checked against the actual state reader.
 The default is 100%; Preset Off restores it, and Soft/Dark Nights leave it alone.
 It shares the existing density hook, with world/profile reads on the present
 thread only and no reads when the setting is 100%.
+Preset Off restores native fog immediately, and world changes reset the fade.
 
 **Night Exposure** follows Enable Night Lighting and the same clock fades.
 Apply Exposure Overrides All Day bypasses the schedule for exposure alone,

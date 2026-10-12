@@ -23,13 +23,49 @@ or freed pointers. The native lighting host also checks 384 combinations of
 both density multipliers, indoor blending, cave exclusion and Off/support
 restoration against complete freshly built buffers. Interior-only settings
 request hook installation. Preset tests save the building value per profile;
-the optional executable checks independently reject all nine reader signatures.
+the optional executable checks independently reject all eighteen reader signatures.
 
 The Novigrad regression covers a recognized Dandelion interior overlapped by
 the regional `env_novigrad_city.env` area. This audited city layer is allowed;
-cave layers still veto it, unknown local layers remain excluded, and the
+cave and unknown local contributions remain excluded, and the
 outdoor/doorway blend remains unchanged. The live reader changed from 0 to 1
 in the affected building after this classification fix.
+
+The shared `env_novigrad_int.env` building profile is also recognized alongside
+the city layer. Its live indoor state was fully inside, but the previous reader
+excluded it as unknown. The updated reader enables the override there; tests
+retain doorway blending, underground priority and unknown-local-area exclusion.
+
+Upstairs live inspection found a fully weighted Dandelion room at priority 300
+over a sewer environment at priority 0. The detector now follows the native
+selected-layer order and final layer weights, so the overridden sewer cannot
+veto the room. Tests cover both priority orders, fractional cave blending,
+unknown foreground areas and the shared Novigrad interior. The updated reader
+returns 1 in the affected upstairs room.
+
+Entry and exit use a critically damped response (3.2/s), reaching 95% of an
+abrupt change in about 1.5 seconds. Timing checks at 30/60/144 FPS compare
+both directions with the exact response, including doorway reversals without
+position/velocity jumps, bounded output, long-pause step limits, immediate Off
+restoration and resets across world changes. Runtime doorway/stair comparisons
+require the rebuilt addon.
+Alternating the target every frame checks that boundary chatter does not
+reappear as output flicker. A live 20-second doorway trace captured transient
+0/1 target changes with a constant broad indoor state and environment pointer;
+the proposed damped output remained continuous in the read-only inspection tool.
+
+The Kaer Trolde balcony and its room both reported fully indoors. Native weather
+suppression differs: visibility 1 on the balcony, 0 in the room. The reader
+now gates its weight with the inverse of that authored factor (weather +0x5d0),
+independently of actual precipitation intensity (+0x5e0). Regression checks
+cover partial suppression, invalid/missing state and density-only uploads.
+This signal does not prove geometric enclosure in every authored environment;
+other buildings still need runtime coverage checks.
+
+A captured Dandelion room has native weather visibility -0.1686685 despite
+fully weighted building layers. Finite visibility values now saturate to 0–1
+instead of rejecting the room. Tests cover this layer stack, curve undershoot
+and overshoot, nonfinite rejection, and full-buffer fog density isolation.
 
 Read-only inspection using the shipping reader returned 1 in the PT building
 and 0 in the cave. The basic indoor state alone included both; the cave was

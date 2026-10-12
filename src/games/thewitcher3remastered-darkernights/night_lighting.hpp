@@ -718,8 +718,10 @@ inline void Update(bool enabled) {
   if (!Install()) return;
   float fog_density = enabled && fog_density_supported && std::isfinite(fog_amount)
                           ? std::clamp(fog_amount / 100.f, 0.f, 2.f) : 1.f;
-  if (enabled && fog_density_supported && std::isfinite(interior_fog::amount) && interior_fog::amount != 100.f) {
-    fog_density *= 1.f + (std::clamp(interior_fog::amount / 100.f, 0.f, 2.f) - 1.f) * interior_fog::BuildingWeight();
+  const float building_weight = interior_fog::Update(enabled && fog_density_supported
+      && std::isfinite(interior_fog::amount) && interior_fog::amount != 100.f);
+  if (building_weight != 0.f) {
+    fog_density *= 1.f + (std::clamp(interior_fog::amount / 100.f, 0.f, 2.f) - 1.f) * building_weight;
   }
   fog_density_multiplier.store(fog_density, std::memory_order_relaxed);
   normalization::Update(night_enabled);

@@ -1041,14 +1041,19 @@ int main() {
   {
     namespace fog = witcher::night::interior_fog;
     std::vector<unsigned char> game(0x16100), world(0x240), indoor(0x92460), records(0x15dd0);
+    std::array<unsigned char, 0x630> weather{};
     std::array<unsigned char, 16> handle{};
     const auto put = [](unsigned char* output, const auto& value) { std::memcpy(output, &value, sizeof(value)); };
     const unsigned char* game_pointer = game.data();
     put(game.data() + 0xf0, handle.data());
     put(handle.data() + 8, world.data());
     put(world.data() + 0x228, indoor.data());
+    put(indoor.data() + 0x92270, weather.data());
     put(indoor.data() + 0x1d2d0, records.data());
     put(indoor.data() + 0x1d2d8, uint32_t{1});
+    put(indoor.data() + 0x1d39c, uint32_t{1});
+    put(indoor.data() + 0x92260, uint32_t{1});
+    put(indoor.data() + 0x2c040, 1.f);
     put(records.data() + 0x15da8, 1.f);
     fog::game_address = &game_pointer;
     witcher::night::fog_density_supported = true;
@@ -1057,19 +1062,21 @@ int main() {
                              "environment\\definitions\\env_novigrad\\env_novigrad_cave.env"}) {
       put(records.data() + 0x15dac, path);
       put(records.data() + 0x15db4, uint32_t(std::strlen(path) + 1));
-      for (float outside : {0.f, .5f, 1.f}) for (float global : {0.f, 50.f, 100.f, 200.f})
+      for (float visibility : {-.16866850852966309f, 0.f, .5f, 1.f, 2.f}) for (float outside : {0.f, .5f, 1.f}) for (float global : {0.f, 50.f, 100.f, 200.f})
         for (float local : {0.f, 50.f, 100.f, 200.f}) for (bool supported : {false, true})
           for (bool enabled : {false, true}) {
             fog::supported = supported;
             put(indoor.data() + 0x92454, outside);
+            put(weather.data() + 0x5d0, visibility);
             fog::amount = local;
             witcher::night::fog_amount = global;
+            fog::Update(false); // Each whole-buffer case checks its settled scene.
             witcher::night::Update(enabled);
             NativeCommonBuilder(nullptr, nullptr);
             auto expected = common_output;
             const bool building = std::string_view(path).find("cave") == std::string_view::npos;
             const float gain = enabled ? global / 100.f * (1.f + (local / 100.f - 1.f)
-                                                           * (supported && building ? 1.f - outside : 0.f)) : 1.f;
+                                                           * (supported && building ? (1.f - outside) * (1.f - std::clamp(visibility, 0.f, 1.f)) : 0.f)) : 1.f;
             for (unsigned offset : {0x2b0u, 0x2c0u}) {
               float value;
               std::memcpy(&value, expected.data() + offset, sizeof(value));

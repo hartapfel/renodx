@@ -74,7 +74,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 100.f,
         .label = "Building Fog Amount",
         .section = "Fog",
-        .tooltip = "Additional fog density multiplier indoors, at all hours. 0% = off, 100% = unchanged. Also affects the view outside. Known underground and unrecognized local environments are excluded.",
+        .tooltip = "Fog density in sheltered buildings at all hours. 0% = off, 100% = unchanged. Fades on entry/exit and also affects the view outside. Preserves exposed areas and underground profiles.",
         .max = 200.f,
         .format = "%.0f%%",
         .is_enabled = []() { return witcher::night::Supported() && witcher::night::fog_density_supported && witcher::night::interior_fog::supported; },
