@@ -22,7 +22,8 @@ void Check(HRESULT hr) {
 }
 int main(int argc, char** argv) {
   try {
-    if (argc != 2) throw std::runtime_error("Expected prepared shader directory");
+    if (argc != 2 && (argc != 3 || std::strcmp(argv[2], "--lut-shadows") != 0))
+      throw std::runtime_error("Expected prepared shader directory [--lut-shadows]");
     ComPtr<ID3D11Device> d;
     ComPtr<ID3D11DeviceContext> c;
     Check(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &d, nullptr, &c));
@@ -86,6 +87,12 @@ int main(int argc, char** argv) {
    if(kind==2)value=0;if(kind==3)value=1;
    if(kind==4)value=.04f+value*(k==0?.30f:k==1?.8f:.45f);
    if(kind==5)value=k==0?value*.2f-.1f:value;
+   if(kind==6 || kind==7) {
+     const float warm[] = {.09f,.03f,.025f};
+     const float cool[] = {.025f,.035f,.09f};
+     const float floor = kind==6 ? warm[std::min(k,2)] : cool[std::min(k,2)];
+     value=floor+value*(.85f-floor);
+   }
    lut[(y*512+x)*4+k]=k==3?1.f:value;
   }
   c->UpdateSubresource(tex[t].Get(),0,nullptr,lut.data(),512*16,0);
@@ -170,6 +177,54 @@ int main(int argc, char** argv) {
     };
     int cases = 0;
     float max_error = 0;
+    if (argc == 3) {
+      // Linear BT.709/D65, diffuse-white-relative units. Near-black neutrals
+      // and coloured surfaces with small deterministic spatial perturbations.
+      // Preserve signed outputs; this test must not hide the bug with a clamp.
+      for (int i = 0; i < 512; ++i) {
+        const float level = i < 3 ? 0.f : std::exp2(-24.f + (i / 16) * (20.f / 31.f));
+        scene[i * 4] = level * (1.f + (i % 3 - 1) * .01f);
+        scene[i * 4 + 1] = level * (i % 16 < 8 ? 1.f : .3f);
+        scene[i * 4 + 2] = level * (i % 16 < 12 ? 1.f : .1f);
+      }
+      c->UpdateSubresource(tex[0].Get(), 0, nullptr, scene.data(), 32 * 16, 0);
+      std::ofstream csv(std::string(argv[1]) + "/lut-shadows.csv");
+      csv << "lut,shader,scaling,pixel,source_r,source_g,source_b,before_r,before_g,before_b,after_r,after_g,after_b\n";
+      float old_black = 0.f, new_black = 0.f, parity_error = 0.f;
+      for (int kind : {1, 6, 7}) {
+        set_lut(kind);
+        for (int j = 5; j < 8; ++j) {
+          initialize(0);
+          native[4] = .5f;
+          native[5] = native[6] = native[9] = native[10] = native[11] = 1.f;
+          for (float scale : {0.f, .5f, .72f, .9f, 1.f}) {
+            p.custom_lut_scaling = scale;
+            auto before = run(0, j), after = run(1, j);
+            for (int i = 0; i < 512; ++i) {
+              csv << kind << ',' << names[j] << ',' << scale << ',' << i;
+              for (int k = 0; k < 3; ++k) csv << ',' << scene[i * 4 + k];
+              for (int k = 0; k < 3; ++k) csv << ',' << before[i * 16 + k];
+              for (int k = 0; k < 3; ++k) csv << ',' << after[i * 16 + k];
+              csv << '\n';
+              for (int k = 0; k < 3; ++k) {
+                if (scale == 0.f) parity_error = std::max(parity_error, std::abs(before[i * 16 + k] - after[i * 16 + k]));
+                if (i < 3 && scale == 1.f) {
+                  old_black = std::max(old_black, std::abs(before[i * 16 + k]));
+                  new_black = std::max(new_black, std::abs(after[i * 16 + k]));
+                }
+              }
+            }
+            ++cases;
+          }
+        }
+      }
+      std::cout << cases << " dark-LUT configurations; full-scaling black error before=" << old_black
+                << " after=" << new_black << "; scaling-zero parity error=" << parity_error << '\n';
+      if (old_black < 1e-7f) throw std::runtime_error("Tinted near-black LUT fixture did not reproduce the coloured black residue");
+      if (new_black > 1e-9f) throw std::runtime_error("LUT scaling retains coloured residue at restored black");
+      if (parity_error != 0.f) throw std::runtime_error("LUT scaling zero changed");
+      return 0;
+    }
     for (int kind = 0; kind < 2; kind++) {
       set_lut(kind);
       for (int j = 0; j < 8; j++)

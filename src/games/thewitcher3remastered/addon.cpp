@@ -211,7 +211,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "LutScaling",
         .binding = &shader_injection.custom_lut_scaling,
-        .default_value = 72.f,
+        .default_value = 100.f,
         .label = "LUT Scaling",
         .section = "Scene Grading",
         .tooltip = "Restores the LUT black and white range using the original mod's black, midgray and white samples. 0 preserves native LUT levels.",

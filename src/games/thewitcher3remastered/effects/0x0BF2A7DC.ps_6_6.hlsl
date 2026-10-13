@@ -99,10 +99,12 @@ float4 main(
   // Evaluate each source tap through the captured native curve before the
   // native four-tap average. Do not impose an SDR-white ceiling or restore
   // HDR range into the extracted effect. The main scene remains unbounded.
+  bool native_reference_captured = false;
   bool native_reference_valid = false;
   if (WitcherUsePsychoV30()) {
     WitcherBloomReference reference = witcher_bloom_reference[0];
-    native_reference_valid = reference.state.y == WITCHER_BLOOM_REFERENCE_TAG
+    native_reference_captured = reference.state.y == WITCHER_BLOOM_REFERENCE_TAG;
+    native_reference_valid = native_reference_captured
         && reference.exposure_state.w > 1e-20f && isfinite(reference.exposure_state.w);
     if (native_reference_valid) {
       _70.rgb = WitcherNativeBloomSample(_70.rgb, reference);
@@ -118,10 +120,12 @@ float4 main(
   float _115 = select(_111, (_100 * 0.2500000298023224f), 0.0f);
   float _116 = select(_111, (_101 * 0.2500000298023224f), 0.0f);
   float _117 = select(_111, (_102 * 0.2500000298023224f), 0.0f);
-  // A missing exposure capture falls back to the previous safe reference.
-  // Valid captures retain the native curve's actual range and chromaticity.
+  // No capture means extraction precedes native exposure/tonemapping: keep
+  // the native scene-linear input, thresholds and range unchanged. Captured
+  // curves reconstruct post-tone-map bloom; only unusable captured exposure
+  // gains need the bounded fallback. The existing GPU tag selects the order.
   WitcherGradeState bloom_reference = {float3(_115, _116, _117), 1.f, 1.f};
-  if (WitcherUsePsychoV30() && !native_reference_valid) {
+  if (native_reference_captured && !native_reference_valid) {
     bloom_reference = WitcherPrepareGrade(float3(_115, _116, _117));
     _115 = bloom_reference.neutral_sdr.r;
     _116 = bloom_reference.neutral_sdr.g;
@@ -209,7 +213,7 @@ float4 main(
   SV_Target.y = (_223 * _207);
   SV_Target.z = (_223 * _208);
   SV_Target.w = 0.0f;
-  if (WitcherUsePsychoV30()) {
+  if (native_reference_captured && !native_reference_valid) {
     // Restore signed chromaticity only. Undoing the reference's range scale
     // here re-amplifies both bloom and sunshafts before their native filters.
     SV_Target.rgb = renodx::color::correct::GamutDecompress(

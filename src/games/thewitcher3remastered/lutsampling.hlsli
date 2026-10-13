@@ -44,8 +44,17 @@ float3 WitcherSampleLUT(float3 neutral_sdr, Texture2D<float4> lut, SamplerState 
   float3 original_perceptual = renodx::color::oklab::from::BT709(linear_color);
   float3 extended_perceptual = renodx::color::oklab::from::BT709(
       renodx::color::gamma::DecodeSafe(sampled - floor_remove + ceiling_add));
-  // Retain the LUT's hue/chroma while restoring its perceptual lightness.
-  original_perceptual.x = lerp(original_perceptual.x, max(extended_perceptual.x, 0.f), CUSTOM_LUT_SCALING);
+  // Absolute chroma cannot remain when its lightness is removed: it produces
+  // signed red/blue residue at black. Preserve hue and relative chroma while
+  // darkening, so both approach zero together. Highlight extension retains
+  // the original chroma. This is not a channel floor or gamut projection.
+  float restored_lightness = lerp(original_perceptual.x, max(extended_perceptual.x, 0.f), CUSTOM_LUT_SCALING);
+  if (restored_lightness < original_perceptual.x) {
+    // The branch guarantees positive original lightness and a nonnegative
+    // numerator, including an exact zero at the restored black endpoint.
+    original_perceptual.yz *= restored_lightness / original_perceptual.x;
+  }
+  original_perceptual.x = restored_lightness;
   return renodx::color::bt709::from::OkLab(original_perceptual);
 }
 

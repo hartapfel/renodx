@@ -361,8 +361,11 @@ scene readback, descriptor heap history, extra scene texture or extra draw.
 Root eligibility reserves the additional two DWORDs and rejects overflow.
 
 Native thresholds, power gain, depth/mask caps, soft knee, filters and alpha
-zero remain. Missing captures and zero/invalid exposure gain use the previous
-bounded fallback. Vanilla retains original extraction. Reconstruction follows
+zero remain. A zero validity tag selects native scene-linear extraction before
+exposure; a valid captured curve selects the post-exposure reference. Only a
+captured zero/invalid exposure gain uses the previous bounded fallback. The
+existing tag supports both orders without cvar polling or new CPU hooks.
+Vanilla retains original extraction. Reconstruction follows
 HDR DOF/sampling; it does not duplicate native tonemapping before those filters,
 so nonlinear ordering can differ in blurred/high-contrast regions. Validate
 Photo Mode DOF, gameplay, environment transitions and Bloom/Sunshafts 0/50/100.

@@ -230,8 +230,11 @@ evaluates the four source taps through the native curve before averaging.
 There is no fixed ceiling at 1. Native thresholds, knee, caps and filters remain
 unchanged, while the main HDR scene reaches PsychoV without that tone curve.
 Masked sunshafts use the same reference and retain their mask/strength control.
-Missing captures or zero exposure gain retain the previous safe bounded fallback.
-No CPU readback or descriptor heap tracking is added.
+Before the exposure pass has captured a curve, extraction keeps its native
+scene-linear input unchanged. After capture it uses the native-curve reference;
+only captured zero/invalid exposure gain uses the safe bounded fallback. The
+existing GPU validity tag selects the order without cvar polling, new CPU hooks,
+readback, descriptor heap tracking or extra draws.
 
 This reconstructs the native curve at extraction: intervening DOF has already
 filtered the HDR source, so nonlinear native tonemapping and DOF are not exactly

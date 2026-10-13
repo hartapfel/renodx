@@ -135,6 +135,47 @@ This is offline shader validation; the rebuilt addon still needs a restart
 and visual confirmation in the same cutscene. All 32 production shaders
 compile with strict DXC flags and the Release addon callback test passes.
 
+## Bloom before and after native tone mapping
+
+`tmp/thewitcher3remastered/bloom-order-20261013/` contains compute wrappers
+around the actual native, previous and corrected bloom extraction shaders.
+D3D11 WARP checks 576 configurations / 294,912 pixels: cleared/unrecognized
+capture tags, valid native curves, captured zero gain, scene/sunshaft records,
+strengths, extraction knees and Vanilla/PsychoV. Pre-exposure and Vanilla
+extraction match native exactly; post-exposure/fallback comparison error is
+at most 1.46e-11. The previous bounded fallback changes 720 tested channels
+in the pre-exposure cases, confirming the ordering regression.
+
+The existing 2,700 native-curve GPU handoff cases still pass. Extraction
+compiles strictly as ps_6_6. After a Release rebuild/restart, compare both
+cvar-selected bloom orders, Bloom/Sunshafts controls and Vanilla/PsychoV.
+The automatic selection uses the already-bound GPU tag, with no additional
+CPU events, cvar reads, descriptors or draw calls. Tag validity is local to
+the existing command-list capture/reset lifetime; it is not resource history
+or detection of arbitrary unrelated bloom inputs.
+
+## High LUT scaling in dark scenes
+
+The gamut harness accepts `--lut-shadows` after its prepared shader directory.
+Prepare before/after shader wrappers with `prepare_gamut.py` and compile the
+host as described above. This mode executes all three production LUT paths
+using neutral, warm and cool lifted-black LUTs at Scaling 0/50/72/90/100.
+Inputs are linear BT.709/D65 near-black ramps with deterministic 1% spatial
+perturbations; signed output is retained in `lut-shadows.csv`.
+
+The 45 configurations reproduce the previous coloured residue at restored
+black (maximum absolute linear RGB 0.000158657). Scaling previously removed
+OKLab lightness while retaining absolute chroma. The correction preserves
+relative chroma while darkening, bringing both to zero at black. Corrected
+black error is zero, Scaling 0 is exactly unchanged, and finite output/alpha
+checks pass. The existing grading and signed wide-gamut regressions also pass;
+the correction introduces no BT.709 channel clamp. All three shaders compile
+with strict DXC flags and the Release HDR addon builds.
+
+Evidence: `tmp/thewitcher3remastered/lut-shadows-20261013/`. After restarting,
+check the affected dark scene at Scaling 72/90/100; synthetic reproduction
+does not replace visual confirmation of the reported in-game pixelation.
+
 ## BT.709 video conversion only
 
 `video.cpp` is restored from fcb3cbc9 and checks only the decoder shader.
