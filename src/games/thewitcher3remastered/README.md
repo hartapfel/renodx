@@ -10,6 +10,30 @@ controls. Night illumination, night grading, camera lights and moon size live in
 It builds and installs independently and can be used alone or alongside this HDR
 addon. Existing HDR lighting keys are ignored; configure the standalone addon.
 
+## Lighting mods and Dynamic Grass
+
+Promotional Atmosphere Lighting Lite supplies environment/weather assets and
+uses the existing native HDR shader path. Dynamic Grass 2.0 extends the shared
+post-process root layout with three vertex bindings (six DWORDs). HDR settings
+use a 23-DWORD payload, leaving room for those bindings and the two-DWORD bloom
+reference within DX12's 64-DWORD limit. The unextended native layout remains
+supported; layouts exceeding the limit retain native rendering safely.
+
+Eight controls shown as whole percentages share two packed DWORDs: highlights,
+shadows, contrast, highlight saturation, blowout, flare, hue shift and sharpening.
+Their INI keys, defaults and integer percentage values are preserved. Other
+controls retain float precision. Fractional INI values for these eight controls
+now use integer slider values. No constant-buffer readback or descriptor tracking
+is added. The lighting mod's grading and weather still pass through the existing
+LUT, colour grading and PsychoV controls.
+
+Validation: all 24 shaders compile strictly. Layout tests cover the captured
+Dynamic Grass extension, the native layout and overflow rejection, plus 808
+percentage writes and 4,608 tone-selector writes. WARP before/after comparisons
+across normal, DLSS and FSR output pass with zero error in Vanilla and PsychoV
+(648 configurations / 1,327,104 output pixels). Live coexistence needs a restart
+with the rebuilt HDR addon.
+
 ## Controls
 
 - Tone mapper: Vanilla or PsychoV-30 (default).
@@ -178,7 +202,7 @@ The replacement Blur passes 360 synthetic comparisons against the old mod's shad
 
 Highlight Contrast and Shadow Contrast appear in Advanced Color Grading with PsychoV-30 selected. Each uses 0–100, default/reset 50, mapped to an exponent multiplier of 0–2. The appropriate multiplier above/below gamma-adjusted 18% scene luminance multiplies overall Contrast, matching the split-contrast math in `re9requiem` and `007firstlight`. Grading scales RGB by a luminance ratio before PsychoV's finite response, keeping the grey pivot, signed colour ratios, and final peak rolloff. Exposure, existing Highlights/Shadows, and the PsychoV response retain their current order. Both controls at 50 preserve previous rendering.
 
-The percentages occupy bits 7–13 and 14–20 of `mode_flags`. Existing flags and the effect percentages retain their fields; payload/root-layout size is 116 bytes/29 DWORDs. Preset Off resets both to 50. Regular and both frame-generation HDR branches use the same helper, with UI composed afterward.
+The percentages occupy bits 7–13 and 14–20 of `mode_flags`. Existing flags and the effect percentages retain their fields; payload/root-layout size is now 92 bytes/23 DWORDs. Preset Off resets both to 50. Regular and both frame-generation HDR branches use the same helper, with UI composed afterward.
 
 The `clang-x64-release` build of `thewitcher3remastered` passes and produces `build/Release/renodx-thewitcher3remastered.addon64`. All 19 production shaders also pass strict DXC compilation and addon C++ syntax validation. WARP tests cover 882 configurations/451,584 samples across BT.709/BT.2020 targets, 400/1000/4000-nit peaks, both full slider ranges and three overall contrast settings: independent regions, fixed grey/black, monotonic greys, signed colour/reference agreement, and bounded display gamut/peak. All 18 neutral comparisons preserve previous shader output exactly. Maximum normalized reference error is below 4.2e-6. Packing checks cover 232,704 contrast transitions and 3,257,856 flag writes; 12 layout checks still pass. Evidence: `tmp/thewitcher3remastered/split-contrast/`. After rebuilding, verify the controls separately in a bright outdoor scene and a dark interior, then reset both to 50.
 

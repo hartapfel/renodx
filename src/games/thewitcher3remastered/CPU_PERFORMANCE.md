@@ -1,6 +1,6 @@
 # CPU performance
 
-The HDR addon uses a 120-byte root-constant payload, cached replacement
+The HDR addon uses a 92-byte root-constant payload, cached replacement
 PSOs and no native lighting hooks. It does not capture or read back the
 game's constant buffers or wait for the GPU each frame. Initial replacement
 PSO creation can still cause first-use hitches. Release builds no longer

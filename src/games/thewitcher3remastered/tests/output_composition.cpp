@@ -27,8 +27,9 @@ void Check(HRESULT result) { if (FAILED(result)) throw std::runtime_error("D3D f
 void Require(bool pass, const char* reason) { if (!pass) throw std::runtime_error(reason); }
 int main(int argc, char** argv) {
   try {
-    Require(argc == 5 || (argc == 6 && (std::string(argv[5]) == "hdr-saturation" || std::string(argv[5]) == "fsr" || std::string(argv[5]) == "fsr-native" || std::string(argv[5]) == "legacy-injection")),
-            "Expected normal/FG shaders before and after, optionally hdr-saturation, fsr, fsr-native or legacy-injection");
+    Require(argc == 5 || (argc == 6 && (std::string(argv[5]) == "hdr-saturation" || std::string(argv[5]) == "fsr" || std::string(argv[5]) == "fsr-native" || std::string(argv[5]) == "legacy-injection" || std::string(argv[5]) == "compact-injection")),
+            "Expected normal/FG shaders before and after, optionally hdr-saturation, fsr, fsr-native or legacy-injection/compact-injection");
+    const bool compact_injection = argc == 6 && std::string(argv[5]) == "compact-injection";
     const bool legacy_injection = argc == 6 && std::string(argv[5]) == "legacy-injection";
     const bool fsr_test = argc == 6 && std::string(argv[5]).starts_with("fsr");
     const bool native_test = argc == 6 && std::string(argv[5]) == "fsr-native";
@@ -56,7 +57,7 @@ int main(int argc, char** argv) {
     native[0] = 203; native[3] = 1000; native[8] = 2.2f; native[10] = 1 / 2.2f;
     native[11] = .18f; native[14] = 32; native[15] = 16;
     native[16] = native[21] = native[26] = 1;
-    const bool saturation_test = argc == 6 && !legacy_injection;
+    const bool saturation_test = argc == 6 && !legacy_injection && !compact_injection;
     if (saturation_test) {
       const float matrix[] = {1.4023422f, -.37857088f, -.01947296f, 0,
           -.06701347f, 1.08590949f, -.01053586f, 0,
@@ -93,12 +94,14 @@ int main(int argc, char** argv) {
       context->CSSetShaderResources(i, 1, views[i].GetAddressOf());
       context->UpdateSubresource(textures[i].Get(), 0, nullptr, black.data(), 32 * sizeof(Pixel), 0);
     }
-    struct { ShaderInjectData data; float padding[3]; } settings = {};
+    struct { ShaderInjectData data; float padding[9]; } settings = {};
     static_assert(sizeof(settings) == 128);
     auto& p = settings.data;
-    p.tone_map_exposure = p.tone_map_gamma = p.tone_map_highlights = p.tone_map_shadows = 1;
-    p.tone_map_contrast = p.tone_map_saturation = p.tone_map_highlight_saturation = 1;
-    p.psychov_hue_shift = p.psychov_cone_response_exponent = p.psychov_gamut_compression = 1;
+    p.tone_map_exposure = p.tone_map_gamma = 1;
+    p.tone_map_saturation = 1;
+      p.grade_strengths = std::bit_cast<float>((50u << 21) | (50u << 14) | (50u << 7) | 50u);
+    p.psychov_cone_response_exponent = p.psychov_gamut_compression = 1;
+    p.look_strengths = std::bit_cast<float>(100u << WITCHER_LOOK_HUE_SHIFT);
     p.psychov_adaptation_anchor = p.psychov_background_anchor = .18f;
     p.effect_strengths = std::bit_cast<float>((50u << 21) | (50u << 14) | (50u << 7) | 50u);
     unsigned cases = 0;
@@ -128,15 +131,41 @@ int main(int argc, char** argv) {
         context->UpdateSubresource(textures[1].Get(), 0, nullptr, ui.data(), 32 * sizeof(Pixel), 0);
         std::vector<Pixel> values[4];
         for (unsigned pass = 0; pass < 4; ++pass) {
-          if (legacy_injection && pass < 2) {
-            // Before shaders use the old 30-DWORD payload with a separate
-            // selector at offset 2; all other values retain their precision.
-            std::array<float, 32> previous{};
-            std::memcpy(previous.data(), &p, 2 * sizeof(float));
-            previous[2] = float(mode);
-            std::memcpy(previous.data() + 3, reinterpret_cast<const char*>(&p) + 2 * sizeof(float), sizeof(p) - 2 * sizeof(float));
-            previous[17] = std::bit_cast<float>(std::bit_cast<uint32_t>(previous[17]) & ~WITCHER_FLAG_PSYCHOV);
-            context->UpdateSubresource(cb13.Get(), 0, nullptr, previous.data(), 0, 0);
+          if ((legacy_injection || compact_injection) && pass < 2) {
+            // Recreate the pre-compaction 29-DWORD payload for the real old
+            // shaders; the optional older selector layout has one extra DWORD.
+            const auto percent = [](float packed, unsigned shift, float scale) {
+              return float((std::bit_cast<uint32_t>(packed) >> shift) & 127u) * scale;
+            };
+            const float previous[] = {
+                p.peak_white_nits, p.diffuse_white_nits, p.tone_map_exposure,
+                p.tone_map_gamma,
+                percent(p.grade_strengths, WITCHER_GRADE_HIGHLIGHTS_SHIFT, .02f),
+                percent(p.grade_strengths, WITCHER_GRADE_SHADOWS_SHIFT, .02f),
+                percent(p.grade_strengths, WITCHER_GRADE_CONTRAST_SHIFT, .02f),
+                p.tone_map_saturation,
+                percent(p.grade_strengths, WITCHER_GRADE_HIGHLIGHT_SATURATION_SHIFT, .02f),
+                percent(p.look_strengths, WITCHER_LOOK_BLOWOUT_SHIFT, .01f),
+                percent(p.look_strengths, WITCHER_LOOK_FLARE_SHIFT, .01f),
+                percent(p.look_strengths, WITCHER_LOOK_HUE_SHIFT, .01f),
+                p.psychov_cone_response_exponent, p.psychov_adaptation_anchor,
+                p.psychov_background_anchor, p.psychov_gamut_compression,
+                p.mode_flags, p.psychov_compression, p.graphics_white_nits,
+                p.chromatic_aberration_intensity, p.chromatic_aberration_start_offset,
+                percent(p.look_strengths, WITCHER_LOOK_SHARPENING_SHIFT, .01f),
+                p.film_grain, p.random_seed, p.vignette_strength,
+                p.custom_lut_strength, p.custom_lut_scaling, p.custom_color_grading, p.effect_strengths,
+            };
+            std::array<float, 32> upload{};
+            if (legacy_injection) {
+              std::copy_n(previous, 2, upload.begin());
+              upload[2] = float(mode);
+              std::copy(std::begin(previous) + 2, std::end(previous), upload.begin() + 3);
+              upload[17] = std::bit_cast<float>(std::bit_cast<uint32_t>(upload[17]) & ~WITCHER_FLAG_PSYCHOV);
+            } else {
+              std::copy(std::begin(previous), std::end(previous), upload.begin());
+            }
+            context->UpdateSubresource(cb13.Get(), 0, nullptr, upload.data(), 0, 0);
           } else {
             context->UpdateSubresource(cb13.Get(), 0, nullptr, &settings, 0, 0);
           }

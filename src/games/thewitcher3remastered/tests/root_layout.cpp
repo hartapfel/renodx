@@ -30,18 +30,26 @@ int main() {
     if (i < 10) params.emplace_back(ranges[i]);
     else params.emplace_back(1, &ranges[i]);
   }
-  check(sizeof(ShaderInjectData) / sizeof(float) + 33 + 2 == 64);
+  check(sizeof(ShaderInjectData) / sizeof(float) + 33 + 6 + 2 == 64);
+  check(ShouldInjectPostProcessLayout(params));
+  // Dynamic Grass adds three vertex-only root descriptors in space7 to this
+  // shared layout. Their six DWORDs previously disabled every HDR replacement.
+  for (auto type : {descriptor_type::constant_buffer, descriptor_type::buffer_shader_resource_view,
+                    descriptor_type::buffer_unordered_access_view}) {
+    params.emplace_back(descriptor_range{.dx_register_space = 7, .count = 1,
+                                        .visibility = shader_stage::vertex, .type = type});
+  }
   check(ShouldInjectPostProcessLayout(params));
   params.emplace_back(1, &ranges[22]);
   check(!ShouldInjectPostProcessLayout(params));
-  params.pop_back();
-  params.emplace_back(constant_range{.dx_register_index = 13, .dx_register_space = 50, .count = 29});
+  params.resize(23);
+  params.emplace_back(constant_range{.dx_register_index = 13, .dx_register_space = 50, .count = 23});
   descriptor_range uav{.dx_register_space = 50, .count = 1, .visibility = shader_stage::pixel, .type = descriptor_type::buffer_unordered_access_view};
   params.emplace_back(uav);
   check(ShouldInjectPostProcessLayout(params));
-  params[23].push_constants.count = 30;
+  params[23].push_constants.count = 24;
   check(!ShouldInjectPostProcessLayout(params));
-  params[23].push_constants.count = 29;
+  params[23].push_constants.count = 23;
   ranges[3].visibility = shader_stage::vertex;
   check(!ShouldInjectPostProcessLayout(params));
   ranges[3].visibility = shader_stage::pixel;
@@ -70,5 +78,20 @@ int main() {
       }
     }
   }
-  std::puts("PASS: captured 33-DWORD layout, injection boundary, and 4608 packed selector writes");
+  std::vector<renodx::utils::settings::Setting> packed_settings{
+#include "packed-percentage-settings.h"
+  };
+  for (auto& setting : packed_settings) {
+    const unsigned shift = std::countr_zero(setting.packed_values[1]);
+    const uint32_t mask = 127u << shift;
+    const uint32_t untouched = 0x1fffffff & ~mask;
+    for (unsigned value = 0; value <= 100; ++value) {
+      *setting.binding = std::bit_cast<float>(untouched);
+      setting.Set(float(value))->Write();
+      check(setting.GetValue() == float(value));
+      check(std::bit_cast<uint32_t>(*setting.binding) == (untouched | setting.packed_values[value]));
+      check(((std::bit_cast<uint32_t>(*setting.binding) >> shift) & 127u) == value);
+    }
+  }
+  std::puts("PASS: native/Dynamic Grass layouts, overflow rejection, 4608 selector and 808 percentage writes");
 }

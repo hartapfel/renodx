@@ -19,22 +19,26 @@
 #define WITCHER_EFFECT_LENS_SHIFT 14u
 #define WITCHER_EFFECT_BLOOM_SHIFT 21u
 
+// Whole-percentage sliders retain their native 0..100 values in seven bits.
+// Two packed DWORDs leave room for Dynamic Grass's three root descriptors.
+#define WITCHER_GRADE_HIGHLIGHTS_SHIFT 0u
+#define WITCHER_GRADE_SHADOWS_SHIFT 7u
+#define WITCHER_GRADE_CONTRAST_SHIFT 14u
+#define WITCHER_GRADE_HIGHLIGHT_SATURATION_SHIFT 21u
+#define WITCHER_LOOK_BLOWOUT_SHIFT 0u
+#define WITCHER_LOOK_FLARE_SHIFT 7u
+#define WITCHER_LOOK_HUE_SHIFT 14u
+#define WITCHER_LOOK_SHARPENING_SHIFT 21u
+
 struct ShaderInjectData {
   float peak_white_nits;
   float diffuse_white_nits;
   float tone_map_exposure;
 
   float tone_map_gamma;
-  float tone_map_highlights;
-  float tone_map_shadows;
-  float tone_map_contrast;
 
   float tone_map_saturation;
-  float tone_map_highlight_saturation;
-  float tone_map_blowout;
-  float tone_map_flare;
 
-  float psychov_hue_shift;
   float psychov_cone_response_exponent;
   float psychov_adaptation_anchor;
   float psychov_background_anchor;
@@ -46,7 +50,6 @@ struct ShaderInjectData {
 
   float chromatic_aberration_intensity;
   float chromatic_aberration_start_offset;
-  float sharpening;
   float film_grain;
   float random_seed;
   float vignette_strength;
@@ -54,11 +57,13 @@ struct ShaderInjectData {
   float custom_lut_scaling;
   float custom_color_grading;
   float effect_strengths;
+  float grade_strengths;
+  float look_strengths;
 };
 
 #ifdef __cplusplus
-// The captured post-process layout uses 33 DWORDs; reserve two for bloom.
-static_assert(sizeof(ShaderInjectData) == 116);
+// Native post-processing uses 33 DWORDs; Dynamic Grass adds six and bloom two.
+static_assert(sizeof(ShaderInjectData) == 92);
 #else
 // DX12 injection binding, paired with addon.cpp; native buffers use space0.
 cbuffer shader_injection : register(b13, space50) {
@@ -71,16 +76,16 @@ cbuffer shader_injection : register(b13, space50) {
 #define RENODX_TONE_MAP_TYPE WITCHER_MODE_FLAG(WITCHER_FLAG_PSYCHOV)
 #define RENODX_TONE_MAP_EXPOSURE shader_injection.tone_map_exposure
 #define RENODX_TONE_MAP_GAMMA shader_injection.tone_map_gamma
-#define RENODX_TONE_MAP_HIGHLIGHTS shader_injection.tone_map_highlights
-#define RENODX_TONE_MAP_SHADOWS shader_injection.tone_map_shadows
-#define RENODX_TONE_MAP_CONTRAST shader_injection.tone_map_contrast
+#define RENODX_TONE_MAP_HIGHLIGHTS (float((asuint(shader_injection.grade_strengths) >> WITCHER_GRADE_HIGHLIGHTS_SHIFT) & 127u) * 0.02f)
+#define RENODX_TONE_MAP_SHADOWS (float((asuint(shader_injection.grade_strengths) >> WITCHER_GRADE_SHADOWS_SHIFT) & 127u) * 0.02f)
+#define RENODX_TONE_MAP_CONTRAST (float((asuint(shader_injection.grade_strengths) >> WITCHER_GRADE_CONTRAST_SHIFT) & 127u) * 0.02f)
 #define RENODX_TONE_MAP_CONTRAST_HIGHLIGHTS (float((asuint(shader_injection.mode_flags) >> WITCHER_CONTRAST_HIGHLIGHTS_SHIFT) & 127u) * 0.02f)
 #define RENODX_TONE_MAP_CONTRAST_SHADOWS (float((asuint(shader_injection.mode_flags) >> WITCHER_CONTRAST_SHADOWS_SHIFT) & 127u) * 0.02f)
 #define RENODX_TONE_MAP_SATURATION shader_injection.tone_map_saturation
-#define RENODX_TONE_MAP_HIGHLIGHT_SATURATION shader_injection.tone_map_highlight_saturation
-#define RENODX_TONE_MAP_BLOWOUT shader_injection.tone_map_blowout
-#define RENODX_TONE_MAP_FLARE shader_injection.tone_map_flare
-#define RENODX_PSYCHOV_HUE_SHIFT shader_injection.psychov_hue_shift
+#define RENODX_TONE_MAP_HIGHLIGHT_SATURATION (float((asuint(shader_injection.grade_strengths) >> WITCHER_GRADE_HIGHLIGHT_SATURATION_SHIFT) & 127u) * 0.02f)
+#define RENODX_TONE_MAP_BLOWOUT (float((asuint(shader_injection.look_strengths) >> WITCHER_LOOK_BLOWOUT_SHIFT) & 127u) * 0.01f)
+#define RENODX_TONE_MAP_FLARE (float((asuint(shader_injection.look_strengths) >> WITCHER_LOOK_FLARE_SHIFT) & 127u) * 0.01f)
+#define RENODX_PSYCHOV_HUE_SHIFT (float((asuint(shader_injection.look_strengths) >> WITCHER_LOOK_HUE_SHIFT) & 127u) * 0.01f)
 #define RENODX_PSYCHOV_CONE_RESPONSE_EXPONENT shader_injection.psychov_cone_response_exponent
 #define RENODX_PSYCHOV_ADAPTATION_ANCHOR shader_injection.psychov_adaptation_anchor
 #define RENODX_PSYCHOV_BACKGROUND_ANCHOR shader_injection.psychov_background_anchor
@@ -93,7 +98,7 @@ cbuffer shader_injection : register(b13, space50) {
 #define CUSTOM_CA_INTENSITY shader_injection.chromatic_aberration_intensity
 #define CUSTOM_CA_START_OFFSET shader_injection.chromatic_aberration_start_offset
 #define CUSTOM_SHARPENING_MODE WITCHER_MODE_FLAG(WITCHER_FLAG_SHARPENING)
-#define CUSTOM_SHARPENING shader_injection.sharpening
+#define CUSTOM_SHARPENING (float((asuint(shader_injection.look_strengths) >> WITCHER_LOOK_SHARPENING_SHIFT) & 127u) * 0.01f)
 #define CUSTOM_FILM_GRAIN shader_injection.film_grain
 #define CUSTOM_RANDOM shader_injection.random_seed
 #define CUSTOM_VIGNETTE_STRENGTH shader_injection.vignette_strength

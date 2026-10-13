@@ -8,8 +8,14 @@ that the 29-DWORD settings payload fits exactly at 64 DWORDs. It checks rejectio
 of oversized/incompatible layouts and initialization with our own bindings.
 The production selector retains its saved/UI values 0/1; 4,608 writes verify
 that it preserves all neighboring mode and contrast fields.
-`prepare_layout.py` extracts the actual predicate and setting instead of
-maintaining a duplicate implementation.
+`prepare_layout.py` extracts the production root-layout predicate and settings.
+`root_layout.cpp` models the captured native layout and Dynamic Grass 2.0's
+three vertex root descriptors in space7. It verifies that all 23 settings DWORDs
+and the bloom UAV fit exactly at 64 DWORDs with Dynamic Grass enabled. It checks
+native compatibility, overflow rejection, incorrect stage/space layouts, all
+808 percentage writes without adjacent-field corruption, and 4,608 tone-mapper
+selector writes. The eight compacted controls retain their existing integer
+INI values; fractional values now use the integer slider representation.
 
 ```powershell
 python src/games/thewitcher3remastered/tests/prepare_layout.py tmp/witcher-layout
@@ -229,3 +235,10 @@ Evidence: `tmp/thewitcher3remastered/fsr-20261007/`. After restarting with the
 Release addon, compare the same scene with FSR Frame Generation off/on:
 highlight detail and peak, white pixelation, UI and native
 HDR Saturation independence. Also check DLSS Frame Generation and Vanilla.
+
+
+The `compact-injection` argument to `output_composition.cpp` reconstructs the
+previous 29-DWORD payload for before shaders and binds the new 23-DWORD payload
+to after shaders. Normal/DLSS and FSR/DLSS comparisons each pass 324 configurations
+with maximum error zero across Vanilla/PsychoV, peak/reference/UI brightness,
+gamut targets and UI alpha. Scratch evidence: `tmp/thewitcher3remastered/lighting-mod-20261014`.

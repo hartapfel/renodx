@@ -1,7 +1,8 @@
 """Adapt the three LUT and five grading shaders to the D3D11 WARP harness.
 
 Run from the repository root: python <this file> <scratch dir> <baseline mod dir>.
-Only register spaces, sampling derivatives and entry-point plumbing change.
+Register spaces, sampling derivatives and entry-point plumbing change; both
+trees use the current constant transport so archived baselines remain bindable.
 """
 from pathlib import Path
 import subprocess
@@ -22,7 +23,8 @@ for mode, source_root in (("before", baseline), ("after", mod)):
             continue
         target = dest / source.relative_to(source_root)
         target.parent.mkdir(parents=True, exist_ok=True)
-        text = source.read_text().replace("../../shaders/", (root / "src/shaders").as_posix() + "/")
+        text = (mod / "shared.h").read_text() if source.name == "shared.h" else source.read_text()
+        text = text.replace("../../shaders/", (root / "src/shaders").as_posix() + "/")
         text = text.replace("register(b13, space50)", "register(b13)")
         for texture, sampler, uv in (("t2", "s2", "TEXCOORD_2"),
                                      ("t2", "s2", "float2(TEXCOORD_2.x, TEXCOORD_2.y)"),

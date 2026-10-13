@@ -7,6 +7,7 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -100,7 +101,7 @@ int main(int argc, char** argv) {
     float native[100] = {};
     struct {
       ShaderInjectData data;
-      float pad[3];
+      float pad[9];
     } settings = {};
     static_assert(sizeof(settings) == 128);
     auto& p = settings.data;
@@ -144,8 +145,9 @@ int main(int argc, char** argv) {
       p.peak_white_nits = 1000;
       p.diffuse_white_nits = 203;
       psychov = true;
-      p.tone_map_exposure = p.tone_map_gamma = p.tone_map_highlights = p.tone_map_shadows = 1;
-      p.tone_map_contrast = p.tone_map_saturation = p.tone_map_highlight_saturation = 1;
+      p.tone_map_exposure = p.tone_map_gamma = 1;
+      p.tone_map_saturation = 1;
+      p.grade_strengths = std::bit_cast<float>((50u << 21) | (50u << 14) | (50u << 7) | 50u);
       p.psychov_cone_response_exponent = p.psychov_gamut_compression = 1;
       p.psychov_adaptation_anchor = p.psychov_background_anchor = .18f;
       uint32_t flags = WITCHER_FLAG_GAMUT_TARGET | (50u << 7) | (50u << 14);
@@ -413,7 +415,7 @@ int main(int argc, char** argv) {
                 for (float saturation : {.5f, 1.f, 2.f}) {
                     initialize(0);
                     p.peak_white_nits = peak;
-                    p.psychov_hue_shift = hue;
+                    p.look_strengths = std::bit_cast<float>(uint32_t(hue * 100.f) << WITCHER_LOOK_HUE_SHIFT);
                     p.psychov_cone_response_exponent = cone;
                     p.psychov_adaptation_anchor = anchor;
                     p.psychov_compression = compression;
@@ -438,7 +440,7 @@ int main(int argc, char** argv) {
             for (float compression : {0.f, 1.f, 2.f}) {
               initialize(0);
               p.psychov_gamut_compression = strength;
-              p.psychov_hue_shift = hue;
+              p.look_strengths = std::bit_cast<float>(uint32_t(hue * 100.f) << WITCHER_LOOK_HUE_SHIFT);
               p.psychov_cone_response_exponent = cone;
               p.psychov_compression = compression;
               uint32_t flags = (target ? WITCHER_FLAG_GAMUT_TARGET : 0u) | (50u << 7) | (50u << 14);
