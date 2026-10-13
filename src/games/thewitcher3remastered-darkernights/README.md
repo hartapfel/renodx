@@ -160,8 +160,9 @@ moon controls use the ranges described below:
 | Cutscene Camera Light | Artificial scene and dialogue camera fill, independent of the night schedule. |
 | Moon Size | Visible moon diameter from 1% to 500%; 100% is native, 50% halves it. |
 | Sun Size | Visible sun diameter from 1% to 500%; 100% is native. Active at every hour. |
-| Fog Amount | Atmospheric fog density at every hour: 0% off, 100% native, 200% double density. Independent of night lighting. |
-| Building Fog Amount | Additional fog density multiplier indoors, at every hour: 0% off, 100% unchanged, 200% double. Excludes known underground environments. |
+| Global Fog Intensity | Atmospheric density everywhere, at every hour: 0% off, 100% native, 200% double. |
+| Outdoor Fog Start Distance | Fog fade-in distance outside buildings and in caves; default 10 m. |
+| Indoor Fog Start Distance | Fog fade-in distance in buildings; default 40 m. |
 | Apply Exposure Overrides All Day | On (default) applies exposure settings at every hour. Off follows the night schedule. Requires Enable Night Lighting. |
 | Auto Exposure | Enabled uses adaptation; Off uses a fixed luminance reference during the selected exposure period. Enabled is the default. |
 | Adaptation | Native (default), Smoothed, or Custom. Smoothed uses 35% brightening and 5% darkening speed, with both limits at 100%. |
@@ -170,44 +171,50 @@ moon controls use the ranges described below:
 | Maximum Darkening | Custom only; 0-100% of native darkening beyond the 0.18 metering reference, default 100%. 0 prevents further darkening beyond that reference; 100 retains the native range. |
 | Fixed Luminance | Off only; 0.001-10, default 0.18. Lower values brighten the image; higher values darken it. |
 
-**Fog Amount** is in its own Fog section. It multiplies freshly built native
-geometry/sky fog density, including distance haze, without changing fog colours,
-vertical falloff, local lights or exposure. It works with Enable Night Lighting
-off and during daylight; Preset Off restores 100%. Soft/Dark Nights leave it
-unchanged. Cloud, smoke and other authored particle effects remain separate.
-The control uses the existing native constant hook, with independently validated
-density loads/stores; no extra shader, buffer binding or GPU pass is added.
-The PT building scene was tested live at zero density with finite output.
-Raster/RT and combined-addon checks require the rebuilt addon.
+**Global Fog Intensity**, **Outdoor Fog Start Distance** and **Indoor Fog
+Start Distance** work at every hour independently of Enable Night Lighting.
+Intensity defaults to 100% native. The distance defaults are 10 m outdoors and
+40 m inside buildings, each adjustable from 0 to 500 m. Caves, crypts and other
+recognized underground profiles use the outdoor distance. A distance of 0
+preserves the native fade for that state.
 
-**Building Fog Amount** follows the engine's indoor/outdoor state, with a
-soft, damped fade when entering or leaving a building (about 1.5 seconds for
-95% of an abrupt change), and
-multiplies Fog Amount. It also affects outdoor fog viewed through windows or
-doorways while indoors. Environment profiles follow native priority and blend
-weights: a fully overridden sewer layer below a building no longer excludes
-that room. Recognized underground and unidentified local profiles retain their
-own contribution; the building override fades with mixed interior layers.
-The native weather suppression multiplier gates other unclassified interior contributions:
-the captured Kaer Trolde balcony retains fog despite reporting fully indoors,
-while its enclosed room receives the override. This is an authored environment
-signal, not a geometric roof test or the current rain intensity. Recognized local
-building profiles receive the override even when a higher-priority storm changes
-this signal; cave and unknown local contributions remain protected. The override
-also covers the captured shared dark-sunset lighting area when the native indoor
-blend identifies a room; its outdoor use does not activate the override. The
-same indoor blend applies within the audited Novigrad city lighting area for
-rooms without a dedicated interior profile, independent of storm suppression.
-Weather classification weights saturate: finite authored curve overshoots do
-not disable the override or amplify it beyond full interior strength. Buildings
-that keep only global weather profiles need native weather suppression to
-receive the override. A custom cave using only ordinary outdoor
-weather and no cave flag cannot be distinguished from those buildings.
-The current PT building and cave were checked against the actual state reader.
-The default is 100%; Preset Off restores it, and Soft/Dark Nights leave it alone.
-It shares the existing density hook, with world/profile reads on the present
-thread only and no reads when the setting is 100%.
-Preset Off restores native fog immediately, and world changes reset the fade.
+The committed camera-state detector supplies the indoor blend: native enclosure,
+weather sheltering for unclassified rooms, and priority-weighted environment
+profiles distinguish buildings from caves. Known regional city and swamp areas
+may overlap buildings without vetoing their detection. Existing balcony,
+upstairs and quest-room handling is retained. Coverage depends on authored
+states/profiles; unknown local atmospheres fall back to the outdoor distance.
+
+An installed-asset audit covered 753 distinct environment profiles (base game,
+expansions and installed mods). Explicit room variants include the q106 tower,
+White Orchard, Novigrad, Kaer Morhen and Hearts of Stone; mine atmospheres and
+Vizima's outdoor variants remain excluded. All profiles passed native outdoor
+and cave-state guard checks. This is static coverage, not an in-game visit to
+every location: ambiguous local profiles still need a captured enclosure state
+before they can safely be treated as buildings.
+
+Entering or leaving a building smoothly blends the effective distance-fade
+parameters in both directions (about 1.5 seconds to reach 95% after a full state
+change). Reversing at a doorway preserves a continuous transition; world changes
+and Preset Off reset it. Native-zero endpoints blend continuously as well. Equal
+distances bypass the detector. Unsupported detection uses the outdoor distance
+everywhere and disables the indoor slider.
+
+A nonzero distance is a minimum: later authored starts and wider native fades
+are preserved. The fade spans at least the selected distance (minimum 10 m).
+For example, 40 m normally fades in from 40 to 80 m. This controls fog for the
+whole camera view, including the view through windows, without a spatial cutout.
+Preset Off restores intensity to 100% and both distances to 0 m. Soft/Dark Nights
+leave these independent controls alone. Saved FogAmount and FogStartDistance
+values are retained (the latter now selects outdoors); the new indoor setting
+defaults to 40 m. Obsolete indoor/cave intensity values are ignored.
+
+The existing common-constants hook modifies density (b12 c43.x/c44.x) and the
+native start/reciprocal width (c48.yz). Renderer workers read a single atomic
+publication; game/profile reads and transition updates stay on Present. The
+native fog shader remains unchanged, with no added GPU pass, mask filtering,
+root binding, descriptor tracking or resource. Cloud, smoke, particles and other
+effects with their own fog logic remain separate.
 
 **Night Exposure** follows Enable Night Lighting and the same clock fades.
 Apply Exposure Overrides All Day bypasses the schedule for exposure alone,

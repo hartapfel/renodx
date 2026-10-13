@@ -10,7 +10,6 @@
 
 namespace witcher::night::interior_fog {
 
-inline float amount = 100.f;
 inline bool supported = false;
 inline const unsigned char* const* game_address = nullptr;
 inline const unsigned char* fade_environment = nullptr;
@@ -29,6 +28,12 @@ inline int Classify(std::string_view path) {
   for (std::string_view name : {"cave", "sewer", "crypt", "catacomb", "grotto", "dungeon", "underground", "tunnel", "ruin"}) {
     if (path.find(name) != std::string_view::npos) return -1;
   }
+  // Authored mine atmospheres also occur without the native cave flag.
+  if (path.find("\\salt_mines\\") != std::string_view::npos
+      || path.ends_with("\\env_salt_mine.env") || path.ends_with("\\env_abandoned_mine.env")) return -1;
+  // This directory includes exterior experiments as well as palace rooms.
+  if (path == "environment\\definitions\\wyzima\\global\\wip\\env_outdoor_wyzima_01.env"
+      || path == "environment\\definitions\\wyzima\\global\\wip\\env_outdoor_wyzima_02.env") return 0;
   for (std::string_view name : {"\\crossroads_inn\\", "\\barons_lair\\", "\\interiors\\dandelion\\",
                                "\\tavern\\", "\\interiors\\kt_castle\\", "\\kaer_trolde_inn\\",
                                "\\kaer_morhen\\interior\\", "\\wyzima\\global\\"}) {
@@ -39,6 +44,29 @@ inline int Classify(std::string_view path) {
                                "\\env_winter_epilog_white_grass_hendriks_house.env"}) {
     if (path.ends_with(name)) return 1;
   }
+  // Installed-asset audit: explicit room variants outside the known groups.
+  // Match whole paths rather than "interior"/"room": cave interiors, DOF
+  // overlays and arena production-room assets are not building evidence.
+  // The captured q106 room overrides island mist; the mist remains unclassified.
+  for (std::string_view name : {
+           "quests\\part_2\\quest_files\\q106_tower\\entities\\q106_temp_island_env_int.env",
+           "environment\\definitions\\cutscenes_definition\\envs_for_cutscenes\\q106_temp_island_env_int_cs.env",
+           "environment\\definitions\\env_nomansland\\env_nml_global_dark_sunset_interior.env",
+           "environment\\definitions\\env_novigrad\\env_interior.env",
+           "environment\\definitions\\novigrad\\env_global_clear_interior.env",
+           "environment\\definitions\\env_prologue\\env_prolog_colors_interior.env",
+           "environment\\definitions\\env_prologue\\env_prolog_global\\env_prolog_global_raw_v1_a_interior.env",
+           "environment\\definitions\\env_prologue\\env_prolog_global\\env_prolog_global_raw_v2_a_interior.env",
+           "environment\\definitions\\kaer_morhen\\kaer_morhen_global\\env_kaer_morhen_v09_hdr_int.env",
+           "environment\\definitions\\kaer_morhen\\kaer_morhen_global\\env_kaer_morhen_v09_int.env",
+           "dlc\\ep1\\data\\environment\\definitions\\in_progress\\q604\\q604_blizzard_interior.env",
+           "dlc\\ep1\\data\\environment\\definitions\\in_progress\\q604\\q604_blizzard_interior_cs.env",
+           "dlc\\ep1\\data\\environment\\definitions\\in_progress\\q604\\q604_creepy_interior.env",
+           "dlc\\ep1\\data\\environment\\definitions\\in_progress\\q604\\q604_painting_interior.env",
+           "dlc\\ep1\\data\\environment\\definitions\\in_progress\\q604\\q604_painting_interior_cs.env",
+       }) {
+    if (path == name) return 1;
+  }
   // Captured over an enclosed Novigrad room and the street outside it. This
   // shared lighting area is not an underground atmosphere; allow the building
   // override only through the native indoor blend, never from this name alone.
@@ -46,12 +74,14 @@ inline int Classify(std::string_view path) {
   // Captured over Dandelion and a quest room with no dedicated interior layer.
   // This city-wide lighting area does not identify a separate atmosphere;
   // allow native indoor detection rather than its storm-overridden rain curve.
-  if (path == "environment\\definitions\\env_novigrad\\env_novigrad_global\\env_novigrad_city.env") return 2;
+  // The later captured regional swamp area has the same overlapping role.
+  if (path == "environment\\definitions\\env_novigrad\\env_novigrad_global\\env_novigrad_city.env"
+      || path == "environment\\definitions\\env_nomansland\\nml_global\\env_nml_swamps_v1_a_ps4_flat24.env") return 2;
   return 0;
 }
 
-// Present-thread reads only. Renderer workers consume the combined atomic fog
-// multiplier and never dereference world, profile or string heap pointers.
+// Present-thread reads only. Renderer workers consume the published distance
+// settings and building blend, never world, profile or string heap pointers.
 inline float BuildingWeight(const unsigned char** active_environment = nullptr) {
   const unsigned char* environment = nullptr;
   if (!supported || !normalization::ReadEnvironment(game_address, &environment)) return 0.f;

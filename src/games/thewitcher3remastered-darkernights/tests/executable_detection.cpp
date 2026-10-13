@@ -71,6 +71,15 @@ int main(int argc, char** argv) {
     assert(witcher::night::ValidateImage(image.data()) && witcher::night::interior_fog::supported);
     ++cases;
   }
+  assert(witcher::night::fog_distance_supported);
+  for (unsigned offset : {0xd5au, 0xd6au, 0xd72u, 0xd8cu, 0xd95u}) {
+    const unsigned address = witcher::night::active_layout->common + offset;
+    image[address] ^= 1;
+    assert(witcher::night::ValidateImage(image.data()) && !witcher::night::fog_distance_supported);
+    image[address] ^= 1;
+    assert(witcher::night::ValidateImage(image.data()) && witcher::night::fog_distance_supported);
+    ++cases;
+  }
   for (unsigned offset : {0xb4eu, 0xb5fu, 0xbe1u, 0xc1du}) {
     const unsigned address = witcher::night::active_layout->common + offset;
     image[address] ^= 1;

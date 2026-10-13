@@ -21,7 +21,8 @@ int main(int argc, char** argv) {
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "MoonSize"}] = std::to_string(i * 30);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "SunSize"}] = std::to_string(i * 50);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "FogAmount"}] = std::to_string(i * 25);
-    configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "BuildingFogAmount"}] = std::to_string(i * 20);
+    if (std::strcmp(argv[1], "defaults")) configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "FogStartDistance"}] = std::to_string(i * 20);
+    if (std::strcmp(argv[1], "defaults") && std::strcmp(argv[1], "legacy")) configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "IndoorFogStartDistance"}] = std::to_string(i * 30);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightAutoExposureEnabled"}] = i == 2 ? "0" : "1";
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightExposureAllDay"}] = i == 2 ? "1" : "0";
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightExposureAdaptation"}] = std::to_string(i - 1);
@@ -43,7 +44,7 @@ int main(int argc, char** argv) {
         || witcher::night::moon_size != 100.f
         || witcher::night::sun_size != 100.f
         || witcher::night::fog_amount != 100.f
-        || witcher::night::interior_fog::amount != 100.f
+        || witcher::night::fog_start_distance != 0.f || witcher::night::indoor_fog_start_distance != 0.f
         || witcher::night::grading::saturation_strength != 100.f) return 4;
   } else if (witcher::night::grading::saturation_strength != expected * 25.f
              || witcher::night::rain_strength != expected * 10.f
@@ -52,7 +53,8 @@ int main(int argc, char** argv) {
              || witcher::night::moon_size != expected * 30.f
              || witcher::night::sun_size != expected * 50.f
              || witcher::night::fog_amount != expected * 25.f
-             || witcher::night::interior_fog::amount != expected * 20.f) return 5;
+             || witcher::night::fog_start_distance != (!std::strcmp(argv[1], "defaults") ? 10.f : expected * 20.f)
+             || witcher::night::indoor_fog_start_distance != (!std::strcmp(argv[1], "defaults") || !std::strcmp(argv[1], "legacy") ? 40.f : expected * 30.f)) return 5;
   if (expected != 0 && (witcher::night::exposure::enabled != (expected == 2 ? 0.f : 1.f)
       || witcher::night::exposure::all_day != (expected == 2 ? 1.f : 0.f)
       || witcher::night::exposure::adaptation != expected - 1.f
@@ -78,7 +80,7 @@ int main(int argc, char** argv) {
   }
   renodx::utils::settings::UpdateSettings({{"GameplayCameraLightStrength", 13.f},
                                         {"CutsceneCameraLightStrength", 23.f}, {"MoonSize", 250.f}, {"SunSize", 150.f},
-                                        {"FogAmount", 35.f}, {"BuildingFogAmount", 45.f}});
+                                        {"FogAmount", 35.f}, {"FogStartDistance", 45.f}, {"IndoorFogStartDistance", 65.f}});
   for (const auto* setting : settings) {
     if (setting->label == "Soft Nights") setting->on_change();
   }
@@ -87,9 +89,9 @@ int main(int argc, char** argv) {
   }
   if (witcher::night::camera_strength != 13.f || witcher::night::cutscene_strength != 23.f
       || witcher::night::moon_size != 250.f || witcher::night::sun_size != 150.f
-      || witcher::night::fog_amount != 35.f || witcher::night::interior_fog::amount != 45.f) return 9;
+      || witcher::night::fog_amount != 35.f || witcher::night::fog_start_distance != 45.f || witcher::night::indoor_fog_start_distance != 65.f) return 9;
   OnPresetOff();
-  if (witcher::night::fog_amount != 100.f || witcher::night::interior_fog::amount != 100.f) return 16;
+  if (witcher::night::fog_amount != 100.f || witcher::night::fog_start_distance != 0.f || witcher::night::indoor_fog_start_distance != 0.f) return 16;
   // Off exposes only the fixed reference. Enabled exposes Adaptation, and
   // its two speed sliders appear exclusively for Custom.
   for (float enabled : {0.f, 1.f}) for (float mode : {0.f, 1.f, 2.f}) {

@@ -34,6 +34,7 @@ std::array<unsigned char, 0x590> output;
 std::array<unsigned char, 0x18> input;
 std::array<unsigned char, 0x1550> common_output;
 float sun_exponent = 1024.f;
+std::array<float, 2> native_fog_fade{0.f, 0.05f};
 std::array<unsigned char, 0x430> direct_output;
 std::array<unsigned char, 0x6a0> renderer;
 std::array<unsigned char, 0x10> common_context;
@@ -74,6 +75,7 @@ void NativeCommonBuilder(const void*, void*) {
   // Captured directional fog colors; other native fields are sentinels to
   // detect any edits to density, projection matrices, alpha or other effects.
   common_output.fill(0x5a);
+  std::memcpy(common_output.data() + 0x304, native_fog_fade.data(), sizeof(native_fog_fade));
   std::memcpy(common_output.data() + 0xcc0, &sun_exponent, sizeof(sun_exponent));
   std::memset(common_output.data() + 0xce8, 0, sizeof(uint64_t)); // Native c206.zw clear.
   // Native zeroed c37.w padding; moon transport must preserve every other byte.
@@ -120,6 +122,8 @@ void* NativeSkyBuilder(void* result, const void* source) {
 }  // namespace
 
 int main() {
+  assert(witcher::night::fog_start_distance == 10.f && witcher::night::indoor_fog_start_distance == 40.f);
+  witcher::night::fog_start_distance = witcher::night::indoor_fog_start_distance = 0.f;
   witcher::night::build_environment = NativeBuilder;
   const auto* pointer = environment.data();
   std::memcpy(input.data() + 0x10, &pointer, sizeof(pointer));
@@ -850,10 +854,10 @@ int main() {
   assert(witcher::night::attempted && !witcher::night::installed);
   witcher::night::fog_amount = 100.f;
   witcher::night::attempted = false;
-  witcher::night::interior_fog::amount = 0.f;
+  witcher::night::fog_start_distance = 20.f;
   witcher::night::Update(true);
   assert(witcher::night::attempted && !witcher::night::installed);
-  witcher::night::interior_fog::amount = 100.f;
+  witcher::night::fog_start_distance = 0.f;
   std::printf("Camera lighting: %u gameplay/cutscene isolation and failed-build cases; independent controls and restore checks passed.\n", camera_cases);
   std::printf("Night schedule: %u custom-hour/cross-midnight/invalid/instant-fade cases passed.\n", schedule_cases);
 
@@ -1039,54 +1043,39 @@ int main() {
   witcher::night::Update(false);
   std::puts("All-day fog: density-only edits, clock/master independence, native/Off restoration, support guards and fresh uploads passed.");
   {
-    namespace fog = witcher::night::interior_fog;
-    std::vector<unsigned char> game(0x16100), world(0x240), indoor(0x92460), records(0x15dd0);
-    std::array<unsigned char, 0x630> weather{};
-    std::array<unsigned char, 16> handle{};
-    const auto put = [](unsigned char* output, const auto& value) { std::memcpy(output, &value, sizeof(value)); };
-    const unsigned char* game_pointer = game.data();
-    put(game.data() + 0xf0, handle.data());
-    put(handle.data() + 8, world.data());
-    put(world.data() + 0x228, indoor.data());
-    put(indoor.data() + 0x92270, weather.data());
-    put(indoor.data() + 0x1d2d0, records.data());
-    put(indoor.data() + 0x1d2d8, uint32_t{1});
-    put(indoor.data() + 0x1d39c, uint32_t{1});
-    put(indoor.data() + 0x92260, uint32_t{1});
-    put(indoor.data() + 0x2c040, 1.f);
-    put(records.data() + 0x15da8, 1.f);
-    fog::game_address = &game_pointer;
-    witcher::night::fog_density_supported = true;
     unsigned cases = 0;
-    for (const char* path : {"environment\\definitions\\env_prologue\\env_prolog_colors_v1_b_sunset.env",
-                             "environment\\definitions\\env_novigrad\\env_novigrad_cave.env",
-                             "environment\\definitions\\env_novigrad\\env_novigrad_int.env",
-                             "environment\\definitions\\env_nomansland\\env_nml_global_dark_sunset.env",
-                             "environment\\definitions\\env_novigrad\\env_novigrad_global\\env_novigrad_city.env"}) {
-      put(records.data() + 0x15dac, path);
-      put(records.data() + 0x15db4, uint32_t(std::strlen(path) + 1));
-      const bool known_building = fog::Classify(path) > 0;
-      put(records.data() + 0x15d80, known_building ? reinterpret_cast<const unsigned char*>(1) : nullptr);
-      for (float visibility : {-.16866850852966309f, 0.f, .5f, 1.f, 2.f}) for (float outside : {0.f, .5f, 1.f}) for (float global : {0.f, 50.f, 100.f, 200.f})
-        for (float local : {0.f, 50.f, 100.f, 200.f}) for (bool supported : {false, true})
-          for (bool enabled : {false, true}) {
-            fog::supported = supported;
-            put(indoor.data() + 0x92454, outside);
-            put(weather.data() + 0x5d0, visibility);
-            fog::amount = local;
-            witcher::night::fog_amount = global;
-            fog::Update(false); // Each whole-buffer case checks its settled scene.
+    const float invalid = std::numeric_limits<float>::quiet_NaN();
+    for (const std::array<float, 2> native : {std::array<float, 2>{0.f, 0.05f}, {40.f, 0.01f},
+                                           {-5.f, 1.f}, {invalid, .1f}, {0.f, invalid}, {0.f, 0.f}, {0.f, -1.f}}) {
+      native_fog_fade = native;
+      for (float distance : {0.f, 1.f, 20.f, 100.f, 500.f, 1000.f, -1.f, invalid,
+                             std::numeric_limits<float>::infinity()})
+        for (float intensity : {0.f, 50.f, 100.f, 200.f})
+          for (bool enabled : {false, true}) for (bool supported : {false, true}) {
+            witcher::night::fog_start_distance = distance;
+            witcher::night::fog_amount = intensity;
+            witcher::night::fog_density_supported = true;
+            witcher::night::fog_distance_supported = supported;
             witcher::night::Update(enabled);
             NativeCommonBuilder(nullptr, nullptr);
             auto expected = common_output;
-            const bool building = std::string_view(path).find("cave") == std::string_view::npos;
-            const float gain = enabled ? global / 100.f * (1.f + (local / 100.f - 1.f)
-                                                           * (supported && building ? (1.f - outside) * (known_building ? 1.f : 1.f - std::clamp(visibility, 0.f, 1.f)) : 0.f)) : 1.f;
             for (unsigned offset : {0x2b0u, 0x2c0u}) {
-              float value;
-              std::memcpy(&value, expected.data() + offset, sizeof(value));
-              value *= gain;
-              put(expected.data() + offset, value);
+              float density;
+              std::memcpy(&density, expected.data() + offset, sizeof(density));
+              density *= enabled ? intensity / 100.f : 1.f;
+              std::memcpy(expected.data() + offset, &density, sizeof(density));
+            }
+            if (enabled && supported && std::isfinite(distance) && distance > 0.f
+                && std::isfinite(native[0]) && std::isfinite(native[1]) && native[1] > 0.f) {
+              const float start = std::clamp(distance, 0.f, 500.f);
+              const std::array<float, 2> fade{std::max(native[0], start),
+                                             std::min(native[1], 1.f / std::max(10.f, start))};
+              std::memcpy(expected.data() + 0x304, fade.data(), sizeof(fade));
+              // The native ramp has no opacity jump: zero at its start,
+              // half way at half its width and unity at the end.
+              assert(std::clamp((fade[0] - fade[0]) * fade[1], 0.f, 1.f) == 0.f);
+              assert(std::abs(((fade[0] + 0.5f / fade[1]) - fade[0]) * fade[1] - 0.5f) < 1e-5f);
+              assert(std::abs(((fade[0] + 1.f / fade[1]) - fade[0]) * fade[1] - 1.f) < 1e-5f);
             }
             witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
             assert(expected == common_output);
@@ -1095,12 +1084,43 @@ int main() {
             ++cases;
           }
     }
-    fog::supported = false;
-    fog::game_address = nullptr;
-    fog::amount = witcher::night::fog_amount = 100.f;
+    native_fog_fade = {0.f, 0.05f};
+    witcher::night::fog_start_distance = 0.f;
+    witcher::night::fog_amount = 100.f;
     witcher::night::Update(false);
-    std::printf("Building fog: %u combined-density, indoor-fade, cave exclusion, support/Off and fresh-upload cases passed.\n", cases);
+    std::printf("Fog distance: %u intensity/fade combinations, native/Off, invalid/support guards and isolated fresh uploads passed.\n", cases);
   }
+  // Effective fades interpolate continuously even when an endpoint is native.
+  // Exercise both directions and require all unrelated constant bytes to match.
+  native_fog_fade = {2.f, 0.2f};
+  for (const std::array<unsigned, 2> distances : {std::array<unsigned, 2>{10, 40}, {40, 10}, {0, 40}, {40, 0}, {0, 0}}) {
+    float previous_start = -1.f;
+    for (unsigned blend : {0u, 1u, 16384u, 32768u, 49151u, 65534u, 65535u}) {
+      witcher::night::fog_distance_supported = true;
+      witcher::night::fog_distance_override.store(uint64_t(distances[0] * 100)
+          | (uint64_t(distances[1] * 100) << 16) | (uint64_t(blend) << 32));
+      NativeCommonBuilder(nullptr, nullptr);
+      const auto original = common_output;
+      witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+      float fade[2];
+      std::memcpy(fade, common_output.data() + 0x304, sizeof(fade));
+      const float w = float(blend) / 65535.f;
+      const float outside_start = distances[0] == 0 ? 2.f : float(distances[0]);
+      const float inside_start = distances[1] == 0 ? 2.f : float(distances[1]);
+      const float outside_rate = distances[0] == 0 ? .2f : 1.f / float(distances[0]);
+      const float inside_rate = distances[1] == 0 ? .2f : 1.f / float(distances[1]);
+      assert(std::abs(fade[0] - ((1.f - w) * outside_start + w * inside_start)) < 1e-5f);
+      assert(std::abs(fade[1] - ((1.f - w) * outside_rate + w * inside_rate)) < 1e-6f);
+      if (blend == 1u) assert(std::abs(fade[0] - previous_start) < .001f);
+      if (blend == 65535u) assert(std::abs(fade[0] - previous_start) < .001f);
+      previous_start = fade[0];
+      std::memcpy(common_output.data() + 0x304, original.data() + 0x304, sizeof(fade));
+      assert(common_output == original);
+    }
+  }
+  witcher::night::Update(false);
+  assert(witcher::night::fog_distance_override.load() == 0);
+  std::puts("Indoor/outdoor native-fade endpoint continuity and byte isolation passed.");
   std::printf("Night lighting: %u renderer/water/skylight cases; master toggle, camera independence, restore/rebase checks passed.\n",
               constants_cases);
 }

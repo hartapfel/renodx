@@ -1,102 +1,27 @@
 # Native lighting validation
 
-## All-day fog
+## Global fog and state-dependent distance
 
-The native lighting host checks Fog Amount independently of the night master,
-at four clock values, with native/off/double density and invalid slider inputs.
-Whole-buffer comparisons verify that only geometry/sky density changes and that
-fresh uploads never accumulate scaling. A fog-only change requests hook
-installation. Preset tests cover saved Fog Amount values, Preset Off restoration
-and preservation by Soft Nights. Executable tests reject each changed density
-load/store independently without disabling the other controls.
+Global Fog Intensity changes fresh geometry/sky density. Outdoor and Indoor Fog
+Start Distance default to 10/40 m, with caves following outdoors. Zero preserves
+the native fade for that state. `interior_fog.cpp` restores committed detector
+regressions (balcony, upstairs, quest rooms, weather, caves, profile priority,
+world changes), adds the regional swamp case, and checks smooth response,
+reversals and chatter at 30/60/144 FPS. No spatial fog mask is used.
 
-In the captured PT building, a temporary zero-density fog shader removed the
-indoor blue haze and outdoor distance fog, with no non-finite pixels. The test
-shader was unloaded. The actual Release native hook still needs a restart and
-standalone/HDR coexistence check at 0/50/100/200%, including sky fog, raster/RT,
-day/night and master Off. Authored smoke/cloud effects remain separate.
+`night_lighting.cpp` checks default values, combined intensity/distance settings,
+invalid/support guards, all-day operation, repeated fresh uploads and whole-buffer
+isolation. Native-zero endpoints are checked in both directions for continuity.
+`executable_detection.cpp` rejects altered native fade or detector instructions
+without disabling unrelated controls. Presets save both distances and restore
+native values with Off; old FogStartDistance values remain outdoor settings.
 
-`interior_fog.cpp` checks indoor fading, active/inactive underground profiles,
-ordinary buildings with global weather only, recognized building areas,
-unknown local areas, native cave flags, alternate-world selection and invalid
-or freed pointers. The native lighting host also checks 384 combinations of
-both density multipliers, indoor blending, cave exclusion and Off/support
-restoration against complete freshly built buffers. Interior-only settings
-request hook installation. Preset tests save the building value per profile;
-the optional executable checks independently reject all eighteen reader signatures.
-
-The Novigrad regression covers a recognized Dandelion interior overlapped by
-the regional `env_novigrad_city.env` area. This audited city layer is allowed;
-cave and unknown local contributions remain excluded, and the
-outdoor/doorway blend remains unchanged. The live reader changed from 0 to 1
-in the affected building after this classification fix.
-
-The shared `env_novigrad_int.env` building profile is also recognized alongside
-the city layer. Its live indoor state was fully inside, but the previous reader
-excluded it as unknown. The updated reader enables the override there; tests
-retain doorway blending, underground priority and unknown-local-area exclusion.
-
-Upstairs live inspection found a fully weighted Dandelion room at priority 300
-over a sewer environment at priority 0. The detector now follows the native
-selected-layer order and final layer weights, so the overridden sewer cannot
-veto the room. Tests cover both priority orders, fractional cave blending,
-unknown foreground areas and the shared Novigrad interior. The updated reader
-returns 1 in the affected upstairs room.
-
-Entry and exit use a critically damped response (3.2/s), reaching 95% of an
-abrupt change in about 1.5 seconds. Timing checks at 30/60/144 FPS compare
-both directions with the exact response, including doorway reversals without
-position/velocity jumps, bounded output, long-pause step limits, immediate Off
-restoration and resets across world changes. Runtime doorway/stair comparisons
-require the rebuilt addon.
-Alternating the target every frame checks that boundary chatter does not
-reappear as output flicker. A live 20-second doorway trace captured transient
-0/1 target changes with a constant broad indoor state and environment pointer;
-the proposed damped output remained continuous in the read-only inspection tool.
-
-The Kaer Trolde balcony and its room both reported fully indoors. Native weather
-suppression differs: visibility 1 on the balcony, 0 in the room. The reader
-gates unclassified interior weight with the inverse of that authored factor (weather +0x5d0),
-independently of actual precipitation intensity (+0x5e0). Regression checks
-cover partial suppression, invalid/missing state and density-only uploads.
-This signal does not prove geometric enclosure in every authored environment;
-other buildings still need runtime coverage checks.
-
-In a captured Novigrad storm room, global dark clouds at priority 254 set weather
-visibility to 1 above a fully active local `env_novigrad_int.env` at priority 210.
-Recognized building contribution bypasses that weather gate. Tests cover this
-stack, partial building weights, higher-priority cave exclusion, and full-buffer
-density-only uploads across weather visibility values. The unclassified residual
-still uses weather suppression, preserving the captured balcony behavior.
-
-A second Novigrad room uses the local `env_nml_global_dark_sunset.env` lighting
-area over global sunset weather, with visibility 1. The same area remains active
-outside, but the native outside blend switches from 0 to 1 at the doorway.
-This audited shared profile allows building control through the indoor blend;
-its global use alone does not identify a room. Tests cover the captured inside
-and outside states, partial blends, higher-priority caves and density isolation.
-
-A locked Novigrad quest room reports fully indoors but has no dedicated interior
-profile: dark clouds at priority 254 override city lighting (weight 0.43166414)
-at priority 200 above global sunset. An active local city lighting area now lets
-the native indoor blend cover the unclassified residual, independent of weather
-visibility or city lighting strength. Tests cover that stack, outdoor/partial
-indoor states, inactive/global city records and higher cave/unknown contributions.
-The locked quest prevents an in-game outdoor comparison for this specific room;
-exposed areas that share its indoor volume still need runtime verification.
-
-A captured Dandelion room has native weather visibility -0.1686685 despite
-fully weighted building layers. Finite visibility values now saturate to 0–1
-instead of rejecting the room. Tests cover this layer stack, curve undershoot
-and overshoot, nonfinite rejection, and full-buffer fog density isolation.
-
-Read-only inspection using the shipping reader returned 1 in the PT building
-and 0 in the cave. The basic indoor state alone included both; the cave was
-excluded by its active `env_novigrad_cave.env` profile. A custom cave lacking
-both an underground profile and the native cave flag remains indistinguishable
-from a building with ordinary global weather. After restarting, test Building
-Fog Amount at 0/50/100 in the building, through the doorway fade, outside and
-in a cave. Outdoor fog viewed through windows is intentionally affected.
+After rebuilding, cross a doorway both ways and reverse direction partway.
+Compare outdoor/indoor 10/40 m, 0/40 m and 40/0 m, then equal values and Off.
+Check the swamp building and a cave (outdoor setting), as well as HDR coexistence
+and raster/RT/PT. The native distance control was verified live at 20 m in the
+preceding build; the new state-dependent Release still needs a restarted live
+transition check. Authored particles and non-native fog effects remain separate.
 
 ## Night exposure
 

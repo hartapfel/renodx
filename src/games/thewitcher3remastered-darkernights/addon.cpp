@@ -61,23 +61,34 @@ renodx::utils::settings::Settings settings = {
         .key = "FogAmount",
         .binding = &witcher::night::fog_amount,
         .default_value = 100.f,
-        .label = "Fog Amount",
+        .label = "Global Fog Intensity",
         .section = "Fog",
-        .tooltip = "Atmospheric fog density at all hours. 0% = off, 100% = native. Also affects distance haze; excludes cloud and smoke effects.",
+        .tooltip = "Atmospheric fog everywhere, at all hours. 0% = off, 100% = native. Cloud and smoke effects stay separate.",
         .max = 200.f,
         .format = "%.0f%%",
         .is_enabled = []() { return witcher::night::Supported() && witcher::night::fog_density_supported; },
     },
     new renodx::utils::settings::Setting{
-        .key = "BuildingFogAmount",
-        .binding = &witcher::night::interior_fog::amount,
-        .default_value = 100.f,
-        .label = "Building Fog Amount",
+        .key = "FogStartDistance",
+        .binding = &witcher::night::fog_start_distance,
+        .default_value = 10.f,
+        .label = "Outdoor Fog Start Distance",
         .section = "Fog",
-        .tooltip = "Fog density in sheltered buildings at all hours. 0% = off, 100% = unchanged. Fades on entry/exit and also affects the view outside. Preserves exposed areas and underground profiles.",
-        .max = 200.f,
-        .format = "%.0f%%",
-        .is_enabled = []() { return witcher::night::Supported() && witcher::night::fog_density_supported && witcher::night::interior_fog::supported; },
+        .tooltip = "Fog fade-in distance outdoors and in caves, at all hours. 0 m = native.",
+        .max = 500.f,
+        .format = "%.0f m",
+        .is_enabled = []() { return witcher::night::Supported() && witcher::night::fog_distance_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "IndoorFogStartDistance",
+        .binding = &witcher::night::indoor_fog_start_distance,
+        .default_value = 40.f,
+        .label = "Indoor Fog Start Distance",
+        .section = "Fog",
+        .tooltip = "Fog fade-in distance in buildings. Blends smoothly when entering or leaving. 0 m = native.",
+        .max = 500.f,
+        .format = "%.0f m",
+        .is_enabled = []() { return witcher::night::Supported() && witcher::night::fog_distance_supported && witcher::night::interior_fog::supported; },
     },
     new renodx::utils::settings::Setting{
         .key = "NightLightingEnabled",
@@ -550,7 +561,8 @@ void OnPresetOff() {
       {"MoonSize", 100.f},
       {"SunSize", 100.f},
       {"FogAmount", 100.f},
-      {"BuildingFogAmount", 100.f},
+      {"FogStartDistance", 0.f},
+      {"IndoorFogStartDistance", 0.f},
       {"NightSaturation", 100.f},
   });
   witcher::night::vegetation::delta.store(0.f, std::memory_order_relaxed);
@@ -577,10 +589,13 @@ void OnPresent(reshade::api::command_queue*, reshade::api::swapchain*, const res
     }
     if (witcher::night::installed) {
       reshade::log::message(witcher::night::interior_fog::supported ? reshade::log::level::info : reshade::log::level::warning,
-                           witcher::night::interior_fog::supported ? "[RenoDX Witcher Lighting] Building fog classification available; underground profiles and unknown local areas preserve native fog."
-                                                                 : "[RenoDX Witcher Lighting] Building fog classification unavailable; interior fog preserved.");
+                           witcher::night::interior_fog::supported ? "[RenoDX Witcher Lighting] Building fog distance detection available; caves use outdoor distance."
+                                                                 : "[RenoDX Witcher Lighting] Building detection unavailable; outdoor fog distance used everywhere.");
+      reshade::log::message(witcher::night::fog_distance_supported ? reshade::log::level::info : reshade::log::level::warning,
+                           witcher::night::fog_distance_supported ? "[RenoDX Witcher Lighting] Native fog distance control available."
+                                                                  : "[RenoDX Witcher Lighting] Fog distance control unavailable; native fade preserved.");
       reshade::log::message(witcher::night::fog_density_supported ? reshade::log::level::info : reshade::log::level::warning,
-                           witcher::night::fog_density_supported ? "[RenoDX Witcher Lighting] All-day atmospheric fog density control available."
+                           witcher::night::fog_density_supported ? "[RenoDX Witcher Lighting] All-day outdoor fog density control available."
                                                                 : "[RenoDX Witcher Lighting] Fog density control unavailable; native fog preserved.");
       reshade::log::message(witcher::night::normalization::supported ? reshade::log::level::info : reshade::log::level::warning,
                            witcher::night::normalization::supported ? "[RenoDX Witcher Lighting] Regional night normalization available."

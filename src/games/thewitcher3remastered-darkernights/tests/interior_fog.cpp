@@ -255,6 +255,122 @@ int main() {
     ++cases;
   }
   profile(0, building, 1.f);
+  // Regional swamp + dark-sunset room: the regional area must not veto
+  // camera enclosure, and must still permit a higher-priority cave exclusion.
+  constexpr char swamp[] = "environment\\definitions\\env_nomansland\\nml_global\\env_nml_swamps_v1_a_ps4_flat24.env";
+  put(environment.data() + 0x1d2d8, uint32_t{3});
+  profile(0, swamp, 1.f);
+  profile(1, "environment\\definitions\\env_nomansland\\env_nml_global_dark_sunset.env", 1.f);
+  profile(2, cave, 0.f);
+  for (unsigned index : {0u, 1u}) put(records.data() + index * 0x15dd0 + 0x15d80, reinterpret_cast<const unsigned char*>(1));
+  select({2, 0, 1});
+  put(weather.data() + 0x5d0, 1.f);
+  for (float outside : {0.f, .5f, 1.f}) {
+    put(environment.data() + 0x92454, outside);
+    assert(fog::BuildingWeight() == 1.f - outside);
+    ++cases;
+  }
+  put(environment.data() + 0x92454, 0.f);
+  profile(2, cave, 1.f);
+  assert(fog::BuildingWeight() == 0.f);
+  // Captured q106 tower: an explicit room at priority 1024 overrides island
+  // mist at 999 and shared dark-sunset lighting at 100. The mist must remain
+  // outdoor when the room layer is absent, even inside a broad indoor volume.
+  constexpr char tower[] = "quests\\part_2\\quest_files\\q106_tower\\entities\\q106_temp_island_env_int.env";
+  profile(0, tower, 1.f);
+  profile(1, "quests\\part_2\\quest_files\\q106_tower\\entities\\env_mist_q106.env", 1.f);
+  profile(2, "environment\\definitions\\env_nomansland\\env_nml_global_dark_sunset.env", 1.f);
+  put(records.data() + 2 * 0x15dd0 + 0x15d80, reinterpret_cast<const unsigned char*>(1));
+  select({0, 1, 2});
+  for (float outside : {0.f, .5f, 1.f}) {
+    put(environment.data() + 0x92454, outside);
+    assert(fog::BuildingWeight() == 1.f - outside);
+    ++cases;
+  }
+  put(environment.data() + 0x92454, 0.f);
+  for (float weight : {0.f, .25f, .5f, 1.f}) {
+    profile(0, tower, weight);
+    assert(fog::BuildingWeight() == weight);
+    ++cases;
+  }
+  environment[0x92448] = 1;
+  assert(fog::BuildingWeight() == 0.f);
+  environment[0x92448] = 0;
+  profile(2, cave, 1.f);
+  select({2, 0, 1});
+  assert(fog::BuildingWeight() == 0.f);
+  cases += 2;
+  put(environment.data() + 0x1d2d8, uint32_t{1});
+  put(records.data() + 0x15d80, static_cast<const unsigned char*>(nullptr));
+  profile(0, building, 1.f);
+  select({0});
+  put(weather.data() + 0x5d0, 0.f);
+  // Asset-audited room variants must work even when storm weather reports
+  // full visibility. Native outdoor/cave states always retain outdoor distance.
+  for (const char* name : {
+           "environment\\definitions\\env_nomansland\\env_nml_global_dark_sunset_interior.env",
+           "environment\\definitions\\env_novigrad\\env_interior.env",
+           "environment\\definitions\\novigrad\\env_global_clear_interior.env",
+           "environment\\definitions\\env_prologue\\env_prolog_colors_interior.env",
+           "environment\\definitions\\env_prologue\\env_prolog_global\\env_prolog_global_raw_v1_a_interior.env",
+           "environment\\definitions\\env_prologue\\env_prolog_global\\env_prolog_global_raw_v2_a_interior.env",
+           "environment\\definitions\\kaer_morhen\\kaer_morhen_global\\env_kaer_morhen_v09_hdr_int.env",
+           "environment\\definitions\\kaer_morhen\\kaer_morhen_global\\env_kaer_morhen_v09_int.env",
+           "dlc\\ep1\\data\\environment\\definitions\\in_progress\\q604\\q604_blizzard_interior.env",
+           "dlc\\ep1\\data\\environment\\definitions\\in_progress\\q604\\q604_blizzard_interior_cs.env",
+           "dlc\\ep1\\data\\environment\\definitions\\in_progress\\q604\\q604_creepy_interior.env",
+           "dlc\\ep1\\data\\environment\\definitions\\in_progress\\q604\\q604_painting_interior.env",
+           "dlc\\ep1\\data\\environment\\definitions\\in_progress\\q604\\q604_painting_interior_cs.env",
+           "environment\\definitions\\cutscenes_definition\\envs_for_cutscenes\\q106_temp_island_env_int_cs.env",
+           tower,
+       }) {
+    profile(0, name, 1.f);
+    put(records.data() + 0x15d80, reinterpret_cast<const unsigned char*>(1));
+    for (float visibility : {0.f, .5f, 1.f}) {
+      put(weather.data() + 0x5d0, visibility);
+      for (float outside : {0.f, .25f, .5f, 1.f}) {
+        put(environment.data() + 0x92454, outside);
+        assert(fog::BuildingWeight() == 1.f - outside);
+        environment[0x92448] = 1;
+        assert(fog::BuildingWeight() == 0.f);
+        environment[0x92448] = 0;
+        cases += 2;
+      }
+    }
+    put(environment.data() + 0x92454, 0.f);
+    put(records.data() + 0x15d80, static_cast<const unsigned char*>(nullptr));
+    assert(fog::BuildingWeight() == 0.f); // A global/cutscene profile alone is not a room volume.
+    ++cases;
+  }
+  for (const char* name : {
+           "environment\\definitions\\wyzima\\global\\wip\\env_outdoor_wyzima_01.env",
+           "environment\\definitions\\wyzima\\global\\wip\\env_outdoor_wyzima_02.env",
+           "dlc\\bob\\data\\environment\\definitions\\sunny\\dof_interior.env",
+           "dlc\\bob\\data\\environment\\definitions\\quests\\q704\\temp\\q704_detlaff_arena_prod_room.env",
+           "quests\\part_2\\quest_files\\q106_tower\\entities\\env_mist_q106.env",
+           "quests\\part_2\\quest_files\\q106_tower\\entities\\q106_temp_island_env.env",
+       }) {
+    profile(0, name, 1.f);
+    put(records.data() + 0x15d80, reinterpret_cast<const unsigned char*>(1));
+    put(weather.data() + 0x5d0, 0.f);
+    assert(fog::BuildingWeight() == 0.f); // Enclosure alone cannot reclassify a protected local atmosphere.
+    ++cases;
+  }
+  for (const char* name : {
+           "environment\\definitions\\env_nomansland\\salt_mines\\wip\\env_nml_salt_mines_main_chamber.env",
+           "environment\\definitions\\camera_lights_set_up\\env_salt_mine.env",
+           "environment\\definitions\\skellige\\env_abandoned_mine.env",
+       }) {
+    profile(0, name, 1.f);
+    for (const unsigned char* area : {static_cast<const unsigned char*>(nullptr), reinterpret_cast<const unsigned char*>(1)}) {
+      put(records.data() + 0x15d80, area);
+      assert(fog::BuildingWeight() == 0.f); // Also preserve scripted/global mine atmosphere with no cave flag.
+      ++cases;
+    }
+  }
+  put(records.data() + 0x15d80, static_cast<const unsigned char*>(nullptr));
+  profile(0, building, 1.f);
+  put(weather.data() + 0x5d0, 0.f);
   // Timed fades use wall time, independent of presentation rate. Both
   // directions follow the same damped response across presentation rates.
   for (unsigned fps : {30u, 60u, 144u}) {

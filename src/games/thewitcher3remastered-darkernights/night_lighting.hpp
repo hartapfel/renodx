@@ -37,6 +37,12 @@ inline float fog_strength = 50.f;
 inline float fog_amount = 100.f;
 inline std::atomic<float> fog_density_multiplier = 1.f;
 inline bool fog_density_supported = false;
+inline float fog_start_distance = 10.f;
+inline float indoor_fog_start_distance = 40.f;
+// Centimetres outdoors/indoors and a UNORM16 building blend in one publication.
+// Renderer workers cannot observe settings from different Present updates.
+inline std::atomic<uint64_t> fog_distance_override = 0;
+inline bool fog_distance_supported = false;
 inline float haze_strength = 50.f;
 inline float visible_sky_strength = 50.f;
 inline float moon_strength = 50.f;
@@ -216,8 +222,7 @@ inline void CommonConstantsHook(const void* context, void* output) {
   // injection and native impacts do not retain a stale PT-frame night weight.
   night_weight.store(weight, std::memory_order_relaxed);
   auto* constants = static_cast<unsigned char*>(output);
-  // Native AllowFog gates these density coefficients before every consumer.
-  // Scale fresh values at all hours, leaving colours and vertical shape native.
+  // Native AllowFog still gates the fresh geometry/sky density.
   const float fog_density = fog_density_multiplier.load(std::memory_order_relaxed);
   if (fog_density_supported && fog_density != 1.f) {
     for (unsigned offset : {0x2b0u, 0x2c0u}) {
@@ -226,6 +231,24 @@ inline void CommonConstantsHook(const void* context, void* output) {
       if (!std::isfinite(value) || value < 0.f) continue;
       value *= fog_density;
       if (std::isfinite(value)) std::memcpy(constants + offset, &value, sizeof(value));
+    }
+  }
+  // Native distance fade: saturate((ray_distance - c48.y) * c48.z).
+  // Blend the effective native fades, not just the slider values: a zero
+  // endpoint must approach the native fade continuously rather than snap back.
+  const uint64_t fog_distance = fog_distance_override.load(std::memory_order_relaxed);
+  if (fog_distance_supported && fog_distance != 0) {
+    float fade[2];
+    std::memcpy(fade, constants + 0x304, sizeof(fade));
+    if (std::isfinite(fade[0]) && std::isfinite(fade[1]) && fade[1] > 0.f) {
+      const float outdoor = float(fog_distance & 0xffffu) / 100.f;
+      const float indoor = float((fog_distance >> 16) & 0xffffu) / 100.f;
+      const float weight = float((fog_distance >> 32) & 0xffffu) / 65535.f;
+      fade[0] = std::lerp(outdoor > 0.f ? (std::max)(fade[0], outdoor) : fade[0],
+                          indoor > 0.f ? (std::max)(fade[0], indoor) : fade[0], weight);
+      fade[1] = std::lerp(outdoor > 0.f ? (std::min)(fade[1], 1.f / (std::max)(10.f, outdoor)) : fade[1],
+                          indoor > 0.f ? (std::min)(fade[1], 1.f / (std::max)(10.f, indoor)) : fade[1], weight);
+      std::memcpy(constants + 0x304, fade, sizeof(fade));
     }
   }
   const auto calibration = normalization::GetCalibration();
@@ -522,6 +545,17 @@ inline bool ValidateImage(const unsigned char* image) {
         && !std::memcmp(image + layout.common + 0xb5f, density_store, sizeof(density_store))
         && !std::memcmp(image + layout.common + 0xbe1, sky_density_read, sizeof(sky_density_read))
         && !std::memcmp(image + layout.common + 0xc1d, sky_density_store, sizeof(sky_density_store));
+    // c48.y is the authored start distance, c48.z the reciprocal fade width.
+    constexpr unsigned char fog_width_read[] = {0xc5,0xfa,0x10,0x8b,0x6c,0x34,0x00,0x00};
+    constexpr unsigned char fog_start_read[] = {0xc5,0xfa,0x10,0x8b,0x4c,0x34,0x00,0x00};
+    constexpr unsigned char fog_width_reciprocal[] = {0xc5,0x8a,0x5e,0xd0};
+    constexpr unsigned char fog_start_store[] = {0xc4,0xc1,0x7a,0x11,0x8f,0x04,0x03,0x00,0x00};
+    constexpr unsigned char fog_width_store[] = {0xc4,0xc1,0x7a,0x11,0x97,0x08,0x03,0x00,0x00};
+    fog_distance_supported = !std::memcmp(image + layout.common + 0xd5a, fog_width_read, sizeof(fog_width_read))
+        && !std::memcmp(image + layout.common + 0xd6a, fog_start_read, sizeof(fog_start_read))
+        && !std::memcmp(image + layout.common + 0xd72, fog_width_reciprocal, sizeof(fog_width_reciprocal))
+        && !std::memcmp(image + layout.common + 0xd8c, fog_start_store, sizeof(fog_start_store))
+        && !std::memcmp(image + layout.common + 0xd95, fog_width_store, sizeof(fog_width_store));
     // Decode the existing per-view builder call, rather than guessing an RVA
     // for older executables. A changed sky builder leaves core controls usable.
     water_sky_supported = false;
@@ -706,7 +740,8 @@ inline void Update(bool enabled) {
       && (!enabled || moon_size == 100.f)
       && (!enabled || sun_size == 100.f)
       && (!enabled || !std::isfinite(fog_amount) || fog_amount == 100.f)
-      && (!enabled || !std::isfinite(interior_fog::amount) || interior_fog::amount == 100.f)
+      && (!enabled || !std::isfinite(fog_start_distance) || fog_start_distance <= 0.f)
+      && (!enabled || !std::isfinite(indoor_fog_start_distance) || indoor_fog_start_distance <= 0.f)
       && (exposure::fixed_reference.load(std::memory_order_relaxed) == 0.f
           && exposure::brightening_scale.load(std::memory_order_relaxed) == 1.f
           && exposure::darkening_scale.load(std::memory_order_relaxed) == 1.f
@@ -716,14 +751,20 @@ inline void Update(bool enabled) {
                             && grading::chroma.load(std::memory_order_relaxed) == 1.f
                             && grading::saturation_strength == 100.f))) return;
   if (!Install()) return;
-  float fog_density = enabled && fog_density_supported && std::isfinite(fog_amount)
-                          ? std::clamp(fog_amount / 100.f, 0.f, 2.f) : 1.f;
-  const float building_weight = interior_fog::Update(enabled && fog_density_supported
-      && std::isfinite(interior_fog::amount) && interior_fog::amount != 100.f);
-  if (building_weight != 0.f) {
-    fog_density *= 1.f + (std::clamp(interior_fog::amount / 100.f, 0.f, 2.f) - 1.f) * building_weight;
-  }
-  fog_density_multiplier.store(fog_density, std::memory_order_relaxed);
+  fog_density_multiplier.store(enabled && fog_density_supported && std::isfinite(fog_amount)
+                                   ? std::clamp(fog_amount / 100.f, 0.f, 2.f) : 1.f,
+                               std::memory_order_relaxed);
+  const float outdoor_distance = enabled && fog_distance_supported && std::isfinite(fog_start_distance)
+                                     ? std::clamp(fog_start_distance, 0.f, 500.f) : 0.f;
+  const float indoor_distance = enabled && fog_distance_supported && std::isfinite(indoor_fog_start_distance)
+                                    ? std::clamp(indoor_fog_start_distance, 0.f, 500.f) : 0.f;
+  const float building_weight = interior_fog::Update(enabled && fog_distance_supported
+                                                     && outdoor_distance != indoor_distance);
+  fog_distance_override.store(outdoor_distance == 0.f && indoor_distance == 0.f ? 0
+      : static_cast<uint64_t>(std::round(outdoor_distance * 100.f))
+          | (static_cast<uint64_t>(std::round(indoor_distance * 100.f)) << 16)
+          | (static_cast<uint64_t>(std::round(building_weight * 65535.f)) << 32),
+      std::memory_order_relaxed);
   normalization::Update(night_enabled);
   moon_multiplier.store(enabled && moon_supported && std::isfinite(moon_size)
                             ? std::clamp(moon_size / 100.f, 0.01f, 5.f) : 1.f,
