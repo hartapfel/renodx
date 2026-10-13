@@ -1059,9 +1059,14 @@ int main() {
     witcher::night::fog_density_supported = true;
     unsigned cases = 0;
     for (const char* path : {"environment\\definitions\\env_prologue\\env_prolog_colors_v1_b_sunset.env",
-                             "environment\\definitions\\env_novigrad\\env_novigrad_cave.env"}) {
+                             "environment\\definitions\\env_novigrad\\env_novigrad_cave.env",
+                             "environment\\definitions\\env_novigrad\\env_novigrad_int.env",
+                             "environment\\definitions\\env_nomansland\\env_nml_global_dark_sunset.env",
+                             "environment\\definitions\\env_novigrad\\env_novigrad_global\\env_novigrad_city.env"}) {
       put(records.data() + 0x15dac, path);
       put(records.data() + 0x15db4, uint32_t(std::strlen(path) + 1));
+      const bool known_building = fog::Classify(path) > 0;
+      put(records.data() + 0x15d80, known_building ? reinterpret_cast<const unsigned char*>(1) : nullptr);
       for (float visibility : {-.16866850852966309f, 0.f, .5f, 1.f, 2.f}) for (float outside : {0.f, .5f, 1.f}) for (float global : {0.f, 50.f, 100.f, 200.f})
         for (float local : {0.f, 50.f, 100.f, 200.f}) for (bool supported : {false, true})
           for (bool enabled : {false, true}) {
@@ -1076,7 +1081,7 @@ int main() {
             auto expected = common_output;
             const bool building = std::string_view(path).find("cave") == std::string_view::npos;
             const float gain = enabled ? global / 100.f * (1.f + (local / 100.f - 1.f)
-                                                           * (supported && building ? (1.f - outside) * (1.f - std::clamp(visibility, 0.f, 1.f)) : 0.f)) : 1.f;
+                                                           * (supported && building ? (1.f - outside) * (known_building ? 1.f : 1.f - std::clamp(visibility, 0.f, 1.f)) : 0.f)) : 1.f;
             for (unsigned offset : {0x2b0u, 0x2c0u}) {
               float value;
               std::memcpy(&value, expected.data() + offset, sizeof(value));

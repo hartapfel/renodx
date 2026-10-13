@@ -39,8 +39,13 @@ inline int Classify(std::string_view path) {
                                "\\env_winter_epilog_white_grass_hendriks_house.env"}) {
     if (path.ends_with(name)) return 1;
   }
-  // Captured over the Dandelion interior: an ordinary city-wide environment,
-  // not a separate interior atmosphere. The indoor blend still gates the fog.
+  // Captured over an enclosed Novigrad room and the street outside it. This
+  // shared lighting area is not an underground atmosphere; allow the building
+  // override only through the native indoor blend, never from this name alone.
+  if (path == "environment\\definitions\\env_nomansland\\env_nml_global_dark_sunset.env") return 1;
+  // Captured over Dandelion and a quest room with no dedicated interior layer.
+  // This city-wide lighting area does not identify a separate atmosphere;
+  // allow native indoor detection rather than its storm-overridden rain curve.
   if (path == "environment\\definitions\\env_novigrad\\env_novigrad_global\\env_novigrad_city.env") return 2;
   return 0;
 }
@@ -56,9 +61,9 @@ inline float BuildingWeight(const unsigned char** active_environment = nullptr) 
   float outside;
   std::memcpy(&outside, state.data() + 0x54, sizeof(outside));
   if (!std::isfinite(outside) || outside < 0.f || outside >= 1.f) return 0.f;
-  // The broad indoor volume can include exposed balconies. The native weather
-  // suppression multiplier distinguishes this castle's sheltered room (0)
-  // from its balcony (1), independently of actual rain/weather intensity.
+  // The broad indoor volume can include exposed balconies. Use native weather
+  // suppression for unclassified interiors only: higher-priority storm layers
+  // can override this signal even when a known building profile is active.
   const unsigned char* weather = nullptr;
   float weather_visibility;
   if (!normalization::Read(environment + 0x92270, &weather) || !weather
@@ -79,7 +84,7 @@ inline float BuildingWeight(const unsigned char** active_environment = nullptr) 
       || !normalization::Read(environment + 0x92260, &layers) || layers != count
       || !normalization::Read(environment + 0x1d2dc, &order)) return 0.f;
   float remaining = 1.f, building = 0.f;
-  bool active = false;
+  bool active = false, city_area = false;
   int32_t previous_priority = INT32_MAX;
   for (unsigned i = 0; i < count && remaining > 0.f; ++i) {
     int32_t priority;
@@ -106,12 +111,18 @@ inline float BuildingWeight(const unsigned char** active_environment = nullptr) 
     const unsigned char* area = nullptr;
     std::memcpy(&area, record.data(), sizeof(area));
     active = true;
-    // Ordinary weather/regional layers do not identify the kind of interior.
-    if (type == 2 || (!area && type >= 0)) continue;
+    // The audited city area can cover ordinary rooms without a dedicated
+    // interior profile. Its lighting blend is not a building coverage weight.
+    if (type == 2) {
+      city_area |= area != nullptr;
+      continue;
+    }
+    // Ordinary global weather layers do not identify the kind of interior.
+    if (!area && type >= 0) continue;
     if (type == 1) building += remaining * weight;
     remaining *= 1.f - weight;
   }
-  return active ? (building + remaining) * (1.f - outside) * (1.f - weather_visibility) : 0.f;
+  return active ? (building + remaining * (city_area ? 1.f : 1.f - weather_visibility)) * (1.f - outside) : 0.f;
 }
 
 // Critically damp both directions: about 1.5 seconds to complete 95% of an

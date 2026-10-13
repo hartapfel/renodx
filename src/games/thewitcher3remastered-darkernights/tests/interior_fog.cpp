@@ -108,6 +108,33 @@ int main() {
   // Dandelion's named profile. Keep the same city overlap and cave guards.
   profile(2, "environment\\definitions\\env_novigrad\\env_novigrad_int.env", 1.f);
   assert(fog::BuildingWeight() == 1.f);
+  // Captured storm room: global dark clouds override the weather visibility
+  // curve at priority 254, above the local interior at 210 and city at 200.
+  // Explicit building contribution must survive that unrelated weather layer.
+  profile(3, "environment\\definitions\\env_novigrad\\env_novigrad_dark_clouds.env", 1.f);
+  select({3, 2, 1, 0});
+  for (float visibility : {0.f, .5f, 1.f, 2.f}) {
+    put(weather.data() + 0x5d0, visibility);
+    assert(fog::BuildingWeight() == 1.f);
+    ++cases;
+  }
+  profile(2, "environment\\definitions\\env_novigrad\\env_novigrad_int.env", .25f);
+  put(weather.data() + 0x5d0, 1.f);
+  assert(fog::BuildingWeight() == 1.f); // City fallback covers the ordinary residual room.
+  put(records.data() + 0x15dd0 + 0x15d80, static_cast<const unsigned char*>(nullptr));
+  assert(fog::BuildingWeight() == .25f); // Only the known building fraction overrides weather.
+  put(weather.data() + 0x5d0, 0.f);
+  assert(fog::BuildingWeight() == 1.f); // Sheltered residual remains covered.
+  put(records.data() + 0x15dd0 + 0x15d80, reinterpret_cast<const unsigned char*>(1));
+  profile(2, "environment\\definitions\\env_novigrad\\env_novigrad_int.env", 1.f);
+  profile(3, cave, .25f);
+  put(weather.data() + 0x5d0, 1.f);
+  assert(fog::BuildingWeight() == .75f); // Higher-priority cave atmosphere still wins its fraction.
+  profile(3, cave, 1.f);
+  assert(fog::BuildingWeight() == 0.f);
+  profile(3, cave, 0.f);
+  put(weather.data() + 0x5d0, 0.f);
+  cases += 5;
   put(environment.data() + 0x92454, .25f);
   assert(fog::BuildingWeight() == .75f);
   put(environment.data() + 0x92454, 1.f);
@@ -126,11 +153,67 @@ int main() {
   select({1, 2, 3, 0});
   assert(fog::BuildingWeight() == 0.f); // Unidentified local profiles remain protected.
   cases += 8;
+  // Captured locked quest room: storm weight 1 above city lighting .43166414
+  // and global sunset, without a dedicated interior profile. The city area's
+  // lighting blend must not attenuate building coverage from the indoor state.
+  profile(0, generic, 1.f);
+  profile(1, city, .43166414f);
+  profile(2, "environment\\definitions\\env_novigrad\\env_novigrad_dark_clouds.env", 1.f);
+  profile(3, cave, 0.f);
+  put(records.data() + 2 * 0x15dd0 + 0x15d80, static_cast<const unsigned char*>(nullptr));
+  select({2, 1, 0, 3});
+  put(weather.data() + 0x5d0, 1.f);
+  for (float outside : {0.f, .25f, .5f, 1.f}) {
+    put(environment.data() + 0x92454, outside);
+    assert(fog::BuildingWeight() == 1.f - outside);
+    ++cases;
+  }
+  put(environment.data() + 0x92454, 0.f);
+  profile(3, cave, .25f);
+  select({3, 2, 1, 0});
+  assert(fog::BuildingWeight() == .75f);
+  profile(3, cave, 1.f);
+  assert(fog::BuildingWeight() == 0.f);
+  profile(3, generic, .5f);
+  put(records.data() + 3 * 0x15dd0 + 0x15d80, reinterpret_cast<const unsigned char*>(1));
+  assert(fog::BuildingWeight() == .5f); // Unknown local atmosphere keeps its effective contribution.
+  profile(3, cave, 0.f);
+  put(records.data() + 3 * 0x15dd0 + 0x15d80, static_cast<const unsigned char*>(nullptr));
+  profile(1, city, 0.f);
+  assert(fog::BuildingWeight() == 0.f); // Inactive regional records cannot identify a room.
+  profile(1, city, .43166414f);
+  put(records.data() + 0x15dd0 + 0x15d80, static_cast<const unsigned char*>(nullptr));
+  assert(fog::BuildingWeight() == 0.f); // Global city use alone keeps the weather fallback.
+  put(weather.data() + 0x5d0, 0.f);
+  cases += 5;
   for (unsigned i : {1u, 2u}) put(records.data() + i * 0x15dd0 + 0x15d80, static_cast<const unsigned char*>(nullptr));
   put(environment.data() + 0x1d2d8, uint32_t{2});
   profile(0, building, 1.f);
   profile(1, generic, 1.f);
   select({0, 1});
+  // Second captured Novigrad room: only a local shared dark-sunset area over
+  // global weather, visibility 1 both inside and outside. Native indoor blend
+  // is 1 in the room and 0 on the street; the profile itself spans both.
+  profile(0, "environment\\definitions\\env_nomansland\\env_nml_global_dark_sunset.env", 1.f);
+  put(records.data() + 0x15d80, reinterpret_cast<const unsigned char*>(1));
+  put(weather.data() + 0x5d0, 1.f);
+  for (float outside : {0.f, .25f, .5f, 1.f}) {
+    put(environment.data() + 0x92454, outside);
+    assert(fog::BuildingWeight() == 1.f - outside);
+    ++cases;
+  }
+  put(environment.data() + 0x92454, 0.f);
+  profile(1, cave, 1.f);
+  select({1, 0});
+  assert(fog::BuildingWeight() == 0.f); // A shared lighting area cannot override a higher cave layer.
+  ++cases;
+  select({0, 1});
+  profile(1, generic, 1.f);
+  put(records.data() + 0x15d80, static_cast<const unsigned char*>(nullptr));
+  assert(fog::BuildingWeight() == 0.f); // Global use alone does not prove a room.
+  ++cases;
+  profile(0, building, 1.f);
+  put(weather.data() + 0x5d0, 0.f);
   for (std::string_view name : {cave, "environment\\definitions\\env_skellige\\interiors\\cave\\env_cave_fog_in_v1.env",
                                "environment\\definitions\\env_novigrad\\novigrad_sewers\\novigrad_sewers_03.env",
                                "dlc\\bob\\data\\environment\\definitions\\cave\\cave_catacombs.env",

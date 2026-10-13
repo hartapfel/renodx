@@ -56,11 +56,34 @@ the proposed damped output remained continuous in the read-only inspection tool.
 
 The Kaer Trolde balcony and its room both reported fully indoors. Native weather
 suppression differs: visibility 1 on the balcony, 0 in the room. The reader
-now gates its weight with the inverse of that authored factor (weather +0x5d0),
+gates unclassified interior weight with the inverse of that authored factor (weather +0x5d0),
 independently of actual precipitation intensity (+0x5e0). Regression checks
 cover partial suppression, invalid/missing state and density-only uploads.
 This signal does not prove geometric enclosure in every authored environment;
 other buildings still need runtime coverage checks.
+
+In a captured Novigrad storm room, global dark clouds at priority 254 set weather
+visibility to 1 above a fully active local `env_novigrad_int.env` at priority 210.
+Recognized building contribution bypasses that weather gate. Tests cover this
+stack, partial building weights, higher-priority cave exclusion, and full-buffer
+density-only uploads across weather visibility values. The unclassified residual
+still uses weather suppression, preserving the captured balcony behavior.
+
+A second Novigrad room uses the local `env_nml_global_dark_sunset.env` lighting
+area over global sunset weather, with visibility 1. The same area remains active
+outside, but the native outside blend switches from 0 to 1 at the doorway.
+This audited shared profile allows building control through the indoor blend;
+its global use alone does not identify a room. Tests cover the captured inside
+and outside states, partial blends, higher-priority caves and density isolation.
+
+A locked Novigrad quest room reports fully indoors but has no dedicated interior
+profile: dark clouds at priority 254 override city lighting (weight 0.43166414)
+at priority 200 above global sunset. An active local city lighting area now lets
+the native indoor blend cover the unclassified residual, independent of weather
+visibility or city lighting strength. Tests cover that stack, outdoor/partial
+indoor states, inactive/global city records and higher cave/unknown contributions.
+The locked quest prevents an in-game outdoor comparison for this specific room;
+exposed areas that share its indoor volume still need runtime verification.
 
 A captured Dandelion room has native weather visibility -0.1686685 despite
 fully weighted building layers. Finite visibility values now saturate to 0–1
@@ -239,20 +262,24 @@ and HDR settings bindings, but do not execute the live GPU callback path.
 
 `vegetation_routing.cpp` compiles the standalone's actual registration code
 into the mock host, then runs the installed HDR DLL's create/init/destroy
-pipeline callbacks against the six original post-grade CSOs. All six routes
-remain observation-only alone and in both addon load orders. The installed
-HDR v0.2026.1003.311 substitutes four of them, and v0.2026.1006.1950 substitutes
-six including Toussaint's `0x2BF760E2`; their bytecode hashes match the ten
-compatibility aliases. The user confirmed the older rebuilt combination works
-in game. DevKit identified the
-updated active grading pass as `0xE22E8A08`, writing gamma-2.2 scene RGB into
-RGBA16F. Toussaint uses `0xFF89140C` with the same output domain and format.
-Original dumps remain outside `src/games/`.
+pipeline callbacks against all seven original post-grade CSOs. It verifies
+observation-only routing alone and in both addon load orders, including the
+new current HDR replacements. Pipeline destruction clears the observation
+cache; device/addon teardown remains isolated and clean.
 
-Validated the updated DLL's actual create-time substitutions in both load
-orders and the standalone's six native routes (18 cases). Each route retains
-the grading shader and uses observation only, with clean device teardown.
-These CPU checks do not establish rendered output after restarting the game.
+Its `--interfaces <directory>` mode checks the DXIL matcher against captured
+native shaders and CSOs extracted from the two HDR addon fixtures. The native
+corpus has 1,468 shaders, of which only the seven audited grading passes match.
+The two HDR builds contain 51 distinct shaders, with exactly seven grading
+replacements accepted per build. Other effects, truncated containers and
+invalid part offsets are rejected. Changing a replacement's container identity
+keeps the interface match despite its changed CRC32. These fixture hashes are
+used only by tests; production recognition has no HDR-release hash list.
+
+The current Photo Mode output `0x3D87EF7F` was inspected with DevKit and writes
+the expected RGBA16F scene target. After rebuilding, compare saturation 100/0
+in gameplay and Photo Mode with both addons enabled, and verify the UI remains
+unchanged. CPU routing checks do not establish rendered output after restart.
 
 `preset_persistence.cpp` uses the same host and addon source. It checks startup
 restoration of the independent all-day exposure toggle and its preset reset,
@@ -272,6 +299,8 @@ clang-cl @testOptions src/games/thewitcher3remastered-darkernights/tests/vegetat
 ./tmp/vegetation-routing.exe path/to/originals path/to/hdr.addon64 lighting-first
 ./tmp/vegetation-routing.exe path/to/originals path/to/hdr.addon64 hdr-first
 ./tmp/vegetation-routing.exe path/to/originals none lighting-first
+./tmp/vegetation-routing.exe --interfaces path/to/native-shader-corpus
+./tmp/vegetation-routing.exe --interfaces path/to/extracted-hdr-fixtures
 clang-cl @testOptions src/games/thewitcher3remastered-darkernights/tests/preset_persistence.cpp /Fe:tmp/preset-persistence.exe /Fo:tmp/preset-persistence.obj /link external/Detours/lib.X64/detours.lib shell32.lib
 foreach ($selection in @('0', '1', '2', '3', 'missing', '-1', '4', 'invalid', '999999999999999999999999')) { ./tmp/preset-persistence.exe $selection; if ($LASTEXITCODE -ne 0) { throw "Failed selection: $selection" } }
 ```

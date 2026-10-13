@@ -5,21 +5,112 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cstring>
 #include <mutex>
+#include <shared_mutex>
+#include <span>
+#include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include "../../utils/data.hpp"
+#include "../../utils/hash.hpp"
 #include "../../utils/swapchain.hpp"
 
 namespace witcher::night::vegetation {
 using namespace reshade::api;
 inline std::atomic<float> delta = 0.f;
 
+// Only the seven audited native grades are recognized without an HDR binding.
+// Foreign RenoDX grades can change bytecode on every rebuild. Recognize their
+// fixed scene interface instead, including the injected b13,space50 binding.
+inline bool IsGradingShader(std::span<const uint8_t> code) {
+  switch (renodx::utils::hash::ComputeCRC32(code.data(), code.size())) {
+    case 0x16967617: case 0x9600E32A: case 0xAD02BAB3: case 0xC5AB358E:
+    case 0xF961D049: case 0x2BF760E2: case 0x6DDA5B7B: return true;
+  }
+  // Read container metadata only; no compiler, reflection DLL, disassembly or
+  // descriptor tracking is needed at runtime. All parsing happens at creation.
+  if (code.size() < 32 || std::memcmp(code.data(), "DXBC", 4) != 0) return false;
+  const auto word = [](std::span<const uint8_t> bytes, size_t offset) {
+    uint32_t value = 0;
+    std::memcpy(&value, bytes.data() + offset, sizeof(value));
+    return value;
+  };
+  if (word(code, 24) != code.size() || word(code, 28) > (code.size() - 32) / 4) return false;
+  std::span<const uint8_t> input, output, validation;
+  for (uint32_t i = 0; i < word(code, 28); ++i) {
+    const size_t offset = word(code, 32 + i * 4);
+    if (offset > code.size() - 8 || word(code, offset + 4) > code.size() - offset - 8) return false;
+    const auto part = code.subspan(offset + 8, word(code, offset + 4));
+    if (std::memcmp(code.data() + offset, "ISG1", 4) == 0) input = part;
+    else if (std::memcmp(code.data() + offset, "OSG1", 4) == 0) output = part;
+    else if (std::memcmp(code.data() + offset, "PSV0", 4) == 0) validation = part;
+  }
+  const auto signature_matches = [&word](std::span<const uint8_t> signature, bool is_output) {
+    if (signature.size() < 8 || word(signature, 4) != 8) return false;
+    const uint32_t count = word(signature, 0);
+    if ((is_output ? count != 1 : count != 2 && count != 3)
+        || count > (signature.size() - 8) / 32) return false;
+    for (uint32_t i = 0; i < count; ++i) {
+      const size_t offset = 8 + i * 32;
+      const size_t name_offset = word(signature, offset + 4);
+      const std::string_view name = is_output ? "SV_Target" : i == 0 ? "SV_Position" : "TEXCOORD";
+      if (name_offset >= signature.size() || name.size() >= signature.size() - name_offset
+          || std::memcmp(signature.data() + name_offset, name.data(), name.size()) != 0
+          || signature[name_offset + name.size()] != 0
+          || word(signature, offset) != 0  // stream
+          || word(signature, offset + 8) != (i == 2 ? 2u : 0u) // semantic index
+          || word(signature, offset + 12) != (is_output ? 64u : i == 0 ? 1u : 0u) // system value
+          || word(signature, offset + 16) != 3 // float32
+          || word(signature, offset + 20) != (is_output || i == 0 ? 0u : 1u) // register
+          || signature[offset + 24] != (is_output || i == 0 ? 15u : i == 1 ? 3u : 12u)
+          || word(signature, offset + 28) != 0) return false;
+      // Used-component masks are deliberately ignored: optimization changes
+      // their values without changing the scene transport or binding contract.
+    }
+    return true;
+  };
+  if (!signature_matches(input, false) || !signature_matches(output, true) || validation.size() < 4) return false;
+  const size_t runtime_size = word(validation, 0);
+  if (runtime_size < 36 || runtime_size > validation.size() - 4
+      || validation.size() - 4 - runtime_size < 8) return false;
+  // PSVRuntimeInfo1::ShaderStage: pixel, and no depth/sample-frequency outputs.
+  if (validation[4 + 24] != 0 || word(validation, 4) != 0 || word(validation, 8) != 0) return false;
+  const uint32_t count = word(validation, 4 + runtime_size);
+  const size_t stride = word(validation, 8 + runtime_size);
+  const size_t begin = 12 + runtime_size;
+  if ((count != 4 && count != 6) || stride < 24 || count > (validation.size() - begin) / stride) return false;
+  uint32_t bindings = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    const size_t offset = begin + i * stride;
+    const uint32_t type = word(validation, offset);
+    const uint32_t space = word(validation, offset + 4);
+    const uint32_t slot = word(validation, offset + 8);
+    const uint32_t kind = word(validation, offset + 16);
+    if (word(validation, offset + 12) != slot || word(validation, offset + 20) != 0) return false;
+    uint32_t bit = 0;
+    if (type == 2 && kind == 13 && space == 0 && slot == 3) bit = 1;
+    else if (type == 2 && kind == 13 && space == 50 && slot == 13) bit = 2;
+    else if (type == 1 && kind == 14 && space == 0 && slot <= 1) bit = 4;
+    else if (type == 3 && kind == 2 && space == 0 && slot == 0) bit = 8;
+    else if (type == 1 && kind == 14 && space == 0 && slot == 2) bit = 16;
+    else if (type == 3 && kind == 2 && space == 0 && slot == 2) bit = 32;
+    else return false;
+    if (bindings & bit) return false;
+    bindings |= bit;
+  }
+  // Reject bloom, LUT, output, UI and other passes (including t1 variants).
+  return bindings == (count == 4 ? 15u : 63u);
+}
+
 struct __declspec(uuid("de38e5a3-7d83-4d7f-ae39-5db33a287076")) DeviceData {
   std::mutex mutex;
   pipeline_layout layout = {};
   pipeline shader = {};
   bool attempted = false;
+  std::shared_mutex grading_mutex;
+  std::unordered_set<uint64_t> grading_pipelines;
 };
 struct RootBinding {
   descriptor_table table = {};
@@ -35,6 +126,7 @@ struct __declspec(uuid("1ae8a882-2869-4b54-8154-86ddfe49c32d")) CommandData {
   uint64_t scratch_size = 0;
   std::vector<resource> buffers;
   pipeline current_pipeline = {};
+  bool grading_pipeline = false;
   pipeline_stage current_stages = pipeline_stage::all;
   pipeline_layout compute_layout = {};
   std::vector<RootBinding> roots;
@@ -69,12 +161,39 @@ inline void OnResetCommand(command_list* c) {
   if (!state) return;
   state->pending = {};
   state->current_pipeline = {};
+  state->grading_pipeline = false;
   state->ClearComputeRoots();
 }
 inline void OnBindPipeline(command_list* c, pipeline_stage stages, pipeline p) {
   if (auto* state = renodx::utils::data::Get<CommandData>(c)) {
     state->current_pipeline = p;
     state->current_stages = stages;
+    state->grading_pipeline = false;
+    if ((uint32_t(stages) & uint32_t(pipeline_stage::pixel_shader)) == 0) return;
+    auto* device_state = renodx::utils::data::Get<DeviceData>(c->get_device());
+    if (device_state) {
+      std::shared_lock lock(device_state->grading_mutex);
+      state->grading_pipeline = device_state->grading_pipelines.contains(p.handle);
+    }
+  }
+}
+inline void OnInitPipeline(device* d, pipeline_layout, uint32_t count,
+                           const pipeline_subobject* subobjects, pipeline p) {
+  auto* state = renodx::utils::data::Get<DeviceData>(d);
+  if (!state || d->get_api() != device_api::d3d12) return;
+  for (uint32_t i = 0; i < count; ++i) {
+    if (subobjects[i].type != pipeline_subobject_type::pixel_shader || subobjects[i].count != 1) continue;
+    const auto& code = *static_cast<const shader_desc*>(subobjects[i].data);
+    if (!code.code || !IsGradingShader({static_cast<const uint8_t*>(code.code), code.code_size})) continue;
+    std::unique_lock lock(state->grading_mutex);
+    state->grading_pipelines.insert(p.handle);
+    return;
+  }
+}
+inline void OnDestroyPipeline(device* d, pipeline p) {
+  if (auto* state = renodx::utils::data::Get<DeviceData>(d)) {
+    std::unique_lock lock(state->grading_mutex);
+    state->grading_pipelines.erase(p.handle);
   }
 }
 // Capture only compute root values, never descriptor heap contents/copies.
@@ -121,7 +240,7 @@ inline bool Arm(command_list* c) {
   if (delta.load(std::memory_order_relaxed) == 0.f) return true;
   auto* state = renodx::utils::data::Get<CommandData>(c);
   auto* targets = renodx::utils::swapchain::GetCurrentState(c);
-  if (!state || !targets || targets->current_render_targets.size() != 1) return true;
+  if (!state || !state->grading_pipeline || !targets || targets->current_render_targets.size() != 1) return true;
   auto* d = c->get_device();
   const auto r = d->get_resource_from_view(targets->current_render_targets[0]);
   const auto desc = d->get_resource_desc(r);
@@ -129,6 +248,8 @@ inline bool Arm(command_list* c) {
       && desc.texture.samples == 1 && desc.texture.levels == 1 && desc.texture.depth_or_layers == 1) state->pending = r;
   return true;
 }
+inline bool OnDraw(command_list* c, uint32_t, uint32_t, uint32_t, uint32_t) { return !Arm(c); }
+inline bool OnDrawIndexed(command_list* c, uint32_t, uint32_t, uint32_t, int32_t, uint32_t) { return !Arm(c); }
 
 inline void OnBarrier(command_list* c, uint32_t count, const resource* resources,
                       const resource_usage* old_states, const resource_usage* new_states) {
@@ -228,7 +349,11 @@ inline void Use(DWORD reason) {
   WITCHER_VEGETATION_EVENT(init_command_list, OnInitCommand);
   WITCHER_VEGETATION_EVENT(destroy_command_list, OnDestroyCommand);
   WITCHER_VEGETATION_EVENT(reset_command_list, OnResetCommand);
+  WITCHER_VEGETATION_EVENT(init_pipeline, OnInitPipeline);
+  WITCHER_VEGETATION_EVENT(destroy_pipeline, OnDestroyPipeline);
   WITCHER_VEGETATION_EVENT(bind_pipeline, OnBindPipeline);
+  WITCHER_VEGETATION_EVENT(draw, OnDraw);
+  WITCHER_VEGETATION_EVENT(draw_indexed, OnDrawIndexed);
   WITCHER_VEGETATION_EVENT(push_constants, OnConstants);
   WITCHER_VEGETATION_EVENT(push_descriptors, OnDescriptors);
   WITCHER_VEGETATION_EVENT(bind_descriptor_tables, OnTables);

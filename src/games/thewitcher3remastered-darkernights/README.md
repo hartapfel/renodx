@@ -188,11 +188,17 @@ doorways while indoors. Environment profiles follow native priority and blend
 weights: a fully overridden sewer layer below a building no longer excludes
 that room. Recognized underground and unidentified local profiles retain their
 own contribution; the building override fades with mixed interior layers.
-The native weather suppression multiplier additionally gates the override:
+The native weather suppression multiplier gates other unclassified interior contributions:
 the captured Kaer Trolde balcony retains fog despite reporting fully indoors,
 while its enclosed room receives the override. This is an authored environment
-signal, not a geometric roof test or the current rain intensity. It
-uses a saturated classification weight: finite authored curve overshoots do
+signal, not a geometric roof test or the current rain intensity. Recognized local
+building profiles receive the override even when a higher-priority storm changes
+this signal; cave and unknown local contributions remain protected. The override
+also covers the captured shared dark-sunset lighting area when the native indoor
+blend identifies a room; its outdoor use does not activate the override. The
+same indoor blend applies within the audited Novigrad city lighting area for
+rooms without a dedicated interior profile, independent of storm suppression.
+Weather classification weights saturate: finite authored curve overshoots do
 not disable the override or amplify it beyond full interior strength. Buildings
 that keep only global weather profiles need native weather suppression to
 receive the override. A custom cave using only ordinary outdoor
@@ -316,22 +322,20 @@ Night Vegetation Saturation uses a smooth OKLCh hue selection
 (full green/cyan, weaker yellow/blue, neutral colours excluded). It follows
 the master toggle and clock fades and works independently of the grading sliders.
 The standalone applies it to the audited signed gamma-2.2 BT.709 scene output of
-the six native post-grade variants, before UI composition and the selected
+the seven native post-grade variants, before UI composition and the selected
 output tonemapper. The HDR addon has no separate selective saturation control; this standalone
 pass supplies it when the addons are used together.
 
-The observation list also recognizes the four compiled grading replacements
-in HDR v0.2026.1003.311 and six in v0.2026.1006.1950. DevKit confirmed the
-updated active `0xAD02BAB3` variant appears as `0xE22E8A08` (previously
-`0x2957BB38`), with the same gamma-2.2 transport
-and RGBA16F scene target. This restores the saturation control when that addon
-replaces shaders during pipeline creation. These aliases observe its output;
-they do not replace its shaders or share its internal C++ state. Other HDR
-builds with different bytecode hashes need their grading passes audited too.
-
-Toussaint's texture-vignette grading variant `0x2BF760E2` is observed too,
-including its updated HDR replacement `0xFF89140C`. Its scene output uses the
-same gamma-2.2 transport; native vignette and alpha metadata remain intact.
+HDR grading replacements are recognized from their DXIL scene interface at
+pipeline creation, rather than a list of compiled shader hashes. The matcher
+requires the audited fullscreen input/output signatures, native b3, the RenoDX
+b13/space50 binding, and the exact scene/sampler/vignette texture bindings.
+Bloom, LUT, UI and output passes with other bindings are excluded. The result
+is cached per pipeline; no compiler/reflection DLL or per-frame shader parsing
+is needed. Gameplay, Toussaint and Photo Mode are covered in either addon load
+order. Ordinary HDR recompilation and tuning changes retain compatibility as
+long as this interface and the signed gamma-2.2 BT.709 transport remain intact.
+A changed output encoding or binding contract still needs a fresh audit.
 
 One GPU texture-to-buffer copy, root-UAV compute pass and copy back is recorded
 when the night delta is nonzero. At 100, during daytime or with the master Off,
@@ -476,12 +480,12 @@ The routing test includes seven native grading hashes, with standalone-only
 and both load orders against the installed HDR addon. After rebuilding
 `thewitcher3remastered-darkernights` in `clang-x64-release`, compare Photo Mode and
 gameplay at Night Vegetation Saturation 100/0, test the two night grading
-sliders and master Off, and confirm the UI stays unchanged. A foreign HDR
-addon that replaces this pass with a new bytecode hash needs an audited
-observation alias, as with the other grading variants.
+sliders and master Off, and confirm the UI stays unchanged. HDR replacements
+of this pass use the same interface recognition as the gameplay and Toussaint
+variants.
 
-The installed HDR v0.2026.1006.1950 replaces Photo Mode 0x6DDA5B7B with
-0xE715845F at pipeline creation. This alias is now observed too. A live
+The current installed HDR addon replaces Photo Mode 0x6DDA5B7B with
+0x3D87EF7F at pipeline creation, recognized by its scene interface. A live
 capture confirmed the RGBA16F scene output precedes separate UI composition;
 its shader retains gamma-2.2 BT.709 transport and source alpha. The actual
 foreign-DLL routing test reproduced the missed callback before the fix and

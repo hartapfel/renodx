@@ -9,8 +9,45 @@
 #include "../addon.cpp"
 #undef DllMain
 #include <fstream>
+#include <filesystem>
 
 int main(int argc, char** argv) {
+  if (argc == 3 && std::strcmp(argv[1], "--interfaces") == 0) {
+    // Includes all native shader dumps and all CSOs extracted from both the
+    // installed HDR addon and our HDR build. The seven native grades and seven
+    // replacements in each HDR build are the only accepted shaders.
+    const std::set<uint32_t> expected = {
+        0x16967617, 0x9600E32A, 0xAD02BAB3, 0xC5AB358E, 0xF961D049, 0x2BF760E2, 0x6DDA5B7B,
+        0xCE1A0970, 0x9259C77E, 0xF461A605, 0x9743E54D, 0x92B4C36F, 0xC57C4E7E, 0x3D87EF7F,
+        0xD0775084, 0x14C9BF5D, 0x550A0973, 0xC74FBE7E, 0xB74F942D, 0xEF359CF7, 0xCFAD6F3F,
+    };
+    unsigned tested = 0, accepted = 0;
+    for (const auto& file : std::filesystem::directory_iterator(argv[2])) {
+      if (file.path().extension() != ".cso") continue;
+      std::ifstream stream(file.path(), std::ios::binary);
+      std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(stream)), {});
+      const uint32_t hash = renodx::utils::hash::ComputeCRC32(bytes.data(), bytes.size());
+      const bool match = witcher::night::vegetation::IsGradingShader(bytes);
+      if (match != expected.contains(hash)) {
+        std::printf("FAIL: interface %08X (%s)\n", hash, file.path().string().c_str()); return 7;
+      }
+      ++tested;
+      accepted += match;
+      if (match && hash != 0x16967617 && hash != 0x9600E32A && hash != 0xAD02BAB3
+          && hash != 0xC5AB358E && hash != 0xF961D049 && hash != 0x2BF760E2 && hash != 0x6DDA5B7B) {
+        bytes[4] ^= 0x42; // Different container identity/hash, identical grading contract.
+        if (!witcher::night::vegetation::IsGradingShader(bytes)) return 8;
+        for (size_t length = 0; length < bytes.size(); length += 137) {
+          if (witcher::night::vegetation::IsGradingShader({bytes.data(), length})) return 9;
+        }
+        std::fill_n(bytes.begin() + 32, 4, uint8_t(0xff)); // Invalid part offset.
+        if (witcher::night::vegetation::IsGradingShader(bytes)) return 10;
+      }
+    }
+    if (tested == 0 || accepted == 0) return 11;
+    std::printf("PASS: %u shader interfaces checked, %u audited grades accepted; unrelated effects and malformed containers excluded\n", tested, accepted);
+    return 0;
+  }
   if (argc != 4) {
     std::puts("Usage: vegetation-routing.exe originals-directory hdr.addon64|none lighting-first|hdr-first");
     return 1;
@@ -56,12 +93,10 @@ int main(int argc, char** argv) {
     bool observed = false;
     renodx::utils::shader::GetPipelineShaderDetails(p, [&](const auto& details) {
       const uint32_t actual = details.compatible_shader_infos[renodx::utils::shader::PIXEL_INDEX].shader_hash;
-      const auto entry = renodx::mods::shader::custom_shaders.find(actual);
-      const auto* observer = entry == renodx::mods::shader::custom_shaders.end() ? nullptr
-          : entry->second.on_draw.template target<bool (*)(command_list*)>();
-      observed = entry != renodx::mods::shader::custom_shaders.end()
-          && observer && *observer == &witcher::night::vegetation::Arm
-          && !entry->second.on_replace(nullptr) && !entry->second.on_inject(nullptr)
+      auto* state = renodx::utils::data::Get<witcher::night::vegetation::DeviceData>(&device);
+      std::shared_lock lock(state->grading_mutex);
+      observed = state->grading_pipelines.contains(p.handle)
+          && !renodx::mods::shader::custom_shaders.contains(actual)
           && !details.replacement_pipeline.handle;
       std::printf("%08X -> %08X: %s\n", hash, actual, observed ? "observe only" : "FAIL");
     });
@@ -71,6 +106,7 @@ int main(int argc, char** argv) {
         reinterpret_cast<reshade::addon_event_traits<reshade::addon_event::destroy_pipeline>::decl>(callback.function)(&device, p);
       }
     }
+    if (renodx::utils::data::Get<witcher::night::vegetation::DeviceData>(&device)->grading_pipelines.contains(p.handle)) return 12;
     // Older HDR builds point directly at embedded bytecode; newer builds
     // allocate a copy for the create event. Never free the DLL's image data.
     MEMORY_BASIC_INFORMATION storage = {};

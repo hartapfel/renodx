@@ -676,30 +676,6 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
           };
         }
       }
-      // HDR addons that replace at pipeline creation expose their bytecode
-      // hashes to our isolated tracker. Observe the audited replacements too;
-      // keep the foreign shader, settings binding and root signature intact.
-      for (uint32_t hash : {0x16967617u, 0x9600E32Au, 0xAD02BAB3u, 0xC5AB358Eu, 0xF961D049u,
-                            0x2BF760E2u,  // Toussaint grading with texture vignette
-                            0x6DDA5B7Bu,  // Photo Mode grading; observe scene before UI
-                            0xE715845Fu,  // Photo Mode replacement, HDR v0.2026.1006.1950
-                            0x3BC7DBE4u,  // 0x16967617, installed HDR v0.2026.1003.311
-                            0x2957BB38u,  // 0xAD02BAB3
-                            0x823D59CBu,  // 0xC5AB358E
-                            0xBEDA0207u,  // 0xF961D049
-                            0xE8588026u,  // 0x16967617, installed HDR v0.2026.1006.1950
-                            0x8074E167u,  // 0x9600E32A
-                            0xE22E8A08u,  // 0xAD02BAB3
-                            0x3ADEE5E4u,  // 0xC5AB358E
-                            0x8DC14D3Bu,  // 0xF961D049
-                            0xFF89140Cu}) {  // 0x2BF760E2, installed HDR v0.2026.1006.1950
-        custom_shaders.emplace(hash, renodx::mods::shader::CustomShader{
-            .crc32 = hash,
-            .on_replace = [](auto*) { return false; },
-            .on_inject = [](auto*) { return false; },
-            .on_draw = &witcher::night::vegetation::Arm,
-        });
-      }
       reshade::register_event<reshade::addon_event::present>(OnPresent);
       break;
     case DLL_PROCESS_DETACH:
