@@ -10,7 +10,7 @@
 #include <shared_mutex>
 #include <span>
 #include <string_view>
-#include <unordered_set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include "../../utils/data.hpp"
@@ -19,12 +19,15 @@
 
 namespace witcher::night::vegetation {
 using namespace reshade::api;
-inline std::atomic<float> delta = 0.f;
+// Publish saturation delta and tint amount together, already night-faded.
+inline std::atomic<uint64_t> adjustments = 0;
+static_assert(std::atomic<uint64_t>::is_always_lock_free);
 
 // Only the seven audited native grades are recognized without an HDR binding.
 // Foreign RenoDX grades can change bytecode on every rebuild. Recognize their
 // fixed scene interface instead, including the injected b13,space50 binding.
-inline bool IsGradingShader(std::span<const uint8_t> code) {
+inline bool IsGradingShader(std::span<const uint8_t> code, bool* signed_transport = nullptr) {
+  if (signed_transport) *signed_transport = false;
   switch (renodx::utils::hash::ComputeCRC32(code.data(), code.size())) {
     case 0x16967617: case 0x9600E32A: case 0xAD02BAB3: case 0xC5AB358E:
     case 0xF961D049: case 0x2BF760E2: case 0x6DDA5B7B: return true;
@@ -101,7 +104,9 @@ inline bool IsGradingShader(std::span<const uint8_t> code) {
     bindings |= bit;
   }
   // Reject bloom, LUT, output, UI and other passes (including t1 variants).
-  return bindings == (count == 4 ? 15u : 63u);
+  const bool matched = bindings == (count == 4 ? 15u : 63u);
+  if (signed_transport) *signed_transport = matched;
+  return matched;
 }
 
 struct __declspec(uuid("de38e5a3-7d83-4d7f-ae39-5db33a287076")) DeviceData {
@@ -110,7 +115,7 @@ struct __declspec(uuid("de38e5a3-7d83-4d7f-ae39-5db33a287076")) DeviceData {
   pipeline shader = {};
   bool attempted = false;
   std::shared_mutex grading_mutex;
-  std::unordered_set<uint64_t> grading_pipelines;
+  std::unordered_map<uint64_t, bool> grading_pipelines;
 };
 struct RootBinding {
   descriptor_table table = {};
@@ -127,6 +132,7 @@ struct __declspec(uuid("1ae8a882-2869-4b54-8154-86ddfe49c32d")) CommandData {
   std::vector<resource> buffers;
   pipeline current_pipeline = {};
   bool grading_pipeline = false;
+  bool current_signed_transport = false, pending_signed_transport = false;
   pipeline_stage current_stages = pipeline_stage::all;
   pipeline_layout compute_layout = {};
   std::vector<RootBinding> roots;
@@ -173,7 +179,9 @@ inline void OnBindPipeline(command_list* c, pipeline_stage stages, pipeline p) {
     auto* device_state = renodx::utils::data::Get<DeviceData>(c->get_device());
     if (device_state) {
       std::shared_lock lock(device_state->grading_mutex);
-      state->grading_pipeline = device_state->grading_pipelines.contains(p.handle);
+      const auto observed = device_state->grading_pipelines.find(p.handle);
+      state->grading_pipeline = observed != device_state->grading_pipelines.end();
+      state->current_signed_transport = state->grading_pipeline && observed->second;
     }
   }
 }
@@ -184,9 +192,10 @@ inline void OnInitPipeline(device* d, pipeline_layout, uint32_t count,
   for (uint32_t i = 0; i < count; ++i) {
     if (subobjects[i].type != pipeline_subobject_type::pixel_shader || subobjects[i].count != 1) continue;
     const auto& code = *static_cast<const shader_desc*>(subobjects[i].data);
-    if (!code.code || !IsGradingShader({static_cast<const uint8_t*>(code.code), code.code_size})) continue;
+    bool signed_transport = false;
+    if (!code.code || !IsGradingShader({static_cast<const uint8_t*>(code.code), code.code_size}, &signed_transport)) continue;
     std::unique_lock lock(state->grading_mutex);
-    state->grading_pipelines.insert(p.handle);
+    state->grading_pipelines.emplace(p.handle, signed_transport);
     return;
   }
 }
@@ -237,7 +246,7 @@ inline void OnDescriptors(command_list* c, shader_stage stages, pipeline_layout 
 }
 
 inline bool Arm(command_list* c) {
-  if (delta.load(std::memory_order_relaxed) == 0.f) return true;
+  if (adjustments.load(std::memory_order_relaxed) == 0) return true;
   auto* state = renodx::utils::data::Get<CommandData>(c);
   auto* targets = renodx::utils::swapchain::GetCurrentState(c);
   if (!state || !state->grading_pipeline || !targets || targets->current_render_targets.size() != 1) return true;
@@ -245,7 +254,10 @@ inline bool Arm(command_list* c) {
   const auto r = d->get_resource_from_view(targets->current_render_targets[0]);
   const auto desc = d->get_resource_desc(r);
   if (desc.type == resource_type::texture_2d && desc.texture.format == format::r16g16b16a16_float
-      && desc.texture.samples == 1 && desc.texture.levels == 1 && desc.texture.depth_or_layers == 1) state->pending = r;
+      && desc.texture.samples == 1 && desc.texture.levels == 1 && desc.texture.depth_or_layers == 1) {
+    state->pending = r;
+    state->pending_signed_transport = state->current_signed_transport;
+  }
   return true;
 }
 inline bool OnDraw(command_list* c, uint32_t, uint32_t, uint32_t, uint32_t) { return !Arm(c); }
@@ -262,8 +274,8 @@ inline void OnBarrier(command_list* c, uint32_t count, const resource* resources
     for (uint32_t next = i + 1; next < count; ++next) {
       if (resources[next] == target) final_transition = next;
     }
-    const float amount = delta.load(std::memory_order_relaxed);
-    if (amount == 0.f) return;
+    const uint64_t amounts = adjustments.load(std::memory_order_relaxed);
+    if (amounts == 0) return;
     // ReShade's DX12 barrier event is AFTER the native transition. Restore
     // its destination state after the in-place scene operation.
     auto* d = c->get_device();
@@ -279,7 +291,7 @@ inline void OnBarrier(command_list* c, uint32_t count, const resource* resources
         params[0].push_descriptors.count = 1;
         params[0].push_descriptors.visibility = shader_stage::compute;
         params[1].type = pipeline_layout_param_type::push_constants;
-        params[1].push_constants.count = 4;
+        params[1].push_constants.count = 6;
         params[1].push_constants.visibility = shader_stage::compute;
         if (d->create_pipeline_layout(2, params, &device_state->layout)) {
           shader_desc code = {__0xF3B20000.data(), __0xF3B20000.size()};
@@ -287,7 +299,7 @@ inline void OnBarrier(command_list* c, uint32_t count, const resource* resources
           d->create_pipeline(device_state->layout, 1, &shader_object, &device_state->shader);
         }
         if (!device_state->shader.handle) reshade::log::message(reshade::log::level::warning,
-            "[Darker Nights] Vegetation saturation pass unavailable; scene preserved.");
+            "[Darker Nights] Vegetation colour pass unavailable; scene preserved.");
       }
     }
     if (!device_state->shader.handle) return;
@@ -310,8 +322,10 @@ inline void OnBarrier(command_list* c, uint32_t count, const resource* resources
     c->copy_texture_to_buffer(target, 0, nullptr, state->scratch, 0, pitch / 8, desc.texture.height);
     c->barrier(state->scratch, resource_usage::copy_dest, resource_usage::unordered_access);
     c->bind_pipeline(pipeline_stage::all_compute, device_state->shader);
-    const uint32_t constants[] = {desc.texture.width, desc.texture.height, pitch, std::bit_cast<uint32_t>(amount)};
-    c->push_constants(shader_stage::compute, device_state->layout, 1, 0, 4, constants);
+    const uint32_t constants[] = {desc.texture.width, desc.texture.height, pitch,
+                                 static_cast<uint32_t>(amounts), static_cast<uint32_t>(amounts >> 32),
+                                 state->pending_signed_transport ? 1u : 0u};
+    c->push_constants(shader_stage::compute, device_state->layout, 1, 0, 6, constants);
     // Buffer view handles encode GPU addresses for DX12 root UAV bindings.
     auto* native = reinterpret_cast<ID3D12GraphicsCommandList*>(c->get_native());
     native->SetComputeRootUnorderedAccessView(0,

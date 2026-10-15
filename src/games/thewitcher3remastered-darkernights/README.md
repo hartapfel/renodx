@@ -156,6 +156,7 @@ moon controls use the ranges described below:
 | Brightness & Contrast | Night grade luminance curve; 0 removes it, 100 keeps native. |
 | Tint & Saturation | Night grade colour filter; 0 removes it, 100 keeps native. |
 | Vegetation Saturation | Green/cyan scene saturation, with gentler yellow/blue coverage; 100 is native, 0 reduces it. Matching non-foliage colours also respond. |
+| Vegetation Tint Correction | Warms the same selected night hues while preserving brightness and relative chroma. 0 is off; 100 is the full correction. |
 | Gameplay Camera Light | Player-following fill light throughout the day and night. |
 | Cutscene Camera Light | Artificial scene and dialogue camera fill, independent of the night schedule. |
 | Moon Size | Visible moon diameter from 1% to 500%; 100% is native, 50% halves it. |
@@ -165,7 +166,7 @@ moon controls use the ranges described below:
 | Indoor Fog Start Distance | Fog fade-in distance in buildings; default 40 m. |
 | Apply Exposure Overrides All Day | On (default) applies exposure settings at every hour. Off follows the night schedule. Requires Enable Night Lighting. |
 | Auto Exposure | Enabled uses adaptation; Off uses a fixed luminance reference during the selected exposure period. Enabled is the default. |
-| Adaptation | Native (default), Smoothed, or Custom. Smoothed uses 35% brightening and 5% darkening speed, with both limits at 100%. |
+| Adaptation | Native, Smoothed (default), or Custom. Smoothed uses 35% brightening and 5% darkening speed, with both limits at 100%. |
 | Brightening / Darkening Speed | Custom only; 1-200% of each native speed, default 35% brightening and 5% darkening. 100% retains that direction's native response. |
 | Maximum Brightening | Custom only; 0-100% of native brightening beyond the 0.18 metering reference, default 100%. 0 prevents lift beyond that reference; 100 retains the native range. |
 | Maximum Darkening | Custom only; 0-100% of native darkening beyond the 0.18 metering reference, default 100%. 0 prevents further darkening beyond that reference; 100 retains the native range. |
@@ -268,7 +269,7 @@ routing and bloom exposure references. A foreign addon that ignores native
 metering parameters can bypass this control. Preset Off and the night master Off
 always restore native exposure. Daytime and invalid schedules restore native
 exposure unless All Day is enabled.
-Values are saved per preset; Soft Nights resets exposure to Enabled + Smoothed
+Values are saved per preset; both night buttons set exposure to Enabled + Smoothed
 and turns All Day on.
 
 Torches, ordinary local lights and the separate interior camera-light group retain
@@ -282,15 +283,15 @@ launch. Missing or invalid saved selections start on Preset #1.
 
 **Moon Brightness** is in Night Atmosphere and follows Enable Night Lighting and
 its clock fades. It covers the regular and Toussaint moon materials, preserving
-size, texture, phase, fog and directional moonlight. Both night presets retain
-native brightness (50). It shares the existing moon marker in native constants
+size, texture, phase, fog and directional moonlight. Soft Nights uses brightness
+35 and Dark Nights uses 15; 50 is native. It shares the existing moon marker in native constants
 and introduces no additional shader binding.
 
 **Moon Size** is in the Sky Appearance section and works independently of Enable Night
 Lighting and its clock schedule. It scales the moon mesh while preserving its
 texture and phase; it does not change the directional moonlight strength. It is
-saved with each preset, defaults to 100%, and returns to native size with Preset
-Off. The two night preset buttons leave moon size unchanged.
+saved with each preset, defaults to 50%, and returns to native size with Preset
+Off. Soft Nights sets moon size to 50%; Dark Nights sets it to 30%.
 
 Moon Size also covers Toussaint's alternate moon mesh in gameplay and Photo Mode.
 Both regional variants retain their authored texture and phase shading.
@@ -314,12 +315,16 @@ separate mesh shrinks as well. The mesh replacement is restricted to vertex
 shader `0xE1C4426E` paired with sun pixel shader `0xE46451D5`.
 
 **Soft Nights** is the standalone default: night lighting enabled; fade in
-20:00 to 23:00, fade out 03:30 to 06:00; skylight 15, direct 15, fog 15, haze 5,
-sky 5, clouds 15, rain 15, water 0, both grading controls 100 and vegetation saturation
-50. Its button restores these
-night defaults. **Dark Nights** keeps the same schedule and grading, with skylight
-5, direct 5, fog 5, clouds 10 and rain 10. Both buttons enable Night Lighting and leave both camera
-sliders unchanged. Existing saved settings are preserved; use Soft Nights
+18:00 to 23:00, fade out 03:30 to 06:00; skylight, direct light, fog, haze,
+sky, clouds and rain 15; water 0; moon brightness 35 and moon size 50%; both
+grading controls 100; vegetation saturation 75 and tint correction 100.
+**Dark Nights** keeps the same schedule and grading, with skylight, direct light,
+haze and sky 5; fog, clouds and rain 1; moon brightness 15, moon size 30% and
+vegetation saturation 50.
+Both buttons explicitly assign their recipes, enable Night Lighting and both
+normalization options, and set exposure to Enabled + Smoothed with All Day on,
+speeds 35/5, limits 100/100 and fixed luminance 0.18. They leave camera lighting,
+Sun Size and the all-day fog controls unchanged. Existing saved settings are preserved; use Soft Nights
 or Reset All Settings to adopt the defaults. Setting keys are unchanged by the UI
 regrouping, so saved profiles remain compatible.
 
@@ -335,6 +340,21 @@ Native display and tone mapping remain in use unless another addon changes them.
 Night Vegetation Saturation uses a smooth OKLCh hue selection
 (full green/cyan, weaker yellow/blue, neutral colours excluded). It follows
 the master toggle and clock fades and works independently of the grading sliders.
+**Vegetation Tint Correction** adds an independent warm hue adjustment using
+the same original-colour selection. Full strength rotates the selected hues
+up to 25 degrees toward warmer yellow/green, retaining linear luminance and
+relative OKLab chroma (C/L), within half-float rounding. It does not add a complementary
+RGB colour, which would desaturate, or reconstruct an exact inverse of the
+game's grade. Matching non-foliage colours also respond. Vegetation saturation
+defaults to 75 for Soft Nights and 50 for Dark Nights; tint correction defaults
+to 100 for both.
+They are saved per preset; Off restores saturation 100 and tint correction 0. Set
+Vegetation Saturation to 100 to use tint correction without desaturation.
+Without an HDR grading replacement, the hue arc is shortened if needed to stay
+within native presentation's nonnegative RGB transport, retaining colour strength
+instead of clipping channels. The audited HDR route keeps its signed wide-gamut
+transport and leaves display-gamut mapping to the HDR tonemapper.
+
 The standalone applies it to the audited signed gamma-2.2 BT.709 scene output of
 the seven native post-grade variants, before UI composition and the selected
 output tonemapper. The HDR addon has no separate selective saturation control; this standalone
@@ -351,9 +371,11 @@ order. Ordinary HDR recompilation and tuning changes retain compatibility as
 long as this interface and the signed gamma-2.2 BT.709 transport remain intact.
 A changed output encoding or binding contract still needs a fresh audit.
 
-One GPU texture-to-buffer copy, root-UAV compute pass and copy back is recorded
-when the night delta is nonzero. At 100, during daytime or with the master Off,
-no extra GPU work is recorded. Native scene alpha bits are preserved. Brightness
+One GPU texture-to-buffer copy, root-UAV compute pass and copy back handles both
+controls when either night adjustment is nonzero. At saturation 100 and tint 0,
+during daytime or with the master Off, no extra GPU work is recorded. The helper
+uses six constant DWORDs, including tint strength and the cached output contract;
+native and HDR root layouts are unchanged. Native scene alpha bits are preserved. Brightness
 is preserved within half-float rounding; saturation increases use a soft RGB
 black-boundary limit, leaving highlight mapping to the downstream tonemapper.
 The pass never replaces another addon's grading/output shader, changes its

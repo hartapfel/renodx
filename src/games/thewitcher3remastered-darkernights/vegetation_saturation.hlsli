@@ -6,10 +6,10 @@
 #include "../../shaders/color.hlsl"
 
 // Scene transport at the audited post-grade outputs is signed gamma 2.2
-// BT.709, before scene/UI composition. Delta already includes the night fade.
-float3 WitcherVegetationSaturation(float3 encoded, float delta) {
-  if (delta == 0.f) return encoded;
-  const float3 linear_bt709 = sign(encoded) * pow(abs(encoded), 2.2f);
+// BT.709, before scene/UI composition. Both amounts include the night fade.
+float3 WitcherVegetationGrade(float3 encoded, float delta, float tint_correction, bool signed_transport) {
+  if (delta == 0.f && tint_correction == 0.f) return encoded;
+  float3 linear_bt709 = sign(encoded) * pow(abs(encoded), 2.2f);
   const float3 lab = renodx::color::oklab::from::BT709(linear_bt709);
   const float relative_chroma = length(lab.yz) / max(lab.x, 1e-6f);
   if (relative_chroma <= 0.02f) return encoded;
@@ -22,6 +22,41 @@ float3 WitcherVegetationSaturation(float3 encoded, float delta) {
   const float weight = saturate(warm_weight * cool_weight)
       * smoothstep(0.02f, 0.06f, relative_chroma);
   if (weight == 0.f) return encoded;
+  if (tint_correction != 0.f) {
+    // Complementary RGB addition would neutralize the same chroma we want
+    // to retain. Rotate toward warmer yellow/green instead (up to 25 degrees),
+    // with the same original-colour selection as the saturation control.
+    float sine, cosine;
+    const float angle = -tint_correction * weight * (25.f * 3.141592653589793f / 180.f);
+    sincos(angle, sine, cosine);
+    float3 corrected = renodx::color::bt709::from::OkLab(float3(lab.x,
+        lab.y * cosine - lab.z * sine, lab.y * sine + lab.z * cosine));
+    if (!signed_transport && all(linear_bt709 >= 0.f) && any(corrected < 0.f)) {
+      // Native presentation uses log2(rgb), not signed gamma. Shorten the
+      // hue arc at its black boundary instead of clipping channels or losing
+      // saturation. Audited HDR presentation has no such BT.709 restriction.
+      float lower = 0.f, upper = 1.f;
+      corrected = linear_bt709;
+      for (uint i = 0u; i < 8u; ++i) {
+        const float amount = (lower + upper) * 0.5f;
+        sincos(angle * amount, sine, cosine);
+        const float3 candidate = renodx::color::bt709::from::OkLab(float3(lab.x,
+            lab.y * cosine - lab.z * sine, lab.y * sine + lab.z * cosine));
+        if (all(candidate >= 0.f)) {
+          lower = amount;
+          corrected = candidate;
+        } else upper = amount;
+      }
+    }
+    const float luminance = renodx::color::y::from::BT709(linear_bt709);
+    const float corrected_luminance = renodx::color::y::from::BT709(corrected);
+    if (luminance > 0.f && corrected_luminance > 1e-20f) {
+      // Uniform linear rescaling restores Y and leaves OKLab C/L unchanged.
+      // Keep signed wide-gamut channels; the downstream tonemapper maps them.
+      linear_bt709 = corrected * (luminance / corrected_luminance);
+    }
+    if (delta == 0.f) return sign(linear_bt709) * pow(abs(linear_bt709), 1.f / 2.2f);
+  }
   float saturation = 1.f + delta * weight;
   float3 target = renodx::color::bt2020::from::BT709(linear_bt709);
   const float luminance = renodx::color::y::from::BT2020(target);

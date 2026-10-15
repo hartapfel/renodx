@@ -9,6 +9,8 @@ cbuffer Parameters : register(b0) {
   uint height;
   uint row_pitch;
   float night_delta;
+  float tint_correction;
+  uint signed_transport;
 };
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
@@ -17,7 +19,7 @@ void main(uint3 id : SV_DispatchThreadID) {
   const uint2 packed = scene.Load2(offset);
   const float3 rgb = float3(f16tof32(packed.x & 65535u),
       f16tof32(packed.x >> 16u), f16tof32(packed.y & 65535u));
-  float3 result = WitcherVegetationSaturation(rgb, night_delta);
+  float3 result = WitcherVegetationGrade(rgb, night_delta, tint_correction, signed_transport != 0u);
   // Reject unrepresentable results instead of introducing infinities into
   // the native half-float scene. No display-range/gamut clamp is added.
   if (any(isnan(result)) || any(isinf(result)) || any(abs(result) > 65504.f)) result = rgb;

@@ -55,7 +55,7 @@ checked; nothing is scanned per frame. Existing build profiles retain their
 original lighting checks.
 
 The preset host also checks all eight exposure values are restored from saved
-profiles, Soft Nights restores Enabled + Smoothed with All Day off, and visibility follows Off /
+profiles, both night buttons restore Enabled + Smoothed with All Day on, and visibility follows Off /
 Enabled and Native / Smoothed / Custom. These CPU tests do not verify the live
 detour or final image. After rebuilding and restarting, test the Night Exposure
 section standalone and with HDR: move the camera between dark and bright areas
@@ -161,10 +161,13 @@ clang-cl /std:c++20 /EHsc /O2 /MT /DNOMINMAX src/games/thewitcher3remastered-dar
 ## Selective vegetation saturation
 
 `vegetation_gpu.cpp` executes the actual helper CSO on D3D12 WARP, including
-RGBA16F texture-to-buffer copying, root-UAV dispatch and copying back. Its 20
+RGBA16F texture-to-buffer copying, root-UAV dispatch and copying back. Its 160
 cases cover aligned/padded row pitches, odd dispatch dimensions, signed HDR
 transport, slider 0/50/100/150/200, neutral/warm/pink isolation, green/cyan
-coverage, luminance within half-float rounding and exact alpha metadata bits.
+coverage, tint correction 0/25/50/100, luminance and relative-chroma preservation,
+warm hue direction, native nonnegative transport and exact alpha metadata bits.
+Passing a preceding helper CSO as a second argument adds 40 bit-exact comparisons
+with tint disabled across both output contracts.
 This does not establish live callback timing or frame time with another addon.
 
 ```powershell
@@ -178,6 +181,17 @@ The standalone shares the HDR addon's measured OKLCh selection endpoints:
 Near-neutral selection fades at relative OKLab chroma C/L 0.02..0.06. It is
 a hue filter, not material identification. Hue research and saved foliage
 measurement evidence are in `tmp/thewitcher3remastered/night-selective-saturation/`.
+Tint rotates that selection by up to -25 degrees in OKLab and restores linear
+luminance with a uniform scale, retaining C/L. Selection is evaluated before
+either control so the two sliders share a stable mask. No early gamut clamp or
+second compute/copy pass is introduced; the independent helper uses six root
+constant DWORDs and a root UAV. Native output shortens only an out-of-range hue
+arc while preserving chroma and Y; the audited HDR output permits signed values.
+The game's/HDR addon's root layouts are untouched.
+Native hashes are treated conservatively when a foreign addon defers its
+replacement until drawing. Existing signed source colours remain preserved;
+the full signed correction requires the audited HDR interface at pipeline
+creation. Interface recognition is not a guarantee for arbitrary HDR backends.
 The standalone grades before the downstream tonemapper, rather than after
 PsychoV as the HDR addon does. Check its appearance alone and alongside the
 intended other HDR addon after restarting; verify SDR/HDR and FG On/Off.
@@ -195,7 +209,8 @@ and HDR settings bindings, but do not execute the live GPU callback path.
 into the mock host, then runs the installed HDR DLL's create/init/destroy
 pipeline callbacks against all seven original post-grade CSOs. It verifies
 observation-only routing alone and in both addon load orders, including the
-new current HDR replacements. Pipeline destruction clears the observation
+new current HDR replacements. It also verifies the cached native versus signed
+HDR transport selection. Pipeline destruction clears the observation
 cache; device/addon teardown remains isolated and clean.
 
 Its `--interfaces <directory>` mode checks the DXIL matcher against captured
@@ -213,12 +228,18 @@ in gameplay and Photo Mode with both addons enabled, and verify the UI remains
 unchanged. CPU routing checks do not establish rendered output after restart.
 
 `preset_persistence.cpp` uses the same host and addon source. It checks startup
+restoration and the missing-key default of 100 for Vegetation Tint Correction, both
+controls' coherent publication through Present, night fades, master Off, invalid
+schedules and non-finite tint values. It also checks startup
 restoration of the independent all-day exposure toggle and its preset reset,
 restoration of selections 0..3 and their profile values, Off's native reset,
 missing/invalid selection fallback, saving every selector change, and keeping
-the HDR addon's separate configuration untouched. It also invokes Soft Nights
-after mutating every night control to check that the regrouped sections still
-reset together while both camera sliders and Moon Size remain unchanged.
+the HDR addon's separate configuration untouched. It repeatedly invokes both
+night buttons after mutating every night control and the UI defaults, proving
+that the explicit recipes cover every night section and survive saving/loading.
+Soft matches startup defaults; Soft/Dark set vegetation saturation to 75/50,
+tint correction to 100 and Moon Size to 50%/30% respectively. Cameras, Sun Size and the all-day fog
+controls remain unchanged.
 It does not simulate ImGui.
 
 Both tests include `addon.cpp`, so build the Release addon first to generate its
@@ -233,7 +254,7 @@ clang-cl @testOptions src/games/thewitcher3remastered-darkernights/tests/vegetat
 ./tmp/vegetation-routing.exe --interfaces path/to/native-shader-corpus
 ./tmp/vegetation-routing.exe --interfaces path/to/extracted-hdr-fixtures
 clang-cl @testOptions src/games/thewitcher3remastered-darkernights/tests/preset_persistence.cpp /Fe:tmp/preset-persistence.exe /Fo:tmp/preset-persistence.obj /link external/Detours/lib.X64/detours.lib shell32.lib
-foreach ($selection in @('0', '1', '2', '3', 'missing', '-1', '4', 'invalid', '999999999999999999999999')) { ./tmp/preset-persistence.exe $selection; if ($LASTEXITCODE -ne 0) { throw "Failed selection: $selection" } }
+foreach ($selection in @('0', '1', '2', '3', 'missing', 'defaults', 'legacy', '-1', '4', 'invalid', '999999999999999999999999')) { ./tmp/preset-persistence.exe $selection; if ($LASTEXITCODE -ne 0) { throw "Failed selection: $selection" } }
 ```
 
 Runtime: select Preset #2, change a slider, restart, and verify both the selected

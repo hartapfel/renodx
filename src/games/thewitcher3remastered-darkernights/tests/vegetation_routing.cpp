@@ -27,7 +27,8 @@ int main(int argc, char** argv) {
       std::ifstream stream(file.path(), std::ios::binary);
       std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(stream)), {});
       const uint32_t hash = renodx::utils::hash::ComputeCRC32(bytes.data(), bytes.size());
-      const bool match = witcher::night::vegetation::IsGradingShader(bytes);
+      bool signed_transport = false;
+      const bool match = witcher::night::vegetation::IsGradingShader(bytes, &signed_transport);
       if (match != expected.contains(hash)) {
         std::printf("FAIL: interface %08X (%s)\n", hash, file.path().string().c_str()); return 7;
       }
@@ -35,6 +36,7 @@ int main(int argc, char** argv) {
       accepted += match;
       if (match && hash != 0x16967617 && hash != 0x9600E32A && hash != 0xAD02BAB3
           && hash != 0xC5AB358E && hash != 0xF961D049 && hash != 0x2BF760E2 && hash != 0x6DDA5B7B) {
+        if (!signed_transport) return 13;
         bytes[4] ^= 0x42; // Different container identity/hash, identical grading contract.
         if (!witcher::night::vegetation::IsGradingShader(bytes)) return 8;
         for (size_t length = 0; length < bytes.size(); length += 137) {
@@ -42,7 +44,7 @@ int main(int argc, char** argv) {
         }
         std::fill_n(bytes.begin() + 32, 4, uint8_t(0xff)); // Invalid part offset.
         if (witcher::night::vegetation::IsGradingShader(bytes)) return 10;
-      }
+      } else if (signed_transport) return 14;
     }
     if (tested == 0 || accepted == 0) return 11;
     std::printf("PASS: %u shader interfaces checked, %u audited grades accepted; unrelated effects and malformed containers excluded\n", tested, accepted);
@@ -98,6 +100,8 @@ int main(int argc, char** argv) {
       observed = state->grading_pipelines.contains(p.handle)
           && !renodx::mods::shader::custom_shaders.contains(actual)
           && !details.replacement_pipeline.handle;
+      if (observed) observed = state->grading_pipelines.at(p.handle)
+          == (renodx::utils::hash::ComputeCRC32(static_cast<const uint8_t*>(shader.code), shader.code_size) != hash);
       std::printf("%08X -> %08X: %s\n", hash, actual, observed ? "observe only" : "FAIL");
     });
     if (!observed) return 5;

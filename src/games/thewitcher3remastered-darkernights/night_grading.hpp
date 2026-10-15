@@ -16,6 +16,7 @@ namespace witcher::night::grading {
 
 inline float luminance_strength = 100.f, chroma_strength = 100.f;
 inline float saturation_strength = 100.f;
+inline float vegetation_tint = 0.f;
 inline std::atomic<float> luminance = 1.f, chroma = 1.f;
 inline bool supported = false;
 inline uintptr_t image_base = 0;

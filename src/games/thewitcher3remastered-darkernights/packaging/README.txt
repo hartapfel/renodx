@@ -27,6 +27,8 @@ use only one implementation if your HDR addon already includes Darker Nights.
 SETTINGS
 Restart the game, open ReShade's Add-ons tab, and expand Darker Nights - Remastered.
 Night Lighting: enable the night adjustments and choose Soft Nights or Dark Nights.
+Both buttons set tint correction to 100, with smoothed exposure. Soft Nights
+sets vegetation saturation to 75 and Moon Size to 50%; Dark Nights uses 50/30%.
 Night Schedule: select the fade-in, full darkness, fade-out and end times.
 Night Illumination: adjust skylight, direct light and water lighting.
 Night Atmosphere: adjust fog, haze, sky, clouds and rain brightness.

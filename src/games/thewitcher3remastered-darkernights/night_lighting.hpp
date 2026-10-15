@@ -749,7 +749,7 @@ inline void Update(bool enabled) {
           && exposure::brightening_range.load(std::memory_order_relaxed) == 1.f)
       && (!night_enabled || (grading::luminance.load(std::memory_order_relaxed) == 1.f
                             && grading::chroma.load(std::memory_order_relaxed) == 1.f
-                            && grading::saturation_strength == 100.f))) return;
+                            && grading::saturation_strength == 100.f && grading::vegetation_tint == 0.f))) return;
   if (!Install()) return;
   fog_density_multiplier.store(enabled && fog_density_supported && std::isfinite(fog_amount)
                                    ? std::clamp(fog_amount / 100.f, 0.f, 2.f) : 1.f,

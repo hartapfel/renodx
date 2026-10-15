@@ -133,13 +133,40 @@ renodx::utils::settings::Settings settings = {
         .label = "Soft Nights",
         .section = "Night Lighting",
         .group = "night-lighting-presets",
-        .tooltip = "Restores the default softer night lighting settings.",
+        .tooltip = "Applies softer night lighting, smoothed exposure and a 50% moon.",
         .is_enabled = []() { return witcher::night::Supported(); },
         .on_change = []() {
-          for (const auto* setting : settings) {
-            if (!setting->key.starts_with("Night")) continue;
-            renodx::utils::settings::UpdateSetting(setting->key, setting->default_value);
-          }
+          renodx::utils::settings::UpdateSettings({
+              {"NightLightingEnabled", 1.f},
+              {"NightRegionalNormalization", 1.f},
+              {"NightWeatherNormalization", 1.f},
+              {"NightDarkeningStart", 18.f},
+              {"NightFullDarknessStart", 23.f},
+              {"NightFadeOutStart", 3.5f},
+              {"NightDarkeningEnd", 6.f},
+              {"NightSkyStrength", 15.f},
+              {"NightDirectStrength", 15.f},
+              {"NightFogStrength", 15.f},
+              {"NightHazeStrength", 15.f},
+              {"NightVisibleSkyStrength", 15.f},
+              {"NightMoonStrength", 35.f},
+              {"NightCloudStrength", 15.f},
+              {"NightRainStrength", 15.f},
+              {"NightWaterStrength", 0.f},
+              {"NightColorGradeLuminance", 100.f},
+              {"NightColorGradeChroma", 100.f},
+              {"NightSaturation", 75.f},
+              {"NightVegetationTint", 100.f},
+              {"NightExposureAllDay", 1.f},
+              {"NightAutoExposureEnabled", 1.f},
+              {"NightExposureAdaptation", 1.f},
+              {"NightExposureBrighteningSpeed", 35.f},
+              {"NightExposureDarkeningSpeed", 5.f},
+              {"NightExposureMaximumBrightening", 100.f},
+              {"NightExposureMaximumDarkening", 100.f},
+              {"NightExposureFixedLuminance", 0.18f},
+              {"MoonSize", 50.f},
+          });
         },
     },
     new renodx::utils::settings::Setting{
@@ -147,7 +174,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Dark Nights",
         .section = "Night Lighting",
         .group = "night-lighting-presets",
-        .tooltip = "Applies the darker night lighting preset.",
+        .tooltip = "Applies darker night lighting, smoothed exposure and a 30% moon.",
         .is_enabled = []() { return witcher::night::Supported(); },
         .on_change = []() {
           renodx::utils::settings::UpdateSettings({
@@ -170,6 +197,15 @@ renodx::utils::settings::Settings settings = {
               {"NightColorGradeLuminance", 100.f},
               {"NightColorGradeChroma", 100.f},
               {"NightSaturation", 50.f},
+              {"NightVegetationTint", 100.f},
+              {"NightExposureAllDay", 1.f},
+              {"NightAutoExposureEnabled", 1.f},
+              {"NightExposureAdaptation", 1.f},
+              {"NightExposureBrighteningSpeed", 35.f},
+              {"NightExposureDarkeningSpeed", 5.f},
+              {"NightExposureMaximumBrightening", 100.f},
+              {"NightExposureMaximumDarkening", 100.f},
+              {"NightExposureFixedLuminance", 0.18f},
               {"MoonSize", 30.f},
           });
         },
@@ -348,10 +384,21 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "NightSaturation",
         .binding = &witcher::night::grading::saturation_strength,
-        .default_value = 50.f,
+        .default_value = 75.f,
         .label = "Vegetation Saturation",
         .section = "Night Colour Grading",
         .tooltip = "Reduces green/cyan saturation, with gentler yellow/blue coverage. 100 is native. Matching non-foliage colours also respond.",
+        .max = 100.f,
+        .format = "%.0f",
+        .is_enabled = IsNightLightingEnabled,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightVegetationTint",
+        .binding = &witcher::night::grading::vegetation_tint,
+        .default_value = 100.f,
+        .label = "Vegetation Tint Correction",
+        .section = "Night Colour Grading",
+        .tooltip = "Warms green/cyan night tones while preserving brightness and saturation. 0 = off. Matching non-foliage colours also respond.",
         .max = 100.f,
         .format = "%.0f",
         .is_enabled = IsNightLightingEnabled,
@@ -564,20 +611,25 @@ void OnPresetOff() {
       {"FogStartDistance", 0.f},
       {"IndoorFogStartDistance", 0.f},
       {"NightSaturation", 100.f},
+      {"NightVegetationTint", 0.f},
   });
-  witcher::night::vegetation::delta.store(0.f, std::memory_order_relaxed);
+  witcher::night::vegetation::adjustments.store(0, std::memory_order_relaxed);
   if (witcher::night::installed) witcher::night::Update(false);
 }
 
 void OnPresent(reshade::api::command_queue*, reshade::api::swapchain*, const reshade::api::rect*,
                const reshade::api::rect*, uint32_t, const reshade::api::rect*) {
   witcher::night::Update(true);
-  witcher::night::vegetation::delta.store(IsNightLightingEnabled() && witcher::night::installed
+  const float weight = IsNightLightingEnabled() && witcher::night::installed
           && witcher::night::NightSchedule() != 0
-          && std::isfinite(witcher::night::grading::saturation_strength)
+      ? std::clamp(witcher::night::night_weight.load(std::memory_order_relaxed), 0.f, 1.f) : 0.f;
+  const float saturation = weight > 0.f && std::isfinite(witcher::night::grading::saturation_strength)
       ? (std::clamp(witcher::night::grading::saturation_strength / 100.f, 0.f, 2.f) - 1.f)
-          * std::clamp(witcher::night::night_weight.load(std::memory_order_relaxed), 0.f, 1.f)
-      : 0.f, std::memory_order_relaxed);
+          * weight : 0.f;
+  const float tint = weight > 0.f && std::isfinite(witcher::night::grading::vegetation_tint)
+      ? std::clamp(witcher::night::grading::vegetation_tint / 100.f, 0.f, 1.f) * weight : 0.f;
+  witcher::night::vegetation::adjustments.store(uint64_t(std::bit_cast<uint32_t>(saturation))
+      | (uint64_t(std::bit_cast<uint32_t>(tint)) << 32), std::memory_order_relaxed);
   static bool reported = false;
   if (witcher::night::attempted && !reported) {
     reshade::log::message(witcher::night::installed ? reshade::log::level::info : reshade::log::level::warning,
