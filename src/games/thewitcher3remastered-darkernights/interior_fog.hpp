@@ -77,6 +77,12 @@ inline int Classify(std::string_view path) {
   // The later captured regional swamp area has the same overlapping role.
   if (path == "environment\\definitions\\env_novigrad\\env_novigrad_global\\env_novigrad_city.env"
       || path == "environment\\definitions\\env_nomansland\\nml_global\\env_nml_swamps_v1_a_ps4_flat24.env") return 2;
+  // Captured Novigrad room/street: no local area profile, weather visibility
+  // stays 1 in both, but native outside blend changes from 0 to 1. Permit
+  // enclosure fallback for this exact global profile without an area handle.
+  // Do not generalize to all weather profiles: the Kaer Trolde balcony also
+  // reports an indoor blend and needs its weather-sheltering guard.
+  if (path == "environment\\definitions\\env_novigrad\\env_novigrad_sunset.env") return 3;
   return 0;
 }
 
@@ -114,7 +120,7 @@ inline float BuildingWeight(const unsigned char** active_environment = nullptr) 
       || !normalization::Read(environment + 0x92260, &layers) || layers != count
       || !normalization::Read(environment + 0x1d2dc, &order)) return 0.f;
   float remaining = 1.f, building = 0.f;
-  bool active = false, city_area = false;
+  bool active = false, enclosure_fallback = false;
   int32_t previous_priority = INT32_MAX;
   for (unsigned i = 0; i < count && remaining > 0.f; ++i) {
     int32_t priority;
@@ -141,10 +147,11 @@ inline float BuildingWeight(const unsigned char** active_environment = nullptr) 
     const unsigned char* area = nullptr;
     std::memcpy(&area, record.data(), sizeof(area));
     active = true;
-    // The audited city area can cover ordinary rooms without a dedicated
-    // interior profile. Its lighting blend is not a building coverage weight.
-    if (type == 2) {
-      city_area |= area != nullptr;
+    // Audited shared areas can cover rooms without a dedicated interior
+    // profile. Type 3 additionally permits the captured global-only profile;
+    // neither lighting weight is itself a building coverage weight.
+    if (type == 2 || type == 3) {
+      enclosure_fallback |= area != nullptr || type == 3;
       continue;
     }
     // Ordinary global weather layers do not identify the kind of interior.
@@ -152,7 +159,7 @@ inline float BuildingWeight(const unsigned char** active_environment = nullptr) 
     if (type == 1) building += remaining * weight;
     remaining *= 1.f - weight;
   }
-  return active ? (building + remaining * (city_area ? 1.f : 1.f - weather_visibility)) * (1.f - outside) : 0.f;
+  return active ? (building + remaining * (enclosure_fallback ? 1.f : 1.f - weather_visibility)) * (1.f - outside) : 0.f;
 }
 
 // Critically damp both directions: about 1.5 seconds to complete 95% of an

@@ -9,6 +9,12 @@ regressions (balcony, upstairs, quest rooms, weather, caves, profile priority,
 world changes), adds the regional swamp case, and checks smooth response,
 reversals and chatter at 30/60/144 FPS. No spatial fog mask is used.
 
+The global-only Novigrad sunset regression follows native enclosure at weather
+visibility 1 without an area handle, covering indoor/outdoor transition endpoints,
+the native cave flag, partial higher-priority cave/unknown atmosphere protection,
+and an inactive fallback layer. The exposed Kaer Trolde balcony fixture retains
+its distinct Skellige weather profile and visibility-based guard.
+
 `night_lighting.cpp` checks default values, combined intensity/distance settings,
 invalid/support guards, all-day operation, repeated fresh uploads and whole-buffer
 isolation. Native-zero endpoints are checked in both directions for continuity.

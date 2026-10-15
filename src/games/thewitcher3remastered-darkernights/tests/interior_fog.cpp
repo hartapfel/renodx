@@ -30,7 +30,10 @@ int main() {
   fog::supported = true;
   constexpr char building[] = "environment\\definitions\\env_nomansland\\crossroads_inn\\env_nml_crossroads_inn_v2.env";
   constexpr char cave[] = "environment\\definitions\\env_novigrad\\env_novigrad_cave.env";
-  constexpr char generic[] = "environment\\definitions\\env_novigrad\\env_novigrad_sunset.env";
+  // The captured exposed Kaer Trolde balcony uses global Skellige weather.
+  // Keep that visibility-based fixture separate from the newly captured
+  // Novigrad global-only room, whose native enclosure has a verified boundary.
+  constexpr char generic[] = "environment\\definitions\\env_skellige\\env_skellige_brown.env";
   const auto profile = [&](unsigned index, const char* name, float weight) {
     put(records.data() + index * 0x15dd0 + 0x15da8, weight);
     put(records.data() + index * 0x15dd0 + 0x15dac, name);
@@ -247,6 +250,44 @@ int main() {
     assert(fog::BuildingWeight() == 0.f);
     ++cases;
   }
+  put(environment.data() + 0x1d2d8, uint32_t{1});
+  select({0});
+  // Captured global-only Novigrad room: inactive cutscene layer, sunset
+  // weather with no area handle, visibility 1 on both sides of the doorway.
+  constexpr char global_room[] = "environment\\definitions\\env_novigrad\\env_novigrad_sunset.env";
+  put(environment.data() + 0x1d2d8, uint32_t{2});
+  profile(0, global_room, 1.f);
+  profile(1, "environment\\definitions\\cutscenes_definition\\cutscen_definition_global.env", 0.f);
+  select({1, 0});
+  for (float visibility : {0.f, .5f, 1.f}) {
+    put(weather.data() + 0x5d0, visibility);
+    for (float outside : {0.f, .25f, .5f, 1.f}) {
+      put(environment.data() + 0x92454, outside);
+      assert(fog::BuildingWeight() == 1.f - outside);
+      environment[0x92448] = 1;
+      assert(fog::BuildingWeight() == 0.f);
+      environment[0x92448] = 0;
+      cases += 2;
+    }
+  }
+  put(environment.data() + 0x92454, 0.f);
+  put(weather.data() + 0x5d0, 1.f);
+  for (const char* protected_profile : {cave, "quests\\special\\unknown_local_atmosphere.env"}) {
+    profile(1, protected_profile, 1.f);
+    put(records.data() + 0x15dd0 + 0x15d80, reinterpret_cast<const unsigned char*>(1));
+    for (float amount : {0.f, .25f, .5f, 1.f}) {
+      profile(1, protected_profile, amount);
+      assert(fog::BuildingWeight() == 1.f - amount);
+      ++cases;
+    }
+  }
+  // A registered but inactive sunset profile cannot enable the fallback.
+  put(records.data() + 0x15dd0 + 0x15d80, static_cast<const unsigned char*>(nullptr));
+  profile(0, global_room, 0.f);
+  profile(1, generic, 1.f);
+  assert(fog::BuildingWeight() == 0.f);
+  ++cases;
+  // Restore the existing invalid-weight fixture.
   put(environment.data() + 0x1d2d8, uint32_t{1});
   select({0});
   for (float weight : {-1.f, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {

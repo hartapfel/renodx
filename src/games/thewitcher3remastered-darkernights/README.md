@@ -185,6 +185,13 @@ may overlap buildings without vetoing their detection. Existing balcony,
 upstairs and quest-room handling is retained. Coverage depends on authored
 states/profiles; unknown local atmospheres fall back to the outdoor distance.
 
+The captured global-only Novigrad sunset room uses the same weather profile
+inside and outside, with weather visibility fixed at 1. Its exact profile now
+allows the native enclosure blend to select the indoor distance without a local
+area handle. The captured street returns to outdoor distance. Cave flags and
+higher-priority underground/unknown local atmospheres still exclude their
+contribution; other global weather profiles retain their existing shelter check.
+
 An installed-asset audit covered 753 distinct environment profiles (base game,
 expansions and installed mods). Explicit room variants include the q106 tower,
 White Orchard, Novigrad, Kaer Morhen and Hearts of Stone; mine atmospheres and
