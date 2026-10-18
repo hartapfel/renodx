@@ -524,7 +524,17 @@ float4 ps_main(PSInput input) : SV_Target0
 
     if (RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31)
     {
-        if (mode == 1u)
+        if (RENODX_PSYCHOV_CONTRAST_CURVE != 0.f)
+        {
+            float3 nativeMidgray = 0.18f.xxx;
+            if (mode == 1u)
+                nativeMidgray = ApplyLogDomainToneMap(nativeMidgray, C7.xyz, C7.w, C8.xyz, C8.w,
+                    C19.x, C16.w, C19.y, C19.z, C19.w, useParametricCurve, false, 0.f);
+            else if (mode == 0u)
+                nativeMidgray = ApplyHableNormalized(nativeMidgray, C7.x, C7.y, C7.z, C8.x, C8.y, C8.z, C16.y);
+            exposed = WitcherApplyNaturalContrast(exposed, nativeMidgray);
+        }
+        else if (mode == 1u)
         {
             // A grey gain alone loses the native toe/slope and washes out the
             // grading input. Reuse Vanilla+'s unbounded shoulder, before PsychoV.

@@ -168,6 +168,11 @@ void AgxApplyBlackFloor(
     bool useParametricCurve,
     float diffuseWhiteNits)
 {
+    // Natural contrast supplies its own zero-anchored toe. Do not let a saved
+    // native Black Floor value change the middle-grey reference used to anchor it.
+    if (RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31
+        && RENODX_PSYCHOV_CONTRAST_CURVE != 0.f) return;
+
     if (useParametricCurve && RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31)
     {
         // PsychoV imports the native toe: 0 retains the previous zero-floor

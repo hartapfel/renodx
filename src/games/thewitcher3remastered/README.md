@@ -17,13 +17,33 @@ SDR targets BT.709 at unit peak; HDR uses the selected peak, game brightness,
 and BT.709/BT.2020/Display P3 target. UI composition, frame-generation outputs, PQ encoding,
 and the existing effects stay in their original passes.
 
-PsychoV always uses native AgX contrast and its unbounded highlight extension.
-**Shoulder Blend** and **Black Floor** remain adjustable in **Tone Mapping**.
-Black Floor 0 targets zero black; 100 retains the native toe, with intermediate
-values blending the low shoulder. Inflection/highlights stay fixed. Saved values
-of the removed Native Slope Matching toggle no longer affect the pipeline.
-Hable retains mid-grey matching and bypass stays unshaped. Each environment is
-handled before blending, and exposure runs once.
+PsychoV's **Contrast Curve** selector in **Tone Mapping** defaults to **Natural**.
+Native uses the game's AgX contrast and unbounded highlight extension, with
+adjustable **Shoulder Blend** and **Black Floor**. Black Floor 0 targets zero
+black; 100 retains the native toe. The retired slope-matching toggle is ignored.
+
+**Natural** replaces that early contrast curve with a gentle luminance-only
+curve anchored to the native response at exposed 18% grey. Its normalized form
+is `f(t) = t * (t + k) / (k*t + 1)`, where `t = Y / 0.18` and `k = 9/11`.
+The middle-grey log slope is 1.1, the slope at zero is positive and finite, and
+zero stays exactly zero. There is no input threshold, log clamp, or added black
+pedestal. A common RGB gain preserves signed wide-gamut chromaticities. The
+existing high-range safety compression remains above display range.
+PsychoV still performs the final display shoulder and gamut mapping after grading;
+Natural does not add a second display shoulder. Native Shoulder Blend and Black
+Floor are disabled and ignored in this mode, including their saved values.
+Both environment branches apply the chosen curve before blending; exposure runs
+once. Native Hable retains mid-grey matching and bypass stays unshaped; Natural
+uses the same middle-grey anchor for these paths.
+
+This is a creative alternative, not a calibrated physical rendering transform.
+The design separates contrast formation from display mapping and follows the
+smooth, monotonic, zero-anchored principles described by
+[Hable](https://filmicworlds.com/blog/filmic-tonemapping-with-piecewise-power-curves/)
+and the [ACES tone-scale requirements](https://docs.acescentral.com/system-components/output-transforms/technical-details/tone-mapping/).
+It is not their tone-mapping algorithm. The existing LUT, native colour grading,
+and vignette retain their controls and can still alter shadow appearance; the
+zero-black guarantee here applies to the new curve, not every artistic grade.
 
 Advanced settings expose adaptation/background anchors, gamut
 compression/target, response compression, and gamma in the
@@ -132,7 +152,7 @@ red fabrics/lights, foliage, near-black ramps and photo mode in SDR/HDR.
 Setting a stage's grading strength to zero also removes its hue correction.
 Preset Off resets the hue shift.
 
-Black Floor is available for PsychoV alongside the other custom tone mappers.
+Black Floor is available for PsychoV with the Native contrast curve.
 Prism primaries and the AgX debug canvas remain exclusive to Prism's developer
 menu; vanilla inverse tone mapping remains disabled outside Vanilla. Shared
 grading and effects stay available, and HDR-only controls follow the output mode.
@@ -198,7 +218,7 @@ D3D12 reads, and Darker Nights addon initialization/destruction in both load
 orders. These checks do not establish live visual quality, timing, or
 compatibility with every third-party addon.
 
-Native slope matching is automatic; the full-grayscale Blowout endpoint is retained.
+Native slope matching is automatic in Native mode; the full-grayscale Blowout endpoint is retained.
 Software-GPU checks isolate shader behavior and are not captured full-frame A/B
 comparisons. The custom implementation still requires in-game visual validation.
 
@@ -209,9 +229,12 @@ Before opening the PR, verify in game:
    PsychoV is last and has no brightness-compensation control.
 2. Check Toussaint, interiors, night, weather transitions, saturated lights,
    and cutscenes. Compare PsychoV with Prism/Vanilla+ at neutral grading, then
-   confirm PsychoV automatically follows native AgX contrast. Test Shoulder Blend
-   0/20/100 and Black Floor 0/50/100 (corrected to native toe), including dark
-   caves. Confirm old saved slope-toggle values cannot disable matching.
+   confirm Native follows AgX contrast. Test Shoulder Blend 0/20/100 and Black
+   Floor 0/50/100, including dark caves. In Natural, both controls must be disabled
+   and their saved values must have no effect. Compare indoor and outdoor shadow
+   detail, fog, weather/environment transitions, sunsets and fire. Check black
+   ramps with grading disabled, then with the actual LUT/grade restored. Confirm
+   old saved slope-toggle values cannot change either mode.
    Test the advanced PsychoV controls, LUT and grading
    contributions at 0/50/100, and all three HDR gamut targets.
    Compare sunset and fire highlights at Gamut Compression 0/50/100: colour

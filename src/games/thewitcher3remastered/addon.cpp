@@ -550,6 +550,17 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return current_settings_mode >= 0.f && !shader_injection.last_is_hdr; },
     },
     new renodx::utils::settings::Setting{
+        .key = "PsychoVContrastCurve",
+        .binding = &shader_injection.psychov_contrast_curve,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Contrast Curve",
+        .section = "Tone Mapping",
+        .tooltip = "Native retains the game's contrast. Natural keeps native middle-grey brightness with a gentle, zero-anchored shadow curve; PsychoV handles the highlight rolloff.",
+        .labels = {"Native", "Natural"},
+        .is_visible = []() { return RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "ToneMapAgxVanillaBend",
         .binding = &shader_injection.agx_vanilla_bend,
         .default_value = 20.f,
@@ -557,7 +568,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Tone Mapping",
         .tooltip = "Blends the extended shoulder strength toward the vanilla tonemapper.",
         .max = 100.f,
-        .is_enabled = []() { return RENODX_TONE_MAP_TYPE >= 1.f; },
+        .is_enabled = []() { return RENODX_TONE_MAP_TYPE >= 1.f && (RENODX_TONE_MAP_TYPE != WITCHER_TONE_MAP_PSYCHOV_CUSTOM31 || RENODX_PSYCHOV_CONTRAST_CURVE == 0.f); },
         .parse = [](float value) { return value * 0.01f; },
         .is_visible = []() { return current_settings_mode >= 1.f; },
     },
@@ -584,6 +595,7 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Controls the toe of the curve. 0 targets a perfect black floor, 100 is vanilla.",
         .min = 0.f,
         .max = 100.f,
+        .is_enabled = []() { return RENODX_TONE_MAP_TYPE != WITCHER_TONE_MAP_PSYCHOV_CUSTOM31 || RENODX_PSYCHOV_CONTRAST_CURVE == 0.f; },
         .parse = [](float value) { return value * 0.01f; },
         .on_change_value = &OnPrismSettingChange,
         .is_visible = []() { return current_settings_mode >= 0.f; },
@@ -968,7 +980,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "PsychoVGamutCompression",
         .binding = &shader_injection.psychov_gamut_compression,
-        .default_value = 0.f,
+        .default_value = 1.f,
         .label = "Gamut Compression",
         .section = "PsychoV-31 (Custom)",
         .tooltip = "0 leaves gamut unclamped; 1 maps fully to the target. SDR always targets BT.709.",
@@ -980,7 +992,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "PsychoVCustom31Compression",
         .binding = &shader_injection.psychov_compression,
-        .default_value = 0.f,
+        .default_value = 3.5f,
         .label = "Compression (0 = Auto)",
         .section = "PsychoV-31 (Custom)",
         .tooltip = "0 selects automatic compression. Positive values set the custom C-infinity shoulder strength.",
@@ -1290,6 +1302,7 @@ renodx::utils::settings::Settings settings = {
 };
 
 void OnPresetOff() {
+  renodx::utils::settings::UpdateSetting("PsychoVContrastCurve", 0.f);
   renodx::utils::settings::UpdateSetting("SceneGradeHueShift", 0.f);
   renodx::utils::settings::UpdateSetting("ColorGradeStrength", 100.f);
   renodx::utils::settings::UpdateSetting("PsychoVAdaptationAnchor", 0.18f);

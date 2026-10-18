@@ -14,6 +14,21 @@ float WitcherNativeBrightnessScale(float3 native_midgray) {
   return scale;
 }
 
+// A mild, middle-grey-anchored contrast formation before scene grading.
+// f(t) = t * (t + k) / (k*t + 1), k = 9/11, gives log slope 1.1 at t=1.
+// f(0)=0 and f'(0)=k>0: no pedestal, cutoff, or power-law crushed toe.
+// Its gain stays between k and 1/k; PsychoV owns the display shoulder later.
+float3 WitcherApplyNaturalContrast(float3 scene, float3 native_midgray) {
+  const float luminance = renodx::color::y::from::BT709(scene);
+  const float t = max(luminance, 0.f) / 0.18f;
+  const float k = 9.f / 11.f;
+  float middle_gray_scale = WitcherNativeBrightnessScale(native_midgray);
+  if (!(middle_gray_scale > 0.f)) middle_gray_scale = 1.f;
+  // One scalar preserves signed RGB ratios and wide-gamut chromaticities.
+  scene *= middle_gray_scale * (t + k) / (k * t + 1.f);
+  return renodx::tonemap::neutwo::MaxChannel(scene, 16384.f);
+}
+
 // Preserve the native AgX luminance curve through grading, including the
 // upstream shoulder extension. A grey sample supplies luminance only: signed
 // RGB ratios and PsychoV's observer-space colour response remain independent.

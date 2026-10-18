@@ -730,7 +730,10 @@ float4 ps_main(PSInput input) : SV_Target0
 
     if (RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31)
     {
-        if ((uint)A_ModeExposure.x == 1u)
+        if (RENODX_PSYCHOV_CONTRAST_CURVE != 0.f)
+            exposedA = WitcherApplyNaturalContrast(exposedA, ApplyGameToneMap(0.18f.xxx, (uint)A_ModeExposure.x,
+                A_ScaleSat, A_PowerLog, A_Exposure, A_Curve, useParametricCurveA, false, 0.f));
+        else if ((uint)A_ModeExposure.x == 1u)
             exposedA = WitcherApplyNativeContrast(exposedA, ApplyGameToneMap(
                 max(renodx::color::y::from::BT709(exposedA), 0.000001f).xxx, 1u,
                 A_ScaleSat, A_PowerLog, A_Exposure, A_Curve, useParametricCurveA,
@@ -738,7 +741,10 @@ float4 ps_main(PSInput input) : SV_Target0
         else
             exposedA *= WitcherNativeBrightnessScale(ApplyGameToneMap(0.18f.xxx, (uint)A_ModeExposure.x,
                 A_ScaleSat, A_PowerLog, A_Exposure, A_Curve, useParametricCurveA, false, 0.f));
-        if ((uint)B_ModeExposure.x == 1u)
+        if (RENODX_PSYCHOV_CONTRAST_CURVE != 0.f)
+            exposedB = WitcherApplyNaturalContrast(exposedB, ApplyGameToneMap(0.18f.xxx, (uint)B_ModeExposure.x,
+                B_ScaleSat, B_PowerLog, B_Exposure, B_Curve, useParametricCurveB, false, 0.f));
+        else if ((uint)B_ModeExposure.x == 1u)
             exposedB = WitcherApplyNativeContrast(exposedB, ApplyGameToneMap(
                 max(renodx::color::y::from::BT709(exposedB), 0.000001f).xxx, 1u,
                 B_ScaleSat, B_PowerLog, B_Exposure, B_Curve, useParametricCurveB,
