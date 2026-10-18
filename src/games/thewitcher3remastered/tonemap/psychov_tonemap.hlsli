@@ -3,6 +3,7 @@
 
 #include "../shared.h"
 #include "./customtest31.hlsli"
+#include "./psychov_gamut.hlsli"
 
 // Evaluate the original curve at 18% grey in the exposure shaders, then use
 // only its luminance gain. A scalar preserves HDR ratios and chromaticity.
@@ -64,9 +65,13 @@ float3 WitcherToneMapPsychoVCustom31(float3 color_bt709, bool is_hdr) {
       RENODX_PSYCHOV_ADAPTATION_ANCHOR.xxx,
       RENODX_PSYCHOV_BACKGROUND_ANCHOR.xxx,
       0.f,  // SDR EOTF emulation stays off.
-      RENODX_PSYCHOV_GAMUT_COMPRESSION,
+      0.f,  // Map the display gamut below along a constant perceptual hue ray.
       is_hdr ? (int)RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE : 0,
       RENODX_PSYCHOV_COMPRESSION);
+  mapped_bt709 = WitcherCompressPsychoVGamut(
+      mapped_bt709, peak,
+      is_hdr ? (int)RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE : 0,
+      RENODX_PSYCHOV_GAMUT_COMPRESSION);
   // Remove only numerical neutral-axis error at the exact grayscale endpoint.
   if (RENODX_TONE_MAP_SATURATION == 0.f) {
     return renodx::color::y::from::BT709(mapped_bt709).xxx;

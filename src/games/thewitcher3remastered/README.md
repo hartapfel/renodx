@@ -35,16 +35,31 @@ Advanced settings expose adaptation/background anchors, gamut
 compression/target, response compression, and gamma in the
 **PsychoV-31 (Custom)** section below **Color Grading**. The custom mapper
 handles tonal and saturation grading directly. Highlight hue, source boundary,
-source awareness, gamut mapping and SDR EOTF emulation use the implementation
-defaults internally (0, None, 1, Smooth Knee and Off respectively).
-Compression defaults to 1.5
-and uses a new saved key, so the former auto-compression setting does not
-override the new default. Cone Response Exponent and the former Hue Shift
+source awareness and SDR EOTF emulation use the implementation defaults
+internally (0, None, 1 and Off respectively). Display gamut mapping is handled
+by the game-local wrapper described below. Response Compression defaults to
+0 (Auto). Cone Response Exponent and the former Hue Shift
 control are removed because they do not belong to this implementation.
 The existing highlights, shadows, split contrast, saturation, flare, and
 contribution controls are reused. The LUT and analytic grade bridges preserve
 signed wide-gamut inputs with a reversible proxy when grading improvements
 are enabled.
+
+Gamut Compression uses a game-local constant-Oklab-hue mapping after the
+supplied PsychoV response. It first compresses chroma smoothly toward the
+selected target's zero-channel boundary, preserving linear luminance. It then
+fits peak brightness with a common RGB scale and a soft shoulder, allowing
+bright saturated colours to lose luminance instead of bleaching toward white.
+This second step preserves hue and relative chroma (C/L). The in-range neutral
+curve is retained. Compression 0 bypasses both steps exactly; 100 fits the
+selected BT.709, Display P3 or BT.2020 volume, with SDR always targeting BT.709.
+Intermediate strengths blend toward that result and can remain out of gamut.
+Signed BT.709 remains the transport representation, so it is not clamped to
+BT.709 when a wider target is selected. Black remains zero. There is no
+fire-specific hue rotation, and intentional Blowout still runs afterwards.
+The hue/brightness distinction follows the principles discussed in
+[Oklab gamut projection](https://bottosson.github.io/posts/gamutclipping/);
+the target-boundary search and peak shoulder here are game-local implementations.
 
 PsychoV Blowout uses uniform chroma bleaching, closer to Prism's behavior,
 with an exact grayscale endpoint at 100. Zero preserves the original response;
@@ -88,8 +103,9 @@ chroma. This avoids deliberately reducing colourfulness as the former
 Red Grading Reduction did. The thresholds/window are a creative selection,
 not a standardized correction or an estimate of objectively correct colours.
 
-LUT sampling, signed HDR reconstruction, target primaries and PsychoV gamut
-mapping are unchanged. There is no added RGB clamp or Rec.709 gamut boundary.
+The Grading Hue Shift control does not change LUT sampling, signed HDR
+reconstruction, target primaries or PsychoV gamut mapping. It adds no RGB clamp
+or Rec.709 gamut boundary.
 Hue rotation can create out-of-display-gamut values; the selected tone mapper
 still handles them and may alter final colourfulness. Preserving luminance and
 C/L here is before display mapping and the existing grade-strength blends,
@@ -192,6 +208,9 @@ Before opening the PR, verify in game:
    native toe). With slope matching off, the slider must be hidden and ignored.
    Test the advanced PsychoV controls, LUT and grading
    contributions at 0/50/100, and all three HDR gamut targets.
+   Compare sunset and fire highlights at Gamut Compression 0/50/100: colour
+   should survive peak fitting, with lower highlight luminance where necessary.
+   Check neutral ramps, Saturation 0 and Blowout 100, and measure frame times.
 3. Compare native/custom CA, intensity zero, and start offset one in gameplay,
    cutscenes and photo mode. Check bloom, lens dirt, sunshafts, depth blur,
    vignette, RCAS and grain independently. Test Bloom and Sunshafts at 0/50/100
