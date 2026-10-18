@@ -1,124 +1,182 @@
-#ifndef SRC_GAMES_THEWITCHER3REMASTERED_SHARED_H_
-#define SRC_GAMES_THEWITCHER3REMASTERED_SHARED_H_
+#ifndef SRC_THEWITCHER3_SHARED_H_
+#define SRC_THEWITCHER3_SHARED_H_
 
-// Keep scalar order identical in the C++ injection payload and HLSL cbuffer.
-#define WITCHER_FLAG_GAMUT_TARGET (1u << 0)
-#define WITCHER_FLAG_CA (1u << 1)
-#define WITCHER_FLAG_SHARPENING (1u << 2)
-#define WITCHER_FLAG_VIGNETTE_BLACK (1u << 3)
-#define WITCHER_FLAG_NATIVE_BRIGHTNESS (1u << 4)
-#define WITCHER_FLAG_PSYCHOV (1u << 5)
-#define WITCHER_FLAG_NATIVE_BRIGHTNESS_DARKEN_ONLY (1u << 6)
-
-// Split contrast percentages share unused bits with the boolean/mode flags.
-#define WITCHER_CONTRAST_HIGHLIGHTS_SHIFT 7u
-#define WITCHER_CONTRAST_SHADOWS_SHIFT 14u
-// Pack four independent effect percentages into one root DWORD.
-#define WITCHER_EFFECT_BLUR_SHIFT 0u
-#define WITCHER_EFFECT_SHAFTS_SHIFT 7u
-#define WITCHER_EFFECT_LENS_SHIFT 14u
-#define WITCHER_EFFECT_BLOOM_SHIFT 21u
-
-// Whole-percentage sliders retain their native 0..100 values in seven bits.
-// Two packed DWORDs leave room for Dynamic Grass's three root descriptors.
-#define WITCHER_GRADE_HIGHLIGHTS_SHIFT 0u
-#define WITCHER_GRADE_SHADOWS_SHIFT 7u
-#define WITCHER_GRADE_CONTRAST_SHIFT 14u
-#define WITCHER_GRADE_HIGHLIGHT_SATURATION_SHIFT 21u
-#define WITCHER_LOOK_BLOWOUT_SHIFT 0u
-#define WITCHER_LOOK_FLARE_SHIFT 7u
-#define WITCHER_LOOK_HUE_SHIFT 14u
-#define WITCHER_LOOK_SHARPENING_SHIFT 21u
-
-struct ShaderInjectData {
-  float peak_white_nits;
-  float diffuse_white_nits;
-  float tone_map_exposure;
-
-  float tone_map_gamma;
-
-  float tone_map_saturation;
-
-  float psychov_cone_response_exponent;
-  float psychov_adaptation_anchor;
-  float psychov_background_anchor;
-
-  float psychov_gamut_compression;
-  float mode_flags;
-  float psychov_compression;
-  float graphics_white_nits;
-
-  float chromatic_aberration_intensity;
-  float chromatic_aberration_start_offset;
-  float film_grain;
-  float random_seed;
-  float vignette_strength;
-  float custom_lut_strength;
-  float custom_lut_scaling;
-  float custom_color_grading;
-  float effect_strengths;
-  float grade_strengths;
-  float look_strengths;
-};
-
-#ifdef __cplusplus
-// Native post-processing uses 33 DWORDs; Dynamic Grass adds six and bloom two.
-static_assert(sizeof(ShaderInjectData) == 92);
-#else
-// DX12 injection binding, paired with addon.cpp; native buffers use space0.
-cbuffer shader_injection : register(b13, space50) {
-  ShaderInjectData shader_injection : packoffset(c0);
-}
-
-#define RENODX_PEAK_WHITE_NITS shader_injection.peak_white_nits
-#define RENODX_DIFFUSE_WHITE_NITS shader_injection.diffuse_white_nits
-#define RENODX_GRAPHICS_WHITE_NITS shader_injection.graphics_white_nits
-#define RENODX_TONE_MAP_TYPE WITCHER_MODE_FLAG(WITCHER_FLAG_PSYCHOV)
-#define RENODX_TONE_MAP_EXPOSURE shader_injection.tone_map_exposure
-#define RENODX_TONE_MAP_GAMMA shader_injection.tone_map_gamma
-#define RENODX_TONE_MAP_HIGHLIGHTS (float((asuint(shader_injection.grade_strengths) >> WITCHER_GRADE_HIGHLIGHTS_SHIFT) & 127u) * 0.02f)
-#define RENODX_TONE_MAP_SHADOWS (float((asuint(shader_injection.grade_strengths) >> WITCHER_GRADE_SHADOWS_SHIFT) & 127u) * 0.02f)
-#define RENODX_TONE_MAP_CONTRAST (float((asuint(shader_injection.grade_strengths) >> WITCHER_GRADE_CONTRAST_SHIFT) & 127u) * 0.02f)
-#define RENODX_TONE_MAP_CONTRAST_HIGHLIGHTS (float((asuint(shader_injection.mode_flags) >> WITCHER_CONTRAST_HIGHLIGHTS_SHIFT) & 127u) * 0.02f)
-#define RENODX_TONE_MAP_CONTRAST_SHADOWS (float((asuint(shader_injection.mode_flags) >> WITCHER_CONTRAST_SHADOWS_SHIFT) & 127u) * 0.02f)
-#define RENODX_TONE_MAP_SATURATION shader_injection.tone_map_saturation
-#define RENODX_TONE_MAP_HIGHLIGHT_SATURATION (float((asuint(shader_injection.grade_strengths) >> WITCHER_GRADE_HIGHLIGHT_SATURATION_SHIFT) & 127u) * 0.02f)
-#define RENODX_TONE_MAP_BLOWOUT (float((asuint(shader_injection.look_strengths) >> WITCHER_LOOK_BLOWOUT_SHIFT) & 127u) * 0.01f)
-#define RENODX_TONE_MAP_FLARE (float((asuint(shader_injection.look_strengths) >> WITCHER_LOOK_FLARE_SHIFT) & 127u) * 0.01f)
-#define RENODX_PSYCHOV_HUE_SHIFT (float((asuint(shader_injection.look_strengths) >> WITCHER_LOOK_HUE_SHIFT) & 127u) * 0.01f)
-#define RENODX_PSYCHOV_CONE_RESPONSE_EXPONENT shader_injection.psychov_cone_response_exponent
+#define WITCHER_TONE_MAP_PSYCHOV_CUSTOM31 3.f
+#define RENODX_PSYCHOV_NATIVE_CONTRAST shader_injection.psychov_native_contrast
 #define RENODX_PSYCHOV_ADAPTATION_ANCHOR shader_injection.psychov_adaptation_anchor
 #define RENODX_PSYCHOV_BACKGROUND_ANCHOR shader_injection.psychov_background_anchor
 #define RENODX_PSYCHOV_GAMUT_COMPRESSION shader_injection.psychov_gamut_compression
-#define WITCHER_MODE_FLAG(flag) float((asuint(shader_injection.mode_flags) & (flag)) != 0u)
-#define RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE WITCHER_MODE_FLAG(WITCHER_FLAG_GAMUT_TARGET)
+#define RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE shader_injection.psychov_gamut_compression_mode
 #define RENODX_PSYCHOV_COMPRESSION shader_injection.psychov_compression
-
-#define CUSTOM_CA_MODE WITCHER_MODE_FLAG(WITCHER_FLAG_CA)
+#define RENODX_TONE_MAP_GAMMA shader_injection.tone_map_gamma
+#define CUSTOM_CA_MODE shader_injection.chromatic_aberration_mode
 #define CUSTOM_CA_INTENSITY shader_injection.chromatic_aberration_intensity
 #define CUSTOM_CA_START_OFFSET shader_injection.chromatic_aberration_start_offset
-#define CUSTOM_SHARPENING_MODE WITCHER_MODE_FLAG(WITCHER_FLAG_SHARPENING)
-#define CUSTOM_SHARPENING (float((asuint(shader_injection.look_strengths) >> WITCHER_LOOK_SHARPENING_SHIFT) & 127u) * 0.01f)
-#define CUSTOM_FILM_GRAIN shader_injection.film_grain
-#define CUSTOM_RANDOM shader_injection.random_seed
-#define CUSTOM_VIGNETTE_STRENGTH shader_injection.vignette_strength
-#define CUSTOM_VIGNETTE_BLACK_FLOOR WITCHER_MODE_FLAG(WITCHER_FLAG_VIGNETTE_BLACK)
-#define CUSTOM_NATIVE_BRIGHTNESS_COMPENSATION WITCHER_MODE_FLAG(WITCHER_FLAG_NATIVE_BRIGHTNESS | WITCHER_FLAG_NATIVE_BRIGHTNESS_DARKEN_ONLY)
-#define CUSTOM_NATIVE_BRIGHTNESS_DARKEN_ONLY WITCHER_MODE_FLAG(WITCHER_FLAG_NATIVE_BRIGHTNESS_DARKEN_ONLY)
-#define CUSTOM_LUT_STRENGTH shader_injection.custom_lut_strength
-#define CUSTOM_LUT_SCALING shader_injection.custom_lut_scaling
-#define CUSTOM_COLOR_GRADING shader_injection.custom_color_grading
 
-#define WITCHER_EFFECT_STRENGTH(shift) (float((asuint(shader_injection.effect_strengths) >> (shift)) & 127u) * 0.02f)
-#define CUSTOM_BLUR_STRENGTH WITCHER_EFFECT_STRENGTH(WITCHER_EFFECT_BLUR_SHIFT)
-#define CUSTOM_SHAFTS_STRENGTH WITCHER_EFFECT_STRENGTH(WITCHER_EFFECT_SHAFTS_SHIFT)
-#define CUSTOM_LENS_STRENGTH WITCHER_EFFECT_STRENGTH(WITCHER_EFFECT_LENS_SHIFT)
-#define CUSTOM_BLOOM_STRENGTH WITCHER_EFFECT_STRENGTH(WITCHER_EFFECT_BLOOM_SHIFT)
+#define RENODX_TONE_MAP_TYPE                   shader_injection.tone_map_type
+#define RENODX_PEAK_WHITE_NITS                 shader_injection.peak_white_nits
+#define RENODX_DIFFUSE_WHITE_NITS              shader_injection.diffuse_white_nits
+#define RENODX_GRAPHICS_WHITE_NITS             shader_injection.graphics_white_nits
+#define RENODX_TONE_MAP_EXPOSURE               shader_injection.tone_map_exposure
+#define RENODX_TONE_MAP_HIGHLIGHTS             shader_injection.tone_map_highlights
+#define RENODX_TONE_MAP_SHADOWS                shader_injection.tone_map_shadows
+#define RENODX_TONE_MAP_CONTRAST               shader_injection.tone_map_contrast
+#define RENODX_TONE_MAP_HIGHLIGHT_CONTRAST     shader_injection.tone_map_highlight_contrast
+#define RENODX_TONE_MAP_SHADOW_CONTRAST        shader_injection.tone_map_shadow_contrast
+#define RENODX_TONE_MAP_SATURATION             shader_injection.tone_map_saturation
+#define RENODX_TONE_MAP_HIGHLIGHT_SATURATION   shader_injection.tone_map_highlight_saturation
+#define RENODX_TONE_MAP_BLOWOUT                shader_injection.tone_map_blowout
+#define RENODX_TONE_MAP_FLARE                  shader_injection.tone_map_flare
+//#define RENODX_COLOR_GRADE_STRENGTH            shader_injection.tone_map_color_grade_strength
+#define RENODX_INTERMEDIATE_ENCODING           renodx::draw::ENCODING_NONE
+#define RENODX_SWAP_CHAIN_DECODING             renodx::draw::ENCODING_NONE
+#define RENODX_SWAP_CHAIN_GAMMA_CORRECTION     renodx::draw::GAMMA_CORRECTION_NONE
+#define RENODX_GAMMA_CORRECTION                renodx::draw::GAMMA_CORRECTION_NONE
+//#define RENODX_SWAP_CHAIN_SCALING_NITS         100.f * RENODX_DIFFUSE_WHITE_NITS / 203.f
+#define RENODX_SWAP_CHAIN_DECODING_COLOR_SPACE color::convert::COLOR_SPACE_BT709
+#define RENODX_SWAP_CHAIN_CLAMP_COLOR_SPACE    color::convert::COLOR_SPACE_BT2020
+#define RENODX_SWAP_CHAIN_ENCODING             renodx::draw::ENCODING_PQ
+#define RENODX_SWAP_CHAIN_ENCODING_COLOR_SPACE color::convert::COLOR_SPACE_BT2020
+#define RENODX_RENO_DRT_TONE_MAP_METHOD        renodx::tonemap::renodrt::config::tone_map_method::NONE
+//#define RENODX_RENO_DRT_WHITE_CLIP             100.f
+//#define CUSTOM_SCENE_GRADE_METHOD              shader_injection.scene_grade_method
+#define CUSTOM_SCENE_HUE_METHOD                1
+#define CUSTOM_FILM_GRAIN_STRENGTH             shader_injection.custom_film_grain
+#define CUSTOM_RANDOM                          shader_injection.custom_random
+#define CUSTOM_LUT_STRENGTH                    shader_injection.custom_lut_strength
+#define CUSTOM_LUT_SCALING                     shader_injection.custom_lut_scaling
+#define CUSTOM_COLOR_GRADING                   shader_injection.custom_color_grading
+#define CUSTOM_GRADING_IMPROVEMENTS             shader_injection.custom_grading_improvements
+//#define CUSTOM_POST_MAXCLL                     shader_injection.custom_post_maxcll
+#define CUSTOM_LENS_DIRT                       shader_injection.custom_lens_dirt
+#define CUSTOM_SUNSHAFTS_STRENGTH              shader_injection.custom_sunshafts_strength
+#define CUSTOM_DEPTH_BLUR                      shader_injection.custom_depth_blur
+#define CUSTOM_SHARPENING_TYPE                shader_injection.custom_sharpening_type
+#define CUSTOM_SHARPNESS                      shader_injection.custom_sharpness
+#define CUSTOM_INVERSE_TONE_MAP                shader_injection.custom_inverse_tone_map
+#define CUSTOM_VIDEO                           shader_injection.custom_video
 
-// Scene intermediates use BT.709; the native output pass encodes BT.2020 PQ.
-#include "../../shaders/color.hlsl"
-#include "../../shaders/colorcorrect.hlsl"
-#include "../../shaders/math.hlsl"
+#define CUSTOM_BLOOM                           shader_injection.custom_bloom
+#define CUSTOM_BLOOM_BEFORE_TONEMAP            shader_injection.custom_bloom_before_tonemap
+#define CUSTOM_VIGNETTE                        shader_injection.custom_vignette
+#define CUSTOM_VIGNETTE_BLACK_LEVEL            shader_injection.custom_vignette_black_level
+#define CUSTOM_SDR_OUTPUT_ENCODING             shader_injection.custom_sdr_output_encoding
+#define CUSTOM_HIDE_UI                         shader_injection.custom_hide_ui
+#define LAST_IS_HDR                            shader_injection.last_is_hdr
+#define PRISM_INSET_00                         shader_injection.prism_inset_00
+#define PRISM_INSET_01                         shader_injection.prism_inset_01
+#define PRISM_INSET_02                         shader_injection.prism_inset_02
+#define PRISM_INSET_10                         shader_injection.prism_inset_10
+#define PRISM_INSET_11                         shader_injection.prism_inset_11
+#define PRISM_INSET_12                         shader_injection.prism_inset_12
+#define PRISM_INSET_20                         shader_injection.prism_inset_20
+#define PRISM_INSET_21                         shader_injection.prism_inset_21
+#define PRISM_INSET_22                         shader_injection.prism_inset_22
+#define PRISM_BLACK_FLOOR                       shader_injection.prism_black_floor
+// #define CUSTOM_BLOOM_ROLLOFF_START                 shader_injection.custom_bloom_rolloff_start
+// #define CUSTOM_SUNSHAFT_ROLLOFF_START             shader_injection.custom_sunshaft_rolloff_start
+// #define CUSTOM_BLOOM_THRESHOLD                 shader_injection.custom_bloom_threshold
+// #define CUSTOM_BLOOM_CURVE                     shader_injection.custom_bloom_curve
+//#define CUSTOM_BLOOM_RADIUS                    shader_injection.custom_bloom_radius
+
+// #define CUSTOM_GAMMA_TYPE                      shader_injection.custom_gamma_type
+// #define CUSTOM_GAMMA_VALUE                     shader_injection.custom_gamma_value
+
+//#define UTILITY_COMPARISON                    shader_injection.utility_comparison
+//#define UTILITY_HUD                            shader_injection.utility_hud
+
+// Must be 32bit aligned
+// Should be 4x32
+struct ShaderInjectData {
+  float peak_white_nits;
+  float diffuse_white_nits;
+  float graphics_white_nits;
+  float tone_map_type;
+  float tone_map_exposure;
+  float tone_map_highlights;
+  float tone_map_shadows;
+  float tone_map_contrast;
+  float tone_map_highlight_contrast;
+  float tone_map_shadow_contrast;
+  float tone_map_saturation;
+  float tone_map_highlight_saturation;
+  float tone_map_blowout;
+  float tone_map_flare;
+  float custom_film_grain;
+  float custom_random;
+  float custom_lut_strength;
+  float custom_lut_scaling;
+  float custom_color_grading;
+  float custom_grading_improvements;
+  //float custom_post_maxcll;
+  float custom_lens_dirt;
+  float custom_sunshafts_strength;
+  float custom_tone_map_exposure;
+  float custom_depth_blur;
+  float custom_sharpening_type;
+  float custom_sharpness;
+
+  float custom_bloom;
+  float custom_vignette;
+  float custom_vignette_black_level;
+
+  float agx_vanilla_bend;
+  float custom_inverse_tone_map;
+  float custom_video;
+
+  //float utility_comparison;
+  //float utility_hud;
+  float last_is_hdr;  // Four bytes in both C++ and HLSL.
+  float custom_sdr_output_encoding;
+  float prism_inset_00;
+  float prism_inset_01;
+  float prism_inset_02;
+  float prism_inset_10;
+  float prism_inset_11;
+  float prism_inset_12;
+  float prism_inset_20;
+  float prism_inset_21;
+  float prism_inset_22;
+  float prism_yf_weight_0;
+  float prism_yf_weight_1;
+  float prism_yf_weight_2;
+  float prism_yf_neutral_axis_0;
+  float prism_yf_neutral_axis_1;
+  float prism_yf_neutral_axis_2;
+  float prism_yf_neutral_reciprocal;
+  float prism_black_floor;
+  float custom_debug_show_agx_curve_values;
+  float custom_bloom_before_tonemap;
+  float custom_hide_ui;
+
+  // Game-specific settings, injected through a root CBV.
+  float psychov_adaptation_anchor;
+  float psychov_background_anchor;
+  float psychov_gamut_compression;
+  float psychov_gamut_compression_mode;
+  float psychov_compression;
+  float tone_map_gamma;
+  float chromatic_aberration_mode;
+  float chromatic_aberration_intensity;
+  float chromatic_aberration_start_offset;
+  float psychov_native_contrast;
+  float scene_grade_hue_shift;
+};
+
+#ifndef __cplusplus
+#if ((__SHADER_TARGET_MAJOR == 5 && __SHADER_TARGET_MINOR >= 1) || __SHADER_TARGET_MAJOR >= 6)
+cbuffer injectedBuffer : register(b13, space50) {
+#elif (__SHADER_TARGET_MAJOR < 5) || ((__SHADER_TARGET_MAJOR == 5) && (__SHADER_TARGET_MINOR < 1))
+cbuffer injectedBuffer : register(b13) {
+#endif
+  ShaderInjectData shader_injection : packoffset(c0);
+}
+
+#if (__SHADER_TARGET_MAJOR >= 6)
+#pragma dxc diagnostic ignored "-Wparentheses-equality"
 #endif
 
-#endif  // SRC_GAMES_THEWITCHER3REMASTERED_SHARED_H_
+#include "../../shaders/renodx.hlsl"
+#endif
+
+#endif  // SRC_THEWITCHER3_SHARED_H_

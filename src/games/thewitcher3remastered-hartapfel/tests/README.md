@@ -18,8 +18,8 @@ selector writes. The eight compacted controls retain their existing integer
 INI values; fractional values now use the integer slider representation.
 
 ```powershell
-python src/games/thewitcher3remastered/tests/prepare_layout.py tmp/witcher-layout
-clang-cl /std:c++20 /EHsc /O2 /MT /DNOMINMAX /DWIN32=1 /Iexternal/reshade /Itmp/witcher-layout src/games/thewitcher3remastered/tests/root_layout.cpp /Fe:tmp/witcher-layout/check.exe /Fo:tmp/witcher-layout/check.obj
+python src/games/thewitcher3remastered-hartapfel/tests/prepare_layout.py tmp/witcher-layout
+clang-cl /std:c++20 /EHsc /O2 /MT /DNOMINMAX /DWIN32=1 /Iexternal/reshade /Itmp/witcher-layout src/games/thewitcher3remastered-hartapfel/tests/root_layout.cpp /Fe:tmp/witcher-layout/check.exe /Fo:tmp/witcher-layout/check.obj
 ./tmp/witcher-layout/check.exe
 ```
 
@@ -39,8 +39,8 @@ No game or GPU callbacks are invoked.
 From an x64 Visual Studio developer shell at the repository root:
 
 ```powershell
-clang-cl /std:c++20 /EHsc /O2 /MT /DNDEBUG /DNOMINMAX /DWIN32=1 /Iexternal/reshade src/games/thewitcher3remastered/tests/addon_runtime.cpp /Fe:tmp/addon-runtime.exe /Fo:tmp/addon-runtime.obj
-./tmp/addon-runtime.exe ./build/Release/renodx-thewitcher3remastered.addon64
+clang-cl /std:c++20 /EHsc /O2 /MT /DNDEBUG /DNOMINMAX /DWIN32=1 /Iexternal/reshade src/games/thewitcher3remastered-hartapfel/tests/addon_runtime.cpp /Fe:tmp/addon-runtime.exe /Fo:tmp/addon-runtime.obj
+./tmp/addon-runtime.exe ./build/Release/renodx-thewitcher3remastered-hartapfel.addon64
 ```
 
 See `../CPU_PERFORMANCE.md` for the profiling findings and runtime checks.
@@ -61,15 +61,15 @@ the native FG coverage mask also pass. These checks do not verify game resource
 lifetimes, native decoder playback or hardware frame time.
 
 ```powershell
-python src/games/thewitcher3remastered/tests/prepare_output.py tmp/output-after
-python src/games/thewitcher3remastered/tests/prepare_output.py tmp/output-before <before-source-folder>
+python src/games/thewitcher3remastered-hartapfel/tests/prepare_output.py tmp/output-after
+python src/games/thewitcher3remastered-hartapfel/tests/prepare_output.py tmp/output-before <before-source-folder>
 foreach ($stage in 'before', 'after') {
   foreach ($id in '8F5737B5', '496222DA') {
     bin/fxc.exe /nologo /T cs_5_0 /E main /Ges /WX /O3 /Fo "tmp/$stage-$id.cso" "tmp/output-$stage/output/0x$id.ps_6_6.hlsl"
     if ($LASTEXITCODE) { throw 'Output compilation failed' }
   }
 }
-clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered/tests/output_composition.cpp /Fe:tmp/output-composition.exe /Fo:tmp/output-composition.obj /link d3d11.lib
+clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered-hartapfel/tests/output_composition.cpp /Fe:tmp/output-composition.exe /Fo:tmp/output-composition.obj /link d3d11.lib
 ./tmp/output-composition.exe tmp/before-8F5737B5.cso tmp/before-496222DA.cso tmp/after-8F5737B5.cso tmp/after-496222DA.cso
 ```
 
@@ -84,8 +84,8 @@ variants to CS5.0. Its second argument is a snapshot of the mod before the
 change. `gamut.cpp` executes those before/after shaders through D3D11 WARP:
 
 ```powershell
-python src/games/thewitcher3remastered/tests/prepare_gamut.py tmp/gamut-check <before-source-folder>
-clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered/tests/gamut.cpp /Fe:tmp/gamut-check/gamut.exe /Fo:tmp/gamut-check/gamut.obj /link d3d11.lib
+python src/games/thewitcher3remastered-hartapfel/tests/prepare_gamut.py tmp/gamut-check <before-source-folder>
+clang-cl /std:c++20 /EHsc /O2 /MT src/games/thewitcher3remastered-hartapfel/tests/gamut.cpp /Fe:tmp/gamut-check/gamut.exe /Fo:tmp/gamut-check/gamut.obj /link d3d11.lib
 ./tmp/gamut-check/gamut.exe tmp/gamut-check
 ```
 

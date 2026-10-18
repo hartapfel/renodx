@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 root = Path.cwd()
-mod = root / "src/games/thewitcher3remastered"
+mod = root / "src/games/thewitcher3remastered-hartapfel"
 out = Path(sys.argv[1]).resolve()
 baseline = Path(sys.argv[2]).resolve()
 targets = [("postprocess", name) for name in (

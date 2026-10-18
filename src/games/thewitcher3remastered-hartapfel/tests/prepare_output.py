@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 root = Path.cwd()
-mod = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else root / "src/games/thewitcher3remastered"
+mod = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else root / "src/games/thewitcher3remastered-hartapfel"
 dest = Path(sys.argv[1]).resolve()
 for source in mod.rglob("*"):
     if not source.is_file() or source.suffix not in (".h", ".hlsl", ".hlsli"):

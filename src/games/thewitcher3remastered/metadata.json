@@ -1,23 +1,18 @@
 {
   "$schema": "https://cdn.jsdelivr.net/gh/clshortfuse/renodx/renodx-metadata-schema.json",
-  "id": "thewitcher3remastered",
-  "title": "The Witcher 3 - Remastered",
-  "summary": "Experimental PsychoV-30 replacement for the native DX12 HDR pipeline.",
-  "status": "experimental",
-  "notes": [
-    "Preserves exposed HDR through native grading, applies PsychoV-30 before UI composition, and outputs HDR10 with independent UI white.",
-    "Requires native HDR output. Scene rendering, grading controls and highlight roll-off have been checked live. Alternate views and output paths remain experimental.",
-    "Night lighting, camera lights, moon size and night grading are provided by the separate optional Darker Nights - Remastered addon."
+  "id": "thewitcher3",
+  "title": "The Witcher 3: Wild Hunt",
+  "maintainers": [
+    "OopyDoopy (Jon)"
+  ],
+  "status": "stable",
+  "urls": [
+    {
+      "url": "https://www.nexusmods.com/witcher3/mods/10900",
+      "kind": "nexus_mods"
+    }
   ],
   "deploy": {
-    "steam_appid": 292030,
-    "game_exe": "witcher3.exe",
-    "process_name": "witcher3.exe",
-    "api": "d3d12",
-    "architecture": [
-      "x64"
-    ],
-    "reshade_preferred_name": "dxgi.dll"
-  },
-  "variant": "HDR"
+    "steam_appid": 292030
+  }
 }
