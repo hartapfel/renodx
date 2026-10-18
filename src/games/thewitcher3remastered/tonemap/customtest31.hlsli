@@ -1113,10 +1113,12 @@ float3 custom_psycho31_ApplyAnchoredCInfinityShoulder(
     float3 peak,
     float3 anchor,
     float compression_strength) {
-  float3 shoulder_range = peak - anchor;
+  // Keep the supplied asymptotic shoulder. Strengths below ln(2) overshoot
+  // its peak, so both the observer and display-reference paths use this floor.
+  float3 shoulder_range = max(peak - anchor, 1e-6f);
   float3 distance_from_anchor = max(color - anchor, 0.f);
   float3 flat_weight = exp2(
-      -shoulder_range / (compression_strength * distance_from_anchor));
+      -shoulder_range / (max(compression_strength, 0.693147181f) * max(distance_from_anchor, 1e-20f)));
   float3 response_denominator = mad(
       distance_from_anchor,
       flat_weight,
@@ -1124,7 +1126,8 @@ float3 custom_psycho31_ApplyAnchoredCInfinityShoulder(
   return mad(
       shoulder_range,
       distance_from_anchor / response_denominator,
-      color - distance_from_anchor);
+      // Subtracting two large values loses the anchor after strong grading.
+      min(color, anchor));
 }
 
 // Lab shoulder-weighted policy: physical WHITE-weighted pre-tonal source

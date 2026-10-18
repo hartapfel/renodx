@@ -8,9 +8,9 @@ default. PsychoV-31 (Custom) is the fourth and last option.
 
 The game-local tone mapper uses the supplied `customtest31.hlsli` entry
 `custom_psychotm_test31`, with its matching Test 30 support from the PsychoV31
-shader bundle. Only includes, guards and the namespace are adapted; shared
-shader libraries are unchanged. Chromatic aberration is ported from Hartapfel's
-Witcher 3 addon.
+shader bundle. The game wrapper owns grading and display-gamut fitting; the
+supplied shoulder has numerical safety fixes. Shared shader libraries are
+unchanged. Chromatic aberration is ported from Hartapfel's Witcher 3 addon.
 PsychoV keeps exposed scene HDR through grading and maps it once before UI
 composition: in the last grading pass for SDR, or the HDR output pass for HDR.
 SDR targets BT.709 at unit peak; HDR uses the selected peak, game brightness,
@@ -48,11 +48,14 @@ zero-black guarantee here applies to the new curve, not every artistic grade.
 Advanced settings expose adaptation/background anchors, gamut
 compression/target, response compression, and gamma in the
 **PsychoV-31 (Custom)** section below **Color Grading**. The custom mapper
-handles tonal and saturation grading directly. Highlight hue, source boundary,
+applies tonal controls to luminance before its observer response; saturation
+remains a separate colour operation. Highlight hue, source boundary,
 source awareness and SDR EOTF emulation use the implementation defaults
 internally (0, None, 1 and Off respectively). Display gamut mapping is handled
 by the game-local wrapper described below. Response Compression defaults to
-0 (Auto). The active custom entry point has no separate Cone Response Exponent parameter;
+3.5; 0 selects Auto. Manual values below ln(2) use the minimum monotonic
+strength, and background anchors stay below the selected peak. The active custom
+entry point has no separate Cone Response Exponent parameter;
 that control belongs to the unused standard PsychoV entry point in the supplied
 file. It is not exposed for this custom curve. The former Hue Shift is removed.
 The existing highlights, shadows, split contrast, saturation, flare, and
@@ -60,21 +63,27 @@ contribution controls are reused. The LUT and analytic grade bridges preserve
 signed wide-gamut inputs with a reversible proxy when grading improvements
 are enabled.
 
-Gamut Compression uses a game-local constant-Oklab-hue mapping after the
-supplied PsychoV response. It first compresses chroma smoothly toward the
-selected target's zero-channel boundary, preserving linear luminance. It then
-fits peak brightness with a common RGB scale and a soft shoulder, allowing
-bright saturated colours to lose luminance instead of bleaching toward white.
-This second step preserves hue and relative chroma (C/L). The in-range neutral
-curve is retained. Compression 0 bypasses both steps exactly; 100 fits the
-selected BT.709, Display P3 or BT.2020 volume, with SDR always targeting BT.709.
-Intermediate strengths blend toward that result and can remain out of gamut.
-Signed BT.709 remains the transport representation, so it is not clamped to
-BT.709 when a wider target is selected. Black remains zero. There is no
-fire-specific hue rotation, and intentional Blowout still runs afterwards.
-The hue/brightness distinction follows the principles discussed in
-[Oklab gamut projection](https://bottosson.github.io/posts/gamutclipping/);
-the target-boundary search and peak shoulder here are game-local implementations.
+Gamut Compression fits the PsychoV observer response toward a bounded response
+of the same graded source in the selected display RGB space. The reference
+first smoothly fits the source's negative channels without limiting HDR
+intensity, then applies the same anchored shoulder per display channel. This
+provides a warm highlight path toward white rather than adding grey to a
+saturated red or applying a second scalar brightness limit. A smooth support
+of all six target RGB boundaries blends the observer response toward that
+reference without a maximum-channel switch. This is a game-specific mapping,
+not an ACES or Oklab hue-preserving transform.
+
+Compression 0 bypasses that fit exactly; 1 fits BT.709, Display P3 or BT.2020,
+with SDR always targeting BT.709. Intermediate strengths can remain out of
+gamut. Signed BT.709 remains the transport representation. Zero stays zero;
+Saturation 0 and Blowout 100 remain grayscale. The physiological observer
+response and display reference share the resolved response-compression value.
+Tonal controls run once on scene luminance, so increasing Highlights also
+raises weak cone components rather than leaving them below the control's
+threshold. The shoulder retains an asymptotic peak: finite input does not
+necessarily equal peak white, and coloured highlights can have CIE luminance
+below their maximum RGB component. No finite endpoint or hard highlight clip
+is added.
 
 Before the PsychoV response, a narrow soft compression keeps near-zero and
 negative cone components inside its positive LMS domain. The supplied signed
@@ -238,7 +247,7 @@ Before opening the PR, verify in game:
    Test the advanced PsychoV controls, LUT and grading
    contributions at 0/50/100, and all three HDR gamut targets.
    Compare sunset and fire highlights at Gamut Compression 0/50/100: colour
-   should survive peak fitting, with lower highlight luminance where necessary.
+   should follow a continuous warm path to white without a fixed-luminance pink projection.
    Check neutral ramps, Saturation 0 and Blowout 100, and measure frame times.
    Check bright cutscene flares/embers with response Compression 3.5 and Auto,
    including the yellow-green/white transition, and compare the previously
@@ -260,4 +269,15 @@ Before opening the PR, verify in game:
    Darker Nights enabled. Check loading, shader coverage, ReShade FX output,
    frame times, logs, and HDR/SDR transitions. Both addon load orders must work.
 
-Live validation of this merged build is still pending.
+The 2026-10-18 PsychoV pipeline correction passed the Release addon build,
+1,290,240 HDR/SDR slider/gamut samples, and 589,824 warm/neutral ramp samples
+without a luminance reversal above 0.01 nit. Tests include exact zero black,
+grayscale endpoints, all three target gamuts, and low/manual/Auto compression.
+A replay of the captured sunset approached 999.8 nits at a 1000-nit peak with
+Highlights and Highlight Contrast raised, without a lower fixed ceiling.
+DevKit readback of the running HDR addon showed a continuous sunset highlight
+profile without the earlier shelves or pink core. The user confirmed improved
+sunset rendering, expected grading-control behaviour, and warm flames at full
+gamut compression while raising Highlights. These checks cover this correction;
+the broader merge/PR checklist above still needs its remaining scene and mode
+coverage.

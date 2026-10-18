@@ -64,27 +64,40 @@ float3 WitcherToneMapPsychoVCustom31(float3 color_bt709, bool is_hdr) {
         color_bt709) / renodx::tonemap::witcher_psychov_custom31::PSYCHO30_D65_WHITE_YF;
     color_bt709 = lerp(neutral.xxx, color_bt709, RENODX_TONE_MAP_SATURATION);
   }
+  // Grade luminance once before the observer response. Grading each cone
+  // separately leaves a weak S cone below the highlight-control threshold
+  // while L/M saturate, holding saturated highlights on a coloured plateau.
+  // One positive gain preserves scene chromaticity and the zero black floor.
+  const float source_y = renodx::color::y::from::BT709(color_bt709);
+  if (!(source_y > 0.f)) return 0.f;
+  const float graded_y = renodx::tonemap::witcher_psychov_custom31::custom_psycho31_ApplyAnchoredTonalGrading(
+      source_y.xxx, RENODX_PSYCHOV_ADAPTATION_ANCHOR.xxx,
+      RENODX_PSYCHOV_ADAPTATION_ANCHOR.xxx,
+      RENODX_TONE_MAP_CONTRAST, RENODX_TONE_MAP_FLARE,
+      RENODX_TONE_MAP_HIGHLIGHT_CONTRAST, RENODX_TONE_MAP_SHADOW_CONTRAST,
+      RENODX_TONE_MAP_HIGHLIGHTS, RENODX_TONE_MAP_SHADOWS).x;
+  color_bt709 *= graded_y / source_y;
+  const float background_anchor = min(RENODX_PSYCHOV_BACKGROUND_ANCHOR, peak * 0.99f);
+  const float response_compression = RENODX_PSYCHOV_COMPRESSION == 0.f
+      ? renodx::tonemap::witcher_psychov_custom31::psycho30_AutoCompressionPower(
+          background_anchor, peak)
+      : RENODX_PSYCHOV_COMPRESSION;
   float3 mapped_bt709 = renodx::tonemap::witcher_psychov_custom31::custom_psychotm_test31(
       WitcherCompressPsychoVConeInput(color_bt709),
       peak,
       1.f,
-      RENODX_TONE_MAP_HIGHLIGHTS,
-      RENODX_TONE_MAP_SHADOWS,
-      RENODX_TONE_MAP_CONTRAST,
-      RENODX_TONE_MAP_FLARE,
-      RENODX_TONE_MAP_HIGHLIGHT_CONTRAST,
-      RENODX_TONE_MAP_SHADOW_CONTRAST,
+      1.f, 1.f, 1.f, 0.f, 1.f, 1.f,  // Tonal grading was applied above.
       1.f,  // Global saturation is applied above, before signed fallback selection.
       RENODX_TONE_MAP_HIGHLIGHT_SATURATION,
       0.f,  // Retain the shared Blowout control's full-grayscale endpoint below.
       RENODX_PSYCHOV_ADAPTATION_ANCHOR.xxx,
-      RENODX_PSYCHOV_BACKGROUND_ANCHOR.xxx,
+      background_anchor.xxx,
       0.f,  // SDR EOTF emulation stays off.
-      0.f,  // Map the display gamut below along a constant perceptual hue ray.
+      0.f,  // The game-local display gamut fit below owns this operation.
       is_hdr ? (int)RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE : 0,
-      RENODX_PSYCHOV_COMPRESSION);
+      response_compression);
   mapped_bt709 = WitcherCompressPsychoVGamut(
-      mapped_bt709, peak,
+      mapped_bt709, color_bt709, peak, response_compression,
       is_hdr ? (int)RENODX_PSYCHOV_GAMUT_COMPRESSION_MODE : 0,
       RENODX_PSYCHOV_GAMUT_COMPRESSION);
   // Remove only numerical neutral-axis error at the exact grayscale endpoint.

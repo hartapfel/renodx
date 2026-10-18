@@ -23,70 +23,46 @@ float3 WitcherCompressPsychoVConeInput(float3 rgb) {
   return lerp(luminance.xxx, rgb, compressed / distance);
 }
 
-// A constant Oklab hue ray, rescaled to keep display-linear luminance.
-// This scalar rescaling preserves hue and C/L; signed BT.709 is transport,
-// not a clipping boundary. The caller tests the selected display RGB volume.
-float3 WitcherPsychoVGamutCandidate(float3 lab, float chroma_scale, float luminance) {
-  float3 rgb = renodx::color::bt709::from::OkLab(
-      float3(lab.x, lab.yz * chroma_scale));
-  const float candidate_y = renodx::color::y::from::BT709(rgb);
-  if (!(candidate_y > 0.f)) return -1.f.xxx;
-  return rgb * (luminance / candidate_y);
-}
-
-float3 WitcherCompressPsychoVGamut(float3 rgb, float peak, int target, float strength) {
+// Use a bounded display-channel response as the compression destination.
+// Unlike a neutral destination it retains a warm yellow path to peak white.
+float3 WitcherCompressPsychoVGamut(
+    float3 rgb, float3 source, float peak, float compression, int target, float strength) {
   if (strength <= 0.f) return rgb;
-  const float3 normalized = rgb / max(peak, 1e-6f);
-  const float luminance = renodx::color::y::from::BT709(normalized);
-  if (!(luminance > 0.f)) {
-    return lerp(rgb, 0.f.xxx, saturate(strength));
-  }
-  const float3 lab = renodx::color::oklab::from::BT709(normalized);
-  if (!(lab.x > 0.f) || any(isnan(lab)) || any(isinf(lab))) {
-    return lerp(rgb, saturate(luminance).xxx * peak, saturate(strength));
-  }
   const float3x3 to_target = target == 3
       ? mul(renodx::color::XYZ_TO_DISPLAYP3_MAT, renodx::color::BT709_TO_XYZ_MAT)
       : (target == 1 ? renodx::color::BT709_TO_BT2020_MAT
                      : float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1));
-  // Compress chromaticity against the target's lower (zero-channel) boundary
-  // only. Holding Y while also fitting the peak boundary bleaches bright
-  // yellows/reds to white, even when the perceptual hue itself is preserved.
-  // Start the chroma knee at 80% of that boundary; interior colours bypass it.
-  float lower = 0.f;
-  float upper = 1.25f;
-  float3 probe = mul(to_target, WitcherPsychoVGamutCandidate(lab, upper, luminance));
-  float3 compressed = normalized;
-  if (any(probe < 0.f)) {
-    [loop]
-    for (int iteration = 0; iteration < 16; ++iteration) {
-      const float middle = (lower + upper) * 0.5f;
-      probe = mul(to_target, WitcherPsychoVGamutCandidate(lab, middle, luminance));
-      if (all(probe >= 0.f)) lower = middle;
-      else upper = middle;
-    }
-    // The inside endpoint plus a numerical margin keeps target RGB nonnegative.
-    // A rational shoulder joins the identity at the knee with unit slope.
-    const float boundary = lower * 0.99999f;
-    const float knee = boundary * 0.8f;
-    const float distance = 1.f - knee;
-    const float headroom = boundary - knee;
-    const float scale = knee + distance * headroom / (distance + headroom);
-    compressed = boundary > 0.f
-        ? WitcherPsychoVGamutCandidate(lab, scale, luminance) : luminance.xxx;
-  }
-  // Fit peak with one RGB scale, preserving the mapped hue and C/L. Allowing
-  // highlight luminance to fall retains colour instead of adding white.
-  // Raising the knee to Y leaves the mapper's in-range neutral curve intact.
-  const float maximum = renodx::math::Max(mul(to_target, compressed));
-  const float peak_knee = max(0.8f, saturate(luminance));
-  if (maximum > peak_knee) {
-    const float headroom = 1.f - peak_knee;
-    const float distance = maximum - peak_knee;
-    const float mapped_maximum = peak_knee + distance * headroom / (distance + headroom);
-    compressed *= mapped_maximum / maximum;
-  }
-  return lerp(rgb, compressed * peak, saturate(strength));
+  const float3x3 from_target = target == 3
+      ? mul(renodx::color::XYZ_TO_BT709_MAT, renodx::color::DISPLAYP3_TO_XYZ_MAT)
+      : (target == 1 ? renodx::color::BT2020_TO_BT709_MAT
+                     : float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1));
+  float3 reference = mul(to_target, source);
+  const float y = renodx::color::y::from::BT709(source);
+  if (!(y > 0.f)) return lerp(rgb, 0.f.xxx, saturate(strength));
+  // Lower-bound source gamut fit preserves Y and does not restrict HDR range.
+  const float3 low = max(1.f - reference / y, 0.f);
+  const float low_support = max(1.f, renodx::math::Max(low));
+  const float lower_scale = rcp(low_support) * pow(
+      pow(rcp(low_support), 8.f) + dot(pow(low / low_support, 8.f), 1.f.xxx), -0.125f);
+  reference = lerp(y.xxx, reference, lower_scale);
+  const float background_anchor = min(RENODX_PSYCHOV_BACKGROUND_ANCHOR, peak * 0.99f);
+  reference = renodx::tonemap::witcher_psychov_custom31::custom_psycho31_ApplyAnchoredCInfinityShoulder(
+      reference * (background_anchor / RENODX_PSYCHOV_ADAPTATION_ANCHOR),
+      peak.xxx, background_anchor.xxx, compression) / peak;
+  const float3 normalized = mul(to_target, rgb / peak);
+  const float3 delta = normalized - reference;
+  const float3 demand_low = max(-delta, 0.f) / max(reference, 1e-7f);
+  const float3 demand_high = max(delta, 0.f) / max(1.f - reference, 1e-7f);
+  const float support = max(1.f, max(renodx::math::Max(demand_low), renodx::math::Max(demand_high)));
+  // A smooth support of all six RGB faces avoids a corner when the limiting
+  // channel changes. Scaling by the largest demand prevents squared overflow;
+  // it cancels algebraically and introduces no max-channel knee in the result.
+  // scale <= 1 / each demand proves the endpoint stays in the target cube.
+  const float scale = rcp(support) * rsqrt(
+      rcp(support) * rcp(support)
+      + dot(demand_low / support, demand_low / support)
+      + dot(demand_high / support, demand_high / support));
+  return lerp(rgb, mul(from_target, reference + delta * scale) * peak, saturate(strength));
 }
 
 #endif
