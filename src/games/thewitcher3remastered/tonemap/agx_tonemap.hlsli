@@ -168,8 +168,7 @@ void AgxApplyBlackFloor(
     bool useParametricCurve,
     float diffuseWhiteNits)
 {
-    if (useParametricCurve && RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31
-        && RENODX_PSYCHOV_NATIVE_CONTRAST != 0.f)
+    if (useParametricCurve && RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31)
     {
         // PsychoV imports the native toe: 0 retains the previous zero-floor
         // correction, 1 keeps the native shoulder. Inflection/highlights stay fixed.

@@ -2,7 +2,6 @@
 #define SRC_THEWITCHER3_SHARED_H_
 
 #define WITCHER_TONE_MAP_PSYCHOV_CUSTOM31 3.f
-#define RENODX_PSYCHOV_NATIVE_CONTRAST shader_injection.psychov_native_contrast
 #define RENODX_PSYCHOV_ADAPTATION_ANCHOR shader_injection.psychov_adaptation_anchor
 #define RENODX_PSYCHOV_BACKGROUND_ANCHOR shader_injection.psychov_background_anchor
 #define RENODX_PSYCHOV_GAMUT_COMPRESSION shader_injection.psychov_gamut_compression
@@ -159,7 +158,6 @@ struct ShaderInjectData {
   float chromatic_aberration_mode;
   float chromatic_aberration_intensity;
   float chromatic_aberration_start_offset;
-  float psychov_native_contrast;
   float scene_grade_hue_shift;
 };
 

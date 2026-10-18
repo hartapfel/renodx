@@ -550,17 +550,6 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return current_settings_mode >= 0.f && !shader_injection.last_is_hdr; },
     },
     new renodx::utils::settings::Setting{
-        .key = "PsychoVNativeContrast",
-        .binding = &shader_injection.psychov_native_contrast,
-        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
-        .default_value = 1.f,
-        .label = "Native Slope Matching",
-        .section = "Tone Mapping",
-        .tooltip = "Off: match native mid-grey brightness only. On: use native AgX contrast with Shoulder Blend and adjustable Black Floor.",
-        .labels = {"Off", "On"},
-        .is_visible = []() { return RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31; },
-    },
-    new renodx::utils::settings::Setting{
         .key = "ToneMapAgxVanillaBend",
         .binding = &shader_injection.agx_vanilla_bend,
         .default_value = 20.f,
@@ -568,7 +557,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Tone Mapping",
         .tooltip = "Blends the extended shoulder strength toward the vanilla tonemapper.",
         .max = 100.f,
-        .is_enabled = []() { return RENODX_TONE_MAP_TYPE >= 1.f && (RENODX_TONE_MAP_TYPE != WITCHER_TONE_MAP_PSYCHOV_CUSTOM31 || RENODX_PSYCHOV_NATIVE_CONTRAST != 0.f); },
+        .is_enabled = []() { return RENODX_TONE_MAP_TYPE >= 1.f; },
         .parse = [](float value) { return value * 0.01f; },
         .is_visible = []() { return current_settings_mode >= 1.f; },
     },
@@ -595,10 +584,9 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Controls the toe of the curve. 0 targets a perfect black floor, 100 is vanilla.",
         .min = 0.f,
         .max = 100.f,
-        .is_enabled = []() { return RENODX_TONE_MAP_TYPE != WITCHER_TONE_MAP_PSYCHOV_CUSTOM31 || RENODX_PSYCHOV_NATIVE_CONTRAST != 0.f; },
         .parse = [](float value) { return value * 0.01f; },
         .on_change_value = &OnPrismSettingChange,
-        .is_visible = []() { return current_settings_mode >= 0.f && (RENODX_TONE_MAP_TYPE != WITCHER_TONE_MAP_PSYCHOV_CUSTOM31 || RENODX_PSYCHOV_NATIVE_CONTRAST != 0.f); },
+        .is_visible = []() { return current_settings_mode >= 0.f; },
     },
 
     new renodx::utils::settings::Setting{
@@ -1304,7 +1292,6 @@ renodx::utils::settings::Settings settings = {
 void OnPresetOff() {
   renodx::utils::settings::UpdateSetting("SceneGradeHueShift", 0.f);
   renodx::utils::settings::UpdateSetting("ColorGradeStrength", 100.f);
-  renodx::utils::settings::UpdateSetting("PsychoVNativeContrast", 0.f);
   renodx::utils::settings::UpdateSetting("PsychoVAdaptationAnchor", 0.18f);
   renodx::utils::settings::UpdateSetting("PsychoVBackgroundAnchor", 0.18f);
   renodx::utils::settings::UpdateSetting("PsychoVGamutCompression", 1.f);

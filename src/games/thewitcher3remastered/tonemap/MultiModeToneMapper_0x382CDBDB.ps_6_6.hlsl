@@ -321,7 +321,7 @@ float3 ApplyLogDomainToneMap(
 
     // Preserve the native encoding floor except in PsychoV's zero-anchored reference.
     outColor =
-        max(outColor, (RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31 && RENODX_PSYCHOV_NATIVE_CONTRAST != 0.f) ? 0.0f : 0.0000999999975f);
+        max(outColor, (RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31) ? 0.0f : 0.0000999999975f);
 
     outColor =
         pow(outColor, 2.2000000477f);
@@ -413,7 +413,7 @@ float4 ps_main(PSInput input) : SV_Target0
                 && PRISM_BLACK_FLOOR < 1.0f);
 
         if (RENODX_TONE_MAP_TYPE < 2.0f
-        || (RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31 && RENODX_PSYCHOV_NATIVE_CONTRAST != 0.f))
+        || (RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31))
         {
             AgxApplyBlackFloor(
                 C19.z,
@@ -524,7 +524,7 @@ float4 ps_main(PSInput input) : SV_Target0
 
     if (RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31)
     {
-        if (mode == 1u && RENODX_PSYCHOV_NATIVE_CONTRAST != 0.f)
+        if (mode == 1u)
         {
             // A grey gain alone loses the native toe/slope and washes out the
             // grading input. Reuse Vanilla+'s unbounded shoulder, before PsychoV.
