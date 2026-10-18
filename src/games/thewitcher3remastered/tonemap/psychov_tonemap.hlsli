@@ -50,7 +50,7 @@ float3 WitcherToneMapPsychoVCustom31(float3 color_bt709, bool is_hdr) {
     color_bt709 = lerp(neutral.xxx, color_bt709, RENODX_TONE_MAP_SATURATION);
   }
   float3 mapped_bt709 = renodx::tonemap::witcher_psychov_custom31::custom_psychotm_test31(
-      color_bt709,
+      WitcherCompressPsychoVConeInput(color_bt709),
       peak,
       1.f,
       RENODX_TONE_MAP_HIGHLIGHTS,

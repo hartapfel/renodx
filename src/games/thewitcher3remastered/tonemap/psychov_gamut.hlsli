@@ -1,6 +1,28 @@
 #ifndef THEWITCHER3REMASTERED_PSYCHOV_GAMUT_HLSLI_
 #define THEWITCHER3REMASTERED_PSYCHOV_GAMUT_HLSLI_
 
+// Keep the observer response inside its positive cone domain. Signed RGB is
+// valid wide-gamut transport, but a negative LMS component never approaches
+// positive peak white through the supplied mapper's abs/sign fallback. This
+// produces a flat yellow/green highlight with a white seam where S crosses zero.
+float3 WitcherCompressPsychoVConeInput(float3 rgb) {
+  const float luminance = renodx::color::y::from::BT709(rgb);
+  if (!(luminance > 0.f)) return rgb;
+  const float3 relative_lms = mul(
+      renodx::tonemap::witcher_psychov_custom31::PSYCHO30_BT709_TO_LMS_MAT, rgb)
+      / renodx::tonemap::witcher_psychov_custom31::PSYCHO30_D65_WHITE_LMS;
+  const float distance = 1.f - renodx::math::Min(relative_lms) / luminance;
+  // A narrow, exposure-invariant knee starts before the cone boundary to avoid
+  // a seam at zero. Ordinary colours bypass exactly; no BT.709 RGB clamp or
+  // display-gamut restriction is introduced. The RGB blend preserves CIE Y.
+  const float knee = 0.98f;
+  if (distance <= knee) return rgb;
+  const float excess = distance - knee;
+  const float headroom = 1.f - knee;
+  const float compressed = knee + excess * headroom / (excess + headroom);
+  return lerp(luminance.xxx, rgb, compressed / distance);
+}
+
 // A constant Oklab hue ray, rescaled to keep display-linear luminance.
 // This scalar rescaling preserves hue and C/L; signed BT.709 is transport,
 // not a clipping boundary. The caller tests the selected display RGB volume.

@@ -61,6 +61,19 @@ The hue/brightness distinction follows the principles discussed in
 [Oklab gamut projection](https://bottosson.github.io/posts/gamutclipping/);
 the target-boundary search and peak shoulder here are game-local implementations.
 
+Before the PsychoV response, a narrow soft compression keeps near-zero and
+negative cone components inside its positive LMS domain. The supplied signed
+fallback otherwise sends a negative cone toward negative peak as exposure
+increases, producing a saturated yellow-green plateau and a white seam across
+the zero-cone boundary. This input correction preserves CIE luminance and is
+exposure-independent; colours with all cone components above 2% of their
+luminance-matched neutral bypass it exactly. Signed BT.709 and wide-gamut
+colours remain supported. It is separate from the display-gamut slider and
+does not alter the supplied mapper sources, native slope or black-floor controls.
+Negative-domain artefacts and soft source compression are also discussed in
+the [ACES reference gamut-compression overview](https://docs.acescentral.com/rgc/overview/);
+this correction uses PsychoV's cone basis, not the ACES AP1 algorithm.
+
 PsychoV Blowout uses uniform chroma bleaching, closer to Prism's behavior,
 with an exact grayscale endpoint at 100. Zero preserves the original response;
 the control preserves mapped luminance and behaves consistently in SDR/HDR.
@@ -211,6 +224,9 @@ Before opening the PR, verify in game:
    Compare sunset and fire highlights at Gamut Compression 0/50/100: colour
    should survive peak fitting, with lower highlight luminance where necessary.
    Check neutral ramps, Saturation 0 and Blowout 100, and measure frame times.
+   Check bright cutscene flares/embers with response Compression 3.5 and Auto,
+   including the yellow-green/white transition, and compare the previously
+   validated sunset/fire scenes for retained warmth.
 3. Compare native/custom CA, intensity zero, and start offset one in gameplay,
    cutscenes and photo mode. Check bloom, lens dirt, sunshafts, depth blur,
    vignette, RCAS and grain independently. Test Bloom and Sunshafts at 0/50/100
