@@ -12,6 +12,7 @@
 
 #include "../../utils/command_action.hpp"
 #include "../../utils/data.hpp"
+#include "../../utils/state.hpp"
 #include "./taa_camera.hpp"
 #include "./taa_jitter.hpp"
 #include "./taa_resolve.hpp"
@@ -1215,7 +1216,8 @@ inline void OnSceneDrawn(reshade::api::command_list* cmd_list) {
 inline constexpr auto OnLut = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context> {
   if ((mode == 0.f && capture_enabled == 0.f)
       || context.cmd_list->get_device()->get_api() != reshade::api::device_api::d3d9
-      || renodx::utils::shader::GetCurrentPixelShaderHash(renodx::utils::command_action::GetShaderState(&context)) != 0x48DCE479u) return {};
+      || renodx::utils::state::GetCurrentShaderHash(
+             context.cmd_list, reshade::api::pipeline_stage::pixel_shader, &context.bound_state_cache) != 0x48DCE479u) return {};
   OnScene(context.cmd_list);
   return {.post_callback = [](Context& context, const void*) { OnSceneDrawn(context.cmd_list); }};
 };
@@ -1226,7 +1228,8 @@ inline constexpr auto OnLut = []<typename Context>(Context& context) -> renodx::
 inline constexpr auto OnFinalScene = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context> {
   if (!frame_generation::NeedsInputs() || !frame_generation::output_enabled
       || context.cmd_list->get_device()->get_api() != reshade::api::device_api::d3d9
-      || renodx::utils::shader::GetCurrentPixelShaderHash(renodx::utils::command_action::GetShaderState(&context)) != 0xC9F2C59Bu) return {};
+      || renodx::utils::state::GetCurrentShaderHash(
+             context.cmd_list, reshade::api::pipeline_stage::pixel_shader, &context.bound_state_cache) != 0xC9F2C59Bu) return {};
   return {.post_callback = [](Context& context, const void*) {
     if (auto* data = renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device()); data && data->fg_capture)
       data->fg_capture->CaptureHudless(reinterpret_cast<IDirect3DDevice9*>(context.cmd_list->get_native()));

@@ -15,6 +15,7 @@
 
 #include "../../utils/command_action.hpp"
 #include "../../utils/data.hpp"
+#include "../../utils/state.hpp"
 #include "./native_alpha_patch.hpp"
 #include "./native_lighting_patch.hpp"
 
@@ -121,9 +122,8 @@ inline constexpr auto OnCommand = []<typename Context>(Context& context) -> reno
   // registrations below run afterwards, so the guard patches the actual bound
   // replacement and cannot be overwritten by scene/UI shader selection.
   if (context.matched_shader_hash == 0) {
-    if (renodx::utils::command_action::GetShaderState(&context) == nullptr) return {};
-    const auto hash = renodx::utils::shader::GetCurrentPixelShaderHash(
-        renodx::utils::command_action::GetShaderState(&context));
+    const auto hash = renodx::utils::state::GetCurrentShaderHash(
+        context.cmd_list, reshade::api::pipeline_stage::pixel_shader, &context.bound_state_cache);
     if (scheduled_shaders.contains(hash)) return {};
   }
   auto* native = reinterpret_cast<IDirect3DDevice9*>(context.cmd_list->get_native());
@@ -177,7 +177,8 @@ inline constexpr auto OnCommand = []<typename Context>(Context& context) -> reno
         std::stringstream message;
         message << "AC2: native shader fix (lighting=" << unclamped << ", bound="
                 << (mask == D3DSP_WRITEMASK_3 ? "alpha" : mask != 0 ? "RGB mask" : "none") << ") for shader 0x" << std::hex
-                << renodx::utils::shader::GetCurrentPixelShaderHash(renodx::utils::command_action::GetShaderState(&context))
+                << renodx::utils::state::GetCurrentShaderHash(
+                       context.cmd_list, reshade::api::pipeline_stage::pixel_shader, &context.bound_state_cache)
                 << std::dec << " (src=" << source << ", dst=" << dest << ", op=" << operation << ")";
         reshade::log::message(reshade::log::level::info, message.str().c_str());
       }

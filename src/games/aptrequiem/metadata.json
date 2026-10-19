@@ -5,8 +5,15 @@
   "maintainers": [
     "Hartapfel"
   ],
-  "status": "wip",
+  "status": "experimental",
   "deploy": {
     "steam_appid": 1182900
-  }
+  },
+  "compatibility": "working",
+  "urls": [
+    {
+      "kind": "nexus",
+      "url": "https://www.nexusmods.com/aplaguetalerequiem/mods/50"
+    }
+  ]
 }

@@ -60,6 +60,16 @@ inline void FreeProcessMemory(T* storage) noexcept {
 
 }  // namespace internal
 
+// A pinned module cannot be unloaded before process exit; do not call this for temporary references.
+inline bool PinModule(const void* address) {
+  HMODULE module = nullptr;
+  return ::GetModuleHandleExW(
+             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+             reinterpret_cast<LPCWSTR>(address), &module)
+         != FALSE
+         && module != nullptr;
+}
+
 template <typename T>
 struct ProcessAllocator {
   using value_type = T;

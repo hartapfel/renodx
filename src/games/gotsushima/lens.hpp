@@ -244,7 +244,7 @@ inline bool InjectOutput(reshade::api::command_list* cmd_list) {
   auto* pixel = renodx::utils::shader::GetCurrentPixelState(shader_state);
   if (pixel == nullptr || pixel->pipeline_details == nullptr) return true;
   auto* details = pixel->pipeline_details;
-  renodx::utils::shader::BuildReplacementPipeline(details);
+  renodx::utils::shader::BuildReplacementPipeline(pixel->pipeline);
   if (details->injection_layout == 0u || details->injection_index == -1) return true;
 
   // The shared user settings are read by all recording threads. Never put a
