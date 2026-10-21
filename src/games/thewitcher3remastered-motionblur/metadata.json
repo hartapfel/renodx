@@ -1,0 +1,37 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/gh/clshortfuse/renodx/renodx-metadata-schema.json",
+  "id": "thewitcher3remastered-motionblur",
+  "title": "Motion Blur - Remastered",
+  "variant": "Motion Blur",
+  "summary": "Standalone full-resolution depth-aware motion blur with shutter intensity and sample controls for DX12.",
+  "status": "experimental",
+  "maintainers": [
+    "Hartapfel"
+  ],
+  "notes": [
+    "Enhanced activates motion blur automatically on supported executable builds; Native respects the game's Motion Blur On/Off setting.",
+    "Works independently of tone mapping, with SDR or HDR. Designed to coexist with the current Witcher HDR and Darker Nights addons.",
+    "Do not combine with the historical HDR addon that already includes enhanced motion blur."
+  ],
+  "deploy": {
+    "steam_appid": 292030,
+    "game_exe": "witcher3.exe",
+    "process_name": "witcher3.exe",
+    "api": "d3d12",
+    "architecture": [
+      "x64"
+    ],
+    "reshade_preferred_name": "dxgi.dll"
+  },
+  "games": [
+    {
+      "title": "The Witcher 3 - Remastered",
+      "variant": "Motion Blur",
+      "deploy": {
+        "steam_appid": 292030,
+        "game_exe": "witcher3.exe",
+        "process_name": "witcher3.exe"
+      }
+    }
+  ]
+}
