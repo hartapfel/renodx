@@ -128,5 +128,74 @@ int main(int argc, char** argv) { try {
     std::cout<<"components="<<flags<<" scenario="<<scenarios[scenario]<<" max_pixel_velocity_error="<<max_error<<'\n';
     if(max_error>1e-4f)throw std::runtime_error("Camera/object separation differs from native reference");
   }
-  std::cout<<"PASS: "<<W*H<<" GPU pixels retain exact native XY and exact 32-bit depth through FP16 storage; all 32768 packed chunks roundtrip\n";
+  // Independently generate static-scene vectors with the original converter
+  // under fast perspective camera changes. The original test above used an
+  // affine matrix; perspective division and FP16 rounding need separate proof.
+  unsigned projection_cases = 0;
+  for(unsigned camera_case=0;camera_case<13;++camera_case) {
+    constants={W,H,1.f/W,1.f/H,1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    float a = camera_case%2 ? .55f : -.55f;
+    if(camera_case==1||camera_case==2) { constants[16]=a; constants[17]=a*.37f; }
+    if(camera_case==3||camera_case==4) {
+      constants[4]=std::cos(a);constants[7]=-std::sin(a);
+      constants[16]=std::sin(a);constants[19]=std::cos(a);
+    }
+    if(camera_case==5||camera_case==6) {
+      constants[9]=std::cos(a);constants[11]=-std::sin(a);
+      constants[17]=std::sin(a);constants[19]=std::cos(a);
+    }
+    if(camera_case==7||camera_case==8) {
+      constants[4]=std::cos(a);constants[5]=std::sin(a);
+      constants[8]=-std::sin(a);constants[9]=std::cos(a);
+    }
+    if(camera_case==9) { constants[4]=1.3f;constants[9]=1.3f; }
+    if(camera_case==10) { constants[4]=.7f;constants[9]=.7f; }
+    if(camera_case==11) { constants[12]=.8f;constants[13]=-.3f;constants[15]=.2f; }
+    if(camera_case==12) { constants[16]=1.f/W;constants[17]=-1.f/H; }
+    for(auto& v:motion)v={2,2,0,0};
+    ID3D11ShaderResourceView* unbind[3]={};
+    cmd->CSSetShaderResources(0,3,unbind);
+    cmd->UpdateSubresource(cb.Get(),0,nullptr,constants.data(),0,0);
+    cmd->UpdateSubresource(inputs[1].Get(),0,nullptr,motion.data(),W*16,0);
+    // Also exercise explicit raster velocities equal to the camera field,
+    // rather than testing only pixels with the native static sentinel.
+    for(unsigned explicit_velocity=0;explicit_velocity<2;++explicit_velocity) {
+      cmd->CSSetShaderResources(0,3,unbind);
+      cmd->CSSetShaderResources(0,2,views);
+      cmd->CSSetShader(shader[0].Get(),nullptr,0);
+      cmd->CSSetUnorderedAccessViews(0,1,uavs[0].GetAddressOf(),nullptr);cmd->Dispatch((W+7)/8,(H+7)/8,1);
+      cmd->CSSetUnorderedAccessViews(0,1,&null_uav,nullptr);
+      if(explicit_velocity==0) {
+        cmd->CopyResource(readback.Get(),outputs[0].Get());Check(cmd->Map(readback.Get(),0,D3D11_MAP_READ,0,&mapped));
+        for(unsigned y=0;y<H;++y) {
+          auto* row=reinterpret_cast<const uint16_t*>(static_cast<const char*>(mapped.pData)+y*mapped.RowPitch);
+          for(unsigned x=0;x<W;++x) motion[y*W+x]={-XMConvertHalfToFloat(row[x*4]),-XMConvertHalfToFloat(row[x*4+1]),0,0};
+        }
+        cmd->Unmap(readback.Get(),0);
+      }
+      cmd->CSSetShader(shader[1].Get(),nullptr,0);
+      cmd->CSSetUnorderedAccessViews(0,1,uavs[1].GetAddressOf(),nullptr);cmd->Dispatch((W+7)/8,(H+7)/8,1);
+      cmd->CSSetUnorderedAccessViews(0,1,&null_uav,nullptr);
+      cmd->CSSetShaderResources(0,3,inputs_for_blur);
+      settings.components=2;settings.angle=0;settings.object_angle=360;
+      cmd->UpdateSubresource(settings_cb.Get(),0,nullptr,&settings,0,0);
+      cmd->CSSetShader(shader[2].Get(),nullptr,0);
+      cmd->CSSetUnorderedAccessViews(0,1,diagnostic_uav.GetAddressOf(),nullptr);cmd->Dispatch((W+7)/8,(H+7)/8,1);
+      cmd->CSSetUnorderedAccessViews(0,1,&null_uav,nullptr);
+      cmd->CopyResource(diagnostic_readback.Get(),diagnostic.Get());Check(cmd->Map(diagnostic_readback.Get(),0,D3D11_MAP_READ,0,&mapped));
+      float maximum_radius=0;
+      for(unsigned y=0;y<H;++y)for(unsigned x=0;x<W;++x) {
+        auto* p=reinterpret_cast<const float*>(static_cast<const char*>(mapped.pData)+y*mapped.RowPitch)+x*4;
+        if(!std::isfinite(p[0])||!std::isfinite(p[1]))throw std::runtime_error("Nonfinite camera separation");
+        maximum_radius=std::max(maximum_radius,std::hypot(p[0]*3840.f/W,p[1]*2160.f/H));
+      }
+      cmd->Unmap(diagnostic_readback.Get(),0);
+      std::cout<<"static_projection="<<camera_case<<" explicit="<<explicit_velocity<<" max_4k_object_radius="<<maximum_radius<<'\n';
+      if(maximum_radius>.01f)throw std::runtime_error("Camera-only movement leaked into object blur");
+      ++projection_cases;
+      cmd->CSSetShaderResources(0,3,unbind);
+      cmd->UpdateSubresource(inputs[1].Get(),0,nullptr,motion.data(),W*16,0);
+    }
+  }
+  std::cout<<"PASS: "<<W*H<<" GPU pixels retain exact native XY and exact 32-bit depth through FP16 storage; all 32768 packed chunks roundtrip; "<<projection_cases<<" static camera cases\n";
  }catch(const std::exception& e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;} }

@@ -25,11 +25,15 @@ Object Motion Blur On. Both Off removes Enhanced blur. These toggles only apply
 in Enhanced mode; Native keeps the game's original behavior.
 Camera Intensity / Object Intensity: adjust each source independently.
 0 removes that source, 50 = 180-degree shutter, 100 = 360-degree shutter.
-Both default to 50; an existing shared Intensity value initializes both.
+Camera and Object both default to 50; an existing shared Intensity value initializes both.
 Each slider is available when its source is enabled in Enhanced mode.
 Sample Quality: choose 16 Samples - Low, 32 Samples - Medium,
 64 Samples - High, or 128 Samples - Ultra. Higher tiers trade GPU cost for
-smoother blur. Long trails automatically use additional samples.
+smoother blur. The selected count is a fixed maximum, even at high intensity.
+Very long trails can look noisier at Low quality.
+Half-Resolution Blur: optional faster reconstruction, On by default.
+On can soften moving fine detail. Static surfaces and incompatible edges keep
+full-resolution reconstruction; the speedup depends on the scene.
 Frame-rate response comes from native per-frame motion.
 Reset All Settings restores the defaults. Settings save automatically.
 

@@ -53,7 +53,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "MotionBlurCameraIntensity",
         .binding = &witcher::motion::shutter_angle,
-        .default_value = 10.f,
+        .default_value = 50.f,
         .label = "Camera Intensity",
         .section = "Motion Sources",
         .tooltip = "0 removes blur, 50 is a 180-degree shutter, and 100 is a 360-degree shutter. Per-frame motion naturally adjusts the blur to the rendered frame rate.",
@@ -88,9 +88,20 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * 3.6f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "MotionBlurHalfResolution",
+        .binding = &witcher::motion::half_resolution,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .label = "Half-Resolution Blur",
+        .section = "Quality",
+        .tooltip = "Reduce reconstruction cost using a half-width, half-height blur with depth/motion-aware upsampling. Static detail and incompatible edges use full-resolution reconstruction. Full resolution retains finer moving detail.",
+        .labels = {"Off", "On"},
+        .is_enabled = []() { return witcher::motion::mode == 1.f; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "MotionBlurSamples",
         .binding = &witcher::motion::sample_count,
-        .default_value = 32.f,
+        .default_value = 16.f,
         // Keep numeric sample counts in the existing config; older slider
         // values select the nearest tier without changing the storage format.
         .min = 16.f,
@@ -107,7 +118,7 @@ renodx::utils::settings::Settings settings = {
         .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
         .label = "Sample Quality",
         .section = "Quality",
-        .tooltip = "Higher values smooth blur at a greater GPU cost. Long visible trails automatically use more samples.",
+        .tooltip = "Maximum samples per pixel. Higher tiers reduce noise on long trails at a greater GPU cost. Increasing intensity does not increase this sample budget.",
         .is_enabled = []() { return witcher::motion::mode == 1.f; },
         .on_draw = []() {
           constexpr const char* labels[] = {"16 Samples - Low", "32 Samples - Medium", "64 Samples - High", "128 Samples - Ultra"};
@@ -131,15 +142,16 @@ renodx::utils::settings::Settings settings = {
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Reset All Settings",
         .section = "Options",
-        .tooltip = "Restore Enhanced mode, both motion sources, both intensities 50 and Sample Quality 16.",
+        .tooltip = "Restore the default mode, motion sources, intensities and sample quality.",
         .on_change = []() { renodx::utils::settings::ResetSettings(); },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
         .label = "Mode: Enhanced = automatic custom blur. Native = game's On/Off setting.\n\n"
                  "Object-only: Camera Off, Object On.\n\n"
-                 "Intensity: Adjust each source separately. 0 = off; 50 = default.\n\n"
+                 "Intensity: Adjust each source separately. 0 = off; 50 = 180-degree shutter.\n\n"
                  "Quality: Start at Low. Higher tiers smooth trails at a higher GPU cost.\n\n"
+                 "Half-Resolution Blur: Faster, with softer moving detail. Off keeps full resolution.\n\n"
                  "Settings save automatically. Compare blur while moving.",
         .section = "How to Use",
     },
@@ -209,7 +221,7 @@ void OnPresent(reshade::api::command_queue*, reshade::api::swapchain*, const res
 
 extern "C" __declspec(dllexport) constexpr const char* NAME = "Motion Blur - Remastered";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
-    "Standalone full-resolution motion blur for The Witcher 3 Remastered by Hartapfel";
+    "Standalone motion blur for The Witcher 3 Remastered by Hartapfel";
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
   if (reason == DLL_PROCESS_ATTACH) {
     if (!reshade::register_addon(module)) return FALSE;
@@ -230,7 +242,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         }
       }
     }
-    witcher::motion::code = {__0xF3B10000, __0xF3B10001, __0xF3B10002, __0x9F1C32F1, __0xF3B10004};
+    witcher::motion::code = {__0xF3B10000, __0xF3B10001, __0xF3B10002, __0x9F1C32F1, __0xF3B10004, __0xF3B10005, __0xF3B10006, __0xF3B10007, __0xF3B10008};
   }
   witcher::motion::Use(reason);
   renodx::utils::settings::Use(reason, &settings);
