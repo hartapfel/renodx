@@ -1,6 +1,9 @@
 #include "../tonemap/prism_tonemap.hlsli"
 #include "../include/pixel_constants.hlsli"
 #include "../output/agx_custom_tonemap.hlsli"
+#include "../../../shaders/color/oklab.hlsl"
+#include "../../../shaders/color/macleod_boynton.hlsl"
+#include "../tonemap/lms_gamut_compression.hlsli"
 
 struct SaturationGrade {
   float3 ungraded;
@@ -56,13 +59,25 @@ float3 ApplyVanillaSaturationShaper(float3 source_gamma) {
 }
 
 float3 ApplyUpgradedSaturationShaper(float3 source_linear) {
+  // Preserve signed wide-gamut channels in Psycho's reversible grading proxy.
+  if (RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31) {
+    return renodx::math::SignPow(
+        CustomPixelConsts_224.x * renodx::math::SignPow(source_linear, CustomPixelConsts_128.x)
+            + CustomPixelConsts_224.y,
+        CustomPixelConsts_224.z);
+  }
   return renodx::math::SafePow(
-      max(
-          0.f,
-          CustomPixelConsts_224.x
-              * renodx::math::SafePow(source_linear, CustomPixelConsts_128.x)
-            + CustomPixelConsts_224.y),
+      CustomPixelConsts_224.x
+          * renodx::math::SafePow(source_linear, CustomPixelConsts_128.x)
+        + CustomPixelConsts_224.y,
       CustomPixelConsts_224.z);
+}
+
+float3 EncodeNativeGradingGamma(float3 color) {
+  return float3(
+      CustomGammaEncode(color.r),
+      CustomGammaEncode(color.g),
+      CustomGammaEncode(color.b));
 }
 
 SaturationGrade ApplySaturationGrade(float3 source_linear) {
@@ -70,30 +85,61 @@ SaturationGrade ApplySaturationGrade(float3 source_linear) {
   // In the remaster, mode 0 is vanilla and upgraded grading starts at mode 1.
   bool use_upgraded_grading = CUSTOM_GRADING_IMPROVEMENTS == 1.f
                               && RENODX_TONE_MAP_TYPE != 0.f;
-  float3 shaped_gamma = ApplyVanillaSaturationShaper(source_linear);
+  const bool use_psychov_proxy = use_upgraded_grading
+      && RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31;
+  const float saturation_space = RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31
+      ? shader_injection.psychov_game_grading_saturation_space
+      : CUSTOM_GAME_GRADING_SATURATION_SPACE;
   result.ungraded = source_linear;
-
-  float3 grading_input = exp2(log2(max(0.f, shaped_gamma)) * 2.200000047683716f);
   float tonemap_scale = 1.f;
   float gamut_scale = 1.f;
-
+  if (use_psychov_proxy) {
+    source_linear = ColorGradeLUTInput(source_linear, tonemap_scale, gamut_scale);
+  }
+  bool use_oklab_grading = use_upgraded_grading
+                           && saturation_space == 1.f;
+  float shaping_strength = RENODX_TONE_MAP_TYPE != 0.f
+      ? saturate(CUSTOM_GAME_GRADING_SHAPING)
+      : 1.f;
+  float3 neutral_gamma = EncodeNativeGradingGamma(source_linear);
+  float3 shaped_gamma = ApplyVanillaSaturationShaper(source_linear);
+  float3 grading_input;
+  float3 grading_oklab;
   [branch]
   if (use_upgraded_grading) {
-    grading_input = source_linear;
-    shaped_gamma = ApplyUpgradedSaturationShaper(grading_input);
-    if (RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31) {
-      grading_input = ColorGradeLUTInput(source_linear, tonemap_scale, gamut_scale);
-      shaped_gamma = renodx::math::SignPow(
-          CustomPixelConsts_224.x * renodx::math::SignPow(grading_input, CustomPixelConsts_128.x)
-              + CustomPixelConsts_224.y,
-          CustomPixelConsts_224.z);
+    if (use_oklab_grading) {
+      float3 source_oklab = renodx::color::oklab::from::BT709(source_linear);
+      float source_lightness = source_oklab.x;
+      float neutral_linear = source_lightness * source_lightness * source_lightness;
+      float neutral_shaped_gamma = lerp(
+          CustomGammaEncode(neutral_linear),
+          ApplyUpgradedSaturationShaper(neutral_linear.xxx).x,
+          shaping_strength);
+      float shaped_neutral_linear = renodx::color::gamma::DecodeSafe(neutral_shaped_gamma);
+      float shaped_lightness = renodx::math::Cbrt(shaped_neutral_linear);
+        // Don't let a lifted shadow toe amplify low-light chroma.
+        float chroma_scale = abs(source_lightness) > 1e-6f
+          ? saturate(shaped_lightness / source_lightness)
+          : 1.f;
+      grading_oklab = float3(shaped_lightness, source_oklab.yz * chroma_scale);
+      grading_input = renodx::color::bt709::from::OkLab(grading_oklab);
+      shaped_gamma = EncodeNativeGradingGamma(grading_input);
+    } else {
+      shaped_gamma = ApplyUpgradedSaturationShaper(source_linear);
+      shaped_gamma = lerp(neutral_gamma, shaped_gamma, shaping_strength);
+      grading_input = renodx::color::gamma::DecodeSafe(shaped_gamma);
+      if (!use_psychov_proxy) shaped_gamma = EncodeNativeGradingGamma(grading_input);
     }
-    grading_input = renodx::color::gamma::DecodeSafe(shaped_gamma);
+  } else {
+    shaped_gamma = lerp(neutral_gamma, shaped_gamma, shaping_strength);
+    grading_input = exp2(log2(max(0.f, shaped_gamma)) * 2.200000047683716f);
   }
 
-  float game_luminance = dot(
-      float3(0.29899999499320984f, 0.5870000123977661f, 0.11400000005960464f),
-      shaped_gamma);
+  float game_luminance = use_oklab_grading
+      ? CustomGammaEncode(grading_oklab.x * grading_oklab.x * grading_oklab.x)
+      : dot(
+            float3(0.29899999499320984f, 0.5870000123977661f, 0.11400000005960464f),
+            shaped_gamma);
   float lower_mask = saturate((game_luminance - CustomPixelConsts_160.x) * CustomPixelConsts_160.y);
   float upper_mask = saturate((game_luminance - CustomPixelConsts_160.z) * CustomPixelConsts_160.w);
 
@@ -102,19 +148,54 @@ SaturationGrade ApplySaturationGrade(float3 source_linear) {
       grading_input);
   float4 lower_grade = lerp(CustomPixelConsts_192, CustomPixelConsts_176, lower_mask);
   float3 channel_grade = lerp(lower_grade.rgb, CustomPixelConsts_208.rgb, upper_mask);
-  float saturation = lerp(lower_grade.a, CustomPixelConsts_208.a, upper_mask);
-  float3 saturated = lerp(luminance.xxx, grading_input, saturation);
-  float3 graded_linear = saturated * channel_grade;
-  result.graded_gamma = CustomPixelConsts_144.rgb * float3(
-      CustomGammaEncode(graded_linear.r),
-      CustomGammaEncode(graded_linear.g),
-      CustomGammaEncode(graded_linear.b));
+  channel_grade = lerp(1.f.xxx, channel_grade, shaping_strength);
+  float lower_saturation = lerp(
+      1.f,
+      lower_grade.a,
+      RENODX_TONE_MAP_TYPE != 0.f
+          ? saturate(CUSTOM_GAME_GRADING_SATURATION_LOWER)
+          : 1.f);
+  float upper_saturation = lerp(
+      1.f,
+      CustomPixelConsts_208.a,
+      RENODX_TONE_MAP_TYPE != 0.f
+          ? saturate(CUSTOM_GAME_GRADING_SATURATION_UPPER)
+          : 1.f);
+  float saturation = lerp(lower_saturation, upper_saturation, upper_mask);
 
-  if (use_upgraded_grading && RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31) {
+  float3 saturated;
+  if (use_oklab_grading) {
+    grading_oklab.yz *= saturation;
+  } else if (use_upgraded_grading) {
+    if (saturation_space == 2.f) {
+      float3 mb = renodx::color::macleod_boynton::from::BT709(grading_input);
+      const float3 mb_neutral = renodx::color::macleod_boynton::from::BT709(1.f.xxx);
+      mb.xy = lerp(mb_neutral.xy, mb.xy, saturation);
+      saturated = renodx::color::bt709::from::MacLeodBoynton(mb);
+    } else {
+      saturated = lerp(luminance.xxx, grading_input, saturation);
+    }
+  } else {
+    saturated = lerp(luminance.xxx, grading_input, saturation);
+  }
+  float3 graded_linear;
+  if (use_oklab_grading) {
+    float neutral_lightness = grading_oklab.x;
+    float neutral_linear = neutral_lightness * neutral_lightness * neutral_lightness;
+    float3 neutral_oklab = renodx::color::oklab::from::BT709(neutral_linear.xxx);
+    float3 graded_neutral_oklab = renodx::color::oklab::from::BT709(
+        neutral_linear.xxx * channel_grade);
+    grading_oklab += graded_neutral_oklab - neutral_oklab;
+    graded_linear = renodx::color::bt709::from::OkLab(grading_oklab);
+  } else {
+    graded_linear = saturated * channel_grade;
+  }
+  result.graded_gamma = CustomPixelConsts_144.rgb * EncodeNativeGradingGamma(graded_linear);
+
+  if (use_psychov_proxy) {
     result.graded_gamma = renodx::color::gamma::EncodeSafe(ColorGradeLUTOutput(
         renodx::color::gamma::DecodeSafe(result.graded_gamma), tonemap_scale, gamut_scale));
   }
-
   return result;
 }
 
@@ -135,7 +216,11 @@ float3 ApplyFinalGradingTonemap(float3 gamma_color) {
   } else {
     scene_linear = CustomTonemapSDR(scene_linear);
   }
-  scene_linear = renodx::color::gamut::GamutCompressBT709(scene_linear);
+  if (RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31) {
+    scene_linear = renodx::color::gamut::GamutCompressBT709(scene_linear);
+  } else if (CUSTOM_GRADING_IMPROVEMENTS == 1.f) {
+    scene_linear = CompressLMSRadialBT709(scene_linear);
+  }
   return renodx::color::gamma::EncodeSafe(saturate(scene_linear), 2.2f);
 }
 

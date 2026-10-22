@@ -79,7 +79,7 @@ float3 ColorGradeLUTInput(
   tonemap_scale = 1.f;
   gamut_compression_scale = 1.f;
 
-  if (CUSTOM_GRADING_IMPROVEMENTS == 0.f || RENODX_TONE_MAP_TYPE == 0.f) {
+  if (RENODX_TONE_MAP_TYPE == 0.f) {
     return abs(hdr_color);
   }
 
@@ -114,7 +114,7 @@ float3 ColorGradeLUTOutput(
     float3 lut_output,
     float tonemap_scale,
     float gamut_compression_scale) {
-  if (CUSTOM_GRADING_IMPROVEMENTS == 0.f || RENODX_TONE_MAP_TYPE == 0.f) {
+  if (RENODX_TONE_MAP_TYPE == 0.f) {
     return lut_output;
   }
 
@@ -243,7 +243,7 @@ float CustomGammaEncode(float color) {
 // Restoring linear Y scales L and C equally; this is not chroma suppression.
 float3 ShiftSceneGradeHue(float3 ungraded, float3 graded) {
   [branch]
-  if (RENODX_TONE_MAP_TYPE == 0.f
+  if (RENODX_TONE_MAP_TYPE != WITCHER_TONE_MAP_PSYCHOV_CUSTOM31
       || shader_injection.scene_grade_hue_shift <= 0.f) return graded;
 
   const float source_y = renodx::color::y::from::BT709(ungraded);
@@ -291,7 +291,18 @@ float3 ApplySceneGrading(float3 ungraded, float3 graded, float strength) {
               RENODX_TONE_MAP_TYPE == 0.f ? 1.f : strength);
 }
 
+float3 CustomGammaEncode(float3 color) {
+  return float3(
+      CustomGammaEncode(color.r),
+      CustomGammaEncode(color.g),
+      CustomGammaEncode(color.b));
+}  // Vector overload used by grading pipelines.
+
 float3 CustomColorGrading(float3 ungraded, float3 graded) {
   if (RENODX_TONE_MAP_TYPE == 0.f) return graded;
   return ApplySceneGrading(ungraded, graded, CUSTOM_COLOR_GRADING);
 }
+
+
+
+

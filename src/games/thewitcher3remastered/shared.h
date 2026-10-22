@@ -74,6 +74,12 @@
 #define PRISM_INSET_21                         shader_injection.prism_inset_21
 #define PRISM_INSET_22                         shader_injection.prism_inset_22
 #define PRISM_BLACK_FLOOR                       shader_injection.prism_black_floor
+#define CUSTOM_AGX_CURVE_STRENGTH               shader_injection.agx_curve_strength
+#define CUSTOM_AGX_TONEMAP_SATURATION           shader_injection.agx_tonemap_saturation
+#define CUSTOM_GAME_GRADING_SHAPING             shader_injection.custom_game_grading_shaping
+#define CUSTOM_GAME_GRADING_SATURATION_LOWER    shader_injection.custom_game_grading_saturation_lower
+#define CUSTOM_GAME_GRADING_SATURATION_UPPER    shader_injection.custom_game_grading_saturation_upper
+#define CUSTOM_GAME_GRADING_SATURATION_SPACE    shader_injection.custom_game_grading_saturation_space
 // #define CUSTOM_BLOOM_ROLLOFF_START                 shader_injection.custom_bloom_rolloff_start
 // #define CUSTOM_SUNSHAFT_ROLLOFF_START             shader_injection.custom_sunshaft_rolloff_start
 // #define CUSTOM_BLOOM_THRESHOLD                 shader_injection.custom_bloom_threshold
@@ -163,6 +169,13 @@ struct ShaderInjectData {
   float psychov_highlight_hue;
   float psychov_contrast_curve;
   float scene_grade_hue_shift;
+  float agx_curve_strength;
+  float agx_tonemap_saturation;
+  float custom_game_grading_shaping;
+  float custom_game_grading_saturation_lower;
+  float custom_game_grading_saturation_upper;
+  float custom_game_grading_saturation_space;
+  float psychov_game_grading_saturation_space;
 };
 
 #ifndef __cplusplus

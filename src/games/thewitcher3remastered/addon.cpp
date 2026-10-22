@@ -5,6 +5,10 @@
 
 #define ImTextureID ImU64
 
+// Other RenoDX addons may use a different layout-data ABI. Keep this mod's
+// utility state private, as in Darker Nights, rather than sharing those objects.
+#define RENODX_PRIVATE_DATA_NAMESPACE 0x57334844u
+
 #ifndef NDEBUG
 #define DEBUG_LEVEL_0
 #endif
@@ -276,7 +280,7 @@ renodx::utils::settings::Settings settings = {
         .key = "ToneMapType",
         .binding = &shader_injection.tone_map_type,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 2.f,
+        .default_value = 3.f,
         .can_reset = true,
         .label = "Tone Mapper",
         .section = "Tone Mapping",
@@ -573,6 +577,30 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return current_settings_mode >= 1.f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "ToneMapAgxCurveStrength",
+        .binding = &shader_injection.agx_curve_strength,
+        .default_value = 100.f,
+        .label = "Vanilla+ Curve Strength",
+        .section = "Tone Mapping",
+        .tooltip = "Blends from a mid-gray exposure-matched state to the full extended AgX curve.",
+        .max = 100.f,
+        .is_enabled = []() { return RENODX_TONE_MAP_TYPE == 2.f; },
+        .parse = [](float value) { return value * 0.01f; },
+        .is_visible = []() { return current_settings_mode >= 2.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "ToneMapAgxSaturation",
+        .binding = &shader_injection.agx_tonemap_saturation,
+        .default_value = 100.f,
+        .label = "Tonemap Saturation",
+        .section = "Tone Mapping",
+        .tooltip = "Blends chrominance back to the pre-tonemapped color.",
+        .max = 100.f,
+        .is_enabled = []() { return RENODX_TONE_MAP_TYPE == 2.f; },
+        .parse = [](float value) { return value * 0.01f; },
+        .is_visible = []() { return current_settings_mode >= 2.f; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "ToneMapInverseToneMap",
         .binding = &shader_injection.custom_inverse_tone_map,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
@@ -601,6 +629,18 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return current_settings_mode >= 0.f; },
     },
 
+    new renodx::utils::settings::Setting{
+        .key = "GameGradingSaturationSpace",
+        .binding = &shader_injection.custom_game_grading_saturation_space,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 2.f,
+        .label = "Native Saturation Space",
+        .section = "Developer",
+        .tooltip = "Selects the chroma space used for native saturation controls on upgraded grading paths.",
+        .labels = {"BT.709 Y", "OKLab", "MacLeod-Boynton"},
+        .is_enabled = []() { return IsPrismDeveloperMenuVisible(); },
+        .is_visible = []() { return IsPrismDeveloperMenuVisible(); },
+    },
     new renodx::utils::settings::Setting{
         .key = "DebugAgxCurveCanvas",
         .binding = &shader_injection.custom_debug_show_agx_curve_values,
@@ -815,16 +855,64 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return current_settings_mode >= 1.f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "ColorGradeShaping",
+        .binding = &shader_injection.custom_game_grading_shaping,
+        .default_value = 100.f,
+        .label = "Color Grading Shaping",
+        .section = "Scene Grading",
+        .tooltip = "Blends only the game's native per-channel shaper and luminance-dependent RGB channel multipliers between neutral and their original values.",
+        .max = 100.f,
+        .is_enabled = []() { return RENODX_TONE_MAP_TYPE != 0; },
+        .parse = [](float value) { return value * 0.01f; },
+        .is_visible = []() { return current_settings_mode >= 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "ColorGradeNativeUpperSaturation",
+        .binding = &shader_injection.custom_game_grading_saturation_upper,
+        .default_value = 100.f,
+        .label = "Color Grading Upper Saturation",
+        .section = "Scene Grading",
+        .tooltip = "Blends the game's native upper-range saturation adjustment toward neutral.",
+        .max = 100.f,
+        .is_enabled = []() { return RENODX_TONE_MAP_TYPE != 0; },
+        .parse = [](float value) { return value * 0.01f; },
+        .is_visible = []() { return current_settings_mode >= 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "ColorGradeNativeLowerSaturation",
+        .binding = &shader_injection.custom_game_grading_saturation_lower,
+        .default_value = 100.f,
+        .label = "Color Grading Lower Saturation",
+        .section = "Scene Grading",
+        .tooltip = "Blends the game's native lower-range saturation adjustment toward neutral.",
+        .max = 100.f,
+        .is_enabled = []() { return RENODX_TONE_MAP_TYPE != 0; },
+        .parse = [](float value) { return value * 0.01f; },
+        .is_visible = []() { return current_settings_mode >= 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "PsychoVGradingSaturationSpace",
+        .binding = &shader_injection.psychov_game_grading_saturation_space,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .label = "Native Saturation Space",
+        .section = "Scene Grading",
+        .tooltip = "BT.709 Y preserves the existing Psycho grading. OKLab and MacLeod-Boynton change how native grading shapes color; the Psycho tone curve and display gamut mapping are unchanged. Requires Upgraded grading.",
+        .labels = {"BT.709 Y", "OKLab", "MacLeod-Boynton"},
+        .is_enabled = []() { return RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31 && CUSTOM_GRADING_IMPROVEMENTS == 1.f; },
+        .is_visible = []() { return RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31 && current_settings_mode >= 1.f; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "SceneGradeHueShift",
         .binding = &shader_injection.scene_grade_hue_shift,
-        .default_value = 25.f,
+        .default_value = 80.f,
         .label = "Color Grading Hue Shift",
         .section = "Scene Grading",
         .tooltip = "Steers grading-added pink/red (including peach/coral highlights) toward warmer hues, fading through orange and protecting yellow while preserving linear luminance and relative chroma. 0 = unchanged; 100 = up to 30 degrees per grading stage.",
         .max = 100.f,
-        .is_enabled = []() { return RENODX_TONE_MAP_TYPE != 0.f; },
+        .is_enabled = []() { return RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31; },
         .parse = [](float value) { return value * 0.01f; },
-        .is_visible = []() { return RENODX_TONE_MAP_TYPE != 0.f && current_settings_mode >= 1.f; },
+        .is_visible = []() { return RENODX_TONE_MAP_TYPE == WITCHER_TONE_MAP_PSYCHOV_CUSTOM31 && current_settings_mode >= 1.f; },
     },
     new renodx::utils::settings::Setting{
         .key = "GradingImprovements",
@@ -1318,6 +1406,9 @@ void OnPresetOff() {
   renodx::utils::settings::UpdateSetting("SceneGradeHueShift", 0.f);
   renodx::utils::settings::UpdateSetting("PsychoVCustom31HighlightHue", 0.f);
   renodx::utils::settings::UpdateSetting("ColorGradeStrength", 100.f);
+    renodx::utils::settings::UpdateSetting("ColorGradeShaping", 100.f);
+    renodx::utils::settings::UpdateSetting("ColorGradeNativeUpperSaturation", 100.f);
+    renodx::utils::settings::UpdateSetting("ColorGradeNativeLowerSaturation", 100.f);
   renodx::utils::settings::UpdateSetting("PsychoVAdaptationAnchor", 0.18f);
   renodx::utils::settings::UpdateSetting("PsychoVBackgroundAnchor", 0.18f);
   renodx::utils::settings::UpdateSetting("PsychoVGamutCompression", 1.f);
