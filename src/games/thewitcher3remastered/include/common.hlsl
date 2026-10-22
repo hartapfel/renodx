@@ -302,7 +302,3 @@ float3 CustomColorGrading(float3 ungraded, float3 graded) {
   if (RENODX_TONE_MAP_TYPE == 0.f) return graded;
   return ApplySceneGrading(ungraded, graded, CUSTOM_COLOR_GRADING);
 }
-
-
-
-

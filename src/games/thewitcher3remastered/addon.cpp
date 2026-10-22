@@ -1406,9 +1406,9 @@ void OnPresetOff() {
   renodx::utils::settings::UpdateSetting("SceneGradeHueShift", 0.f);
   renodx::utils::settings::UpdateSetting("PsychoVCustom31HighlightHue", 0.f);
   renodx::utils::settings::UpdateSetting("ColorGradeStrength", 100.f);
-    renodx::utils::settings::UpdateSetting("ColorGradeShaping", 100.f);
-    renodx::utils::settings::UpdateSetting("ColorGradeNativeUpperSaturation", 100.f);
-    renodx::utils::settings::UpdateSetting("ColorGradeNativeLowerSaturation", 100.f);
+  renodx::utils::settings::UpdateSetting("ColorGradeShaping", 100.f);
+  renodx::utils::settings::UpdateSetting("ColorGradeNativeUpperSaturation", 100.f);
+  renodx::utils::settings::UpdateSetting("ColorGradeNativeLowerSaturation", 100.f);
   renodx::utils::settings::UpdateSetting("PsychoVAdaptationAnchor", 0.18f);
   renodx::utils::settings::UpdateSetting("PsychoVBackgroundAnchor", 0.18f);
   renodx::utils::settings::UpdateSetting("PsychoVGamutCompression", 1.f);
