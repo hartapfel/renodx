@@ -905,7 +905,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "SceneGradeHueShift",
         .binding = &shader_injection.scene_grade_hue_shift,
-        .default_value = 80.f,
+        .default_value = 25.f,
         .label = "Color Grading Hue Shift",
         .section = "Scene Grading",
         .tooltip = "Steers grading-added pink/red (including peach/coral highlights) toward warmer hues, fading through orange and protecting yellow while preserving linear luminance and relative chroma. 0 = unchanged; 100 = up to 30 degrees per grading stage.",
