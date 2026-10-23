@@ -39,11 +39,14 @@ struct ShaderInjectData {
   float random_seed;
   float vignette_strength;
   float vignette_black_floor;
-  float reserved_effects[2];
+  float lut_scaling;
+  float lut_strength;
+  float color_grading_strength;
+  float reserved_grading[3];
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(ShaderInjectData) == 144);
+static_assert(sizeof(ShaderInjectData) == 160);
 #else
 // b13 is unused by the captured Classic tonemap and final grading draws.
 cbuffer classic_injection : register(b13) {

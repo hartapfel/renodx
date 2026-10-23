@@ -8,8 +8,53 @@ reusable contracts from Classic-specific offsets and records the known pitfalls.
 
 Classic DX11 addon with Vanilla and Custom PsychoV-31 modes. The native
 exposure pass extends the filmic shoulder; scene LUT and analytic grading
-feed PsychoV before UI composition. Full-resolution RGBA8 render targets
-are cloned to RGBA16F and the swapchain proxy encodes HDR10.
+feed PsychoV before UI composition. Full-resolution RGBA8 and R11G11B10 scene
+render targets are cloned to signed RGBA16F; the swapchain proxy encodes HDR10.
+
+## LUT levels and wide-gamut preservation
+
+In Advanced mode, **Scene Color Grading** follows **Tone Mapping** and contains
+**LUT Grading Strength** (default 100), **LUT Scaling** (default 0), and
+**Color Grading Strength** (default 100), matching the Next Gen controls.
+LUT Grading Strength 0 bypasses LUTs, their gains and environment blending;
+intermediate values blend the grade in the reversible linear proxy. Color
+Grading Strength blends the later native analytic grade in linear space, before
+vignette. Its zero bypass leaves vignette independent. These are separate from
+the user's exposure/contrast/saturation adjustments before PsychoV.
+
+The 2026-10-23 LUT revision ports Hartapfel Remastered's reversible grading
+proxy. Each LUT pass temporarily contracts signed BT.709 about luminance, then
+uses N2 max-channel compression to enter the native atlas domain. The six native
+LUT/intensity/weather blends run there; both scales are undone after the final
+blend. `grading/grade_state.hlsli` shares that contract with the final analytic
+grade, whose level/power math now retains signed channels. PsychoV's selected
+gamut remains the final display mapping.
+
+**HDR → Advanced → Scene Color Grading → LUT Scaling** ports the Remastered
+black/midgray/white sampling and OkLab lightness restoration. Default **0**
+preserves native LUT levels; **100** applies full restoration. This differs from
+Remastered's default 100 deliberately, pending scene comparisons. Gamut and HDR
+range preservation stay active at 0. The zero setting bypasses additional LUT
+endpoint samples; enabling scaling costs up to six additional texture samples
+per active LUT. Constant black/white LUTs retain their native grade safely.
+
+Unsigned R11 scene storage cannot preserve restored negative BT.709 channels.
+Only backbuffer-sized R11 render targets join the existing FP16 clone rules;
+smaller effects buffers retain native formats. DLSS still consumes nonnegative
+color. Its existing output pass now restores the current negative-color residual
+at jitter-correct input coordinates, following Ezio's approach. The residual is
+not temporally reconstructed; disoccluded saturated edges need visual checks.
+No extra fullscreen pass or readback is added. The full-size storage expansion
+has a memory/bandwidth cost that requires live profiling.
+
+WARP/NVIDIA effects tests cover all six native LUT variants, blend endpoints and
+intermediates, Vanilla equivalence, Scaling 0 native-proxy equivalence, restored
+black, degenerate LUTs and signed HDR round-trips. Actual NVIDIA DLAA/SR tests
+verify negative output after reconstruction, poisoned subrect edges, jitter,
+HDR/state restoration and shutdown. See `tests/README.md` and the latest handoff.
+After restart, verify signed LUT/TAA surfaces, compare Scaling 0/50/100 in daylight,
+storm transitions, interiors and cutscenes, and check saturated edges, fades,
+native TAA/DLSS toggles and matched-scene performance.
 
 The 2026-10-23 HDR audit adds the native two-environment weather filmic path,
 manual exposure variants, multi-LUT environment blends, and final grading with
@@ -53,6 +98,16 @@ boundaries using DLSS → Diagnostics → Object Motion / Coverage. See the
 for the exact inputs, tests, remaining limits and build status.
 
 ## Menu
+
+All setting definitions are explicit `new Setting{...}` entries in one ordered
+`Settings settings` list in `addon.cpp`. Move a complete entry to reorder HDR
+controls; no `Control` table or initialization-time append loops construct the
+menu. The global DLSS preferences are declared at the end of that list; its
+separate ImGui tab retains the requested dropdown/diagnostic UI. The initialization
+loop only migrates saved legacy global values, and does not construct settings.
+The HDR section order is Tone Mapping → Scene Color Grading → Color Grading →
+PsychoV-31 → Effects → Options/Instructions/Links/About. Advanced mode exposes
+both grading sections and PsychoV controls. Existing setting keys are retained.
 
 The addon frame has **HDR** and **DLSS** tabs. HDR retains its existing presets,
 settings, effects and information sections. DLSS has Enable DLSS at the top,

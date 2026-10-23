@@ -1,13 +1,13 @@
 /* Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT */
 #include "../temporal/dlss.hpp"
-#include "../temporal/prepare.hpp"
-#include "../temporal/upscale_engine.hpp"
-#include "../../../utils/float16.hpp"
 #include <d3d11sdklayers.h>
 #include <cassert>
-#include <iostream>
 #include <fstream>
+#include <iostream>
 #include <vector>
+#include "../../../utils/float16.hpp"
+#include "../temporal/prepare.hpp"
+#include "../temporal/upscale_engine.hpp"
 
 using namespace witcher3classic::temporal;
 
@@ -95,7 +95,7 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < pixels.size(); i += 4) {
       pixels[i] = renodx::utils::float16::Encode((i / 4) % output_width < width && (i / 4) / output_width < height ? 2.f : 64.f);
       pixels[i + 1] = renodx::utils::float16::Encode(0.5f);
-      pixels[i + 2] = renodx::utils::float16::Encode(0.25f);
+      pixels[i + 2] = renodx::utils::float16::Encode((i / 4) % output_width < width && (i / 4) / output_width < height ? -0.25f : -16.f);
       pixels[i + 3] = renodx::utils::float16::Encode(1.f);
     }
     std::vector<uint16_t> motion(size_t(output_width) * output_height * 2, 0);
@@ -136,10 +136,16 @@ int main(int argc, char** argv) {
     context->RSSetViewports(1, &viewport);
     assert(prepare.Run(context.Get(), original_srv.Get(), depth_srv.Get(), nullptr, camera_cb.Get(), frame_cb.Get(), width, height));
     DlssInputs inputs{
-        .color = prepare.textures[0].Get(), .depth = prepare.textures[1].Get(), .motion = prepare.textures[2].Get(),
+        .color = prepare.textures[0].Get(),
+        .depth = prepare.textures[1].Get(),
+        .motion = prepare.textures[2].Get(),
         .responsive = prepare.textures[3].Get(),
-        .width = width, .height = height, .output_width = output_width, .output_height = output_height,
-        .reset = false, .motion_validated = false,
+        .width = width,
+        .height = height,
+        .output_width = output_width,
+        .output_height = output_height,
+        .reset = false,
+        .motion_validated = false,
         .quality = quality,
     };
     assert(!dlss.Evaluate(context.Get(), inputs));
@@ -185,7 +191,8 @@ int main(int argc, char** argv) {
     ComPtr<ID3D11ShaderResourceView> resolved;
     assert(SUCCEEDED(device->CreateShaderResourceView(dlss.output.Get(), nullptr, &resolved)));
     desc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
-    desc.Width = output_width; desc.Height = output_height;
+    desc.Width = output_width;
+    desc.Height = output_height;
     desc.BindFlags = D3D11_BIND_RENDER_TARGET;
     ComPtr<ID3D11Texture2D> target;
     ComPtr<ID3D11RenderTargetView> rtv;
@@ -193,8 +200,7 @@ int main(int argc, char** argv) {
     assert(SUCCEEDED(device->CreateRenderTargetView(target.Get(), nullptr, &rtv)));
     assert(prepare.Blit(context.Get(), resolved.Get(), rtv.Get(), output_width, output_height));
     // Check diagnostic meanings numerically before any later game color effects.
-    D3D11_TEXTURE2D_DESC debug_desc{output_width, output_height, 1, 1, DXGI_FORMAT_R32G32B32A32_FLOAT,
-                                 {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET};
+    D3D11_TEXTURE2D_DESC debug_desc{output_width, output_height, 1, 1, DXGI_FORMAT_R32G32B32A32_FLOAT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET};
     ComPtr<ID3D11Texture2D> debug_target, debug_readback;
     ComPtr<ID3D11RenderTargetView> debug_rtv;
     assert(SUCCEEDED(device->CreateTexture2D(&debug_desc, nullptr, &debug_target)));
@@ -203,15 +209,32 @@ int main(int argc, char** argv) {
     debug_desc.BindFlags = 0;
     debug_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     assert(SUCCEEDED(device->CreateTexture2D(&debug_desc, nullptr, &debug_readback)));
+    // Signed residual is restored into a signed output after actual NGX.
+    // Poisoned unused source pixels and jitter exercise active-subrect clamping.
+    assert(prepare.Blit(context.Get(), resolved.Get(), debug_rtv.Get(), output_width, output_height,
+                        nullptr, false, 0, original_srv.Get(), .49f, -.49f));
+    context->CopyResource(debug_readback.Get(), debug_target.Get());
+    assert(SUCCEEDED(context->Map(debug_readback.Get(), 0, D3D11_MAP_READ, 0, &mapped)));
+    for (const auto pixel : {std::pair{0u, 0u}, std::pair{output_width / 2, output_height / 2}, std::pair{output_width - 1, output_height - 1}}) {
+      const auto* value = reinterpret_cast<const float*>(static_cast<const uint8_t*>(mapped.pData) + pixel.second * mapped.RowPitch) + pixel.first * 4;
+      assert(std::isfinite(value[2]) && std::abs(value[2] + .25f) < .01f);
+      assert(std::abs(value[0] - 2.f) < .1f && value[3] == 1.f);
+    }
+    context->Unmap(debug_readback.Get(), 0);
     for (uint32_t view = 1; view <= 5; ++view) {
-      const uint32_t source = view <= 2 ? 2 : view == 3 ? 1 : view == 4 ? 3 : 0;
+      const uint32_t source = view <= 2 ? 2 : view == 3 ? 1
+                                          : view == 4   ? 3
+                                                        : 0;
       assert(prepare.Blit(context.Get(), prepare.views[source].Get(), debug_rtv.Get(), output_width, output_height,
                           view == 1 ? depth_srv.Get() : nullptr, view == 1, view));
       context->CopyResource(debug_readback.Get(), debug_target.Get());
       assert(SUCCEEDED(context->Map(debug_readback.Get(), 0, D3D11_MAP_READ, 0, &mapped)));
       const auto* color = reinterpret_cast<const float*>(static_cast<const uint8_t*>(mapped.pData)
-                                                        + (output_height - 1) * mapped.RowPitch) + (output_width - 1) * 4;
-      const float expected = view == 1 ? 0.18f : view == 3 ? 0.5f : view == 5 ? 2.f : 0.f;
+                                                         + (output_height - 1) * mapped.RowPitch)
+                          + (output_width - 1) * 4;
+      const float expected = view == 1 ? 0.18f : view == 3 ? 0.5f
+                                             : view == 5   ? 2.f
+                                                           : 0.f;
       assert(std::abs(color[0] - expected) < 0.002f);
       assert(std::abs(color[3] - 1.f) < 0.002f);
       context->Unmap(debug_readback.Get(), 0);
@@ -222,7 +245,9 @@ int main(int argc, char** argv) {
     // Compare GPU vector preparation to known identity/translated projections.
     D3D11_TEXTURE2D_DESC mv_desc;
     prepare.textures[2]->GetDesc(&mv_desc);
-    mv_desc.Usage = D3D11_USAGE_STAGING; mv_desc.BindFlags = 0; mv_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    mv_desc.Usage = D3D11_USAGE_STAGING;
+    mv_desc.BindFlags = 0;
+    mv_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     ComPtr<ID3D11Texture2D> mv_staging;
     assert(SUCCEEDED(device->CreateTexture2D(&mv_desc, nullptr, &mv_staging)));
     for (float translation : {0.f, 0.04f, -0.08f}) {

@@ -24,9 +24,15 @@ class Prepare {
     if (FAILED(error)) return false;
     error = device->CreatePixelShader(pixel.data(), pixel.size(), nullptr, &pixel_);
     if (SUCCEEDED(error) && !debug.empty()) error = device->CreatePixelShader(debug.data(), debug.size(), nullptr, &debug_);
-    if (SUCCEEDED(error) && !debug.empty()) {
+    if (SUCCEEDED(error)) {
       const D3D11_BUFFER_DESC desc{32, D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER};
       error = device->CreateBuffer(&desc, nullptr, &debug_constants_);
+    }
+    if (SUCCEEDED(error)) {
+      D3D11_SAMPLER_DESC desc = CD3D11_SAMPLER_DESC(D3D11_DEFAULT);
+      desc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+      desc.AddressU = desc.AddressV = desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+      error = device->CreateSamplerState(&desc, &residual_sampler_);
     }
     return SUCCEEDED(error);
   }
@@ -67,7 +73,8 @@ class Prepare {
   }
 
   bool Blit(ID3D11DeviceContext1* context, ID3D11ShaderResourceView* resolved, ID3D11RenderTargetView* target,
-            uint32_t width, uint32_t height, ID3D11ShaderResourceView* debug_depth = nullptr, bool debug_vectors = false, uint32_t debug_view = 0) {
+            uint32_t width, uint32_t height, ID3D11ShaderResourceView* debug_depth = nullptr, bool debug_vectors = false, uint32_t debug_view = 0,
+            ID3D11ShaderResourceView* signed_scene = nullptr, float jitter_x = 0.f, float jitter_y = 0.f) {
     if (!vertex_ || !pixel_ || !resolved || !target || !width || !height) return false;
     ContextScope restore(context, isolated_.Get());
     context->VSSetShader(vertex_.Get(), nullptr, 0);
@@ -78,11 +85,19 @@ class Prepare {
       context->UpdateSubresource(debug_constants_.Get(), 0, nullptr, constants, 0, 0);
       ID3D11Buffer* buffer = debug_constants_.Get();
       context->PSSetConstantBuffers(0, 1, &buffer);
+    } else {
+      const float constants[] = {float(width_), float(height_), float(width), float(height), jitter_x, jitter_y, signed_scene ? 1.f : 0.f, 0.f};
+      context->UpdateSubresource(debug_constants_.Get(), 0, nullptr, constants, 0, 0);
+      ID3D11Buffer* buffer = debug_constants_.Get();
+      context->PSSetConstantBuffers(0, 1, &buffer);
+      ID3D11SamplerState* sampler = residual_sampler_.Get();
+      context->PSSetSamplers(0, 1, &sampler);
     }
     if ((debug_view || debug_depth) && !debug_) return false;
     context->PSSetShader((debug_view || debug_depth) ? debug_.Get() : pixel_.Get(), nullptr, 0);
     context->PSSetShaderResources(0, 1, &resolved);
-    context->PSSetShaderResources(1, 1, &debug_depth);
+    ID3D11ShaderResourceView* secondary = (debug_view || debug_depth) ? debug_depth : signed_scene;
+    context->PSSetShaderResources(1, 1, &secondary);
     context->OMSetRenderTargets(1, &target, nullptr);
     const D3D11_VIEWPORT viewport{0, 0, float(width), float(height), 0, 1};
     context->RSSetViewports(1, &viewport);
@@ -98,6 +113,7 @@ class Prepare {
   Microsoft::WRL::ComPtr<ID3D11PixelShader> pixel_, debug_;
   std::array<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>, 4> uavs_;
   Microsoft::WRL::ComPtr<ID3D11Buffer> debug_constants_;
+  Microsoft::WRL::ComPtr<ID3D11SamplerState> residual_sampler_;
   uint32_t width_ = 0, height_ = 0;
 };
 }  // namespace witcher3classic::temporal

@@ -70,6 +70,14 @@ new permutations are added.
 | `effects` | `effects-20261023/`: native six final-grade CSOs, `6ED58557` blur CSO, `grade-b3.bin`, `blur-b3.bin`, `blur-b12.bin` | Native/Vanilla comparison, RCAS, CA, animated grain, blur/sky, sharpening bypass, vignette black-floor/strength/permutation isolation |
 | Python fingerprint | No proprietary fixtures | Expression invariance and conservative rejection |
 
+The LUT/wide-gamut revision additionally requires the six original LUT CSOs in
+the sibling `hdr-permutations-20261023/cache/` archive. `effects.cpp` checks
+native-proxy/blend equivalence, black/degenerate LUT behavior and signed HDR
+round-trips, LUT grading-strength bypass/midpoint, native analytic-grade
+contribution at 0/50/100, and vignette independence with grading disabled.
+`dlss.cpp` includes signed-residual output checks at center and
+viewport edges, with unused allocation pixels poisoned and nonzero jitter.
+
 `temporal-dev/` abbreviates `tmp/witcher3classic-investigation/temporal-dev/`.
 The effects archive is `tmp/witcher3classic-investigation/effects-20261023/`.
 The shader table/source changes over time; counts in old logs are historical.

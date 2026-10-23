@@ -1,5 +1,108 @@
 # The Witcher 3 Classic 1.32 — RenoDX HDR implementation handoff
 
+**BlitzFX startup compatibility (2026-10-23):** A custom ReShade 6.8.0.2 build
+with opt-in persistent D3D11 context multithread protection passes startup with
+BlitzFX, confirmed by the user. The startup backport alone did not fix it.
+No Classic addon shaders were changed. The user is restoring addons themselves;
+combined HDR/DLSS gameplay remains unverified. See the
+[patch, build/rollback instructions and evidence](WITCHER3_CLASSIC_BLITZFX_COMPATIBILITY.md).
+
+**Latest menu/scene-grade revision (2026-10-23):** `addon.cpp` now uses one explicit,
+ordered RenoDX `Settings` initializer. Removed the synthetic `Control` table,
+settings construction loops and `settings.push_back` calls. Existing settings,
+keys, defaults, hints, tabs, effect order and global/preset behavior remain;
+`DllMain` retains only migrations and actual addon initialization. Hidden global
+DLSS definitions are ordinary entries at the end; `DrawAddon` keeps its requested
+dropdowns and diagnostics. No shared settings-framework changes.
+
+- Advanced **Scene Color Grading** is immediately after Tone Mapping, before
+  user Color Grading/PsychoV. It has **LUT Grading Strength** (`LutGradeStrength`,
+  default 100), **LUT Scaling** (`LutScaling`, default 0, retained choice), and
+  **Color Grading Strength** (`ColorGradeStrength`, default 100), ported from the
+  Hartapfel Next Gen Scene Grading section. Brightness Compensation and Hue Shift
+  are not Scene Grading controls and were not added by this request.
+- LUT strength 0 returns the original signed scene and alpha before any LUT
+  sampling/proxy work. Other values interpolate neutral versus fully blended
+  native LUT grade in linear proxy space, then restore gamut/range once.
+  Analytic grade contribution is interpolated in linear proxy space before
+  vignette. The colored native vignette blend moves after output levels using
+  their commuting affine transform; perfect-black attenuation stays after
+  restoration. Both vignette modes remain independent of scene grade strength.
+- Injection expands from 144 to **160 bytes**, with explicit padding; C++ and
+  shader layout share the struct/assert. Runtime defaults and saved-setting
+  defaults both initialize the two strengths to 1. Existing values are not
+  reinterpreted or overwritten. Preset Off retains original native branches.
+- Release object/shader compile passes (37 existing deprecation warnings).
+  WARP and NVIDIA `tests/effects.cpp` pass prior tests plus native-grade bypass,
+  0/50/100 contribution, independent vignette at grading 0, exact LUT bypass,
+  and midpoint LUT interpolation with signed colors. Structural audit confirms
+  every existing key occurs once, only the two expected keys were added, and
+  the declared section order. Logs: `tmp/classic-scene-menu-compile.log`,
+  `tmp/classic-scene-menu-tests.log`, `tmp/classic-scene-menu-release.log`.
+- Full Release link completed with Classic closed: **4,875,776 bytes**,
+  **2026-10-23 20:28:01 CEST**, SHA256
+  `FE803D660F3CD4AEA980BABFBEF8BBCEA2D98EBDD44CFD55C608D21273A35BCC`.
+  The existing game-folder symlink targets this ready-to-test build. After relaunch, check
+  both tabs, Advanced section order and tooltips, strengths 0/50/100, independent
+  vignette, saved presets and DLSS preferences. Earlier signed-format live
+  capture and performance checks remain pending.
+
+
+**Latest LUT/wide-gamut checkpoint (2026-10-23 20:15 CEST):** implemented and linked
+in `build/Release/renodx-thewitcher3classic.addon64`, **4,849,664 bytes**, SHA256
+`913101094B6DFDBB39B41789B1CA529DA2B1AADDA73F0949D83E7D3D873AA025`.
+The game was closed during linking. It subsequently relaunched as PID 33732
+(20:17:49 CEST); the 20:18:38 log confirms Quality 2560x1440 → 3840x2160
+reconstruction and active object history. DevKit is not loaded/available in this
+run, so signed-format capture, visual and performance acceptance remain pending. These changes follow the earlier published
+`0526a1ed` baseline and have not been committed/pushed in this checkpoint.
+
+- New `grading/grade_state.hlsli` ports Remastered `WitcherPrepareGrade` and
+  `WitcherRestoreGrade`: temporary luminance-axis gamut contraction, N2 range
+  compression, then restoration after all grade/environment blends. Six LUT
+  variants take an early custom branch; original native branches remain intact.
+  Native atlas addressing, per-LUT gamma decode, gains, blend order and alpha
+  are checked against original DXBC. `final_grade.hlsli` uses the same proxy and
+  signed level-power math, restores before perfect-black vignette/PsychoV, and
+  leaves display-gamut fitting to PsychoV.
+- New `grading/lut_sampling.hlsli` ports the Remastered endpoint/OkLab algorithm
+  with constant-LUT guards and relative chroma darkening. **LUT Scaling** is
+  under Advanced → Color Grading, 0–100. Default **0** retains native LUT levels
+  pending weather/interior/cinematic comparisons; 100 applies full restoration.
+  This control is separate from the always-active HDR/gamut bridge. Zero skips
+  six extra atlas texture samples per LUT. `ShaderInjectData` remains 144 bytes:
+  `lut_scaling` consumes one formerly reserved float.
+- Added a clone rule only for backbuffer-sized R11 render targets to signed
+  RGBA16F. The unsigned scene pool would otherwise discard negative restored
+  channels. Reduced-size bloom/effects buffers and material/depth/alpha clamps
+  remain native. Full-size allocation/bandwidth cost needs measurement; this is
+  a color-preservation change, not a performance optimization.
+- DLSS preparation remains finite/nonnegative for NGX. `Prepare::Blit` and
+  private output shader `F3C10003` restore the current signed residual after NGX,
+  following Ezio's `dlaa_output.ps_3_0.hlsl`. Sampling uses actual input/output
+  sizes, current pixel jitter and active-subrect edge clamps; source pool padding
+  is excluded. The existing blit carries it, with a cached sampler/32-byte CB;
+  debug paths retain their own layout/state restoration. Residual negatives are
+  not temporally reconstructed; saturated animated/disoccluded edges need checks.
+- Release object/shader build and full link pass. Extended `tests/effects.cpp`
+  passes WARP and NVIDIA: six LUT permutations × four environment blends,
+  Vanilla/native-proxy equivalence, active Scaling, alpha, zero black, constant
+  LUT guards and signed HDR round-trip, plus prior effects tests. Extended actual
+  NGX tests pass all five quality/model request sequences, HDR/state restoration,
+  signed residual checks at three output positions including poisoned subrect
+  edges, jitter checks and clean shutdown. Logs: `tmp/classic-lut-compile.log`,
+  `tmp/classic-lut-effects.log`, `tmp/classic-lut-dlss-unrestricted.log`,
+  `tmp/classic-lut-release.log`.
+- A restricted test run completed all evaluations then waited inside
+  `NvTelemetryAPI64!UninitializeTelemetry` during NGX shutdown. CDB stack evidence
+  is `tmp/classic-lut-dlss-shutdown-stack.log`. Only that test process was stopped;
+  the unrestricted rerun completed normally. No workaround was added to runtime.
+- Next: relaunch, confirm LUT/AA target and SRV formats are signed FP16 through
+  DevKit (do not infer successful cloning from shader tests), test native TAA as
+  well as DLSS, compare Scaling 0/50/100 through storms/cutscenes/fades, check
+  wide-color edges and original effects, then measure matched-scene memory/frame
+  cost with capture/debug off. No live replacement was activated.
+
 **Publication validation (2026-10-23):** Classic was isolated on remote main
 `7fa3e3e0` in `tmp/classic-publish-check/`, excluding the divergent local commits
 and unrelated dirty work. The only shared build change adds `thewitcher3classic`

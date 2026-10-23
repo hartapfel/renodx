@@ -1,5 +1,12 @@
 # Classic HDR permutation audit — 2026-10-23
 
+**Later LUT/gamut revision:** see the top of the
+[handoff](WITCHER3_CLASSIC_HDR_HANDOFF.md). The LUT family now uses Remastered's
+reversible gamut plus N2 proxy, optional endpoint-based LUT Scaling and signed
+full-size scene storage. Older N2-only/R11 storage descriptions below record the
+weather investigation before that revision. Its weather/exposure findings remain
+applicable; LUT level and gamut processing have subsequently changed.
+
 ## Current checkpoint
 
 The missing weather-transition filmic path and related HDR permutations are

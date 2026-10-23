@@ -347,7 +347,8 @@ inline bool OnTemporalDraw(reshade::api::command_list* cmd) {
   if (!display) display = data->resolved.Get();
   if (!data->prepare.Blit(context.Get(), display,
                           target.Get(), target_desc.Width, target_desc.Height,
-                          debug_vectors ? data->objects.surfaces[1].Get() : nullptr, debug_vectors, debug_view)) return true;
+                          debug_vectors ? data->objects.surfaces[1].Get() : nullptr, debug_vectors, debug_view,
+                          scene.Get(), jitter[0], jitter[1])) return true;
   data->last_resolve = data->frame;
   data->last_time = now;
   if (upscale_engine::active) upscale_engine::active->reconstructed = true;

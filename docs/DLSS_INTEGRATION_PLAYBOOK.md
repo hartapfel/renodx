@@ -101,7 +101,7 @@ Use [dlss.hpp](../src/games/thewitcher3classic/temporal/dlss.hpp) as a lifecycle
 
 | Input | Current implementation | Porting obligation |
 | --- | --- | --- |
-| Color | Render-sized RGBA16F, finite/nonnegative, capped at FP16 maximum, alpha 1 | Prove encoding/exposure/alpha requirements. Classic does not restore Ezio's signed residual or alpha contract |
+| Color | Render-sized RGBA16F, finite/nonnegative, capped at FP16 maximum, alpha 1 | Prove encoding/exposure/alpha requirements. The later LUT revision restores the current negative residual in the output pass, following Ezio; alpha remains Classic's 1 |
 | Depth | Render-sized R32F raw reverse-Z | Set `DepthInverted` only for the observed convention |
 | Motion | Render-sized RG16F, undilated, unjittered `previousUV - currentUV` | Set MV scale to render width/height for normalized UV; do not scale pixel vectors again |
 | Bias-current-color mask | R8, 1 for rejected motion/history | This is integration-owned confidence input, not NVIDIA's internal debug confidence |
@@ -192,7 +192,7 @@ Inspect the actual ordering, not a Remastered version or a shader's apparent nam
 
 When replacement sharpening is enabled, bypass native sharpening with its center sample while preserving the ping-pong target, then apply Lilium RCAS after reconstruction. New CA and grain also run after reconstruction; grain follows tone mapping and stays out of temporal history/HUD. Reuse an existing final pass when possible. Do not skip a draw that must produce a downstream target, and do not relocate depth/blur effects without proving dependencies.
 
-For another game's native pre-exposure, negative HDR channels, alpha and tonemapping, document exactly what NGX sees and how output is restored. Ezio's signed residual restoration is different from Classic's nonnegative preparation; neither is a universal transport contract.
+For another game's native pre-exposure, negative HDR channels, alpha and tonemapping, document exactly what NGX sees and how output is restored. Classic's later LUT revision now follows Ezio's negative-residual restoration: sample the signed current scene at output UV plus current jitter in input pixels, clamp to the active input region, and add its negative component after NGX. NGX still reconstructs nonnegative color. The residual itself is not temporal history. Classic additionally upgrades backbuffer-sized R11 scene targets to signed FP16; a shader-side fix alone cannot preserve negative channels in an unsigned target. Both storage/bandwidth and saturated moving-edge behavior require validation. Alpha remains 1 in Classic, whereas Ezio restores native alpha. Neither is a universal transport contract.
 
 Material-scoped mip bias remains unfinished in Classic. The native sampler binder shares entries across world/shadow/post passes and caches logical indices; a global bias override would affect unrelated work or leave stale bindings. Inspect descriptors and ownership once, cache appropriate variants on quality/device changes, synchronize native binding caches, and measure detail/shimmering. Use the current [NVIDIA programming guide](https://github.com/NVIDIA/DLSS/blob/main/doc/DLSS_Programming_Guide_Release.pdf) for SDK-specific sampling requirements; the local pinned SDK is the build authority. Do not advertise mip-bias completion from a settings dropdown.
 

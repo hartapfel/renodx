@@ -118,6 +118,7 @@ int main(int argc, char** argv) {
     injection.psychov_gamut_compression_mode = 3;
     injection.custom_blur = 1;
     injection.vignette_strength = 1;
+    injection.lut_strength = injection.color_grading_strength = 1;
     const auto inject = [&] {
       std::vector<float> values(sizeof(injection) / sizeof(float));
       std::memcpy(values.data(), &injection, sizeof(injection));
@@ -176,6 +177,36 @@ int main(int argc, char** argv) {
       if (Difference(original, run(code.Get())) > .0001f) throw std::runtime_error("Vanilla effects leaked");
       std::cout << "PASS final grade " << hash << " native, RCAS, CA, grain and Vanilla isolation\n";
 
+      // Scene grading contribution is independent of the user tonemap controls.
+      // At zero, changing native grade constants must not change the result.
+      injection.tone_map_type = 1;
+      injection.sharpening_mode = injection.chromatic_aberration_mode = injection.film_grain = 0;
+      injection.vignette_strength = 0;
+      injection.color_grading_strength = 0;
+      inject();
+      const auto bypass_grade = run(code.Get());
+      const auto saved_constants = constants;
+      constants[36] = .6f;
+      constants[37] = .8f;
+      constants[38] = 1.2f;
+      constants[60] = .05f;
+      constants[61] = .9f;
+      buffer(3, constants);
+      if (Difference(bypass_grade, run(code.Get())) > .000001f)
+        throw std::runtime_error("Native grade leaked at strength zero");
+      injection.color_grading_strength = 1;
+      inject();
+      const auto full_grade = run(code.Get());
+      if (Difference(bypass_grade, full_grade) < 1e-5f) throw std::runtime_error("Scene grade strength ineffective");
+      injection.color_grading_strength = .5f;
+      inject();
+      const auto half_grade = run(code.Get());
+      if (Difference(bypass_grade, half_grade) < 1e-5f || Difference(full_grade, half_grade) < 1e-5f)
+        throw std::runtime_error("Scene grade strength midpoint ineffective");
+      constants = saved_constants;
+      buffer(3, constants);
+      // Keep grading bypassed below: vignette must remain independently active.
+      injection.color_grading_strength = 0;
       // Controlled masks expose black-floor leakage and clipped high-strength
       // opacity, independently of the live scene's current vignette constants.
       injection.tone_map_type = 1;
@@ -227,8 +258,118 @@ int main(int argc, char** argv) {
       inject();
       if (vignette_path && Difference(black, run(code.Get())) < 1e-5f) throw std::runtime_error("Native vignette floor missing");
       texture(0, W, H, scene);
+      injection.color_grading_strength = 1;
       std::cout << "PASS vignette " << hash << " zero/50/100, black floor and permutation isolation\n";
     }
+
+    // All native LUT permutations: unchanged Vanilla; custom scaling zero
+    // matches native grading of the N2 proxy, with range restored only at end.
+    for (const char* hash : {"27EF680B", "63047C3C", "65B4CEFA", "E91AAC85", "7526E398", "7818760A"}) {
+      auto code = Compiled(fs::path("grading") / (std::string("0x") + hash + ".ps_5_0.hlsl"));
+      auto native = Read(root.parent_path() / "hdr-permutations-20261023/cache" / (std::string("0x") + hash + ".cso"));
+      std::vector<float> constants(12);
+      constants[2] = constants[3] = 1;
+      constants[4] = .3f;
+      constants[5] = .8f;
+      constants[6] = 1.1f;
+      constants[8] = .6f;
+      constants[9] = .7f;
+      constants[10] = .9f;
+      for (UINT slot = 1; slot <= 4; ++slot) {
+        std::vector<float> atlas(512 * 512 * 4);
+        for (UINT y = 0; y < 512; ++y)
+          for (UINT x = 0; x < 512; ++x) {
+            const size_t i = (y * 512 + x) * 4;
+            atlas[i] = .04f * slot + .7f * float(x % 64) / 63;
+            atlas[i + 1] = .02f * slot + .8f * float(y % 64) / 63;
+            atlas[i + 2] = .01f * slot + .85f * float((y / 64) * 8 + x / 64) / 63;
+            atlas[i + 3] = 1;
+          }
+        texture(slot, 512, 512, atlas);
+      }
+      for (float blend : {0.f, .239534512f, .5f, 1.f}) {
+        constants[11] = blend;
+        buffer(3, constants);
+        texture(0, W, H, scene);
+        injection.tone_map_type = 0;
+        injection.lut_scaling = 1;
+        inject();
+        if (Difference(render(native.data(), native.size()), run(code.Get())) > .00001f)
+          throw std::runtime_error(std::string(hash) + " LUT Vanilla mismatch");
+        std::vector<float> proxy = scene;
+        std::vector<float> scales(W * H);
+        for (size_t i = 0; i < scene.size(); i += 4) {
+          const float m = std::max({scene[i], scene[i + 1], scene[i + 2]});
+          scales[i / 4] = 1.f / std::sqrt(1.f + m * m);
+          for (size_t c = 0; c < 3; ++c) proxy[i + c] *= scales[i / 4];
+        }
+        texture(0, W, H, proxy);
+        auto expected = render(native.data(), native.size());
+        for (size_t i = 0; i < expected.size(); i += 4)
+          for (size_t c = 0; c < 3; ++c) expected[i + c] /= scales[i / 4];
+        texture(0, W, H, scene);
+        injection.tone_map_type = 1;
+        injection.lut_scaling = 0;
+        inject();
+        if (Difference(expected, run(code.Get())) > .0001f)
+          throw std::runtime_error(std::string(hash) + " LUT proxy/blend mismatch");
+        injection.lut_scaling = 1;
+        inject();
+        const auto scaled = run(code.Get());
+        if (Difference(expected, scaled) < 1e-5f) throw std::runtime_error("LUT scaling ineffective");
+        for (size_t i = 3; i < scaled.size(); i += 4)
+          if (scaled[i] != scene[i]) throw std::runtime_error("LUT alpha changed");
+      }
+      // Raised colored black is removed without introducing signed color residue.
+      constants[5] = constants[9] = constants[6] = constants[10] = 1;
+      buffer(3, constants);
+      texture(0, W, H, std::vector<float>(scene.size()));
+      injection.lut_scaling = 1;
+      inject();
+      const auto black = run(code.Get());
+      for (size_t i = 0; i < black.size(); ++i)
+        if (i % 4 != 3 && std::abs(black[i]) > 1e-5f) throw std::runtime_error("LUT restored black has residue");
+      // Degenerate constant black/white LUTs must not divide by zero.
+      for (float value : {0.f, 1.f}) {
+        for (UINT slot = 1; slot <= 4; ++slot) texture(slot, 1, 1, {value, value, value, 1});
+        texture(0, W, H, scene);
+        Difference(run(code.Get()), run(code.Get()));
+      }
+      // Disabling native LUT strength exposes the reversible gamut/range bridge.
+      constants[5] = constants[9] = 0;
+      buffer(3, constants);
+      auto signed_scene = scene;
+      for (size_t i = 0; i < signed_scene.size(); i += 4) {
+        signed_scene[i] = -.2f * signed_scene[i + 1];
+        signed_scene[i + 2] *= 4;
+      }
+      texture(0, W, H, signed_scene);
+      inject();
+      if (Difference(signed_scene, run(code.Get())) > .0001f)
+        throw std::runtime_error(std::string(hash) + " signed gamut roundtrip failed");
+      // New LUT contribution bypasses the entire grade, irrespective of native
+      // blend/gain controls, and interpolates in the reversible linear proxy.
+      constants[5] = .8f;
+      constants[9] = .7f;
+      buffer(3, constants);
+      injection.lut_strength = 0;
+      inject();
+      const auto bypass_lut = run(code.Get());
+      if (Difference(signed_scene, bypass_lut) > .000001f) throw std::runtime_error("LUT strength zero did not bypass");
+      injection.lut_strength = 1;
+      inject();
+      const auto full_lut = run(code.Get());
+      injection.lut_strength = .5f;
+      inject();
+      const auto half_lut = run(code.Get());
+      auto expected_half = full_lut;
+      for (size_t i = 0; i < expected_half.size(); ++i)
+        expected_half[i] = .5f * (full_lut[i] + bypass_lut[i]);
+      if (Difference(expected_half, half_lut) > .0001f) throw std::runtime_error("LUT strength midpoint blend mismatch");
+      injection.lut_strength = 1;
+      std::cout << "PASS LUT " << hash << " Vanilla, native proxy blends, scaling, black/degenerate and signed HDR roundtrip\n";
+    }
+    texture(0, W, H, scene);
     auto blur = Compiled("src/games/thewitcher3classic/effects/0x6ED58557.ps_5_0.hlsl");
     auto original_blur = Read(root / "0x6ED58557.cso");
     auto frame = Constants("blur-b12.bin");

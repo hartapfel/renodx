@@ -1,0 +1,142 @@
+diff --git a/source/d3d11/d3d11.cpp b/source/d3d11/d3d11.cpp
+index 22d6183..4016cf0 100644
+--- a/source/d3d11/d3d11.cpp
++++ b/source/d3d11/d3d11.cpp
+@@ -10,6 +10,7 @@
+ #include "dll_log.hpp" // Include late to get 'hr_to_string' helper function
+ #include "hook_manager.hpp"
+ #include "addon_manager.hpp"
++#include "ini_file.hpp"
+ 
+ extern thread_local bool g_in_dxgi_runtime;
+ 
+@@ -80,6 +81,9 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter *pAdapter,
+ 
+ 	// Use local feature level variable in case the application did not pass one in
+ 	D3D_FEATURE_LEVEL feature_level = D3D_FEATURE_LEVEL_11_0;
++	const bool force_multithread_protection = reshade::global_config().get("DX11", "ForceMultithreadProtection");
++	if (force_multithread_protection)
++		Flags &= ~D3D11_CREATE_DEVICE_SINGLETHREADED;
+ 
+ 	g_in_dxgi_runtime = true;
+ 	HRESULT hr = trampoline(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, nullptr, nullptr, ppDevice, &feature_level, nullptr);
+@@ -115,6 +119,17 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter *pAdapter,
+ 	reshade::log::message(reshade::log::level::info, "Using feature level %x.", feature_level);
+ 
+ 	auto device = *ppDevice;
++	if (force_multithread_protection)
++	{
++		com_ptr<ID3D11DeviceContext> immediate_context;
++		device->GetImmediateContext(&immediate_context);
++		com_ptr<ID3D11Multithread> multithread;
++		if (SUCCEEDED(immediate_context->QueryInterface(&multithread)))
++		{
++			multithread->SetMultithreadProtected(TRUE);
++			reshade::log::message(reshade::log::level::info, "Enabled persistent D3D11 multithread protection for injector compatibility.");
++		}
++	}
+ 	// Query for the DXGI device and immediate device context since we need to reference them in the proxy device
+ 	com_ptr<IDXGIDevice1> dxgi_device;
+ 	hr = device->QueryInterface(&dxgi_device);
+diff --git a/source/dxgi/dxgi_swapchain.cpp b/source/dxgi/dxgi_swapchain.cpp
+index ce7d6ac..6d55c71 100644
+--- a/source/dxgi/dxgi_swapchain.cpp
++++ b/source/dxgi/dxgi_swapchain.cpp
+@@ -48,7 +48,6 @@ DXGISwapChain::DXGISwapChain(IDXGIFactory *factory, D3D10Device *device, IDXGISw
+ 	DXGISwapChain *const swapchain_proxy = this;
+ 	_orig->SetPrivateData(__uuidof(DXGISwapChain), sizeof(swapchain_proxy), &swapchain_proxy);
+ 
+-	reshade::create_effect_runtime(_impl, device);
+ 	on_init(false);
+ }
+ DXGISwapChain::DXGISwapChain(IDXGIFactory *factory, D3D10Device *device, IDXGISwapChain1 *original) :
+@@ -72,7 +71,6 @@ DXGISwapChain::DXGISwapChain(IDXGIFactory *factory, D3D11Device *device, IDXGISw
+ 	DXGISwapChain *const swapchain_proxy = this;
+ 	_orig->SetPrivateData(__uuidof(DXGISwapChain), sizeof(swapchain_proxy), &swapchain_proxy);
+ 
+-	reshade::create_effect_runtime(_impl, device->_immediate_context);
+ 	on_init(false);
+ }
+ DXGISwapChain::DXGISwapChain(IDXGIFactory *factory, D3D11Device *device, IDXGISwapChain1 *original) :
+@@ -101,13 +99,11 @@ DXGISwapChain::DXGISwapChain(IDXGIFactory *factory, D3D12CommandQueue *command_q
+ 	DXGISwapChain *const swapchain_proxy = this;
+ 	_orig->SetPrivateData(__uuidof(DXGISwapChain), sizeof(swapchain_proxy), &swapchain_proxy);
+ 
+-	reshade::create_effect_runtime(_impl, command_queue);
+ 	on_init(false);
+ }
+ DXGISwapChain::~DXGISwapChain()
+ {
+ 	on_reset(false);
+-	reshade::destroy_effect_runtime(_impl);
+ 
+ 	// Remove pointer to this proxy object from the private data of the swap chain (in case the swap chain unexpectedly survives)
+ 	_orig->SetPrivateData(__uuidof(DXGISwapChain), 0, nullptr);
+@@ -896,12 +892,32 @@ private:
+ 	BOOL was_protected = FALSE;
+ };
+ 
+-void DXGISwapChain::on_init([[maybe_unused]] bool resize)
++void DXGISwapChain::on_init(bool resize)
+ {
+ 	assert(!_is_initialized);
+ 
+ 	const unique_direct3d_device_lock lock(_direct3d_device, _direct3d_version, _direct3d_version == reshade::api::device_api::d3d12 ? static_cast<D3D12CommandQueue *>(_direct3d_command_queue)->_mutex : _impl_mutex);
+ 
++	reshade::api::command_queue *graphics_queue = nullptr;
++	switch (_direct3d_version)
++	{
++	case reshade::api::device_api::d3d10:
++		graphics_queue = static_cast<D3D10Device *>(static_cast<ID3D10Device *>(_direct3d_device));
++		break;
++	case reshade::api::device_api::d3d11:
++		graphics_queue = static_cast<D3D11Device *>(static_cast<ID3D11Device *>(_direct3d_device))->_immediate_context;
++		break;
++	case reshade::api::device_api::d3d12:
++		graphics_queue = static_cast<D3D12CommandQueue *>(_direct3d_command_queue);
++		break;
++	}
++
++	// Some games use the D3D11 immediate context on a worker thread while the
++	// main thread creates a swap chain. Runtime creation also accesses it.
++	// Backport upstream 2796147: hold multithread protection during creation.
++	if (!resize)
++		reshade::create_effect_runtime(_impl, graphics_queue);
++
+ #if RESHADE_ADDON
+ 	reshade::invoke_addon_event<reshade::addon_event::init_swapchain>(_impl, resize);
+ 
+@@ -925,7 +941,7 @@ void DXGISwapChain::on_init([[maybe_unused]] bool resize)
+ 
+ 	_is_initialized = true;
+ }
+-void DXGISwapChain::on_reset([[maybe_unused]] bool resize)
++void DXGISwapChain::on_reset(bool resize)
+ {
+ 	if (!_is_initialized)
+ 		return;
+@@ -938,6 +954,9 @@ void DXGISwapChain::on_reset([[maybe_unused]] bool resize)
+ 	reshade::invoke_addon_event<reshade::addon_event::destroy_swapchain>(_impl, resize);
+ #endif
+ 
++	if (!resize)
++		reshade::destroy_effect_runtime(_impl);
++
+ 	_is_initialized = false;
+ }
+ 
+diff --git a/source/dxgi/dxgi_swapchain.hpp b/source/dxgi/dxgi_swapchain.hpp
+index 1a75c5d..42669d2 100644
+--- a/source/dxgi/dxgi_swapchain.hpp
++++ b/source/dxgi/dxgi_swapchain.hpp
+@@ -106,8 +106,8 @@ public:
+ 	unsigned short _interface_version = 0;
+ 
+ private:
+-	void on_init([[maybe_unused]] bool resize);
+-	void on_reset([[maybe_unused]] bool resize);
++	void on_init(bool resize);
++	void on_reset(bool resize);
+ 	void on_present(UINT flags, [[maybe_unused]] const DXGI_PRESENT_PARAMETERS *params = nullptr);
+ 	void on_finish_present(HRESULT hr);
+ 

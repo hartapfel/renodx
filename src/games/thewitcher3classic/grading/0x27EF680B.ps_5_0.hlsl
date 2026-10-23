@@ -1,4 +1,4 @@
-#include "../shared.h"
+#include "./lut_sampling.hlsli"
 
 // ---- Created with 3Dmigoto v1.3.16 on Thu Oct 22 16:04:47 2026
 Texture2D<float4> t1 : register(t1);
@@ -33,12 +33,12 @@ void main(
   r0.xy = max(cb3[0].xy, v1.xy);
   r0.xy = min(cb3[0].zw, r0.xy);
   r0.xyzw = t0.Sample(s0_s, r0.xy).xyzw;
-  // Keep the original packed 64^3 addressing and game-controlled blend.
-  // N2 compresses the scene into LUT range; restore that range after grading.
-  float scene_scale = 1.f;
   if (RENODX_TONE_MAP_TYPE == CLASSIC_TONE_MAP_PSYCHOV31 && RENODX_PEAK_WHITE_NITS > 0.f) {
-    scene_scale = renodx::tonemap::neutwo::ComputeMaxChannelScale(r0.xyz);
-    r0.xyz *= scene_scale;
+    if (shader_injection.lut_strength == 0.f) { o0 = r0; return; }
+    ClassicGradeState state = ClassicPrepareGrade(r0.xyz);
+    float3 grade1 = lerp(state.neutral_sdr, ClassicSampleLUT(state.neutral_sdr, t1, s1_s) * cb3[1].z, cb3[1].y);
+    o0 = float4(ClassicRestoreGrade(lerp(state.neutral_sdr, grade1, shader_injection.lut_strength), state), r0.w);
+    return;
   }
 
   r1.xyz = log2(abs(r0.xyz));
@@ -81,7 +81,6 @@ void main(
   r1.xyz = exp2(r1.xyz);
   r1.xyz = cb3[1].zzz * r1.xyz + -r0.xyz;
   o0.xyz = cb3[1].yyy * r1.xyz + r0.xyz;
-  o0.xyz /= max(scene_scale, 1e-6f);
   o0.w = r0.w;
   return;
 }

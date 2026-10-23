@@ -2,6 +2,7 @@
 #define THEWITCHER3CLASSIC_FINAL_GRADE_HLSLI_
 
 #include "../tonemap/psychov_tonemap.hlsli"
+#include "./grade_state.hlsli"
 #include "../effects/chromatic_aberration.hlsli"
 #include "../../../shaders/effects.hlsl"
 
@@ -13,8 +14,9 @@
 // exposure, saturation, vignette and game-controlled fades retain their order.
 // The input is the extended native filmic signal after bloom/LUT/AA.
 float3 ClassicGradeAndMap(float3 scene, float2 scene_uv, float2 vignette_uv, float4 constants[CLASSIC_GRADE_CONSTANT_COUNT], bool apply_vignette = true, float texture_vignette = -1.f) {
-  float3 color = renodx::math::SignPow(scene, constants[8].x);
-  color = pow(max(color * constants[14].x + constants[14].y, 0.f), constants[14].z);
+  ClassicGradeState state = ClassicPrepareGrade(scene);
+  float3 color = renodx::math::SignPow(state.neutral_sdr, constants[8].x);
+  color = renodx::math::SignPow(color * constants[14].x + constants[14].y, constants[14].z);
   const float grade_luma = dot(color, float3(0.299f, 0.587f, 0.114f));
   const float2 weights = saturate((grade_luma - constants[10].xz) * constants[10].yw);
   const float4 grade = lerp(lerp(constants[12], constants[11], weights.x), constants[13], weights.y);
@@ -34,12 +36,20 @@ float3 ClassicGradeAndMap(float3 scene, float2 scene_uv, float2 vignette_uv, flo
                         float4(position2 * position2, position2 * position, position2, position)));
     native_vignette = saturate(vignette * constants[6].w
         * saturate(1.f - dot(renodx::color::gamma::DecodeSafe(color, 2.2f), constants[6].rgb)));
-    if (shader_injection.vignette_black_floor == 0.f) {
-      color = lerp(color, constants[7].rgb, saturate(native_vignette * shader_injection.vignette_strength));
-    }
   }
-  color = color * (constants[15].y - constants[15].x) + constants[15].x;
+  const float levels = constants[15].y - constants[15].x;
+  color = color * levels + constants[15].x;
   color = renodx::color::gamma::DecodeSafe(color, 2.2f);
+  // Blend the native grade in linear proxy space, independently of vignette.
+  color = lerp(state.neutral_sdr, color, shader_injection.color_grading_strength);
+  if (apply_vignette && shader_injection.vignette_black_floor == 0.f) {
+    color = renodx::color::gamma::EncodeSafe(color, 2.2f);
+    // Native affine levels commute with the colored vignette blend.
+    color = lerp(color, constants[7].rgb * levels + constants[15].x,
+        saturate(native_vignette * shader_injection.vignette_strength));
+    color = renodx::color::gamma::DecodeSafe(color, 2.2f);
+  }
+  color = ClassicRestoreGrade(color, state);
   if (apply_vignette && shader_injection.vignette_black_floor != 0.f) {
     // Remastered's black-floor fix attenuates linear light after native levels,
     // rather than blending toward a colored floor. Above 1x, optical density
