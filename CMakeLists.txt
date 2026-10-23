@@ -725,7 +725,7 @@ foreach(FILE ${ADDON_FILES})
   add_dependencies(${ADDON} ${ADDON}-shaders)
   add_dependencies(${ADDON} detours)
   target_link_libraries(${ADDON} PRIVATE detours minhook)
-  if((ADDON STREQUAL "asscreed3remastered" OR ADDON STREQUAL "lorwin") AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+  if((ADDON STREQUAL "asscreed3remastered" OR ADDON STREQUAL "lorwin" OR ADDON STREQUAL "thewitcher3classic") AND CMAKE_SIZEOF_VOID_P EQUAL 8)
     target_link_libraries(${ADDON} PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/external/DLSS/lib/Windows_x86_64/x64/nvsdk_ngx_s.lib
       d3d11

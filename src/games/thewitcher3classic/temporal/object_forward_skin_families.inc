@@ -1,0 +1,10 @@
+// Offline audited position/interface matches. See tools/audit_motion_families.py.
+    ObjectShader{0x18186C6E, __0x18186C6E, 11, false, false, false, true, false},
+    ObjectShader{0x62F9496B, __0x62F9496B, 11, false, false, false, true, false},
+    ObjectShader{0x6817FC23, __0x6817FC23, 11, false, false, false, true, false},
+    ObjectShader{0x9848A290, __0x9848A290, 11, false, false, false, true, false},
+    ObjectShader{0xA8AE1484, __0xA8AE1484, 11, false, false, false, true, false},
+    ObjectShader{0xACEE34D6, __0xACEE34D6, 11, false, false, false, true, false},
+    ObjectShader{0xBC187223, __0xBC187223, 11, false, false, false, true, false},
+    ObjectShader{0xEC09D1C5, __0xEC09D1C5, 11, false, false, false, true, false},
+    ObjectShader{0xF9F54B50, __0xF9F54B50, 11, false, false, false, true, false},
