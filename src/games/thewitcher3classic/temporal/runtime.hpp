@@ -401,6 +401,20 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
                       const reshade::api::rect*, const reshade::api::rect*, uint32_t, const reshade::api::rect*) {
   auto* device = swapchain->get_device();
   auto* data = renodx::utils::data::Get<DeviceData>(device);
+  if (device->get_api() == reshade::api::device_api::d3d11 && blitzfx::Initialize()) {
+    // BlitzFX suppresses the native AA draw in its TAA mode, so initialization
+    // cannot wait for that draw. Install the already audited render hooks here.
+    const bool enabled = mode != 0.f && (!data || !data->attempted || data->ready);
+    if (enabled && !object_engine::state->installed) {
+      // BlitzFX also creates a temporary hook-discovery swapchain. Bootstrap
+      // only from Classic's actual window, after that initialization is over.
+      wchar_t window_class[32] = {};
+      if (GetClassNameW(static_cast<HWND>(swapchain->get_hwnd()), window_class, int(std::size(window_class)))
+          && std::wcscmp(window_class, L"W2ViewportClass") == 0)
+        object_engine::Install();
+    }
+    blitzfx::temporal_enabled.store(enabled && object_engine::state->installed, std::memory_order_relaxed);
+  }
   if (!data) return;
   if (data->motion_context) data->objects.ClosePass(data->motion_context.Get());
   if (mode == 0.f) {
@@ -429,6 +443,7 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
   }
 }
 inline void OnDestroySwapchain(reshade::api::swapchain* swapchain, bool) {
+  blitzfx::temporal_enabled.store(false, std::memory_order_relaxed);
   upscale_engine::Disable();
   auto* data = renodx::utils::data::Get<DeviceData>(swapchain->get_device());
   if (data && data->swapchain == swapchain) {
@@ -437,6 +452,7 @@ inline void OnDestroySwapchain(reshade::api::swapchain* swapchain, bool) {
   }
 }
 inline void OnDestroyDevice(reshade::api::device* device) {
+  blitzfx::temporal_enabled.store(false, std::memory_order_relaxed);
   upscale_engine::Disable();
   object_engine::Disable();
   if (renodx::utils::data::Get<DeviceData>(device)) renodx::utils::data::Delete<DeviceData>(device);
@@ -461,6 +477,7 @@ inline void Use(DWORD reason) {
     reshade::register_event<reshade::addon_event::destroy_swapchain>(OnDestroySwapchain);
     reshade::register_event<reshade::addon_event::destroy_device>(OnDestroyDevice);
   } else if (reason == DLL_PROCESS_DETACH) {
+    blitzfx::temporal_enabled.store(false, std::memory_order_relaxed);
     reshade::unregister_event<reshade::addon_event::init_command_list>(OnMotionCommandList);
     reshade::unregister_event<reshade::addon_event::map_buffer_region>(OnMotionMap);
     reshade::unregister_event<reshade::addon_event::unmap_buffer_region>(OnMotionUnmap);

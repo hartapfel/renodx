@@ -1,11 +1,16 @@
 # The Witcher 3 Classic 1.32 — RenoDX HDR implementation handoff
 
-**BlitzFX startup compatibility (2026-10-23):** A custom ReShade 6.8.0.2 build
-with opt-in persistent D3D11 context multithread protection passes startup with
-BlitzFX, confirmed by the user. The startup backport alone did not fix it.
-No Classic addon shaders were changed. The user is restoring addons themselves;
-combined HDR/DLSS gameplay remains unverified. See the
-[patch, build/rollback instructions and evidence](WITCHER3_CLASSIC_BLITZFX_COMPATIBILITY.md).
+**BlitzFX rendering compatibility (2026-10-23):** pre-change Classic state pushed
+as `26075fbb`. Captured BlitzFX TAA suppressing the native DLSS boundary, plus
+its clamped filmic/final-grade shaders. New dynamic, PE/code-guarded world-render
+handoff bypasses BlitzFX TAA/jitter only while DLSS owns reconstruction; it
+restores the selected BlitzFX mode afterward. Added its HDR curve/final grade,
+RCAS ownership and nine captured material-motion permutations. Release build,
+CPU ownership tests, WARP/NVIDIA effects and object suites pass. The live
+manual Vanilla-AA experiment restored Quality reconstruction; the automatic
+switch and full combined scene acceptance still require the new addon.
+The patched ReShade startup DLL remains required. See the
+[implementation, evidence and live checklist](WITCHER3_CLASSIC_BLITZFX_COMPATIBILITY.md).
 
 **Latest menu/scene-grade revision (2026-10-23):** `addon.cpp` now uses one explicit,
 ordered RenoDX `Settings` initializer. Removed the synthetic `Control` table,

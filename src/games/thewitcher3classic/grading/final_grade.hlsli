@@ -13,17 +13,20 @@
 // Native analytic grade, with only the SDR colour bounds removed. Masks,
 // exposure, saturation, vignette and game-controlled fades retain their order.
 // The input is the extended native filmic signal after bloom/LUT/AA.
-float3 ClassicGradeAndMap(float3 scene, float2 scene_uv, float2 vignette_uv, float4 constants[CLASSIC_GRADE_CONSTANT_COUNT], bool apply_vignette = true, float texture_vignette = -1.f) {
+float3 ClassicGradeAndMap(float3 scene, float2 scene_uv, float2 vignette_uv, float4 constants[CLASSIC_GRADE_CONSTANT_COUNT], bool apply_vignette = true, float texture_vignette = -1.f, bool apply_analytic_grade = true) {
   ClassicGradeState state = ClassicPrepareGrade(scene);
   float3 color = renodx::math::SignPow(state.neutral_sdr, constants[8].x);
-  color = renodx::math::SignPow(color * constants[14].x + constants[14].y, constants[14].z);
-  const float grade_luma = dot(color, float3(0.299f, 0.587f, 0.114f));
-  const float2 weights = saturate((grade_luma - constants[10].xz) * constants[10].yw);
-  const float4 grade = lerp(lerp(constants[12], constants[11], weights.x), constants[13], weights.y);
-  color = renodx::color::gamma::DecodeSafe(color, 2.2f);
-  const float luminance = renodx::color::y::from::BT709(color);
-  color = (luminance + (color - luminance) * grade.w) * grade.rgb;
-  color = renodx::color::gamma::EncodeSafe(color, 2.2f) * constants[9].rgb;
+  if (apply_analytic_grade) {
+    color = renodx::math::SignPow(color * constants[14].x + constants[14].y, constants[14].z);
+    const float grade_luma = dot(color, float3(0.299f, 0.587f, 0.114f));
+    const float2 weights = saturate((grade_luma - constants[10].xz) * constants[10].yw);
+    const float4 grade = lerp(lerp(constants[12], constants[11], weights.x), constants[13], weights.y);
+    color = renodx::color::gamma::DecodeSafe(color, 2.2f);
+    const float luminance = renodx::color::y::from::BT709(color);
+    color = (luminance + (color - luminance) * grade.w) * grade.rgb;
+    color = renodx::color::gamma::EncodeSafe(color, 2.2f);
+  }
+  color *= constants[9].rgb;
 
   float native_vignette = 0.f;
   if (apply_vignette) {

@@ -78,7 +78,92 @@ contribution at 0/50/100, and vignette independence with grading disabled.
 `dlss.cpp` includes signed-residual output checks at center and
 viewport edges, with unused allocation pixels poisoned and nonzero jitter.
 
+For the BlitzFX revision, append `--blitzfx` to the effects command (after
+`--hardware` when applicable). This explicitly requires the sibling local
+`blitzfx-20261023/` archive: original `scene-shaders/0x114D8828.cso` and
+`0x5AA6AFFF.cso`, plus `fixtures/grade-b0.bin`, `grade-b1.bin`, `grade-b3.bin`,
+`curve-b1.bin`, `curve-b3.bin`. It checks native/debug flag permutations,
+parametric-grade/CA isolation, RCAS, filmic equivalence and HDR extension.
+The cutscene extension additionally requires originals `A123EB15`, `399CBE16`,
+`445EB59C`, `4FC8DAEB`, `E276DFB3` (each `0xHASH.cso`) in `scene-shaders/`.
+The same final-grade regression runs 64 native/debug combinations per shader
+and checks HDR highlight range and grade/sharpening/CA isolation for all six
+BlitzFX final-grade variants. Inactive variants originate from saved dumps,
+not fabricated live captures.
+The nine original BlitzFX material PS blobs must also be restored to the
+object-motion fixture archive; the ordinary full object suite exercises them
+against their matching native vertex families. The CPU upscale fixture covers
+absent BlitzFX, disabled DLSS, valid/invalid AA modes and scoped restoration.
+See the [BlitzFX handoff](../../../../docs/WITCHER3_CLASSIC_BLITZFX_COMPATIBILITY.md)
+for capture provenance, exact hashes, ABI guards and the required live tests.
+
+The 2026-10-24 effects extension also requires original live
+`scene-shaders/0x0E583BCD.cso` and `scene-shaders/0xBF3EF83C.cso` in that
+BlitzFX archive. It tests single-curve HDR exposure/toe across 48 combinations
+of white reference, adaptation exponent, modify-tonemap flag and vignette;
+16 blended-environment native/toe/highlight cases; five refraction pool sizes
+with poisoned unused pixels; and the actual bloom composite against its
+original CS operating on physically cropped resources. The scene-pool helper
+is read from the current source checkout. Run from the checkout whose Release
+blobs you built. A passing bloom composite test does not validate its upstream
+pyramid or the entire water material. Full combined visual acceptance remains
+separate.
+
+The water/shadow follow-up additionally requires original live
+`scene-shaders/0x4E0137BC.cso`, `0xCA115962.cso`, `0x4708B025.cso` and
+`0x58959EAD.cso` in the same archive directory. The fixture exercises water
+history with the observed yellow clear outside the valid viewport, mixed
+current-depth/output-color reflection preparation, shadow temporal history,
+and packed contact-shadow rays with a point-border sampler. It asserts the
+original pool-addressing bug is observable and contact occlusion actually
+occurs; an unchanged all-one mask cannot pass as meaningful ray validation.
+
+The reflection-depth follow-up additionally requires the original native
+`scene-shaders/0x657A6576.cso`. It compares the exact shipped blob with native
+quarter-depth preparation on physically smaller, rectangular depth resources at
+four sizes, using a point sampler and poisoned unused allocation pixels. Native
+quarter sampling lands on texel boundaries; constant 4×4 depth cells avoid
+ambiguous neighboring point samples from reciprocal roundoff. The original
+uncorrected larger-pool shader must measurably fail at reduced sizes.
+
+`hero_lighting.cpp` exercises the BlitzFX hero skin shader with temporary local
+lights, including an outside-radius final light. Restore `head-b1.bin`,
+`head-b2.bin`, `head-b3.bin`, `head-b4.bin`, `head-b5.bin`, `head-b12.bin`,
+`head-b13.bin` and the pre-fix `0x90BFECE8-before.cso` from the local
+`blitzfx-20261024/igni-face/` archive, plus original `0x90BFECE8.cso` from
+`blitzfx-20261023/scene-shaders/`. It uses captured constants with controlled
+textures/light lists, not a complete live draw replay. The test requires the
+pre-fix blob to fail measurably and the replacement to match finite native RGB
+across 12 cases. A zero-light-only fixture misses the leaked sun-direction index.
+
+```bat
+clang-cl /std:c++20 /EHsc /O2 /DNOMINMAX src/games/thewitcher3classic/tests/hero_lighting.cpp /Fe:tmp/classic-tests/hero-lighting.exe /Fo:tmp/classic-tests/hero-lighting.obj /link d3d11.lib d3dcompiler.lib
+tmp\classic-tests\hero-lighting.exe tmp/witcher3classic-investigation/blitzfx-20261024/igni-face tmp/witcher3classic-investigation/blitzfx-20261023/scene-shaders
+tmp\classic-tests\hero-lighting.exe tmp/witcher3classic-investigation/blitzfx-20261024/igni-face tmp/witcher3classic-investigation/blitzfx-20261023/scene-shaders --hardware
+```
+
 `temporal-dev/` abbreviates `tmp/witcher3classic-investigation/temporal-dev/`.
+
+`blitzfx_dof.cpp` requires original `0xB018A95A.cso`, `0x48885E0D.cso`,
+`0xB73522BB.cso` and `0xAE334616.cso` from the local
+`blitzfx-20261024/depth-of-field/` archive. It compares shipped blobs against
+native passes on physically smaller textures with distinct RGB/CoC and poisoned
+unused allocation pixels. It reads every output channel, including the second
+reduction UAV, at six sizes (one odd) with gameplay and packed cinematic flags.
+Each original larger-pool shader must reproduce an addressing failure. Native
+RGB gathers and flag bits are part of equivalence, not optional shader cleanup.
+The extended fixture also expects `0x249DA2F1.cso` and checks camera motion blur
+at the same six sizes, both static and translated reprojection. Its per-texel
+border gather must preserve the native mask; simply moving the gather inward
+does not. Use the `cutscene-permutations/` archive as the argument for all five
+originals after this extension (the four DoF originals are copied there).
+
+```bat
+clang-cl /std:c++20 /EHsc /O2 /DNOMINMAX src/games/thewitcher3classic/tests/blitzfx_dof.cpp /Fe:tmp/classic-tests/blitzfx-dof.exe /Fo:tmp/classic-tests/blitzfx-dof.obj /link d3d11.lib d3dcompiler.lib
+tmp\classic-tests\blitzfx-dof.exe tmp/witcher3classic-investigation/blitzfx-20261024/depth-of-field
+tmp\classic-tests\blitzfx-dof.exe tmp/witcher3classic-investigation/blitzfx-20261024/depth-of-field --hardware
+```
+
 The effects archive is `tmp/witcher3classic-investigation/effects-20261023/`.
 The shader table/source changes over time; counts in old logs are historical.
 WARP is useful for shader regression but cannot execute NVIDIA NGX. Hardware

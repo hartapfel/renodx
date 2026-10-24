@@ -11,6 +11,49 @@ exposure pass extends the filmic shoulder; scene LUT and analytic grading
 feed PsychoV before UI composition. Full-resolution RGBA8 and R11G11B10 scene
 render targets are cloned to signed RGBA16F; the swapchain proxy encodes HDR10.
 
+## BlitzFX compatibility
+
+The first compatibility revision supports the captured BlitzFX 1.1.0 path;
+combined in-game verification remains pending. See the
+[compatibility handoff](../../../docs/WITCHER3_CLASSIC_BLITZFX_COMPATIBILITY.md)
+for the required patched ReShade startup DLL and exact test checklist.
+When DLSS is enabled, a guarded render scope bypasses BlitzFX TAA and its
+jitter modification, then restores its selected AA mode before settings/UI
+presentation. Turning DLSS off returns AA ownership to BlitzFX. Keep the
+game's AA enabled. Without BlitzFX, the existing standalone path remains.
+Captured BlitzFX filmic/final-grade shaders preserve HDR through PsychoV;
+its extra sharpening is bypassed when RenoDX RCAS owns sharpening. Nine
+BlitzFX material variants use the existing object histories and motion MRTs.
+The 2026-10-24 correction fixes its exposure denominator, covers blended
+environment filmic curves, and adapts water/bloom texture sampling to DLSS's
+render subrect. Offline WARP/NVIDIA regression checks pass; the combined
+rendering still needs in-game visual acceptance after rebuilding/restarting.
+The follow-up additionally corrects water reflection history/preparation and
+screen-space shadow history/contact rays. Those four native-pass replacements
+run only with recognized BlitzFX during reduced-resolution DLSS; DLAA and
+standalone retain their existing passes. The handoff records the remaining
+in-game checks and exact capture/test evidence.
+The next reflection-specific correction adapts native quarter-depth preparation
+(`657A6576`) to the active scene rectangle before SSR ray marching. The confirmed
+failure capture used Performance, not Quality. It uses the same BlitzFX/upscale
+gate; the downstream composite and mip passes retain their existing transforms.
+See the handoff for exact capture modes and pending in-game reflection checks.
+The Igni follow-up repairs eight decompiled sun-direction reads in BlitzFX's
+Geralt skin replacement. Temporary local lights previously leaked their loop
+index into directional lighting, tinting the face brown with Object Motion on.
+Native-bytecode comparisons pass on WARP/NVIDIA; the rebuilt addon still needs
+an in-game Igni/fading-light check with Object Motion re-enabled.
+The DoF follow-up corrects render-to-allocation sampling in BlitzFX's weighted
+reduction, bokeh, dilation and composite. Its focus controls, kernel and order
+are retained. Native comparisons pass on WARP/NVIDIA, including odd dimensions
+and cinematic flags; rebuild/restart and compare Quality/Performance with DLAA.
+The cutscene audit adds the remaining five identified BlitzFX final-grade
+variants, including `A123EB15`, which clipped an HDR input in the captured scene.
+All six share post-reconstruction effects and the existing wide-gamut/PsychoV
+grade path. A further camera motion-blur pass receives subrect-correct samples
+and per-texel mask clamping at viewport borders. The dump audit and remaining
+underwater/bloom-edge follow-ups are recorded in the compatibility handoff.
+
 ## LUT levels and wide-gamut preservation
 
 In Advanced mode, **Scene Color Grading** follows **Tone Mapping** and contains

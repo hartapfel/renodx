@@ -95,6 +95,7 @@ inline const auto OBJECT_PIXEL_SHADERS = [] {
     ObjectShader{0x20C1C070, __0x20C1C070, 11},
     ObjectShader{0x9B839F3B, __0x9B839F3B, 14, false, false, false, true},
 #include "./object_material_families.inc"
+#include "../blitzfx/object_materials.inc"
     ObjectShader{0x602B6AA4, __0x602B6AA4, 20},
     ObjectShader{0x03EAC234, __0x03EAC234, 21},
     ObjectShader{0xCEC6D9F4, __0xCEC6D9F4, 22},

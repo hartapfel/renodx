@@ -78,6 +78,27 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0xBAEDA9BD),  // Masked sky feeding light shafts.
     CustomShaderEntry(0x620431CF),  // Additive bloom with lens dirt.
     CustomShaderEntry(0x0CB5EA21),  // Screen-blended effect composite.
+    {0x2825099C, {.crc32 = 0x2825099C, .code = __0x2825099C, .on_inject = [](auto*) { return false; }}},  // BlitzFX water; preserve native lighting b13.
+    {0xBF3EF83C, {.crc32 = 0xBF3EF83C, .code = __0xBF3EF83C, .on_inject = [](auto*) { return false; }}},  // BlitzFX bloom subrect.
+    {0x4708B025, {.crc32 = 0x4708B025, .code = __0x4708B025, .on_inject = [](auto*) { return false; }}},  // BlitzFX shadow subrect.
+    {0x58959EAD, {.crc32 = 0x58959EAD, .code = __0x58959EAD, .on_inject = [](auto*) { return false; }}},  // BlitzFX shadow subrect.
+    {0xCA115962, {.crc32 = 0xCA115962, .code = __0xCA115962, .on_inject = [](auto*) { return false; }}},  // BlitzFX current-depth / reconstructed-color reflection prep.
+    {0x4E0137BC, {.crc32 = 0x4E0137BC, .code = __0x4E0137BC, .on_inject = [](auto*) { return false; }}},  // BlitzFX water reflection history subrect.
+    {0x657A6576, {.crc32 = 0x657A6576, .code = __0x657A6576, .on_inject = [](auto*) { return false; }}},  // BlitzFX reflection depth subrect.
+    {0xB018A95A, {.crc32 = 0xB018A95A, .code = __0xB018A95A, .on_inject = [](auto*) { return false; }}},  // BlitzFX DoF color/CoC reduction.
+    {0x48885E0D, {.crc32 = 0x48885E0D, .code = __0x48885E0D, .on_inject = [](auto*) { return false; }}},  // BlitzFX DoF bokeh.
+    {0xB73522BB, {.crc32 = 0xB73522BB, .code = __0xB73522BB, .on_inject = [](auto*) { return false; }}},  // BlitzFX DoF color dilation.
+    {0xAE334616, {.crc32 = 0xAE334616, .code = __0xAE334616, .on_inject = [](auto*) { return false; }}},  // BlitzFX DoF composite.
+    {0x249DA2F1, {.crc32 = 0x249DA2F1, .code = __0x249DA2F1, .on_inject = [](auto*) { return false; }}},  // BlitzFX camera motion blur.
+    CustomShaderEntry(0x0E583BCD),  // BlitzFX: blended environment filmic curves.
+    CustomShaderEntry(0x5AA6AFFF),  // BlitzFX: exposed filmic curve, before scene LUT.
+    CustomShaderEntry(0x114D8828),  // BlitzFX: final grade, CA, borders and output.
+    CustomShaderEntry(0xA123EB15),  // BlitzFX: cutscene grade with CA, no vignette.
+    CustomShaderEntry(0x399CBE16),  // BlitzFX: texture vignette, no native CA.
+    CustomShaderEntry(0x445EB59C),  // BlitzFX: texture vignette and native CA.
+    CustomShaderEntry(0x4FC8DAEB),  // BlitzFX: analytic vignette, no native CA.
+    CustomShaderEntry(0xE276DFB3),  // BlitzFX: no native vignette or CA.
+    CustomShaderEntry(0xFBF141A1),  // BlitzFX: avoid sharpening twice in RCAS mode.
 };
 
 bool IsCustom() { return shader_injection.tone_map_type == CLASSIC_TONE_MAP_PSYCHOV31; }
@@ -681,7 +702,7 @@ void DrawAddon(reshade::api::effect_runtime* runtime) {
     bool enabled = mode != 0.f;
     if (ImGui::Checkbox("Enable DLSS", &enabled))
       changed |= renodx::utils::settings::UpdateSetting("AADevelopment", enabled ? 1.f : 0.f);
-    ShowHint("Requires Anti-aliasing enabled in the game. Off restores native TAA.");
+    ShowHint("Keep Anti-aliasing enabled in the game. DLSS replaces native AA and automatically bypasses BlitzFX TAA when present. Off restores the selected AA implementation.");
     ImGui::SeparatorText("Image Quality");
     ImGui::BeginDisabled(!enabled);
     int selected_quality = std::clamp(static_cast<int>(quality), 0, 4);
@@ -799,8 +820,16 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
                                               .on_inject = [](auto*) { return false; },
                                           });
     }
+    for (const auto hash : {0x4E0137BCu, 0xCA115962u, 0x657A6576u, 0x4708B025u, 0x58959EADu,
+                            0xB018A95Au, 0x48885E0Du, 0xB73522BBu, 0xAE334616u, 0x249DA2F1u}) custom_shaders.at(hash).on_replace = [](auto*) {
+      const auto* frame = witcher3classic::temporal::upscale_engine::active;
+      return witcher3classic::blitzfx::runtime_aa && frame
+          && frame->plan.width < frame->plan.output_width;
+    };
     custom_shaders.at(0x3EDDC379).on_replace = [](auto*) { return IsCustom() && shader_injection.sharpening_mode != 0.f; };
     custom_shaders.at(0x3EDDC379).on_inject = [](auto*) { return false; };
+    custom_shaders.at(0xFBF141A1).on_replace = [](auto*) { return IsCustom() && shader_injection.sharpening_mode != 0.f; };
+    custom_shaders.at(0xFBF141A1).on_inject = [](auto*) { return false; };
     custom_shaders.at(0x6ED58557).on_replace = [](auto*) { return IsCustom() && shader_injection.custom_blur != 1.f; };
     renodx::mods::shader::force_pipeline_cloning = true;
     renodx::mods::shader::expected_constant_buffer_index = 13;

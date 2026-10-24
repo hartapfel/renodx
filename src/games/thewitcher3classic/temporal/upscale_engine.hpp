@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include "../blitzfx/compatibility.hpp"
 
 namespace witcher3classic::temporal::upscale_engine {
 // Classic's ForcedRendererResolution path uses a smaller top-left viewport in
@@ -86,6 +87,8 @@ inline void Disable(bool reset_failure = false) {
 }
 
 inline void RenderHook(uint8_t* renderer, uint8_t* submitted, void* world) {
+  const blitzfx::ScopedTemporalOwner temporal_owner(!active && world && submitted
+      && *reinterpret_cast<void**>(submitted + 0x10) && submitted[0x830] == 0 && submitted[0x824] != 0);
   Plan plan;
   {
     std::lock_guard lock(state->mutex);

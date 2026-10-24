@@ -1,0 +1,10 @@
+// BlitzFX 1.1.0 material inputs matched to captured native VS families.
+    ObjectShader{0xE9D2E491, __0xE9D2E491, 4},
+    ObjectShader{0xDB6465A7, __0xDB6465A7, 5},
+    ObjectShader{0xE501A17A, __0xE501A17A, 5},
+    ObjectShader{0x8E158EDE, __0x8E158EDE, 5},
+    ObjectShader{0x2920E76E, __0x2920E76E, 4},
+    ObjectShader{0x4CCA5588, __0x4CCA5588, 4},
+    ObjectShader{0xE1AD6AE5, __0xE1AD6AE5, 13},
+    ObjectShader{0x90BFECE8, __0x90BFECE8, 11, false, false, false, true},
+    ObjectShader{0xC2F7B0B1, __0xC2F7B0B1, 12, false, false, false, true},

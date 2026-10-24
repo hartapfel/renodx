@@ -1,4 +1,5 @@
 /* Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT */
+#define NOMINMAX
 #include "../temporal/upscale_engine.hpp"
 #include <array>
 #include <cassert>
@@ -61,6 +62,22 @@ void Render(uint8_t* owner, uint8_t* frame, void* world) {
 }
 
 int main() {
+  using namespace witcher3classic;
+  int saved_aa = 2;
+  assert(!blitzfx::Initialize());  // No audited BlitzFX module in this fixture.
+  blitzfx::temporal_enabled = true;
+  { const blitzfx::ScopedTemporalOwner scope(true); assert(!blitzfx::runtime_aa); }
+  blitzfx::runtime_aa = &saved_aa;
+  for (int method : {0, 1, 2, 99}) {
+    saved_aa = method;
+    { const blitzfx::ScopedTemporalOwner scope(true); assert(saved_aa == (method <= 2 ? 0 : method)); }
+    assert(saved_aa == method);
+    { const blitzfx::ScopedTemporalOwner scope(false); assert(saved_aa == method); }
+  }
+  blitzfx::temporal_enabled = false;
+  saved_aa = 2;
+  { const blitzfx::ScopedTemporalOwner scope(true); assert(saved_aa == 2); }
+  blitzfx::runtime_aa = nullptr;
   render_function = Render;
   post_function = Post;
   jitter_function = Jitter;

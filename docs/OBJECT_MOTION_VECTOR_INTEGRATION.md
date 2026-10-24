@@ -187,6 +187,18 @@ Microsoft documents the optimization constraints of
 [`precise`](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/precise).
 Inspect compiled arithmetic as well as source when repairing native equivalence.
 
+Decompilation can also corrupt constant-buffer addressing without preventing
+compilation. BlitzFX hero skin `90BFECE8` retained a local-light loop register
+in eight later sun-direction reads that original DXBC encodes as `cb13[0]`.
+This turned Geralt's face brown after Igni with Object Motion enabled; disabling
+motion restored the original material immediately. Audit fixed versus relative
+cbuffer operands against disassembly, including after dynamic loops. Exercise
+zero, multiple, fading/outside-radius lights and different final list indices:
+zero-light or contributing-light-only tests can accidentally leave/truncate
+the register to zero and hide the defect. See
+[hero_lighting.cpp](../src/games/thewitcher3classic/tests/hero_lighting.cpp) and
+the [BlitzFX handoff](WITCHER3_CLASSIC_BLITZFX_COMPATIBILITY.md) for provenance.
+
 ## Identity and history by deformation path
 
 The central rule is to identify a persistent native owner and its generation,

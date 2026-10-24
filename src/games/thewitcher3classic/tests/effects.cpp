@@ -53,7 +53,8 @@ int main(int argc, char** argv) {
     root = argv[1];
     ComPtr<ID3D11Device> dev;
     ComPtr<ID3D11DeviceContext> ctx;
-    Check(D3D11CreateDevice(nullptr, argc > 2 ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &dev, nullptr, &ctx));
+    Check(D3D11CreateDevice(nullptr, std::find(argv + 2, argv + argc, std::string("--hardware")) != argv + argc
+        ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &dev, nullptr, &ctx));
     constexpr UINT W = 64, H = 64;
     const char* vsText = "struct V {float4 p:SV_Position;float2 uv:TEXCOORD0;float2 vignette:TEXCOORD2;}; V main(uint id:SV_VertexID){V v;v.uv=float2((id<<1)&2,id&2);v.p=float4(v.uv*float2(2,-2)+float2(-1,1),0,1);v.vignette=v.uv;return v;}";
     ComPtr<ID3DBlob> vsBlob;
@@ -125,6 +126,493 @@ int main(int argc, char** argv) {
       buffer(13, values);
     };
     const auto run = [&](ID3DBlob* code) { return render(code->GetBufferPointer(), code->GetBufferSize()); };
+    if (std::find(argv + 2, argv + argc, std::string("--blitzfx")) != argv + argc) {
+      const auto saved_injection = injection;
+      const fs::path blitz = root.parent_path() / "blitzfx-20261023";
+      const auto fixture = [&](const char* name) {
+        const auto bytes = Read(blitz / "fixtures" / name);
+        std::vector<float> values(bytes.size() / 4);
+        std::memcpy(values.data(), bytes.data(), bytes.size());
+        return values;
+      };
+      auto constants = fixture("grade-b3.bin");
+      auto custom = fixture("grade-b1.bin");
+      auto frame = fixture("grade-b0.bin");
+      frame[92] = W; frame[93] = H; frame[94] = 1.f / W; frame[95] = 1.f / H;
+      constants[68] = constants[69] = .5f;
+      constants[70] = 1.f / W; constants[71] = 1.f / H;
+      buffer(0, frame);
+      buffer(3, constants);
+      texture(69, 256, 256, std::vector<float>(256 * 256 * 4, .3f));
+      for (UINT slot = 1; slot <= 5; ++slot) texture(slot, W, H, std::vector<float>(W * H * 4, .2f * slot));
+      for (const auto* hash : {"0x114D8828", "0xA123EB15", "0x399CBE16", "0x445EB59C", "0x4FC8DAEB", "0xE276DFB3"}) {
+        constants = fixture("grade-b3.bin"); custom = fixture("grade-b1.bin");
+        constants[68] = constants[69] = .5f; constants[70] = 1.f / W; constants[71] = 1.f / H;
+        buffer(3, constants); injection = saved_injection; inject();
+        const auto native = Read(blitz / (std::string("scene-shaders/") + hash + ".cso"));
+        const auto code = Compiled(std::string(hash) + ".ps_5_0.hlsl");
+        for (uint32_t balance : {0u, 1u}) for (float vignette : {0.f, .8f}) for (float border : {1.f, .7f}) {
+          std::memcpy(&custom[173], &balance, 4); // HLSL bool, not float(1).
+          custom[174] = border; custom[177] = vignette;
+          for (uint32_t debug = 0; debug <= 7; ++debug) {
+            std::memcpy(&custom[175], &debug, 4);
+            buffer(1, custom);
+            injection.tone_map_type = 0; inject();
+            const auto original = render(native.data(), native.size());
+            const float error = Difference(original, run(code.Get()));
+            if (error > .0001f) throw std::runtime_error("BlitzFX final grade Vanilla mismatch: balance="
+                + std::to_string(balance) + " vignette=" + std::to_string(vignette) + " border=" + std::to_string(border)
+                + " debug=" + std::to_string(debug) + " error=" + std::to_string(error));
+            if (debug != 0) {
+              injection.tone_map_type = 1; inject();
+              if (Difference(original, run(code.Get())) > .0001f) throw std::runtime_error("BlitzFX debug view changed");
+            }
+          }
+        }
+        custom[173] = custom[175] = 0; custom[174] = 1; custom[177] = .8f;
+        buffer(1, custom);
+        injection.tone_map_type = 1; inject();
+        const auto no_balance = run(code.Get());
+        const auto saved_constants = constants;
+        constants[56] = .3f; constants[57] = .2f; constants[58] = 1.8f;
+        buffer(3, constants);
+        if (Difference(no_balance, run(code.Get())) > 1e-6f) throw std::runtime_error("BlitzFX disabled parametric grade leaked");
+        constants = saved_constants; buffer(3, constants);
+        injection.sharpening_mode = 1; injection.sharpening_strength = .8f; inject();
+        const auto sharpened = run(code.Get());
+        if (Difference(no_balance, sharpened) < 1e-5f) throw std::runtime_error("BlitzFX RCAS ineffective");
+        injection.chromatic_aberration_mode = 1;
+        injection.chromatic_aberration_intensity = 0; inject();
+        const auto no_ca = run(code.Get());
+        constants[64] = constants[66] = 100;
+        buffer(3, constants);
+        if (Difference(no_ca, run(code.Get())) > 1e-6f) throw std::runtime_error("BlitzFX native CA leaked into zero replacement");
+        injection = saved_injection; inject();
+        texture(0, W, H, scene);
+        auto hdr_scene = scene;
+        for (size_t i = 0; i < hdr_scene.size(); ++i) if (i % 4 != 3) hdr_scene[i] *= 1000;
+        texture(0, W, H, hdr_scene);
+        injection.tone_map_type = 1; inject();
+        const auto hdr_grade = run(code.Get());
+        if (*std::max_element(hdr_grade.begin(), hdr_grade.end()) <= 1.01f)
+          throw std::runtime_error(std::string(hash) + " final grade still clamped to SDR");
+        texture(0, W, H, scene);
+        std::cout << "PASS BlitzFX grade " << hash << ": 64 native/debug permutations, HDR range, grade/RCAS/CA isolation\n";
+      }
+
+      constants = fixture("curve-b3.bin"); custom = fixture("curve-b1.bin");
+      custom[177] = 0; custom[176] = 1;  // No vignette; native contrast.
+      buffer(1, custom); buffer(3, constants);
+      texture(1, 1, 1, {.18f, 0, 0, 0});
+      const auto native_curve = Read(blitz / "scene-shaders/0x5AA6AFFF.cso");
+      const auto curve = Compiled("0x5AA6AFFF.ps_5_0.hlsl");
+      injection.tone_map_type = 0; inject();
+      const auto bounded = render(native_curve.data(), native_curve.size());
+      if (Difference(bounded, run(curve.Get())) > .0001f) throw std::runtime_error("BlitzFX curve Vanilla mismatch");
+      injection.tone_map_type = 1; inject();
+      Difference(bounded, run(curve.Get()));  // Includes finite-value validation.
+      // The HDR branch must retain native exposure/toe. In particular, the
+      // white-reference denominator is NOT a vignette transmission to clamp.
+      // These dark samples stay below the Hable shoulder-extension pivot.
+      auto dark = scene;
+      for (size_t i = 0; i < dark.size(); ++i) if (i % 4 != 3) dark[i] *= 1e-6f;
+      texture(0, W, H, dark);
+      constants[28] = .3f; constants[29] = .3f; constants[30] = .1f;
+      constants[32] = .2f; constants[33] = .01f; constants[34] = .3f;
+      constants[65] = 1.0629823f;
+      for (float white : {.25f, 1.f, 1.78067f, 5.f}) for (float gamma : {.5f, 1.f, 2.f})
+        for (uint32_t modified : {0u, 1u}) for (float vignette : {0.f, .8f}) {
+          constants[64] = white; constants[66] = gamma;
+          std::memcpy(&custom[169], &modified, 4);
+          custom[177] = vignette;
+          buffer(1, custom); buffer(3, constants);
+          injection.vignette_strength = 1;
+          injection.tone_map_type = 0; inject();
+          const auto expected = render(native_curve.data(), native_curve.size());
+          injection.tone_map_type = 1; inject();
+          if (Difference(expected, run(curve.Get())) > .00002f)
+            throw std::runtime_error("BlitzFX HDR exposure/toe mismatch: white=" + std::to_string(white)
+                + " gamma=" + std::to_string(gamma));
+        }
+      constants = fixture("curve-b3.bin"); custom = fixture("curve-b1.bin");
+      custom[177] = 0; custom[176] = 1;
+      buffer(1, custom); buffer(3, constants);
+      auto bright = scene;
+      for (size_t i = 0; i < bright.size(); ++i) if (i % 4 != 3) bright[i] *= 1000;
+      texture(0, W, H, bright);
+      const auto extended = run(curve.Get());
+      if (*std::max_element(extended.begin(), extended.end()) <= 1.01f) throw std::runtime_error("BlitzFX curve still bounded to SDR");
+      if (Difference(extended, extended) != 0) throw std::runtime_error("BlitzFX nonfinite highlight");
+      injection = saved_injection; inject(); texture(0, W, H, scene);
+      std::cout << "PASS BlitzFX curve native equivalence, 48 HDR exposure/toe cases, finite output and highlight extension\n";
+
+      // Weather/environment transitions use an independent pair of curves.
+      const auto blend_native = Read(blitz / "scene-shaders/0x0E583BCD.cso");
+      const auto blend_code = Compiled("0x0E583BCD.ps_5_0.hlsl");
+      constants.resize(72);
+      std::copy_n(constants.begin() + 16, 4, constants.begin() + 36);
+      constants[44] = .25f; constants[45] = .35f; constants[46] = .15f;
+      constants[48] = .2f; constants[49] = .015f; constants[50] = .3f;
+      constants[68] = .8f; constants[69] = 1.3f; constants[70] = .75f;
+      for (float blend : {0.f, .25f, .5f, 1.f}) for (uint32_t modified : {0u, 1u})
+        for (float vignette : {0.f, .8f}) {
+          constants[52] = blend; custom[177] = vignette;
+          std::memcpy(&custom[169], &modified, 4);
+          buffer(1, custom); buffer(3, constants);
+          texture(0, W, H, scene);
+          injection.tone_map_type = 0; inject();
+          if (Difference(render(blend_native.data(), blend_native.size()), run(blend_code.Get())) > .00002f)
+            throw std::runtime_error("BlitzFX blended curve Vanilla mismatch");
+          texture(0, W, H, dark);
+          const auto expected = render(blend_native.data(), blend_native.size());
+          injection.tone_map_type = 1; injection.vignette_strength = 1; inject();
+          if (Difference(expected, run(blend_code.Get())) > .00002f)
+            throw std::runtime_error("BlitzFX blended HDR exposure/toe mismatch");
+          texture(0, W, H, bright);
+          const auto hdr = run(blend_code.Get());
+          if (*std::max_element(hdr.begin(), hdr.end()) <= 1.01f)
+            throw std::runtime_error("BlitzFX blended curve still bounded to SDR");
+        }
+      injection = saved_injection; inject(); texture(0, W, H, scene);
+      std::cout << "PASS BlitzFX blended curves: 16 native/toe/highlight cases, both environment endpoints and blends\n";
+
+      // The reflection ray marcher must receive the same quarter-resolution
+      // depth as native rendering into a physically smaller allocation.
+      const auto reflection_depth_native = Read(blitz / "scene-shaders/0x657A6576.cso");
+      const auto reflection_depth_code = Compiled("0x657A6576.ps_5_0.hlsl");
+      D3D11_SAMPLER_DESC depth_sampler_desc = sd;
+      depth_sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+      ComPtr<ID3D11SamplerState> depth_sampler;
+      Check(dev->CreateSamplerState(&depth_sampler_desc, &depth_sampler));
+      ctx->PSSetSamplers(0, 1, depth_sampler.GetAddressOf());
+      for (const auto size : {std::array<UINT, 2>{64, 64}, {44, 36}, {32, 28}, {20, 20}}) {
+        const UINT quarter_width = size[0] / 4, quarter_height = size[1] / 4;
+        buffer(3, {float(quarter_width), float(quarter_height), 0, 0, .25f, .25f, 4, 4});
+        D3D11_VIEWPORT depth_viewport = {0, 0, float(quarter_width), float(quarter_height), 0, 1};
+        ctx->RSSetViewports(1, &depth_viewport);
+        const auto depth_input = [&](UINT width, UINT height) {
+          std::vector<float> pixels(width * height * 4, .99f);
+          for (UINT y = 0; y < size[1]; ++y) for (UINT x = 0; x < size[0]; ++x)
+            // Native quarter sampling lands on a point-filter texel boundary.
+            // Keep each 4x4 cell constant so reciprocal roundoff cannot turn
+            // the coordinate-domain check into a neighboring-texel tie test.
+            pixels[(y * width + x) * 4] = .01f + .003f * (x / 4) + .007f * (y / 4);
+          texture(0, width, height, pixels);
+        };
+        depth_input(size[0], size[1]);
+        const auto expected = render(reflection_depth_native.data(), reflection_depth_native.size());
+        depth_input(W, H);
+        const auto uncorrected = render(reflection_depth_native.data(), reflection_depth_native.size());
+        const auto actual = run(reflection_depth_code.Get());
+        float error = 0, original_error = 0;
+        for (UINT y = 0; y < quarter_height; ++y) for (UINT x = 0; x < quarter_width; ++x)
+          for (UINT c = 0; c < 4; ++c) {
+            const size_t i = (y * W + x) * 4 + c;
+            if (!std::isfinite(actual[i])) throw std::runtime_error("Nonfinite reflection depth");
+            error = std::max(error, std::abs(expected[i] - actual[i]));
+            original_error = std::max(original_error, std::abs(expected[i] - uncorrected[i]));
+          }
+        if (error > .000001f || (size[0] < W && original_error < .5f))
+          throw std::runtime_error("Reflection depth physical-pool mismatch: " + std::to_string(error));
+        std::cout << "Reflection depth " << size[0] << 'x' << size[1]
+                  << ": corrected error=" << error << ", original pool error=" << original_error << '\n';
+      }
+      ctx->PSSetSamplers(0, 1, sampler.GetAddressOf());
+      ctx->RSSetViewports(1, &vp);
+      std::cout << "PASS reflection depth native/full size and three physical render pools with poisoned unused depth\n";
+
+      // Water's quarter-resolution history lives in a FULL-resolution scratch
+      // texture. Compare with native rendering into a physically smaller pool,
+      // poisoning the unused history with the exact observed yellow clear.
+      const auto water_native = Read(blitz / "scene-shaders/0x4E0137BC.cso");
+      const auto water_code = Compiled("0x4E0137BC.ps_5_0.hlsl");
+      const auto prep_native = Read(blitz / "scene-shaders/0xCA115962.cso");
+      const auto prep_code = Compiled("0xCA115962.ps_5_0.hlsl");
+      std::vector<float> water_matrices(148), water_params(36);
+      for (size_t matrix : {96u, 112u}) for (size_t i = 0; i < 4; ++i)
+        water_matrices[matrix + i * 5] = 1;
+      water_matrices[114] = .2f; water_matrices[118] = .1f;
+      water_matrices[1] = 1.f / 60;
+      buffer(0, water_matrices);
+      for (UINT quarter : {16u, 10u, 8u, 6u}) {
+        water_params[0] = water_params[1] = float(quarter);
+        water_params[32] = water_params[33] = .25f;
+        water_params[34] = water_params[35] = 4;
+        buffer(3, water_params);
+        D3D11_VIEWPORT water_viewport = {0, 0, float(quarter), float(quarter), 0, 1};
+        ctx->RSSetViewports(1, &water_viewport);
+        const auto water_inputs = [&](UINT pool_size) {
+          for (UINT slot = 0; slot < 4; ++slot) {
+            std::vector<float> pixels(pool_size * pool_size * 4);
+            const UINT extent = slot == 2 ? quarter : quarter * 4;
+            for (UINT y = 0; y < pool_size; ++y) for (UINT x = 0; x < pool_size; ++x) {
+              const size_t i = (y * pool_size + x) * 4;
+              if (x >= extent || y >= extent) {
+                // The live scratch mask is transparent outside its viewport;
+                // isolate history poisoning instead of rejecting reprojection
+                // via an artificially invalid depth or opaque water mask.
+                if (slot == 2) { pixels[i] = pixels[i + 1] = 1000; pixels[i + 3] = 1; }
+                if (slot == 3) pixels[i] = .1f;
+              } else if (slot == 3) {
+                pixels[i] = .1f + .001f * x + .002f * y;
+              } else if (slot != 0) {
+                for (UINT c = 0; c < 3; ++c)
+                  pixels[i + c] = .1f * slot + .01f * x + .02f * y + .03f * c;
+              }
+            }
+            texture(slot, pool_size, pool_size, pixels);
+          }
+        };
+        water_inputs(quarter * 4);
+        const auto expected = render(water_native.data(), water_native.size());
+        water_inputs(W);
+        const auto uncorrected = render(water_native.data(), water_native.size());
+        const auto actual = run(water_code.Get());
+        float error = 0, old_error = 0;
+        for (UINT y = 0; y < quarter; ++y) for (UINT x = 0; x < quarter; ++x)
+          for (UINT c = 0; c < 4; ++c) {
+            const size_t i = (y * W + x) * 4 + c;
+            if (!std::isfinite(actual[i])) throw std::runtime_error("Nonfinite water history");
+            error = std::max(error, std::abs(expected[i] - actual[i]));
+            old_error = std::max(old_error, std::abs(expected[i] - uncorrected[i]));
+          }
+        if (error > .0002f) throw std::runtime_error("Water history subrect mismatch at "
+            + std::to_string(quarter) + ": " + std::to_string(error));
+        std::cout << "Water quarter " << quarter << ": corrected error=" << error << ", original pool error=" << old_error << '\n';
+        if (quarter < W / 4 && old_error < 1.f)
+          throw std::runtime_error("Water fixture did not reproduce the original yellow-clear history bug");
+
+        buffer(3, {float(quarter), float(quarter), 0, 0, .25f, .25f, 4, 4});
+        std::vector<float> reconstructed(W * H * 4);
+        for (UINT y = 0; y < H; ++y) for (UINT x = 0; x < W; ++x)
+          for (UINT c = 0; c < 4; ++c) reconstructed[(y * W + x) * 4 + c] = .01f * x + .02f * y + .1f * c;
+        texture(2, W, H, reconstructed);
+        const auto prep_depth = [&](UINT size) {
+          std::vector<float> pixels(size * size * 4, .9f);
+          for (UINT y = 0; y < quarter * 4; ++y) for (UINT x = 0; x < quarter * 4; ++x)
+            pixels[(y * size + x) * 4] = .1f + .001f * x + .002f * y;
+          texture(1, size, size, pixels);
+        };
+        prep_depth(quarter * 4);
+        const auto expected_prep = render(prep_native.data(), prep_native.size());
+        prep_depth(W);
+        const auto actual_prep = run(prep_code.Get());
+        for (UINT y = 0; y < quarter; ++y) for (UINT x = 0; x < quarter; ++x)
+          for (UINT c = 0; c < 4; ++c) {
+            const size_t i = (y * W + x) * 4 + c;
+            if (!std::isfinite(actual_prep[i]) || std::abs(expected_prep[i] - actual_prep[i]) > .0002f)
+              throw std::runtime_error("Water prep mixed depth/output-color domain mismatch");
+          }
+      }
+      ctx->RSSetViewports(1, &vp);
+      std::cout << "PASS native water history/prep against physical render pools, reprojection, four sizes and yellow-clear poisoning\n";
+
+      // Refraction may leave the viewport. Compare pool sampling with a
+      // physically cropped texture, including out-of-range UVs and filter edges.
+      const auto pool_header = Read("src/games/thewitcher3classic/blitzfx/scene_pool.hlsli");
+      const std::string pool_test = std::string(pool_header.begin(), pool_header.end()) + R"(
+Texture2D<float4> scene_color : register(t0);
+SamplerState scene_sampler : register(s0);
+cbuffer Sizes : register(b3) { float4 sizes; }
+float4 main(float4 pos : SV_Position) : SV_Target {
+  float2 uv = pos.xy / 64.f * 1.2f - .1f;
+  return scene_color.SampleLevel(scene_sampler, BlitzScenePoolUV(uv, sizes.xy, sizes.zw), 0);
+})";
+      ComPtr<ID3DBlob> pool_code;
+      Check(D3DCompile(pool_test.data(), pool_test.size(), nullptr, nullptr, nullptr, "main", "ps_5_0", 0, 0, &pool_code, nullptr));
+      for (UINT active_size : {64u, 42u, 38u, 32u, 22u}) {
+        const auto pool_inputs = [&](UINT pool_size) {
+          std::vector<float> pixels(pool_size * pool_size * 4, 10000.f);
+          for (UINT y = 0; y < active_size; ++y) for (UINT x = 0; x < active_size; ++x)
+            for (UINT c = 0; c < 4; ++c)
+              pixels[(y * pool_size + x) * 4 + c] = .01f * x + .02f * y + .1f * c;
+          texture(0, pool_size, pool_size, pixels);
+          buffer(3, {float(active_size), float(active_size), float(pool_size), float(pool_size)});
+        };
+        pool_inputs(active_size);
+        const auto expected = run(pool_code.Get());
+        pool_inputs(W);
+        const float pool_error = Difference(expected, run(pool_code.Get()));
+        // D3D11 samplers quantize interpolation weights to finite subtexel
+        // precision; differently sized textures can round opposite ways.
+        if (pool_error > .0002f)
+          throw std::runtime_error("BlitzFX refraction pool/filter-border mismatch at "
+              + std::to_string(active_size) + ": " + std::to_string(pool_error));
+      }
+      std::cout << "PASS BlitzFX refraction sampling against physical crop, five sizes and poisoned filter borders\n";
+
+      // Compare the actual bloom CS against the original shader operating on
+      // physically render-sized textures. Poison the unused pool rectangle:
+      // a wrong UV or bilinear border must not leak stale pixels into bloom.
+      const auto bloom_native = Read(blitz / "scene-shaders/0xBF3EF83C.cso");
+      const auto bloom_code = Compiled("0xBF3EF83C.cs_5_0.hlsl");
+      td.BindFlags = D3D11_BIND_UNORDERED_ACCESS; td.Usage = D3D11_USAGE_DEFAULT; td.CPUAccessFlags = 0;
+      ComPtr<ID3D11Texture2D> compute_target;
+      Check(dev->CreateTexture2D(&td, nullptr, &compute_target));
+      ComPtr<ID3D11UnorderedAccessView> uav;
+      Check(dev->CreateUnorderedAccessView(compute_target.Get(), nullptr, &uav));
+      ID3D11SamplerState* compute_sampler = sampler.Get();
+      const auto compute_render = [&](const void* bytes, size_t count, UINT active_size) {
+        ComPtr<ID3D11ComputeShader> cs;
+        Check(dev->CreateComputeShader(bytes, count, nullptr, &cs));
+        ctx->CSSetShader(cs.Get(), nullptr, 0);
+        for (UINT slot : {0u, 1u, 2u, 42u, 43u, 44u, 51u, 52u, 69u}) {
+          ComPtr<ID3D11ShaderResourceView> srv;
+          ctx->PSGetShaderResources(slot, 1, &srv); ctx->CSSetShaderResources(slot, 1, srv.GetAddressOf());
+        }
+        for (UINT slot : {0u, 1u, 2u}) {
+          ComPtr<ID3D11Buffer> cb;
+          ctx->PSGetConstantBuffers(slot, 1, &cb); ctx->CSSetConstantBuffers(slot, 1, cb.GetAddressOf());
+        }
+        ctx->CSSetSamplers(0, 1, &compute_sampler);
+        const float zero[4] = {};
+        ctx->ClearUnorderedAccessViewFloat(uav.Get(), zero);
+        ctx->CSSetUnorderedAccessViews(0, 1, uav.GetAddressOf(), nullptr);
+        ctx->Dispatch((active_size + 7) / 8, (active_size + 7) / 8, 1);
+        ID3D11UnorderedAccessView* null_uav = nullptr;
+        ctx->CSSetUnorderedAccessViews(0, 1, &null_uav, nullptr);
+        ctx->CopyResource(staging.Get(), compute_target.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        Check(ctx->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+        std::vector<float> result(active_size * active_size * 4);
+        for (UINT y = 0; y < active_size; ++y)
+          std::memcpy(result.data() + y * active_size * 4, static_cast<char*>(mapped.pData) + y * mapped.RowPitch, active_size * 16);
+        ctx->Unmap(staging.Get(), 0);
+        return result;
+      };
+      for (UINT active_size : {64u, 42u, 38u, 32u, 22u}) {
+        frame.resize(96); frame[92] = frame[93] = float(active_size);
+        frame[94] = frame[95] = 1.f / active_size; buffer(0, frame);
+        std::vector<float> bloom_custom(184);
+        bloom_custom[168] = .1f; bloom_custom[182] = .4f; buffer(2, bloom_custom);
+        const auto inputs = [&](UINT pool_size) {
+          buffer(1, {float(pool_size / 2), float(pool_size / 2), 2.f / pool_size, 2.f / pool_size});
+          for (UINT slot : {0u, 51u, 52u}) {
+            const UINT size = slot == 51 ? pool_size / 2 : pool_size;
+            const UINT extent = slot == 51 ? active_size / 2 : active_size;
+            std::vector<float> pixels(size * size * 4, 10000.f);
+            for (UINT y = 0; y < extent; ++y) for (UINT x = 0; x < extent; ++x) {
+              const size_t i = (y * size + x) * 4;
+              for (UINT c = 0; c < 4; ++c)
+                pixels[i + c] = slot == 0 ? .3f : .01f * x + .02f * y + .1f * c;
+            }
+            texture(slot, size, size, pixels);
+          }
+        };
+        inputs(active_size);
+        const auto expected = compute_render(bloom_native.data(), bloom_native.size(), active_size);
+        inputs(W);
+        if (Difference(expected, compute_render(bloom_code->GetBufferPointer(), bloom_code->GetBufferSize(), active_size)) > .00001f)
+          throw std::runtime_error("BlitzFX bloom subrect mismatch at " + std::to_string(active_size));
+      }
+      ctx->CSSetShader(nullptr, nullptr, 0);
+      std::cout << "PASS BlitzFX bloom full-size/native equivalence and four poisoned subrect/filter-border cases\n";
+      const auto shadow_native = Read(blitz / "scene-shaders/0x4708B025.cso");
+      const auto shadow_code = Compiled("0x4708B025.cs_5_0.hlsl");
+      std::vector<float> shadow_frame(840), shadow_matrices(128);
+      shadow_frame[84] = shadow_frame[88] = 1;
+      for (UINT i = 0; i < 4; ++i) shadow_frame[824 + i * 5] = 1;
+      for (UINT start : {80u, 112u}) for (UINT i = 0; i < 4; ++i) shadow_matrices[start + i * 5] = 1;
+      shadow_matrices[1] = 1.f / 60;
+      buffer(1, shadow_matrices);
+      for (UINT active_size : {64u, 42u, 38u, 32u, 22u}) {
+        shadow_frame[92] = shadow_frame[93] = float(active_size);
+        shadow_frame[94] = shadow_frame[95] = 1.f / active_size; buffer(0, shadow_frame);
+        const auto shadow_inputs = [&](UINT pool_size) {
+          for (UINT slot : {0u, 42u, 43u, 44u}) {
+            std::vector<float> pixels(pool_size * pool_size * 4, 1000.f);
+            for (UINT y = 0; y < active_size; ++y) for (UINT x = 0; x < active_size; ++x) {
+              const float value = slot == 0 ? .25f : slot == 44 ? 4.f
+                  : slot == 42 ? .1f + .01f * x + .002f * y : float((x + y) % 2);
+              for (UINT c = 0; c < 4; ++c) pixels[(y * pool_size + x) * 4 + c] = value;
+            }
+            texture(slot, pool_size, pool_size, pixels);
+          }
+        };
+        shadow_inputs(active_size);
+        const auto expected = compute_render(shadow_native.data(), shadow_native.size(), active_size);
+        shadow_inputs(W);
+        const auto actual = compute_render(shadow_code->GetBufferPointer(), shadow_code->GetBufferSize(), active_size);
+        const auto uncorrected = compute_render(shadow_native.data(), shadow_native.size(), active_size);
+        float error = 0, old_error = 0;
+        // Gather intentionally moves the outermost footprint inward to avoid
+        // touching a stale neighbor. Compare interior samples against native.
+        for (UINT y = 1; y + 1 < active_size; ++y) for (UINT x = 1; x + 1 < active_size; ++x) {
+          const size_t i = (y * active_size + x) * 4;
+          if (!std::isfinite(actual[i])) throw std::runtime_error("Nonfinite shadow history");
+          error = std::max(error, std::abs(expected[i] - actual[i]));
+          old_error = std::max(old_error, std::abs(expected[i] - uncorrected[i]));
+        }
+        if (error > .0002f) throw std::runtime_error("Shadow history subrect mismatch: " + std::to_string(error));
+        if (active_size < W && old_error < .05f)
+          throw std::runtime_error("Shadow fixture did not reproduce the uncorrected history mismatch");
+      }
+      std::cout << "PASS shadow history original/full size and four physical render pools with poisoned history/depth\n";
+      const auto contact_native = Read(blitz / "scene-shaders/0x58959EAD.cso");
+      const auto contact_code = Compiled("0x58959EAD.cs_5_0.hlsl");
+      D3D11_SAMPLER_DESC point_desc = sd;
+      point_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+      point_desc.AddressU = point_desc.AddressV = point_desc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+      ComPtr<ID3D11SamplerState> point_sampler;
+      Check(dev->CreateSamplerState(&point_desc, &point_sampler));
+      compute_sampler = point_sampler.Get();
+      D3D11_TEXTURE2D_DESC stencil_desc = td;
+      stencil_desc.Format = DXGI_FORMAT_R32G32B32A32_UINT;
+      stencil_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+      std::vector<uint32_t> stencil(W * H * 4);
+      D3D11_SUBRESOURCE_DATA stencil_data = {stencil.data(), W * 16};
+      ComPtr<ID3D11Texture2D> stencil_texture;
+      Check(dev->CreateTexture2D(&stencil_desc, &stencil_data, &stencil_texture));
+      ComPtr<ID3D11ShaderResourceView> stencil_view;
+      Check(dev->CreateShaderResourceView(stencil_texture.Get(), nullptr, &stencil_view));
+      ctx->PSSetShaderResources(1, 1, stencil_view.GetAddressOf());
+      texture(69, 256, 256, std::vector<float>(256 * 256 * 4, .3f));
+      std::vector<float> contact_matrices(96);
+      for (UINT i = 0; i < 4; ++i) contact_matrices[80 + i * 5] = 1;
+      contact_matrices[90] = contact_matrices[95] = 0;
+      contact_matrices[91] = contact_matrices[94] = 1;
+      buffer(2, contact_matrices);
+      buffer(1, {.5f, 0, -.8660254f, 1});
+      shadow_frame[0] = shadow_frame[1] = .5f; shadow_frame[2] = 3;
+      shadow_frame[834] = shadow_frame[839] = 0;
+      shadow_frame[835] = shadow_frame[838] = 1;  // Perspective: raw depth = 1 / view depth.
+      for (UINT active_size : {64u, 42u, 32u}) {
+        shadow_frame[92] = shadow_frame[93] = float(active_size);
+        shadow_frame[94] = shadow_frame[95] = 1.f / active_size; buffer(0, shadow_frame);
+        const auto contact_inputs = [&](UINT pool_size) {
+          for (UINT slot : {0u, 2u, 42u, 43u}) {
+            std::vector<float> pixels(pool_size * pool_size * 4);
+            for (UINT y = 0; y < pool_size; ++y) for (UINT x = 0; x < pool_size; ++x) {
+              const size_t i = (y * pool_size + x) * 4;
+              if (slot == 0) pixels[i] = .25f;
+              if (slot == 2) pixels[i + 3] = float(x % 4) / 255;
+              if (slot == 42) pixels[i] = 1;
+              if (slot == 43) {
+                pixels[i] = x < active_size && y < active_size ? 3.8f + .01f * float((x / 3 + y / 3) % 3) : 1000.f;
+                const uint32_t normals[] = {0x4080FFFFu, 0x40FF80FFu, 0x3FFF80FFu, 0x400080FFu};
+                const uint32_t packed = normals[(x / 5 + y / 5) % 4];
+                std::memcpy(&pixels[i + 1], &packed, sizeof(packed));
+              }
+            }
+            texture(slot, pool_size, pool_size, pixels);
+          }
+        };
+        contact_inputs(active_size);
+        const auto expected = compute_render(contact_native.data(), contact_native.size(), active_size);
+        contact_inputs(W);
+        const auto actual = compute_render(contact_code->GetBufferPointer(), contact_code->GetBufferSize(), active_size);
+        const float error = Difference(expected, actual);
+        std::cout << "Contact-shadow size " << active_size << ": native minimum="
+                  << *std::min_element(expected.begin(), expected.end()) << ", error=" << error << '\n';
+        if (*std::min_element(expected.begin(), expected.end()) >= .999f)
+          throw std::runtime_error("Contact-shadow fixture did not exercise occlusion");
+        if (error > .0002f) throw std::runtime_error("Contact-shadow packed data/native or pool mismatch at "
+            + std::to_string(active_size) + ": " + std::to_string(error));
+      }
+      compute_sampler = sampler.Get();
+      std::cout << "PASS contact-shadow native/packed-normal equivalence and three ray-buffer sizes\n";
+      injection = saved_injection; inject(); texture(0, W, H, scene);
+    }
     for (const char* hash : {"649AF4FA", "5CBEC131", "C4D2D4F6", "9F48B203", "1E28F70E", "A1C06A7D"}) {
       auto constants = Constants("grade-b3.bin");
       constants.resize(72);

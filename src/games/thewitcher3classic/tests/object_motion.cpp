@@ -894,6 +894,67 @@ int main(int argc, char** argv) {
       context->UpdateSubresource(view_buffer.Get(), 0, nullptr, view.data(), 0, 0);
       context->UpdateSubresource(instances.Get(), 0, nullptr, instance, 0, 0);
       context->UpdateSubresource(bone_buffer.Get(), 0, nullptr, bones.data(), 0, 0);
+      if (hash == 0xAB3E8304) {
+        // Group-12 hair has a different history ABI. The ordinary material
+        // pair loop deliberately excludes it; exercise its BlitzFX PS here.
+        for (const auto& pixel : OBJECT_PIXEL_SHADERS) {
+          if (pixel.signature != 12 || pixel.hash != 0xC2F7B0B1) continue;
+          const auto native_pixel_code = Read(originals / std::format("0x{:08X}.cso", pixel.hash));
+          BindMaterialInputs(context.Get(), native_pixel_code, material_view.Get(), texture_array.Get(), cube_view.Get(), cubes_view.Get());
+          cb = frame_buffer.Get(); context->PSSetConstantBuffers(12, 1, &cb);
+          cb = light_cb.Get(); context->PSSetConstantBuffers(13, 1, &cb);
+          srv = raw_srv.Get(); context->PSSetShaderResources(20, 1, &srv);
+          ComPtr<ID3D11VertexShader> native_vertex, extended_vertex;
+          ComPtr<ID3D11PixelShader> native_pixel, extended_pixel;
+          assert(SUCCEEDED(device->CreateVertexShader(original.data(), original.size(), nullptr, &native_vertex)));
+          assert(SUCCEEDED(device->CreateVertexShader(replacement.data(), replacement.size(), nullptr, &extended_vertex)));
+          assert(SUCCEEDED(device->CreatePixelShader(native_pixel_code.data(), native_pixel_code.size(), nullptr, &native_pixel)));
+          assert(SUCCEEDED(device->CreatePixelShader(pixel.code.data(), pixel.code.size(), nullptr, &extended_pixel)));
+          for (float alpha : {1.f, .2f}) {
+            const float hair_texel[] = {.6f, .65f, .8f, alpha};
+            const D3D11_SUBRESOURCE_DATA hair_data{hair_texel, sizeof(hair_texel)};
+            ComPtr<ID3D11Texture2D> hair_texture;
+            ComPtr<ID3D11ShaderResourceView> hair_view;
+            assert(SUCCEEDED(device->CreateTexture2D(&tex_desc, &hair_data, &hair_texture)));
+            assert(SUCCEEDED(device->CreateShaderResourceView(hair_texture.Get(), nullptr, &hair_view)));
+            srv = hair_view.Get(); context->PSSetShaderResources(0, 1, &srv);
+            context->OMSetRenderTargets(1, render_targets, depth_view.Get());
+            const float background[] = {.03125f, .0625f, .125f, .25f};
+            context->ClearRenderTargetView(targets[0].Get(), background);
+            context->VSSetShader(native_vertex.Get(), nullptr, 0);
+            context->PSSetShader(native_pixel.Get(), nullptr, 0);
+            context->DrawInstanced(3, 1, 0, 0);
+            const auto reference = Pixel(context.Get(), colors[0].Get());
+            assert(motion.Begin(context.Get(), 1, false, false, false, true));
+            for (auto& surface : motion.surfaces) {
+              ComPtr<ID3D11Resource> resource;
+              ComPtr<ID3D11RenderTargetView> target;
+              surface->GetResource(&resource);
+              assert(SUCCEEDED(device->CreateRenderTargetView(resource.Get(), nullptr, &target)));
+              const float sentinel[] = {-2, -2, -2, -2};
+              context->ClearRenderTargetView(target.Get(), sentinel);
+            }
+            context->ClearRenderTargetView(targets[0].Get(), background);
+            context->VSSetShader(extended_vertex.Get(), nullptr, 0);
+            context->PSSetShader(extended_pixel.Get(), nullptr, 0);
+            context->DrawInstanced(3, 1, 0, 0);
+            motion.End(context.Get());
+            const auto actual = Pixel(context.Get(), colors[0].Get());
+            for (UINT channel = 0; channel < 4; ++channel) assert(SameColor(reference[channel], actual[channel]));
+            ComPtr<ID3D11Resource> vectors, object_depth;
+            motion.surfaces[0]->GetResource(&vectors); motion.surfaces[1]->GetResource(&object_depth);
+            if (alpha < .33f) {
+              assert(std::equal(reference.begin(), reference.end(), background));
+              assert(Pixel(context.Get(), object_depth.Get())[0] == -2.f);
+            } else {
+              assert(!std::equal(reference.begin(), reference.end(), background));
+              assert(std::abs(Pixel(context.Get(), vectors.Get())[0] - .175f) < .001f);
+              assert(Pixel(context.Get(), object_depth.Get())[0] > 0);
+            }
+          }
+          std::cout << "PASS BlitzFX hair 0xC2F7B0B1 native color, TEXCOORD12/13 motion and alpha cutout\n";
+        }
+      }
       std::cerr << std::format("Forward clip invariance 0x{:08X}: {} / 96 components differ with all varyings/motion consumed\n", hash, unequal_clip);
       forward_clip_differences += unequal_clip;
     }
