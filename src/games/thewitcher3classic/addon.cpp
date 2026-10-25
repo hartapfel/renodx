@@ -54,6 +54,50 @@ ShaderInjectData shader_injection = {
     .color_grading_strength = 1.f,
 };
 
+struct __declspec(uuid("de5bfd39-2532-4eb9-ac11-94d4df036e87")) BloomRouting {
+  std::atomic<bool> blitz_drawn = false;
+};
+
+// Detect the executed composite, not merely an installed DLL or compiled PSO.
+// The captured BlitzFX composite precedes the native post-filmic effects.
+void OnBloomInitDevice(reshade::api::device* device) {
+  renodx::utils::data::Create<BloomRouting>(device);
+}
+void OnBloomDestroyDevice(reshade::api::device* device) {
+  renodx::utils::data::Delete<BloomRouting>(device);
+}
+void OnBloomPresent(reshade::api::command_queue*, reshade::api::swapchain* swapchain,
+                    const reshade::api::rect*, const reshade::api::rect*, uint32_t, const reshade::api::rect*) {
+  if (auto* data = renodx::utils::data::Get<BloomRouting>(swapchain->get_device())) {
+    data->blitz_drawn.store(false, std::memory_order_relaxed);
+  }
+}
+bool OnNativeBloomInject(reshade::api::command_list* cmd) {
+  const auto* data = renodx::utils::data::Get<BloomRouting>(cmd->get_device());
+  shader_injection.blitz_bloom_active = data && data->blitz_drawn.load(std::memory_order_relaxed) ? 1.f : 0.f;
+  return true;
+}
+
+// b13 is unused by BF3EF83C, but may belong to a subsequent native compute
+// shader. Restore the actual binding without enabling global state snapshots.
+thread_local std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>> bloom_compute_constants;
+bool OnBlitzBloomInject(reshade::api::command_list* cmd) {
+  bloom_compute_constants.emplace_back();
+  reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native())->CSGetConstantBuffers(
+      13, 1, bloom_compute_constants.back().GetAddressOf());
+  return true;
+}
+void OnBlitzBloomDrawn(reshade::api::command_list* cmd) {
+  if (!bloom_compute_constants.empty()) {
+    reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native())->CSSetConstantBuffers(
+        13, 1, bloom_compute_constants.back().GetAddressOf());
+    bloom_compute_constants.pop_back();
+  }
+  if (auto* data = renodx::utils::data::Get<BloomRouting>(cmd->get_device())) {
+    data->blitz_drawn.store(true, std::memory_order_relaxed);
+  }
+}
+
 renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0xB4953357),  // Native exposure and filmic curve.
     CustomShaderEntry(0xAEE0B973),  // Manual exposure.
@@ -76,10 +120,10 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0x3EDDC379),  // Bypass native pre-AA sharpening in RCAS mode.
     CustomShaderEntry(0x56BDBC86),  // Shared bloom/shafts extraction.
     CustomShaderEntry(0xBAEDA9BD),  // Masked sky feeding light shafts.
-    CustomShaderEntry(0x620431CF),  // Additive bloom with lens dirt.
-    CustomShaderEntry(0x0CB5EA21),  // Screen-blended effect composite.
+    {0x620431CF, {.crc32 = 0x620431CF, .code = __0x620431CF, .on_inject = &OnNativeBloomInject}},  // Additive bloom with lens dirt.
+    {0x0CB5EA21, {.crc32 = 0x0CB5EA21, .code = __0x0CB5EA21, .on_inject = &OnNativeBloomInject}},  // Screen-blended effect composite.
     {0x2825099C, {.crc32 = 0x2825099C, .code = __0x2825099C, .on_inject = [](auto*) { return false; }}},  // BlitzFX water; preserve native lighting b13.
-    {0xBF3EF83C, {.crc32 = 0xBF3EF83C, .code = __0xBF3EF83C, .on_inject = [](auto*) { return false; }}},  // BlitzFX bloom subrect.
+    {0xBF3EF83C, {.crc32 = 0xBF3EF83C, .code = __0xBF3EF83C, .on_inject = &OnBlitzBloomInject, .on_drawn = &OnBlitzBloomDrawn}},  // BlitzFX bloom strength and subrect.
     {0x4708B025, {.crc32 = 0x4708B025, .code = __0x4708B025, .on_inject = [](auto*) { return false; }}},  // BlitzFX shadow subrect.
     {0x58959EAD, {.crc32 = 0x58959EAD, .code = __0x58959EAD, .on_inject = [](auto*) { return false; }}},  // BlitzFX shadow subrect.
     {0xCA115962, {.crc32 = 0xCA115962, .code = __0xCA115962, .on_inject = [](auto*) { return false; }}},  // BlitzFX current-depth / reconstructed-color reflection prep.
@@ -410,7 +454,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Bloom",
         .section = "Effects",
-        .tooltip = "Scales bloom composites. 0 removes bloom, 50 is reference strength, 100 doubles it. Requires native Bloom.",
+        .tooltip = "With BlitzFX: replaces Bloom Scattering (0-100 = 0.00-1.00) and removes native uniform bloom. Underwater scattering and lens dirt remain separate. Without BlitzFX: 0 is off, 50 is native strength, 100 doubles it; requires native Bloom.",
         .min = 0.f,
         .max = 100.f,
         .parse = [](float value) { return value * 0.02f; },
@@ -421,7 +465,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Sunshafts Strength",
         .section = "Effects",
-        .tooltip = "Scales masked sky input to light shafts. 0 removes it, 50 is reference strength, 100 doubles the input. Requires native Light Shafts; Bloom also scales their shared composite.",
+        .tooltip = "Scales masked sky input to light shafts. 0 removes it, 50 is reference strength, 100 doubles the input. Requires native Light Shafts. Without BlitzFX, Bloom also scales the shared composite.",
         .min = 0.f,
         .max = 100.f,
         .parse = [](float value) { return value * 0.02f; },
@@ -782,6 +826,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     renodx::utils::settings::global_name = "renodx-thewitcher3classic";
     renodx::utils::settings::use_presets = true;
     reshade::register_event<reshade::addon_event::init_swapchain>(&OnInitSwapchain);
+    reshade::register_event<reshade::addon_event::init_device>(&OnBloomInitDevice);
+    reshade::register_event<reshade::addon_event::destroy_device>(&OnBloomDestroyDevice);
+    reshade::register_event<reshade::addon_event::present>(&OnBloomPresent);
 
     // Migrate legacy per-preset DLSS preferences without constructing settings.
     for (auto* setting : settings) {
@@ -857,6 +904,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     });
   } else if (reason == DLL_PROCESS_DETACH) {
     reshade::unregister_event<reshade::addon_event::init_swapchain>(&OnInitSwapchain);
+    reshade::unregister_event<reshade::addon_event::init_device>(&OnBloomInitDevice);
+    reshade::unregister_event<reshade::addon_event::destroy_device>(&OnBloomDestroyDevice);
+    reshade::unregister_event<reshade::addon_event::present>(&OnBloomPresent);
     reshade::unregister_addon(module);
   }
   if (reason == DLL_PROCESS_DETACH)

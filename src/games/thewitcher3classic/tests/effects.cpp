@@ -126,6 +126,45 @@ int main(int argc, char** argv) {
       buffer(13, values);
     };
     const auto run = [&](ID3DBlob* code) { return render(code->GetBufferPointer(), code->GetBufferSize()); };
+    {
+      const auto saved = injection;
+      const auto code = Compiled("0x620431CF.ps_5_0.hlsl");
+      const auto native = Read(root.parent_path() / "20261022/originals/0x620431CF.cso");
+      std::vector<float> constants(36);
+      constants[0] = constants[1] = constants[4] = constants[5] = constants[12] = constants[13] = W;
+      constants[22] = constants[23] = W - 1;
+      constants[24] = .3f; constants[25] = .4f; constants[26] = .5f;
+      constants[28] = .1f; constants[29] = .2f; constants[30] = .3f;
+      constants[32] = constants[33] = 1.f / W;
+      texture(1, W, H, std::vector<float>(W * H * 4, .2f));
+      buffer(3, constants);
+      const auto original = render(native.data(), native.size());
+      for (float strength : {0.f, .5f, 1.f, 2.f}) {
+        injection.blitz_bloom_active = 0;
+        injection.custom_bloom = strength;
+        injection.custom_lens_dirt = 1;
+        inject();
+        auto expected = original;
+        for (auto& value : expected) value *= strength;
+        if (Difference(expected, run(code.Get())) > 1e-6f) throw std::runtime_error("Native bloom fallback changed");
+      }
+      constants[24] = constants[25] = constants[26] = 0;
+      buffer(3, constants);
+      const auto dirt_only = render(native.data(), native.size());
+      constants[24] = .3f; constants[25] = .4f; constants[26] = .5f;
+      buffer(3, constants);
+      for (float strength : {0.f, .5f, 1.f, 2.f}) for (float dirt : {0.f, 1.f, 2.f}) {
+        injection.blitz_bloom_active = 1;
+        injection.custom_bloom = strength;
+        injection.custom_lens_dirt = dirt;
+        inject();
+        auto expected = dirt_only;
+        for (auto& value : expected) value *= dirt;
+        if (Difference(expected, run(code.Get())) > 1e-6f) throw std::runtime_error("BlitzFX native bloom suppression/lens dirt isolation failed");
+      }
+      injection = saved; inject();
+      std::cout << "PASS native bloom fallback and BlitzFX uniform-bloom removal with independent lens dirt\n";
+    }
     if (std::find(argv + 2, argv + argc, std::string("--blitzfx")) != argv + argc) {
       const auto saved_injection = injection;
       const fs::path blitz = root.parent_path() / "blitzfx-20261023";
@@ -460,7 +499,7 @@ float4 main(float4 pos : SV_Position) : SV_Target {
           ComPtr<ID3D11ShaderResourceView> srv;
           ctx->PSGetShaderResources(slot, 1, &srv); ctx->CSSetShaderResources(slot, 1, srv.GetAddressOf());
         }
-        for (UINT slot : {0u, 1u, 2u}) {
+        for (UINT slot : {0u, 1u, 2u, 13u}) {
           ComPtr<ID3D11Buffer> cb;
           ctx->PSGetConstantBuffers(slot, 1, &cb); ctx->CSSetConstantBuffers(slot, 1, cb.GetAddressOf());
         }
@@ -499,14 +538,45 @@ float4 main(float4 pos : SV_Position) : SV_Target {
             texture(slot, size, size, pixels);
           }
         };
+        // The slider replaces only BloomScattering. Compare each setting to
+        // the original shader with that absolute value, including underwater
+        // scattering, then vary BlitzFX's setting without changing the result.
+        for (float underwater : {0.f, .4f}) {
+          bloom_custom[182] = underwater;
+          for (float strength : {0.f, .1f, .5f, 1.f, 2.f}) {
+            bloom_custom[168] = strength * .5f; buffer(2, bloom_custom);
+            inputs(active_size);
+            const auto expected = compute_render(bloom_native.data(), bloom_native.size(), active_size);
+            inputs(W);
+            injection.custom_bloom = strength; inject();
+            for (float blitz_setting : {0.f, .01f, .1f, .5f, 1.f}) {
+              bloom_custom[168] = blitz_setting; buffer(2, bloom_custom);
+              const auto actual = compute_render(bloom_code->GetBufferPointer(), bloom_code->GetBufferSize(), active_size);
+              if (Difference(expected, actual) > .00001f)
+                throw std::runtime_error("BlitzFX absolute bloom/subrect/underwater mismatch at " + std::to_string(active_size));
+              if (strength == 0.f && underwater == 0.f) {
+                for (UINT y = 0; y < active_size; ++y) for (UINT x = 0; x < active_size; ++x) for (UINT c = 0; c < 4; ++c) {
+                  const float scene_value = .01f * x + .02f * y + .1f * (c == 3 ? 0 : c);
+                  if (std::abs(actual[(y * active_size + x) * 4 + c] - scene_value) > 1e-6f)
+                    throw std::runtime_error("BlitzFX Bloom zero changed the unscattered scene");
+                }
+              }
+            }
+          }
+        }
+        // DevKit-only replacement has no injected controls: keep native values.
+        const float saved_peak = injection.peak_white_nits;
+        injection.peak_white_nits = 0; inject();
         inputs(active_size);
         const auto expected = compute_render(bloom_native.data(), bloom_native.size(), active_size);
         inputs(W);
         if (Difference(expected, compute_render(bloom_code->GetBufferPointer(), bloom_code->GetBufferSize(), active_size)) > .00001f)
-          throw std::runtime_error("BlitzFX bloom subrect mismatch at " + std::to_string(active_size));
+          throw std::runtime_error("BlitzFX bloom without injection changed native strength");
+        injection.peak_white_nits = saved_peak; inject();
       }
+      injection = saved_injection; inject();
       ctx->CSSetShader(nullptr, nullptr, 0);
-      std::cout << "PASS BlitzFX bloom full-size/native equivalence and four poisoned subrect/filter-border cases\n";
+      std::cout << "PASS BlitzFX absolute bloom: five slider levels independent of five BlitzFX values, underwater isolation, injection fallback and five poisoned subrects\n";
       const auto shadow_native = Read(blitz / "scene-shaders/0x4708B025.cso");
       const auto shadow_code = Compiled("0x4708B025.cs_5_0.hlsl");
       std::vector<float> shadow_frame(840), shadow_matrices(128);

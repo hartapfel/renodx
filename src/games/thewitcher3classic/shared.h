@@ -42,7 +42,8 @@ struct ShaderInjectData {
   float lut_scaling;
   float lut_strength;
   float color_grading_strength;
-  float reserved_grading[3];
+  float blitz_bloom_active;
+  float reserved_grading[2];
 };
 
 #ifdef __cplusplus

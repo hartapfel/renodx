@@ -47,9 +47,12 @@ void main(
   r1.xyz = t1.Sample(s1_s, r1.xy).xyz;
   // Dirt scales separately from the uniform bloom contribution.
   if (RENODX_PEAK_WHITE_NITS > 0.f) r1.xyz *= shader_injection.custom_lens_dirt;
-  r1.xyz = cb3[7].xyz * r1.xyz + cb3[6].xyz;
+  // BlitzFX already scattered the scene before filmic mapping. Retain the
+  // separately controlled lens dirt, but do not add native uniform bloom too.
+  r1.xyz = cb3[7].xyz * r1.xyz
+      + cb3[6].xyz * ((RENODX_PEAK_WHITE_NITS > 0.f && shader_injection.blitz_bloom_active != 0.f) ? 0.f : 1.f);
   o0.xyz = r1.xyz * r0.xyz;
-  if (RENODX_PEAK_WHITE_NITS > 0.f) o0.xyz *= shader_injection.custom_bloom;
+  if (RENODX_PEAK_WHITE_NITS > 0.f && shader_injection.blitz_bloom_active == 0.f) o0.xyz *= shader_injection.custom_bloom;
   o0.w = 0;
   return;
 }

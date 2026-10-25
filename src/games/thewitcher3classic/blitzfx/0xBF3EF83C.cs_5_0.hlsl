@@ -1,4 +1,5 @@
 #include "scene_pool.hlsli"
+#include "../shared.h"
 
 // BlitzFX bloom occupies the same normalized pool subrect as the scene.
 // ---- Created with 3Dmigoto v1.3.16 on Sat Oct 24 00:39:23 2026
@@ -76,7 +77,12 @@ void main(uint3 vThreadID : SV_DispatchThreadID)
   r1.x = dot(r1.xyz, float3(0.212599993,0.715200007,0.0722000003));
   r1.x = 1 + -r1.x;
   r1.x = cb2[45].z * r1.x;
-  r1.x = max(cb2[42].x, r1.x);
+  // Replace BloomScattering rather than scaling BlitzFX's configured value.
+  // UI 0..100 maps to scattering 0..1; retain the separate underwater term.
+  r1.x = max(RENODX_PEAK_WHITE_NITS > 0.f
+                 ? saturate(shader_injection.custom_bloom * 0.5f)
+                 : cb2[42].x,
+             r1.x);
   r0.xyzw = -r2.xyzx + r0.xyzw;
   r0.xyzw = r1.xxxx * r0.xyzw + r2.xyzx;
   output_color[vThreadID.xy] = r0.xyzw;

@@ -48,11 +48,12 @@ void main(
     // Keep native screen blending in SDR, but never subtract HDR highlights
     // through its (1 - scene) factor. Scale the isolated effect, not scene.
     if (RENODX_TONE_MAP_TYPE != CLASSIC_TONE_MAP_VANILLA) {
-      o0.xyz = scene + r1.xyz * (1.f - saturate(scene)) * shader_injection.custom_bloom;
+      o0.xyz = scene + r1.xyz * (1.f - saturate(scene))
+          * (shader_injection.blitz_bloom_active != 0.f ? 1.f : shader_injection.custom_bloom);
       o0.w = 1.f;
       return;
     }
-    r1.xyz *= shader_injection.custom_bloom;
+    if (shader_injection.blitz_bloom_active == 0.f) r1.xyz *= shader_injection.custom_bloom;
   }
   r1.xyz = float3(1,1,1) + -r1.xyz;
   o0.xyz = -r0.xyz * r1.xyz + float3(1,1,1);

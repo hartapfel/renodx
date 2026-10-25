@@ -279,15 +279,22 @@ of the native Hable curve. Vanilla skips this limiter.
 
 Effects sliders use 0 = off, 50 = reference strength, 100 = double:
 
-- **Bloom** scales the additive and screen-blended effect composites.
+- **Bloom** scales the native additive and screen-blended effect composites.
+  When BlitzFX's bloom composite runs, it instead replaces BlitzFX's Bloom
+  Scattering setting: 0–100 maps directly to 0.00–1.00, independently of the
+  BlitzFX menu value. Native uniform bloom is removed to avoid double bloom;
+  underwater scattering, lens dirt and the other screen-blended effects remain.
 - **Lens Dirt** scales only the dirt texture contribution.
 - **Sunshafts Strength** scales masked sky input before extraction. The
-  native threshold makes its response nonlinear; Bloom also scales the
-  shared composite. Requires the game's Light Shafts option.
+  native threshold makes its response nonlinear; without BlitzFX, Bloom also
+  scales the shared composite. Requires the game's Light Shafts option.
 
 The screen-blended HDR path prevents `(1 - scene)` from subtracting bright
 scene values. Vanilla at default effect settings retains native arithmetic.
 These controls require the corresponding game effects to be enabled.
+BlitzFX routing uses a per-device flag from its executed bloom pass, reset at
+Present; it does not poll DLLs, scan resources, read back GPU data or wait for
+the GPU. Verify performance with DevKit and offline replay tests disabled.
 
 ## Build and verify
 
