@@ -69,7 +69,6 @@ cbuffer cb3 : register(b3)
 #define cmp -
 
 
-#define WITCHER_MOTION_FRAME cb12
 #include "../temporal/object_pixel.hlsli"
 
 void main(

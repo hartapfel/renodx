@@ -9,6 +9,9 @@
 namespace witcher3classic::blitzfx {
 inline int* runtime_aa = nullptr;
 inline std::atomic<bool> temporal_enabled = false;
+inline uint8_t* runtime_state = nullptr;
+using ResizeFunction = void (*)(uint8_t*, uint32_t, uint32_t);
+inline ResizeFunction resize_function = nullptr;
 
 // Audited BlitzFX 1.1.0 only. A filename is not sufficient evidence: d3d11.dll
 // may be Microsoft's implementation, ReShade, or another injector.
@@ -26,9 +29,11 @@ inline bool Initialize() {
       constexpr uint8_t jitter[] = {0x4c,0x8b,0xdc,0x48,0x81,0xec,0x88,0,0,0,0x48,0x8b,0x05,0xcf,0xd2,0x03,0,0x48,0x33,0xc4,0x48,0x89,0x04,0x24,0x8b,0x81,0xf4,0x09,0,0,0xff,0xc8};
       constexpr uint8_t shader[] = {0x48,0x89,0x5c,0x24,0x10,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xd9,0x48,0x81,0xec,0xd0,0,0,0};
       constexpr uint8_t draw[] = {0x48,0x89,0x5c,0x24,0x10,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xe1,0x48,0x81,0xec,0x90,0,0,0};
+      constexpr uint8_t resize[] = {0x40,0x55,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x30,0x80,0x79,0x02,0x00,0x45,0x8b,0xf0,0x89,0x54,0x24,0x50,0x44,0x8b,0xfa,0x44,0x89,0x44,0x24,0x54,0x48,0x8b,0xe9};
       if (std::memcmp(image + 0x51d40, jitter, sizeof(jitter))
           || std::memcmp(image + 0x52090, shader, sizeof(shader))
-          || std::memcmp(image + 0x52f40, draw, sizeof(draw))) continue;
+          || std::memcmp(image + 0x52f40, draw, sizeof(draw))
+          || std::memcmp(image + 0x54270, resize, sizeof(resize))) continue;
       MEMORY_BASIC_INFORMATION memory;
       if (!VirtualQuery(image + 0x9166c, &memory, sizeof(memory)) || memory.State != MEM_COMMIT
           || (memory.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0
@@ -39,10 +44,29 @@ inline bool Initialize() {
       // Renderer singleton +0x288 owns its config at +0x940. The AA member is
       // +0xb4. Restore it before Present, where BlitzFX draws/saves its settings.
       runtime_aa = reinterpret_cast<int*>(const_cast<uint8_t*>(image) + 0x9166c);
+      runtime_state = const_cast<uint8_t*>(image) + 0x909f0;
+      resize_function = reinterpret_cast<ResizeFunction>(const_cast<uint8_t*>(image) + 0x54270);
       break;
     }
   });
   return runtime_aa != nullptr;
+}
+
+// BlitzFX's fallback DXGI hook can miss the real swapchain resize and retain
+// its 1x1 bootstrap dimensions. Use its own resize entry point so all private
+// renderers, reciprocal-size constants and temporal surfaces change together.
+// Call only for Classic's primary window, on its presentation/render thread.
+inline bool SynchronizeResolution(uint32_t width, uint32_t height) {
+  if (!runtime_state || !resize_function || !runtime_state[2]
+      || width < 2 || height < 2 || width > 8192 || height > 8192
+      || uint64_t{width} * height > 8388608) return false;
+  uint32_t window_size[2], render_size[2];
+  std::memcpy(window_size, runtime_state + 4, sizeof(window_size));
+  std::memcpy(render_size, runtime_state + 0xca4, sizeof(render_size));
+  if (window_size[0] == width && window_size[1] == height
+      && render_size[0] == width && render_size[1] == height) return false;
+  resize_function(runtime_state, width, height);
+  return true;
 }
 
 // Scope the override to the render thread's world render. Vanilla (0) keeps

@@ -50,7 +50,6 @@ cbuffer cb1 : register(b1)
 #define cmp -
 
 
-#define WITCHER_MOTION_FRAME cb12
 #include "./object_pixel.hlsli"
 
 void main(

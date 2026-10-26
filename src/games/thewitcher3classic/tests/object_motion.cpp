@@ -18,12 +18,29 @@ using Microsoft::WRL::ComPtr;
 #include "./motion_gpu.hpp"
 
 int main(int argc, char** argv) {
+  std::cout << std::unitbuf;
   uint32_t matched_nonfinite_colors = 0;
   const bool hardware = argc > 2 && std::string_view(argv[2]) == "--hardware";
   const bool forward_only = argc > 2 && std::string_view(argv[argc - 1]) == "--forward-only";
   const bool hair_clip_only = argc > 2 && std::string_view(argv[argc - 1]) == "--hair-clip-only";
   assert(argc == 2 || (argc == 3 && (hardware || forward_only || hair_clip_only)) || (argc == 4 && hardware && (forward_only || hair_clip_only)));
   const std::filesystem::path originals = argv[1], shaders = "build/thewitcher3classic.include/embed";
+  using ReflectShader = HRESULT(WINAPI*)(const void*, SIZE_T, REFIID, void**);
+  const auto reflect_shader = reinterpret_cast<ReflectShader>(GetProcAddress(LoadLibraryW(L"d3dcompiler_47.dll"), "D3DReflect"));
+  assert(reflect_shader);
+  for (const auto& pixel : OBJECT_PIXEL_SHADERS) {
+    if (pixel.signature >= 20) continue; // Foliage retains its native frame macros.
+    const auto original = Read(originals / std::format("0x{:08X}.cso", pixel.hash));
+    ComPtr<ID3D11ShaderReflection> reflection;
+    assert(SUCCEEDED(reflect_shader(original.data(), original.size(), __uuidof(ID3D11ShaderReflection), &reflection)));
+    D3D11_SHADER_DESC description;
+    assert(SUCCEEDED(reflection->GetDesc(&description)));
+    for (UINT i=0;i<description.BoundResources;++i) {
+      D3D11_SHADER_INPUT_BIND_DESC binding;
+      assert(SUCCEEDED(reflection->GetResourceBindingDesc(i,&binding)));
+      assert(binding.Type != D3D_SIT_CBUFFER || binding.BindPoint != 11);
+    }
+  }
   ComPtr<ID3D11Device> device;
   ComPtr<ID3D11DeviceContext> base;
   auto result = D3D11CreateDevice(nullptr, hardware ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_DEBUG, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &base);
@@ -100,6 +117,11 @@ int main(int argc, char** argv) {
   frame[48 * 4 + 1] = .1f;
   frame[48 * 4 + 2] = 1;
   auto frame_buffer = Buffer(device.Get(), frame.data(), sizeof(frame), D3D11_BIND_CONSTANT_BUFFER);
+  // Native VS/PS frame buffers are independent. The former supplies motion
+  // dimensions/jitter; the latter must retain its own lighting/fog data.
+  auto pixel_frame = frame;
+  pixel_frame[0] = .125f; pixel_frame[1] = -.25f; pixel_frame[2] = .5f;
+  auto pixel_frame_buffer = Buffer(device.Get(), pixel_frame.data(), sizeof(pixel_frame), D3D11_BIND_CONSTANT_BUFFER);
   std::array<float, 32 * 4> material;
   material.fill(.5f);
   auto material_buffer = Buffer(device.Get(), material.data(), sizeof(material), D3D11_BIND_CONSTANT_BUFFER);
@@ -121,7 +143,10 @@ int main(int argc, char** argv) {
   context->PSSetConstantBuffers(4, 1, &cb);
   cb = frame_buffer.Get();
   context->VSSetConstantBuffers(12, 1, &cb);
+  cb = pixel_frame_buffer.Get();
   context->PSSetConstantBuffers(12, 1, &cb);
+  cb = material_buffer.Get();
+  context->PSSetConstantBuffers(11, 1, &cb);
   std::array<float, 64> bones = {};
   for (UINT bone = 0; bone < 4; ++bone)
     for (UINT i = 0; i < 4; ++i) bones[bone * 16 + i * 5] = 1;
@@ -239,7 +264,19 @@ int main(int argc, char** argv) {
   context->RSSetViewports(1, &viewport);
   object_engine::state->history.Record(0, allocation_pointer, {1, 0, 0, .2f, 0, 1, 0, 0, 0, 0, 1, 0});
   assert(motion.Begin(context.Get(), 0, true));
+  {
+    ComPtr<ID3D11Buffer> native_pixel, motion_pixel;
+    context->PSGetConstantBuffers(12, 1, &native_pixel);
+    context->PSGetConstantBuffers(11, 1, &motion_pixel);
+    assert(native_pixel == pixel_frame_buffer && motion_pixel == frame_buffer);
+  }
   motion.End(context.Get());
+  {
+    ComPtr<ID3D11Buffer> native_pixel, motion_pixel;
+    context->PSGetConstantBuffers(12, 1, &native_pixel);
+    context->PSGetConstantBuffers(11, 1, &motion_pixel);
+    assert(native_pixel == pixel_frame_buffer && motion_pixel == material_buffer);
+  }
   motion.Finish(context.Get(), 0);
   // Actual Classic captures use BUFFEREX (flags zero) for this structured SRV.
   // Keep the first history frame above on BUFFER, then run all native/extended
@@ -791,6 +828,42 @@ int main(int argc, char** argv) {
       assert(std::abs(motion_outputs[vertex * 30 + 25] - (vertices[vertex].position[0] + .35f)) < 2e-5f);
       assert(motion_outputs[vertex * 30 + 29] == 1.f);
     }
+    // Identity transforms can hide a corrupted normal/tangent basis while clip
+    // positions still match. Consume every native varying under mixed bones,
+    // rotated roots and camera matrices, including the direct head path.
+    const auto direct_view = view, direct_bones = bones;
+    const auto direct_mesh = forward_mesh;
+    std::array<Vertex, 3> direct_vertices;
+    std::copy_n(vertices, 3, direct_vertices.begin());
+    for (UINT sample = 0; sample < 24; ++sample) {
+      for (UINT i = 0; i < 16; ++i) view[i] = std::sin(float(i * 17 + sample * 11 + 1)) * 1.731f;
+      for (UINT i = 0; i < 12; ++i) forward_mesh[i] = std::cos(float(i * 7 + sample * 13 + 2)) * 2.193f;
+      forward_mesh[28] = 0;
+      for (UINT bone = 0; bone < 4; ++bone)
+        for (UINT i = 0; i < 16; ++i) bones[bone * 16 + i] = std::sin(float(bone * 19 + i * 3 + sample * 7 + 1)) * .173f + float(i % 5 == 0);
+      for (auto& vertex : direct_vertices)
+        for (UINT i = 0; i < 4; ++i) { vertex.indices[i] = i; vertex.weights[i] = .1f * float(i + 1); }
+      context->UpdateSubresource(vertex_buffer.Get(), 0, nullptr, direct_vertices.data(), 0, 0);
+      context->UpdateSubresource(view_buffer.Get(), 0, nullptr, view.data(), 0, 0);
+      context->UpdateSubresource(forward_cb.Get(), 0, nullptr, forward_mesh.data(), 0, 0);
+      context->UpdateSubresource(bone_buffer.Get(), 0, nullptr, bones.data(), 0, 0);
+      const auto a = VertexOutputs(device.Get(), context.Get(), original, std::span(outputs).first(7));
+      assert(motion.Begin(context.Get(), 1, false, false, false, true));
+      const auto b = VertexOutputs(device.Get(), context.Get(), replacement, outputs);
+      motion.End(context.Get());
+      for (UINT vertex = 0; vertex < 3; ++vertex)
+        for (UINT value = 0; value < 25; ++value) {
+          const float expected = a[vertex * 25 + value], actual = b[vertex * 30 + value];
+          if (!SameColor(expected, actual))
+            std::cerr << std::format("Direct skin 0x{:08X} sample {} varying {} native={} actual={}\n", shader.hash, sample, value, expected, actual);
+          assert(SameColor(expected, actual));
+        }
+    }
+    view = direct_view; bones = direct_bones; forward_mesh = direct_mesh;
+    context->UpdateSubresource(vertex_buffer.Get(), 0, nullptr, vertices, 0, 0);
+    context->UpdateSubresource(view_buffer.Get(), 0, nullptr, view.data(), 0, 0);
+    context->UpdateSubresource(forward_cb.Get(), 0, nullptr, forward_mesh.data(), 0, 0);
+    context->UpdateSubresource(bone_buffer.Get(), 0, nullptr, bones.data(), 0, 0);
     std::array<ID3D11RenderTargetView*, 5> restored = {};
     context->OMGetRenderTargets(5, restored.data(), nullptr);
     assert(restored[0] == targets[0].Get());
@@ -901,7 +974,7 @@ int main(int argc, char** argv) {
           if (pixel.signature != 12 || pixel.hash != 0xC2F7B0B1) continue;
           const auto native_pixel_code = Read(originals / std::format("0x{:08X}.cso", pixel.hash));
           BindMaterialInputs(context.Get(), native_pixel_code, material_view.Get(), texture_array.Get(), cube_view.Get(), cubes_view.Get());
-          cb = frame_buffer.Get(); context->PSSetConstantBuffers(12, 1, &cb);
+          cb = pixel_frame_buffer.Get(); context->PSSetConstantBuffers(12, 1, &cb);
           cb = light_cb.Get(); context->PSSetConstantBuffers(13, 1, &cb);
           srv = raw_srv.Get(); context->PSSetShaderResources(20, 1, &srv);
           ComPtr<ID3D11VertexShader> native_vertex, extended_vertex;

@@ -24,6 +24,67 @@ Primary-source guidance is collected in the
 
 ## Integration and source map
 
+### Preserve native pixel-stage frame constants
+
+The 2026-10-26 Classic lighting audit found a general integration trap: motion
+draws rebound PS b12 to the current VS b12 frame buffer. The two may share a
+layout and size while carrying different lighting/fog values. Native material
+color can then change even if all decompiled material math is equivalent.
+Keep native stage bindings intact and supply motion-only data through a separately
+audited slot. Classic now uses **PS b11** for the same current VS-frame bytes,
+saving/restoring that slot around non-foliage draws; native PS b12 is untouched.
+VS b11 is still previous-frame history. The four foliage material paths retain
+their native frame macros. There is no change to vector math or coverage.
+
+Regression fixtures must use **different native VS and PS frame buffers**,
+verify both identity and material output, and check restoration of the motion
+slot. A fixture sharing one frame buffer between stages masks this class of bug.
+Reflect every native shader before reserving a slot: Classic's 113 non-foliage
+PSs leave b11 unused, but this is not a portable assumption. Full object and
+foliage checks pass WARP/NVIDIA. In the reported Geralt scene the native buffers
+actually matched, and this isolation alone did not resolve the lighting report.
+The proven cause was the shader-decompilation issue below. See the
+[BlitzFX handoff](WITCHER3_CLASSIC_BLITZFX_COMPATIBILITY.md).
+
+### Preserve integer flags and test directional environment lighting
+
+Appending motion outputs must preserve every original shading output, including
+vertex-stage lighting. Classic's hair shaders calculate environment lighting in
+the VS, so testing only PS color math or exact clip positions missed the defect.
+An original shader comparison must preserve other addon replacements: DevKit's
+current global live-unload removes addon runtime replacements too. Restore only
+the shader under comparison, or restore the full embedded set before continuing.
+
+The legacy decompiler printed native `and r3.x, r2.w, l(1)` as
+`r3.x = r2.w ? 0.000000 : 0`. It interpreted integer bit-pattern 1 as a float
+subnormal and rounded it to zero. The native program subsequently converts the
+integer to float for an environment-atlas hemisphere offset. Correct HLSL uses
+the numeric flag `r2.w ? 1.f : 0.f` in this decompiler's float register model.
+Audit the native producer **and consumer** before changing a literal: an integer
+flag, an actual float subnormal and a packed float bit pattern have different
+semantics. Do not replace every small number or zero by pattern alone.
+
+The Classic audit proved 64 such sites in eight hair/tail/forward-material
+programs. `tools/audit_probe_hemispheres.py` compares exact register/condition
+pairs against original DXBC. `tests/probe_lighting.cpp` compares all native VS
+varyings using captured frame/lighting constants, gradients across both atlas
+hemispheres, varied normal/tangent directions and explicit nonzero finite-lighting
+assertions. Constant-color atlas samples conceal wrong-coordinate bugs. Also put
+synthetic geometry **inside the native lighting frustum**: otherwise attenuation
+can zero both shaders and create a false pass. The captured skinned hair origin
+includes mesh decode scale/offset; a deformed tail consumes positions directly.
+
+The old controlled hair fixture differed by up to .199998 in linear lighting.
+Corrected hair, reference hair and both deformed tail VSs match native outputs
+exactly on WARP/NVIDIA. Full motion tests retain native positions, cutouts and
+history; the user confirmed correct hair/eye lighting and valid vectors live.
+The correction changes coordinate selection, adding no draw, replay or resource.
+Reproduction and fixture files are specified in the game test README and the
+BlitzFX compatibility handoff; fresh-launch packaged acceptance is separate from
+live shader acceptance.
+
+### Native reconstruction boundary
+
 Classic already uses DX11. The addon evaluates NVIDIA NGX directly on the game's
 device at native TAA pixel shader `201C53B4`; it needs no DXVK or API wrapper.
 Native AA must remain enabled so that draw exists. The camera-only replacement
@@ -295,8 +356,9 @@ restore their previous TLS state; tests cover scope restoration and destruction.
 Current extra bindings are VS t120 previous bones, t121 palette lookup, t122
 pose entries, t123 previous reference positions, t124 previous CPU-deformed
 positions and t125 previous instance worlds; b8 metadata, b9 deformed world,
-b10 previous camera and b11 previous frame. PS b12 supplies native current-frame
-data. These slots are audited Classic choices, not universally free registers.
+b10 previous camera and b11 previous frame. PS b11 supplies non-foliage motion
+frame data while PS b12 retains native lighting/fog state. These slots are
+audited Classic choices, not universally free registers.
 ObjectPose is 64 bytes. Allocation history is bounded at 4,096, rigid history at
 8,192; packed batches are bounded at 4,096. Flock history is bounded at 256
 owners/8,192 total slots, at most 4,096 per owner.

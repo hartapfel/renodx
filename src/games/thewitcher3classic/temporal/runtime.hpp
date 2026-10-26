@@ -402,16 +402,28 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
   auto* device = swapchain->get_device();
   auto* data = renodx::utils::data::Get<DeviceData>(device);
   if (device->get_api() == reshade::api::device_api::d3d11 && blitzfx::Initialize()) {
+    wchar_t window_class[32] = {};
+    const bool primary_window = GetClassNameW(static_cast<HWND>(swapchain->get_hwnd()), window_class, int(std::size(window_class)))
+        && std::wcscmp(window_class, L"W2ViewportClass") == 0;
+    if (primary_window) {
+      const auto desc = device->get_resource_desc(swapchain->get_back_buffer(0));
+      if (blitzfx::SynchronizeResolution(desc.texture.width, desc.texture.height)) {
+        // The private surfaces were recreated. Start the next resolve with
+        // fresh history and rearm the native-size validation path once.
+        if (data) data->last_resolve = UINT64_MAX;
+        upscale_engine::Disable(true);
+        reshade::log::message(reshade::log::level::info,
+            std::format("Witcher Classic: synchronized BlitzFX renderer to primary output {}x{} after a missed resize.",
+                        desc.texture.width, desc.texture.height).c_str());
+      }
+    }
     // BlitzFX suppresses the native AA draw in its TAA mode, so initialization
     // cannot wait for that draw. Install the already audited render hooks here.
     const bool enabled = mode != 0.f && (!data || !data->attempted || data->ready);
     if (enabled && !object_engine::state->installed) {
       // BlitzFX also creates a temporary hook-discovery swapchain. Bootstrap
       // only from Classic's actual window, after that initialization is over.
-      wchar_t window_class[32] = {};
-      if (GetClassNameW(static_cast<HWND>(swapchain->get_hwnd()), window_class, int(std::size(window_class)))
-          && std::wcscmp(window_class, L"W2ViewportClass") == 0)
-        object_engine::Install();
+      if (primary_window) object_engine::Install();
     }
     blitzfx::temporal_enabled.store(enabled && object_engine::state->installed, std::memory_order_relaxed);
   }

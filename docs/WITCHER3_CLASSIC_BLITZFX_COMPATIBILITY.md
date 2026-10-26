@@ -1,5 +1,457 @@
 # Witcher 3 Classic: BlitzFX compatibility
 
+## Hair, eyes and related object-lighting fix — 2026-10-26
+
+**User confirmed live:** after the corrected shaders were activated, hair and
+eye lighting were correct and full valid object-motion coverage returned
+("everything's perfect"). The normal Release addon has also been rebuilt with
+the fix: SHA256 `3a628e45715f7caac5b061ecca892775d351a919127e70d040e64007c3f35f1b`.
+The game-folder symlink still points to that normal build. A fresh-launch visual
+comparison of the packaged build has not been recorded yet.
+
+The cause was a legacy DXBC decompiler error in environment-probe hemisphere
+selection, not intentional HDR brightening or a need to drop motion coverage.
+Native code uses an integer flag, for example:
+
+```text
+and r3.x, r2.w, l(1)
+... integer-to-float conversion before adding the atlas hemisphere offset ...
+```
+
+The bit pattern `0x00000001` is a tiny subnormal when misread as float. The
+decompiler printed `condition ? 0.000000 : 0`, so the later numeric conversion
+always selected hemisphere zero. A spatially varying environment atlas exposed
+the resulting diffuse/specular lighting change; a constant-color fixture did not.
+The HLSL now retains a numeric `condition ? 1.f : 0.f` at these audited sites.
+
+The complete family scan found **64 selectors in eight programs**:
+
+| Stage | Shaders | Coverage |
+|---|---|---|
+| VS | `AB3E8304`, `B0B4EB6F` | Skinned/reference-pose hair, including vertex-stage environment lighting |
+| VS | `5CC0DB95`, `AE216EAE` | CPU-deformed opaque hair/horse-tail paths |
+| PS | `12B76681`, `20C1C070`, `30F033B5`, `EB8C3FAE` | Related forward materials, including the eye path |
+
+`tools/audit_probe_hemispheres.py` checks all 64 register/condition pairs against
+the original DXBC's integer-1 instructions and rejects any rounded-zero site.
+This is a narrowly audited fix; do not blindly change other floating-point zeros.
+Current positions, previous poses, owner/history matching, cutouts and motion
+outputs are unchanged. There are no new passes, geometry replays or allocations.
+
+The controlled native-hair VS comparison removed its lighting defect but made
+its vectors invalid, as expected when a native shader has no appended motion
+outputs. Restoring the corrected motion-capable shader restored both behaviors.
+The earlier native face VS did not fix hair; the eye material required its
+separate PS correction. Preserve this distinction when interpreting captures.
+
+`tests/probe_lighting.cpp` uses captured lighting constants with directional
+gradient atlases and varying normals/tangents. It consumes every native varying
+and requires finite, nonzero probe-lighting output. The original broken hair
+shader differed by up to **0.199998** in the controlled linear fixture. Corrected
+hair, reference-hair and both tail programs match all native outputs exactly on
+**WARP and NVIDIA**, including 216 finite lighting components per program. The
+tail fixture places vertices at the decoded hair origin; a foot-level position
+was outside the lighting frustum and would have produced an empty comparison.
+The complete object-motion suites also pass on both devices, including native
+material RGB, signed motion/depth, cutouts, history and exact clip checks.
+See `tests/README.md` for reproduction and fixture requirements.
+
+Evidence: `tmp/witcher3classic-investigation/object-lighting-20261026/candidate-31524/`.
+It contains the native disassembly audit, captured hair constants, before/after
+control images, live activation results, final GPU logs and Release build log.
+The constant-slot isolation below is retained as a separate state-preservation
+invariant; the user verified that it alone did **not** solve this lighting issue.
+
+## Object-motion lighting isolation — 2026-10-26
+
+The user supplied paused-scene screenshots with Object Motion on/off: Geralt's
+face lighting changes, and similar differences are suspected on horses. In this
+run DevKit was initially disabled by renaming its symlink to `.addon64.bak`.
+After restoring it, the user relaunched with DevKit (PID 9868). Exact skin
+captures show **the same native buffer handle for VS b12 and PS b12 in this
+scene**. Therefore the binding-isolation change below is defensive and is **not
+an established explanation or accepted fix for this report**.
+
+The general binding audit found that every non-foliage `ObjectMotion::Begin`
+rebound **PS b12 to VS b12**. The latter is needed for current render dimensions
+and jitter, but the former is also native pixel-stage lighting/fog state. Equal
+buffer sizes and a common register number do not prove identical contents.
+The previous GPU fixture bound the same frame buffer to both stages and therefore
+could not detect this class of shading change.
+
+Motion-only frame data now uses **PS b11**, which is unused by all 113 audited
+non-foliage material pixel shaders. Native PS b12 is never replaced by this
+motion scope. The b11 binding is saved/restored in place of the old b12 save/
+restore, so the change adds no context queries, draw, resource copy or allocation.
+The same current VS-frame bytes still feed the unchanged motion calculation.
+VS b11 remains previous-frame history: bindings are stage-local. The four foliage
+material shaders retain their native frame macros and their existing no-PS-
+override path. Eight obsolete `WITCHER_MOTION_FRAME cb12` aliases were removed.
+Skinning, previous bones, worlds, reference/deformed poses, instance ownership,
+cutouts, coverage matching and MRT slots 3/4 are unchanged.
+
+The strengthened `object_motion` fixture binds deliberately distinct VS and PS
+frame buffers, including different pixel-stage camera data. It asserts PS b12
+identity during/after motion draws, verifies the scoped b11 binding and restores
+a preexisting b11 sentinel. Original-bytecode reflection rejects any future
+non-foliage native PS using b11. Full WARP and NVIDIA suites pass native material
+comparisons, skin/head/hair/cloth/rigid/flock motion, and exact clip checks.
+Foliage WARP/NVIDIA suites also pass with **zero** current clip-bit and previous-
+position differences. Some synthetic material combinations contain 48 native
+nonfinite color channels, matched by both native and replacement; these are
+recorded explicitly rather than treated as a live-scene finite-output guarantee.
+
+Release compilation and the normal addon build/link pass. The normal addon was
+linked after the user closed Classic on 2026-10-26 at 13:59 CEST: 5,613,056 bytes,
+SHA256 `42043f605b8ec84742012db24c90e0fe5882fdcd048e0853e08a960e28d25f52`.
+The game-folder symlink still targets `build/Release/renodx-thewitcher3classic.addon64`.
+The user reported that this candidate alone still changed face lighting; the
+hemisphere fix above was subsequently confirmed. Live comparison of the restored installed skin PS and
+original DXBC produces nearly identical pre-curve face-region means with motion
+enabled; disabling object motion changes that face region while chest/road mean
+colors remain nearly unchanged. This points upstream of reconstruction and has
+not yet isolated the responsible input/state. Sequential captures have different
+Halton jitter, so pixelwise differences alone are not evidence of shading errors.
+An expanded direct-skin test also compares all native varyings under 24 mixed
+bone/root/camera transforms, rather than only identity transforms or clip output;
+it passes on NVIDIA. A separate replay with captured camera/mesh constants and
+a rebased captured palette prefix also matches all 25 head varyings exactly;
+this is not a complete capture of the head palette. After a fresh restart of the
+old addon (PID 3152), the native head VS alone likewise leaves pre-curve face
+means nearly unchanged with all other replacements preserved. A quicker user
+OFF/ON sequence still reproduces the face mean-color change (blue .1244 ->
+.1404 in the bounded diagnostic ROI), while road color varies by about 1%.
+These are intermediate linear values, not display nits. Evidence for that
+restart is under `object-lighting-20261026/restarted-3152/`. These controls led
+to the environment-selector audit and correction documented above.
+
+Check Geralt and horse forward
+skin/hair, native PS b12 versus VS b12, actual material color, vector coverage
+and history. If differences remain, audit the specific native shader arithmetic
+instead of removing motion coverage or changing lighting sliders. Evidence is
+`tmp/witcher3classic-investigation/object-lighting-20261026/`.
+
+**DevKit live-unload pitfall:** the currently installed
+`devkit_unload_live_shaders` calls `RemoveRuntimeReplacements(device)` with no
+filter. It removes the game's addon shader replacements too; it does not restore
+the embedded addon shaders. An early native-VS visual comparison was contaminated
+by this: water and motion stopped working. Do not use that comparison as proof
+about vertex math. The installed addon was kept intact on disk; all 261 embedded
+shader programs were recovered from its DLL and restored through a dedicated live
+directory. Recovery matches unchanged compiled bytecode directly in the DLL and
+extracts the older motion programs through their `ObjectShader` spans. The two
+unmatched build-directory CSOs are stale, unregistered shaders, not missing addon
+programs. Recovery script, manifest and activation results are in the evidence
+directory. All subsequent comparisons must restore individual files and reload,
+**not invoke global live-unload**. Reset the temporary live path after a clean
+game restart restores the embedded addon registrations.
+
+## RTSS overlay and refractive rain — 2026-10-26
+
+**RTSS: user confirmed restored live.** `RTSSHooks64.dll` was already injected,
+RTSS's shared-memory app entry advanced frame/OSD counters, and MSI Afterburner's
+OSD slot contained nonempty extended text. The issue was not missing telemetry
+or a stopped RTSS process. The SDK's API flags identified Witcher as **D3D10**
+(`0x00010006`) despite its native D3D11 renderer. The current Global profile
+also forced scRGB correction for the D3D11 overlay (`HDR=1`) while RenoDX uses
+HDR10 output. Disabling DLSS does not remove this shared HDR presentation path.
+
+Created `C:/Program Files (x86)/RivaTuner Statistics Server/Profiles/witcher3.exe.cfg`
+from a byte-backed-up copy of the current Global settings. Only these settings
+were changed in the new game profile:
+
+```ini
+[Hooking]
+D3D1xDevicePriority=1
+
+[RendererDirect3D11]
+HDR=-1
+```
+
+The first makes RTSS prefer D3D11 rather than its ascending D3D10-first choice;
+the second selects its automatic format-based HDR handling. Other rendering,
+palette, position, zoom, framerate-limit and hooking settings were copied as-is.
+The original Global profile was not edited. Windows denied the initial normal
+write to Program Files; the user approved an administrator prompt for the
+prepared game-profile copy. RTSS's documented `UpdateProfiles()` export requested
+a live reload. Shared memory then reported **D3D11** (`0x00010007`), and the user
+confirmed a visible/readable overlay without restarting the game. No game/addon/
+ReShade binary change was needed for the overlay fix. To undo it, remove this
+game-specific profile and request profile reload; Global supplies the old settings.
+The installed SDK headers/sample establish the API flag/profile reload contract.
+
+**Refractive rain: built/tested; live visual acceptance pending.** The current
+draw is `1F3A90A1`. BlitzFX's shader archive also contains `1C74D220`, the masked
+particle permutation with a different input/material layout. Archive DXBC was
+stripped of debug/reflection data with D3DStripShader; the first program matched
+the current original bytecode exactly. DevKit decompiled the tracked shader;
+the offline decompiler was used for the untracked second archive permutation.
+
+Exact inputs under Quality show b3/b12 render size **2560x1440**, while t50's
+scene-color allocation remains **1920x1080** (half of the 3840x2160 output pool).
+The two refracted color samples construct logical render UVs and incorrectly
+sample that entire allocation. Map those UVs through `BlitzScenePoolUV` using
+`floor(renderSize/2)` and the texture's actual dimensions; clamp the bilinear
+footprint to the active rectangle. Preserve the offset/projection calculations
+in render space. The depth/fog UVs use b0's **output-pool reciprocals** already;
+rescaling them again would introduce a second bug. Do not conflate these two
+coordinate domains just because all textures belong to one particle shader.
+
+Both replacements are gated to recognized BlitzFX during reduced-resolution
+reconstruction, with native b13 retained. DLAA/DLSS-off/standalone use the native
+path. The existing render pass, opacity, depth fade, particle masks, HDR color
+and refraction strength are retained; no new pass/copy/readback is added.
+
+`effects --blitzfx --rain-only` compares both exact Release replacements with
+original native DXBC for five physical render sizes (including odd dimensions),
+HDR gradients and poisoned unused pool regions. Nonzero coverage is mandatory,
+and output alpha participates in comparison. The shaders' distinct varying
+register order and material layouts must be respected by the synthetic vertex
+fixture; otherwise empty draws can create false equivalence. The expected
+bilinear gradient error is bounded by one 1/256-texel addressing cell
+(`0.23/256 < 0.001`); this is separate from unused-pool sampling, which produces
+errors near 1000 in the unmodified shader. WARP and NVIDIA focused tests pass.
+The live override for `1F3A90A1` is temporary. Link the normal Release addon with
+Classic closed, unload the override/restore DevKit's default live path and verify
+Quality/Performance against DLAA after relaunch. Evidence/config backups/runners
+are in `tmp/witcher3classic-investigation/rain-overlay-20261026/`.
+
+## PBR travel-post flicker: material storage — 2026-10-26
+
+The user reports light flicker on the travel post only with BlitzFX PBR lighting
+enabled. PID 20008's exact-input capture finds the original PBR lighting shader
+`BFAB3812` active, with the three material G-buffer resources originally
+`R8G8B8A8_UNORM` routed to RGBA16F clones by the broad scene-color rule.
+The normal/roughness buffer alpha reaches **4.91015625**; material values have
+lost both their native bounds and their UNORM quantization. `715390A8` also
+packs those normal fields into integer bits, so their storage contract matters
+to more than the main PBR pass. These are surface properties, not HDR radiance.
+The current snapshot finds no post-lighting render-target reuse of those three
+material resources by the scene tonemap/LUT/final-grade chain.
+
+An offline replay uses the **original native PBR DXBC**, captured b1/b12/b13,
+captured material/depth/environment/shadow textures and a controlled zero stencil.
+Only the three material texture formats/data conversions change between runs.
+On both WARP and NVIDIA the float-material case has **228 nonfinite RGB
+components**; restoring UNORM storage eliminates them. The UNORM replay still
+produces scene-linear values above 59, so preserving bounded material data does
+not clamp the lighting output to SDR. This is a bounded diagnostic, not yet
+visual proof that every reported travel-post flicker is fixed. The two-frame
+live pre-tonemap capture also contains nonfinite pixels before any replacement.
+
+The addon now identifies the native three-attachment RGBA8 material layout with
+matching single-sample D24 depth dimensions, only when the audited BlitzFX
+runtime is recognized. It removes **our own** scene-color clone routing from
+those resources and every existing view, then rebinds the original targets once
+to make callback ordering irrelevant. Subsequent shader-resource views inherit
+native routing. A per-device cache avoids repeating descriptor/map work on each
+geometry binding and is invalidated when its views are destroyed. Partially
+recreated attachments may mix already-native and newly matched resources.
+Scene/LUT/AA/output resources retain the signed FP16 upgrade; without recognized
+BlitzFX the standalone behavior is unchanged. There is no new shader, dispatch,
+texture copy, per-frame allocation or PBR math rewrite.
+
+A decompiled full-PBR baseline was evaluated offline and **rejected**: its
+output differs substantially from native DXBC. The unverified decompilation is
+not shipped or live-loaded. Do not use it as a starting equivalent shader without
+repairing its register/bit semantics and repeating native-bytecode comparisons.
+
+The isolated Release build and normal Release object/link both succeed. The
+normal game-folder symlink now points to the linked revision (SHA256
+`812564DAC6E69E4F2BAFCF008E535842210F5641CDE79CEC89F40B462F730001`).
+No temporary PBR shader or material-resource override was activated.
+
+Evidence: `tmp/witcher3classic-investigation/pbr-post-20261026/` contains the
+snapshot, exact-input captures, resource EXRs, original bytecode, native-PBR
+replay runner and WARP/NVIDIA logs. Remaining acceptance: relaunch at this
+post with PBR on, verify material SRVs
+are native UNORM and filmic/final-grade buffers remain FP16, compare stationary
+and camera-moving sequences, then verify PBR off and standalone behavior.
+
+## Live scene follow-up: water, overcast HDR and contact-shadow history — 2026-10-25
+
+The user confirmed the patched ReShade restores the world after the black-screen
+failure. Repeated save-load stress acceptance has not yet been recorded.
+
+**Water seam (visually accepted in DLAA and Quality).** In `2825099C`, native
+DXBC sets the integer lookup row to **1** before loading water-map metadata from
+t17. The decompiler printed integer bits `1` as the subnormal float
+`1.40129846e-045`; converting that float to a `Load` coordinate selected row 0.
+An exact original-bytecode live override removed the line. Replacing the bad
+literal with numeric `1` in our shader also removed it in DLAA and DLSS Quality,
+as confirmed by the user. Keep the existing render-subrect sampling changes.
+Do not interpret this as evidence that all SSR history problems were solved.
+
+**Overcast HDR shoulder (live correction active; visual acceptance pending).**
+A fresh scan deduplicated 1,065 DXBC programs from the current dump and archived
+originals. All six identified LUT families and the identified filmic/final-grade
+families were registered. That did **not** establish correct HDR: actual
+draw-time captures revealed a mathematical failure in `tonemap/native_curve.hlsli`.
+Captured Hable coefficients were `(A,B,C,D,E,F) =
+(0.985058069, 1.039568782, 1.038619518, 3.043009281, 0.025000904, 1.045922637)`.
+Their second derivative has positive roots near **0.447629** and **233.232719**.
+The old Cardano implementation always selected the largest root, whose slope
+is negative (`-2.48624e-7`); ordinary highlights therefore retained the bounded
+native shoulder. The rising inflection has slope **0.411774**.
+
+The corrected solver considers all real nonnegative roots, selects maximum
+positive slope, and refines roots against the original polynomial to reduce
+float cancellation. It also solves the quadratic/linear case when C=1 removes
+the cubic term. The native toe/exposure, weather blend and normalization remain
+in place; PsychoV still owns display rolloff. Every filmic variant sharing this
+helper receives the fix. This does not remove hair/material coverage clamps.
+The independent GPU regression bisects the rising inflection in double precision
+and compares dark-to-HDR ramps against the native curve/tangent for both the
+captured coefficients and C=1. The final-grade input after the live correction
+retains HDR highlights (maximum luminance 20.236 in the follow-up capture versus
+1.02893 in the preceding capture). These are intermediate linear values, **not
+display nits**; captures are sequential and do not establish a pixel-identical
+scene comparison. User visual confirmation and packaged restart remain required.
+
+**Mild distant contact-shadow flicker (packaged fix awaiting live acceptance).**
+The user reports flicker in both DLAA and Quality, stopping when DLSS is disabled.
+32-frame contact-ray and 16-frame history captures show our geometry jitter
+changing while BlitzFX's current/previous WVP history stays unjittered. Its
+native two-phase jitter fields also do not represent our Halton phases.
+`4708B025` now offsets history UV by `(currentJitter - previousJitter) /
+renderDimensions`; the sign follows native raster displacement `-jitter`.
+Previous jitter advances only after a successful resolve/restoration and is
+invalidated on disable, render-plan changes or a missed resolve. Two formerly
+reserved injection floats carry this delta. Compute b13 is saved/restored so
+native lighting/constants survive the injection. This replacement also runs
+in recognized BlitzFX DLAA, while disabling DLSS restores the native pass.
+The CPU fixture checks phase/reset behavior; GPU tests compare 15 physical-pool/
+jitter combinations with independent native-DXBC matrix reprojection, including
+poisoned unused allocation regions. No extra dispatch, readback or texture copy
+is introduced by this correction. Live flicker reduction is not yet verified.
+
+Local evidence and runners: `tmp/witcher3classic-investigation/water-hdr-20261025/`
+contains `hdr-recheck-*-inputs.json`, `hdr-before-shoulder*`,
+`hdr-after-shoulder*`, `contact-shadow-frames-*.json`,
+`shadow-history-frames-*.json`, `native-aa-shadow-history.json`,
+`hdr-audit/scan-report.json`, and Release/WARP/NVIDIA logs.
+These ignored files are investigation evidence, not redistributable fixtures.
+Release compilation, the CPU fixture, and the full effects suite on WARP and
+NVIDIA all pass. Temporary live overrides currently contain the fixed water
+and all four corrected filmic variants. After linking the packaged addon while the game is closed, remove those
+overrides and restore the prior DevKit live directory before independent restart
+acceptance. Do not leave a live override masking an old installed shader.
+
+## Hook discovery correction: zero configuration despite valid color — 2026-10-25
+
+The first resize-only addon revision was rebuilt by the user and did **not**
+fix the black screen. PID 36224's log confirms that it repaired the size to
+3840x2160. Exact filmic t0 capture now contains the rendered scene (maximum
+luminance 86.3238), and its exposure texture is finite (1.77499). However,
+BlitzFX's CPU-side constant object and its actual GPU b1 both have zero
+white-balance/color multiplier `cb1[41].xyz`, zero exposure `cb1[42].z`, and
+zero contrast `cb1[44].x`. These zeros explain why filmic output remains black.
+Do not paper over them with a guessed exposure multiplier in HLSL.
+
+Ghidra traces the complete failure chain:
+
+1. `InitializeDxgiHooks` at RVA `0x5E30` uses **GetForegroundWindow** as the
+   temporary swapchain's HWND. This can be another application's inaccessible
+   window during launch, producing `0x80070005` in the captured run.
+2. Failure selects `GetModuleHandleA("dxgi.dll")` plus hardcoded offsets
+   `0x3CBC0`/`0x3CC58`. In this installation that module is the local ReShade
+   loader. These are not valid dynamically discovered DXGI method addresses.
+3. BlitzFX's real Present callback (`0x75B0`) never initializes ImGui or calls
+   its normal frame update (`0x56030`). The latter loads/applies configuration,
+   maintains previous-frame state, and resets per-frame trackers. Consequently
+   settings constants remain zero as well as the initial size being 1x1.
+
+The durable ReShade patch now supplies an **owned hidden window** only for
+the audited BlitzFX 1.1.0 discovery call. It checks module PE timestamp,
+AMD64/image size, and an actual stack frame inside `InitializeDxgiHooks` before
+substituting the temporary descriptor's HWND. The hidden `STATIC` window is
+never shown and is destroyed after swapchain creation; this particular chain
+is used only for vtable discovery. Normal game and other application calls use
+their original HWND. Successful discovery lets BlitzFX install its own Present
+and resize hooks normally, including configuration/history/UI behavior.
+The addon size synchronizer remains a defensive check, not a substitute for
+that complete hook initialization.
+
+Build: isolated ReShade Release x64 succeeds. Native D3D11 fixture reproduces
+failure with an unavailable foreground HWND and succeeds with the owned hidden
+window; its swapchain remains usable for descriptor/vtable inspection after
+the window is destroyed. New loader SHA256:
+`B8D2DB9B178D592E97B83054FEB95FE9E40CB0F7BDDC613067EA09C610A38E6F`.
+The loader was installed after the user closed Classic; the original
+`B4694CBE...` build is backed up as `black-save-20261025/dxgi-before-discovery-fix.dll`.
+**Rebuilding only the game addon cannot install this loader fix.** Back up/replace
+the game folder's `dxgi.dll` with the patched ReShade build while Classic is
+closed; preserve its INI.
+
+Acceptance: log must say `Using an owned hidden window for BlitzFX DXGI hook
+discovery`, BlitzFX must select `Hooking swapchain via vtable`, and its Present
+callback must log `Initializing ImGui`. Capture nonzero native configuration
+controls and visible HDR scene color. Verify F8, DLSS off/DLAA/upscaling and
+several save loads before marking this fixed. Current paths use the user's
+Steam installation at `E:/SteamLibrary/steamapps/common/The Witcher 3/bin/x64`.
+
+PID **31148** now confirms all three hook logs, config load/save and a real
+3840x2160 resize. The exact GPU b1 filmic controls are restored to configured
+values: RGB multiplier `(1,1,1)`, exposure `1`, contrast `1`. Final-grade input
+is finite and nonblack across all 8,294,400 pixels (mean luminance `0.184594`,
+maximum `0.753710` in this scene), replacing the former uniform near-zero image.
+DLSS Quality is active at 2560x1440 -> 3840x2160. This proves hook/configuration
+and scene-color recovery; the user confirmed the world is visible again.
+Repeated save-load stress checks remain pending. Evidence is `fixed-filmic-inputs.json`, `fixed-grade-inputs.json`,
+`fixed-grade-analysis.json`, `blitz-fixed.log` and `reshade-fixed.log` in the
+same local evidence folder.
+
+## Black scene after loading: missed BlitzFX resize — 2026-10-25
+
+The user left the failed scene running in PID 16056. DevKit captured 2,041
+draws: world geometry and depth, bloom, filmic, native AA/DLSS boundary,
+final grade `445EB59C`, then HUD. The world did not return when the user
+disabled DLSS. Exact draw-time copies showed black scene color already at
+the input of `201C53B4`; final-grade input was uniformly 1.1920929e-7.
+This is upstream of reconstruction, rather than an NGX failure or a missing
+HDR permutation.
+
+BlitzFX's private state was inconsistent with the real 3840x2160 swapchain:
+both its stored window size and renderer size were **1x1**. Its bloom dispatch
+bound a 1x1 source/UAV and zero size constants with nonfinite reciprocals;
+the filmic pass also bound a 1x1 color source. The startup log reported
+`InitializeDxgiHooks`' temporary swapchain creation failing with Access denied,
+followed by `Hooking swapchain via offset`. ReShade subsequently logged the
+real 3840x2160 resize, while BlitzFX logged no corresponding resize. This
+supports a missed DXGI notification in that fallback path; do not describe it
+as proven save-file corruption or an NVIDIA history problem.
+
+Ghidra verified BlitzFX 1.1.0's resize entry point, RVA **0x54270**. Its caller
+is the native `ResizeBuffers` hook. It updates the singleton's window size at
+`+4`, renderer size at `+0xCA4`, private renderer implementations and full/half
+resolution temporal surfaces together. Patching only the two size integers
+would leave resources inconsistent and is deliberately avoided.
+
+`blitzfx/compatibility.hpp` now verifies this function's 32-byte prologue in
+addition to the existing PE/AA code guards. At presentation, only the real
+`W2ViewportClass` window supplies the actual backbuffer dimensions. Once the
+BlitzFX singleton is initialized (`+2`), `SynchronizeResolution` calls its
+native resize routine if either stored size disagrees. This runs independently
+of DLSS enablement. Discovery/minimized 1x1 dimensions and unsupported sizes
+are rejected. A healthy frame performs CPU size comparisons only; there is
+no GPU readback, pixel analysis or buffer allocation. A repair invalidates
+reconstruction history once and rearms native-size validation before upscaling
+resumes, because BlitzFX's private temporal surfaces have been recreated.
+No change is made to standalone Classic or an unrecognized BlitzFX binary.
+
+Validation: the CPU fixture covers absent/uninitialized BlitzFX, 1x1 bootstrap
+repair, actual output resize, renderer-only disagreement, invalid sizes and
+zero repeated resize calls for healthy frames. The normal Release object target
+compiles. Live recovery and repeated save-load acceptance require the rebuilt
+addon; this section is not a claim of completed in-game validation.
+
+Local evidence: `tmp/witcher3classic-investigation/black-save-20261025/` contains
+the draw sequence, preserved grading/TAA/filmic/bloom inputs and resource
+analyses. Ghidra's audited resize body is in
+`blitzfx-20261023/blitz-load-state.txt`. Keep these private captures outside git.
+After deployment, verify the repair log, non-1x1 effect inputs and visible world,
+then repeat several save loads with DLSS off, DLAA and an upscaling mode.
+
 ## Cutscene grade family and dump audit — 2026-10-24
 
 PID 36924's cutscene uses **`A123EB15`** after `201C53B4` reconstruction, instead

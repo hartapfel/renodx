@@ -63,7 +63,6 @@ cbuffer cb1 : register(b1)
 #define cmp -
 
 
-#define WITCHER_MOTION_FRAME cb12
 #include "./object_pixel.hlsli"
 
 void main(
@@ -692,7 +691,9 @@ void main(
   r1.y = 10.5 * r1.y;
   r0.w = max(r1.y, r0.w);
   r1.y = cmp(r5.w < 0);
-  r1.z = r1.y ? 0.000000 : 0;
+  // Native integer bit 1 selects the other environment-probe hemisphere.
+  // The decompiler rounded its float bit pattern to zero before the int-to-float conversion.
+  r1.z = r1.y ? 1.f : 0.f;
   r7.xyzw = float4(0.5,-0.5,-0.5,0.5) * r5.yzyz;
   r2.w = -r1.w * r0.x + 1;
   r2.w = max(0.00100000005, r2.w);
@@ -759,7 +760,7 @@ void main(
     r1.w = rsqrt(r1.w);
     r14.xyw = r14.xyz * r1.www;
     r2.w = cmp(r14.w < 0);
-    r3.w = r2.w ? 0.000000 : 0;
+    r3.w = r2.w ? 1.f : 0.f;
     r15.xyzw = float4(0.5,-0.5,-0.5,0.5) * r14.xyxy;
     r4.w = -r14.z * r1.w + 1;
     r4.w = max(0.00100000005, r4.w);
@@ -837,7 +838,7 @@ void main(
       r2.w = rsqrt(r2.w);
       r15.xyw = r15.xyz * r2.www;
       r3.w = cmp(r15.w < 0);
-      r4.w = r3.w ? 0.000000 : 0;
+      r4.w = r3.w ? 1.f : 0.f;
       r16.xyzw = float4(0.5,-0.5,-0.5,0.5) * r15.xyxy;
       r6.w = -r15.z * r2.w + 1;
       r6.w = max(0.00100000005, r6.w);
@@ -915,7 +916,7 @@ void main(
       r2.w = rsqrt(r2.w);
       r15.xyw = r15.xyz * r2.www;
       r3.w = cmp(r15.w < 0);
-      r4.w = r3.w ? 0.000000 : 0;
+      r4.w = r3.w ? 1.f : 0.f;
       r16.xyzw = float4(0.5,-0.5,-0.5,0.5) * r15.xyxy;
       r6.w = -r15.z * r2.w + 1;
       r6.w = max(0.00100000005, r6.w);
@@ -993,7 +994,7 @@ void main(
       r2.w = rsqrt(r2.w);
       r15.xyw = r15.xyz * r2.www;
       r3.w = cmp(r15.w < 0);
-      r4.w = r3.w ? 0.000000 : 0;
+      r4.w = r3.w ? 1.f : 0.f;
       r16.xyzw = float4(0.5,-0.5,-0.5,0.5) * r15.xyxy;
       r6.w = -r15.z * r2.w + 1;
       r6.w = max(0.00100000005, r6.w);
@@ -1071,7 +1072,7 @@ void main(
       r2.w = rsqrt(r2.w);
       r15.xyw = r15.xyz * r2.www;
       r3.w = cmp(r15.w < 0);
-      r4.w = r3.w ? 0.000000 : 0;
+      r4.w = r3.w ? 1.f : 0.f;
       r16.xyzw = float4(0.5,-0.5,-0.5,0.5) * r15.xyxy;
       r6.w = -r15.z * r2.w + 1;
       r6.w = max(0.00100000005, r6.w);
@@ -1149,7 +1150,7 @@ void main(
       r1.z = rsqrt(r1.z);
       r15.xyw = r15.xyz * r1.zzz;
       r1.w = cmp(r15.w < 0);
-      r2.w = r1.w ? 0.000000 : 0;
+      r2.w = r1.w ? 1.f : 0.f;
       r16.xyzw = float4(0.5,-0.5,-0.5,0.5) * r15.xyxy;
       r3.w = -r15.z * r1.z + 1;
       r3.w = max(0.00100000005, r3.w);
@@ -1182,7 +1183,7 @@ void main(
     r7.xyz = t22.SampleLevel(s11_s, r7.xy, 1).xyz;
     r13.xyz = r0.xxx * r7.xyz + r13.xyz;
     r1.z = cmp(r10.z < 0);
-    r1.w = r1.z ? 0.000000 : 0;
+    r1.w = r1.z ? 1.f : 0.f;
     r7.xyzw = float4(0.5,-0.5,-0.5,0.5) * r10.xyxy;
     r2.w = 1 + -r10.z;
     r2.w = max(0.00100000005, r2.w);

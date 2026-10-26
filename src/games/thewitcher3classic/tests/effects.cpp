@@ -174,6 +174,106 @@ int main(int argc, char** argv) {
         std::memcpy(values.data(), bytes.data(), bytes.size());
         return values;
       };
+
+      {
+        const char* rain_vertex = R"(
+struct V { float4 a:TEXCOORD0; float4 b:TEXCOORD1;
+  float4 c:TEXCOORD2; float4 d:TEXCOORD3; float4 e:TEXCOORD4;
+#ifdef EXTRA_VARYING
+  float3 f:TEXCOORD5;
+#endif
+  float4 p:SV_Position; };
+V main(uint id:SV_VertexID) {
+  V v;float2 uv=float2((id<<1)&2,id&2);v.p=float4(uv*float2(2,-2)+float2(-1,1),0,1);
+  v.a=1;v.b=float4(0,uv,1);v.c=float4(1,1,1,0);v.d=float4(0,0,0,1);
+  v.e=float4(0,0,1,1);
+#ifdef EXTRA_VARYING
+  v.f=float3(0,0,1);
+#endif
+  return v;
+})";
+        ctx->PSSetSamplers(8, 1, sampler.GetAddressOf());
+        ctx->PSSetSamplers(15, 1, sampler.GetAddressOf());
+        texture(0, 1, 1, {.7f, .65f, .9f, .7f});
+        texture(2, 1, 1, {1,1,1,1});
+        texture(15, W, H, std::vector<float>(W*H*4, .01f));
+        texture(24, W/2, H/2, std::vector<float>(W*H, .5f));
+        auto rain_global = fixture("rain-b0.bin");
+        auto rain_frame = fixture("rain-b12.bin");
+        auto rain_material = fixture("rain-b4.bin");
+        rain_material[36] = 0; // Disable fog opacity rather than hiding the test particles.
+        buffer(2, fixture("rain-b2.bin"));buffer(4, rain_material);buffer(13, fixture("rain-b13.bin"));
+        rain_frame[84] = 1;rain_frame[85] = 0;rain_frame[88] = 1;rain_frame[89] = 0;
+        // Skip optional fog while verifying scene-color addressing independently.
+        rain_frame[271] = -1;
+        const float clear_rain[] = {-.25f,-.25f,-.25f,-.25f};
+        const auto draw_rain = [&](const void* data, size_t bytes) {
+          ctx->ClearRenderTargetView(rt.Get(), clear_rain);
+          return render(data, bytes);
+        };
+        for (const char* hash : {"1F3A90A1", "1C74D220"}) {
+          // Match each native signature's register order, including SV_Position.
+          const D3D_SHADER_MACRO extra[]={{"EXTRA_VARYING","1"},{nullptr,nullptr}};
+          ComPtr<ID3DBlob> rain_vertex_code;
+          Check(D3DCompile(rain_vertex, strlen(rain_vertex), nullptr,
+              std::string(hash)=="1F3A90A1" ? extra : nullptr, nullptr,
+              "main", "vs_5_0", 0, 0, &rain_vertex_code, nullptr));
+          ComPtr<ID3D11VertexShader> rain_vs;
+          Check(dev->CreateVertexShader(rain_vertex_code->GetBufferPointer(), rain_vertex_code->GetBufferSize(), nullptr, &rain_vs));
+          ctx->VSSetShader(rain_vs.Get(), nullptr, 0);
+          const auto native_rain = Read(blitz / (std::string("scene-shaders/0x")+hash+".cso"));
+          const auto rain_code = Compiled(std::string("0x")+hash+".ps_5_0.hlsl");
+          if (std::string(hash)=="1C74D220") {
+            // This atlas/mask permutation has a distinct material layout.
+            rain_material[8]=rain_material[9]=1;
+            rain_material[12]=rain_material[13]=0;
+            rain_material[16]=rain_material[17]=rain_material[18]=2;
+            rain_material[20]=1;rain_material[36]=1;rain_material[40]=0;
+            rain_material[48]=1;buffer(4,rain_material);
+          }
+          for (const auto size : {std::array<UINT,2>{64,64},{44,36},{32,28},{20,20},{45,37}}) {
+            const UINT half_width=size[0]/2,half_height=size[1]/2;
+            rain_frame[92]=float(size[0]);rain_frame[93]=float(size[1]);
+            rain_frame[94]=1.f/size[0];rain_frame[95]=1.f/size[1];
+            buffer(3,rain_frame);buffer(12,rain_frame);
+            rain_global[4]=float(size[0]);rain_global[5]=float(size[1]);
+            rain_global[6]=1.f/size[0];rain_global[7]=1.f/size[1];buffer(0,rain_global);
+            const D3D11_VIEWPORT rain_viewport={0,0,float(size[0]),float(size[1]),0,1};ctx->RSSetViewports(1,&rain_viewport);
+            const auto rain_color = [&](UINT width,UINT height) {
+              std::vector<float> pixels(width*height*4,1000.f);
+              for(UINT y=0;y<half_height;++y)for(UINT x=0;x<half_width;++x) {
+                const size_t i=(y*width+x)*4;
+                pixels[i]=.1f+.2f*x+.03f*y;pixels[i+1]=.2f+.07f*x+.04f*y;
+                pixels[i+2]=.3f+.02f*x+.06f*y;pixels[i+3]=1;
+              }
+              texture(50,width,height,pixels);
+            };
+            rain_color(half_width,half_height);
+            const auto expected=draw_rain(native_rain.data(),native_rain.size());
+            rain_color(W/2,H/2);
+            const auto wrong=draw_rain(native_rain.data(),native_rain.size());
+            const auto actual=draw_rain(rain_code->GetBufferPointer(),rain_code->GetBufferSize());
+            float error=0,wrong_error=0,brightest=0;size_t covered=0;
+            for(UINT y=0;y<size[1];++y)for(UINT x=0;x<size[0];++x)for(UINT c=0;c<4;++c) {
+              const size_t i=(y*W+x)*4+c;
+              if(!std::isfinite(actual[i])||!std::isfinite(expected[i]))throw std::runtime_error("Nonfinite refractive rain");
+              error=std::max(error,std::abs(actual[i]-expected[i]));wrong_error=std::max(wrong_error,std::abs(wrong[i]-expected[i]));
+              if(c==3&&expected[i]>0)++covered;if(c<3)brightest=std::max(brightest,actual[i]);
+            }
+            // Different physical sizes can round bilinear addresses to adjacent
+            // 1/256-texel cells. The largest gradient is .23 per texel, so a
+            // one-cell difference is bounded by .23/256 < .001 in this fixture.
+            if(error>.001f||!covered||brightest<=1|| (size[0]<W&&wrong_error<1))
+              throw std::runtime_error(std::string("Refractive rain pool/native mismatch ")+hash+" error="+std::to_string(error)
+                  +" covered="+std::to_string(covered)+" peak="+std::to_string(brightest)+" wrong="+std::to_string(wrong_error));
+          }
+        }
+        ctx->VSSetShader(vs.Get(),nullptr,0);ctx->RSSetViewports(1,&vp);
+        injection=saved_injection;inject();texture(0,W,H,scene);
+        std::cout<<"PASS refractive rain: both native permutations, five physical sizes, poisoned borders, alpha coverage and HDR color\n";
+      }
+
+      if (std::find(argv + 2, argv + argc, std::string("--rain-only")) != argv + argc) return 0;
       auto constants = fixture("grade-b3.bin");
       auto custom = fixture("grade-b1.bin");
       auto frame = fixture("grade-b0.bin");
@@ -282,6 +382,47 @@ int main(int argc, char** argv) {
       const auto extended = run(curve.Get());
       if (*std::max_element(extended.begin(), extended.end()) <= 1.01f) throw std::runtime_error("BlitzFX curve still bounded to SDR");
       if (Difference(extended, extended) != 0) throw std::runtime_error("BlitzFX nonfinite highlight");
+      // Captured overcast curve: C > 1 has a second positive inflection at
+      // x=233 with NEGATIVE slope. Selecting that root retains the SDR shoulder.
+      // Solve the first rising inflection independently in double precision.
+      for (float coefficient_c : {1.0386195182800293f, 1.f}) {
+        constants[28] = .985058069229126f; constants[29] = 1.0395687818527222f;
+        constants[30] = coefficient_c; constants[32] = 3.0430092811584473f;
+        constants[33] = .025000903755426407f; constants[34] = 1.0459226369857788f;
+        constants[17] = constants[18] = .18f;
+        constants[64] = constants[65] = constants[66] = 1.f;
+        custom[164] = custom[165] = custom[166] = custom[167] = 1.f;
+        custom[168] = custom[170] = custom[176] = 1.f;
+        custom[169] = custom[177] = 0.f;
+        buffer(1, custom); buffer(3, constants);
+        const double a = constants[28], b = constants[29], c = constants[30];
+        const double d = constants[32], e = constants[33], f = constants[34];
+        const double a3 = a*a*b*(c-1), a2 = 3*a*a*d*(e-f);
+        const double a1 = 3*a*b*d*(e-c*f), a0 = a*d*d*(f*f-e*f)+b*b*d*(e-c*f);
+        double low = 0, high = 1;
+        for (int iteration = 0; iteration < 50; ++iteration) {
+          const double x = (low + high) * .5;
+          if (((a3*x+a2)*x+a1)*x+a0 > 0) low = x; else high = x;
+        }
+        const double pivot = (low + high) * .5;
+        const auto native_value = [&](double x) {
+          return (x*(a*x+c*b)+d*e)/(x*(a*x+b)+d*f)-e/f;
+        };
+        const double denominator = pivot*(a*pivot+b)+d*f;
+        const double slope = (-a*b*(c-1)*pivot*pivot+2*a*d*(f-e)*pivot+b*d*(c*f-e))
+            / (denominator*denominator);
+        for (float exposed : {.1f, .4f, 1.f, 5.f, 20.f}) {
+          auto neutral = scene;
+          for (size_t i = 0; i < neutral.size(); ++i) neutral[i] = i % 4 == 3 ? 1.f : exposed * .18f;
+          texture(0, W, H, neutral);
+          const auto actual = run(curve.Get());
+          const float expected = static_cast<float>((exposed < pivot ? native_value(exposed)
+              : native_value(pivot)+slope*(exposed-pivot))/native_value(11.2));
+          for (size_t i = 0; i < actual.size(); ++i) if (i % 4 != 3 && std::abs(actual[i]-expected) > .0001f)
+            throw std::runtime_error("Captured overcast shoulder inflection mismatch");
+        }
+      }
+      std::cout << "PASS captured overcast and quadratic filmic shoulder: rising inflection and HDR ramp\n";
       injection = saved_injection; inject(); texture(0, W, H, scene);
       std::cout << "PASS BlitzFX curve native equivalence, 48 HDR exposure/toe cases, finite output and highlight extension\n";
 
@@ -599,25 +740,39 @@ float4 main(float4 pos : SV_Position) : SV_Target {
             texture(slot, pool_size, pool_size, pixels);
           }
         };
-        shadow_inputs(active_size);
-        const auto expected = compute_render(shadow_native.data(), shadow_native.size(), active_size);
-        shadow_inputs(W);
-        const auto actual = compute_render(shadow_code->GetBufferPointer(), shadow_code->GetBufferSize(), active_size);
-        const auto uncorrected = compute_render(shadow_native.data(), shadow_native.size(), active_size);
-        float error = 0, old_error = 0;
-        // Gather intentionally moves the outermost footprint inward to avoid
-        // touching a stale neighbor. Compare interior samples against native.
-        for (UINT y = 1; y + 1 < active_size; ++y) for (UINT x = 1; x + 1 < active_size; ++x) {
-          const size_t i = (y * active_size + x) * 4;
-          if (!std::isfinite(actual[i])) throw std::runtime_error("Nonfinite shadow history");
-          error = std::max(error, std::abs(expected[i] - actual[i]));
-          old_error = std::max(old_error, std::abs(expected[i] - uncorrected[i]));
+        for (const std::array<float, 2> jitter_pixels : {std::array<float, 2>{0, 0}, {.375f, -.25f}, {-.5f, .5f}}) {
+          // Independent native reference: encode the same raster displacement
+          // in its previous WVP, rather than modifying native shader bytecode.
+          shadow_matrices[115] = 2.f * jitter_pixels[0] / active_size;
+          shadow_matrices[119] = -2.f * jitter_pixels[1] / active_size;
+          buffer(1, shadow_matrices);
+          shadow_inputs(active_size);
+          const auto expected = compute_render(shadow_native.data(), shadow_native.size(), active_size);
+          shadow_matrices[115] = shadow_matrices[119] = 0;
+          buffer(1, shadow_matrices);
+          shadow_inputs(W);
+          injection.blitz_shadow_jitter_delta_x = jitter_pixels[0] / active_size;
+          injection.blitz_shadow_jitter_delta_y = jitter_pixels[1] / active_size;
+          inject();
+          const auto actual = compute_render(shadow_code->GetBufferPointer(), shadow_code->GetBufferSize(), active_size);
+          const auto uncorrected = compute_render(shadow_native.data(), shadow_native.size(), active_size);
+          float error = 0, old_error = 0;
+          // Gather intentionally moves the outermost footprint inward to avoid
+          // touching a stale neighbor. Compare interior samples against native.
+          for (UINT y = 1; y + 1 < active_size; ++y) for (UINT x = 1; x + 1 < active_size; ++x) {
+            const size_t i = (y * active_size + x) * 4;
+            if (!std::isfinite(actual[i])) throw std::runtime_error("Nonfinite shadow history");
+            error = std::max(error, std::abs(expected[i] - actual[i]));
+            old_error = std::max(old_error, std::abs(expected[i] - uncorrected[i]));
+          }
+          if (error > .0002f) throw std::runtime_error("Shadow history jitter/subrect mismatch: " + std::to_string(error));
+          if (active_size < W && old_error < .05f)
+            throw std::runtime_error("Shadow fixture did not reproduce the uncorrected history mismatch");
         }
-        if (error > .0002f) throw std::runtime_error("Shadow history subrect mismatch: " + std::to_string(error));
-        if (active_size < W && old_error < .05f)
-          throw std::runtime_error("Shadow fixture did not reproduce the uncorrected history mismatch");
       }
-      std::cout << "PASS shadow history original/full size and four physical render pools with poisoned history/depth\n";
+      injection.blitz_shadow_jitter_delta_x = injection.blitz_shadow_jitter_delta_y = 0;
+      inject();
+      std::cout << "PASS shadow history native jitter reprojection, full size and four physical render pools with poisoned history/depth\n";
       const auto contact_native = Read(blitz / "scene-shaders/0x58959EAD.cso");
       const auto contact_code = Compiled("0x58959EAD.cs_5_0.hlsl");
       D3D11_SAMPLER_DESC point_desc = sd;

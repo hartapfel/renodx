@@ -1,5 +1,5 @@
 diff --git a/source/d3d11/d3d11.cpp b/source/d3d11/d3d11.cpp
-index 22d6183..4016cf0 100644
+index 22d6183..e1400ad 100644
 --- a/source/d3d11/d3d11.cpp
 +++ b/source/d3d11/d3d11.cpp
 @@ -10,6 +10,7 @@
@@ -38,6 +38,58 @@ index 22d6183..4016cf0 100644
  	// Query for the DXGI device and immediate device context since we need to reference them in the proxy device
  	com_ptr<IDXGIDevice1> dxgi_device;
  	hr = device->QueryInterface(&dxgi_device);
+@@ -178,7 +193,51 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter *pAdapter,
+ 
+ 		reshade::log::message(reshade::log::level::info, "Calling IDXGIFactory::CreateSwapChain:");
+ 
++		DXGI_SWAP_CHAIN_DESC discovery_desc;
++		HWND discovery_window = nullptr;
++		// BlitzFX 1.1.0 borrows GetForegroundWindow for DXGI hook discovery.
++		// A foreign/inaccessible foreground window can reject the swapchain.
++		// Its fallback then hooks hardcoded offsets in this ReShade DLL instead
++		// of DXGI, disconnecting Present (settings/history) and ResizeBuffers.
++		// Give only that audited discovery call an owned, hidden window.
++		void *frames[16];
++		const USHORT frame_count = CaptureStackBackTrace(0, ARRAYSIZE(frames), frames, nullptr);
++		for (const auto name : { L"blitz-fx.asi", L"d3d11.dll" })
++		{
++			const auto image = reinterpret_cast<const uint8_t *>(GetModuleHandleW(name));
++			if (image == nullptr)
++				continue;
++			const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER *>(image);
++			if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 0 || dos->e_lfanew > 4096)
++				continue;
++			const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS64 *>(image + dos->e_lfanew);
++			if (nt->Signature != IMAGE_NT_SIGNATURE || nt->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
++				nt->FileHeader.TimeDateStamp != 0x67410424 || nt->OptionalHeader.SizeOfImage != 0x9e000)
++				continue;
++			for (USHORT index = 0; index < frame_count; ++index)
++			{
++				const auto address = reinterpret_cast<uintptr_t>(frames[index]);
++				if (address < reinterpret_cast<uintptr_t>(image) + 0x5e30 || address >= reinterpret_cast<uintptr_t>(image) + 0x7070)
++					continue;
++				discovery_window = CreateWindowExW(0, L"STATIC", L"BlitzFX DXGI hook discovery", WS_OVERLAPPED,
++					0, 0, pSwapChainDesc->BufferDesc.Width, pSwapChainDesc->BufferDesc.Height,
++					nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
++				if (discovery_window != nullptr)
++				{
++					discovery_desc = *pSwapChainDesc;
++					discovery_desc.OutputWindow = discovery_window;
++					pSwapChainDesc = &discovery_desc;
++					reshade::log::message(reshade::log::level::info, "Using an owned hidden window for BlitzFX DXGI hook discovery.");
++				}
++				break;
++			}
++			break;
++		}
++
+ 		hr = factory->CreateSwapChain(device, const_cast<DXGI_SWAP_CHAIN_DESC *>(pSwapChainDesc), ppSwapChain);
++		// This swapchain is used only to read its vtable, never to present.
++		if (discovery_window != nullptr)
++			DestroyWindow(discovery_window);
+ 	}
+ 
+ #if RESHADE_ADDON >= 2
 diff --git a/source/dxgi/dxgi_swapchain.cpp b/source/dxgi/dxgi_swapchain.cpp
 index ce7d6ac..6d55c71 100644
 --- a/source/dxgi/dxgi_swapchain.cpp

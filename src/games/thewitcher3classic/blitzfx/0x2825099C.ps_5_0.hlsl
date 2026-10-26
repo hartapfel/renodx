@@ -208,7 +208,9 @@ void main(
     r7.yzw = float3(0,0,0);
     r7.xyzw = t17.Load(r7.xyz).xyzw;
     r8.x = (int)r6.z;
-    r8.yzw = float3(1.40129846e-045,0,0);
+    // Native ld addresses row 1. The decompiler printed integer bits 1 as a
+    // subnormal float; converting that float to a Load coordinate selects 0.
+    r8.yzw = float3(1,0,0);
     r8.xyzw = t17.Load(r8.xyz).xyzw;
     t4.GetDimensions(0, fDest.x, fDest.y, fDest.z, fDest.w);
     r5.zw = fDest.xy;

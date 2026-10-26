@@ -4,7 +4,31 @@ Start with the [DLSS integration playbook](../../../../docs/DLSS_INTEGRATION_PLA
 These fixtures exercise game-local CPU logic and actual D3D11 shaders. They do
 not certify every game scene or replace live capture/visual acceptance.
 
+The CPU `upscale_engine.cpp` fixture also covers BlitzFX's missed-resize
+recovery: absent/uninitialized module, 1x1 bootstrap, output resize,
+renderer-only mismatch, invalid dimensions, and no repeated native resize for
+an unchanged output. The repair uses the real primary output size independently
+of DLSS. Live verification must include repeated save loads with DLSS off,
+DLAA and upscaling; the CPU mock cannot certify BlitzFX's private GPU resources.
+
 ## Prerequisites and build
+
+`object_motion` now uses distinct native VS/PS frame buffers. It checks that
+motion draws preserve PS b12, bind the same current VS-frame bytes through PS
+b11, and restore an existing b11 binding afterward. Original-bytecode reflection
+checks that every non-foliage native PS leaves this slot unused. Keep these
+stage-frame values independent; sharing one fixture buffer previously concealed
+lighting-state replacement even when motion/material comparisons passed.
+
+The BlitzFX `effects --blitzfx` suite additionally checks the captured overcast
+filmic coefficients whose cubic has two positive inflections. An independent
+double-precision bisection reference verifies the rising tangent and native toe
+over a dark-to-HDR ramp; C=1 exercises the quadratic case. Shadow-history tests
+compare five physical render pools with three jitter deltas against original
+DXBC using independently shifted previous matrices. The CPU upscale fixture
+checks first-frame zero jitter delta, subsequent phase differences, and reset
+after disable/missing resolve. Run these on WARP and NVIDIA after regenerating
+the exact Release embeds; shader registration alone does not prove unclamping.
 
 Run from repository root in an **x64 Visual Studio developer command prompt**
 with the installed `clang-cl` and Windows SDK on PATH. The examples below use
@@ -49,9 +73,49 @@ clang-cl /std:c++20 /EHsc /O2 /DNOMINMAX /Iexternal/Detours/include /Ibuild/thew
 clang-cl /std:c++20 /EHsc /O2 /DNOMINMAX /Iexternal/Detours/include /Ibuild/thewitcher3classic.include src/games/thewitcher3classic/tests/foliage_motion.cpp /Fe:tmp/classic-tests/foliage-motion.exe /Fo:tmp/classic-tests/foliage-motion.obj /link d3d11.lib dxgi.lib user32.lib
 clang-cl /std:c++20 /EHsc /O2 /MT /DNOMINMAX /Iexternal/DLSS/include src/games/thewitcher3classic/tests/dlss.cpp /Fe:tmp/classic-tests/dlss.exe /Fo:tmp/classic-tests/dlss.obj /link external\DLSS\lib\Windows_x86_64\x64\nvsdk_ngx_s.lib d3d11.lib dxgi.lib user32.lib advapi32.lib shell32.lib ole32.lib
 clang-cl /std:c++20 /EHsc /O2 src/games/thewitcher3classic/tests/effects.cpp /Fe:tmp/classic-tests/effects.exe /Fo:tmp/classic-tests/effects.obj /link d3d11.lib d3dcompiler.lib
+clang-cl /std:c++20 /EHsc /O2 /DNOMINMAX src/games/thewitcher3classic/tests/probe_lighting.cpp /Fe:tmp/classic-tests/probe-lighting.exe /Fo:tmp/classic-tests/probe-lighting.obj /link d3d11.lib d3dcompiler.lib
 ```
 
 ## Inputs and execution
+
+For the 2026-10-26 environment-hemisphere regression:
+
+```bat
+python src/games/thewitcher3classic/tools/audit_probe_hemispheres.py <original-CSO-archive> --output <scratch-audit.json>
+tmp\classic-tests\probe-lighting.exe <captured-hair-directory> <original-CSO-archive>
+tmp\classic-tests\probe-lighting.exe <captured-hair-directory> <original-CSO-archive> --hardware
+```
+
+The original archive needs `AB3E8304`, `B0B4EB6F`, `5CC0DB95`, `AE216EAE`,
+`12B76681`, `20C1C070`, `30F033B5`, `EB8C3FAE` as `0xHASH.cso`. The audit
+verifies 64 native integer-1 register/condition pairs across the eight programs.
+The GPU fixture compares the four VSs; full `object_motion` also checks material
+PS pairs and preservation of vector/history/clip behavior. Live eye-material
+acceptance supplements those checks rather than being inferred from the VS test.
+
+Capture `AB3E8304` at the vertex stage with `maxBufferBytes=65536` and
+`vertexBuffers=true`. Export CB slots **1, 2, 3, 12, 13** to
+`hair-constantBuffers-{slot}.bin` and instance stream **7** to
+`hair-vertexBuffers-7.bin`, preserving `capturedWords` as little-endian uint32s.
+At least the first 80 bytes of the instance stream must be present. The tested
+archive is `tmp/witcher3classic-investigation/object-lighting-20261026/candidate-31524/`.
+It uses captured camera/lighting/material constants with controlled bones and
+spatially varying environment atlases. The tail variants translate synthetic
+vertices to the decoded captured hair origin to remain inside the lighting
+frustum. Assertions require 216 finite, nonzero lighting components per program;
+constant textures or entirely attenuated vertices would hide the old error.
+WARP and NVIDIA pass with zero native-output difference in this fixture.
+
+For the focused refractive-raindrop check, add `--blitzfx --rain-only` to the
+effects command (and optionally `--hardware`). Its archive requires original
+`blitzfx-20261023/scene-shaders/0x1F3A90A1.cso` and `0x1C74D220.cso`, plus captured
+`fixtures/rain-b{0,2,3,4,12,13}.bin`. Both original programs and all new Release
+embeds are required. The masked permutation uses controlled layout-correct
+material constants. Match the native varying registers including SV_Position;
+assert nonempty alpha coverage so an invalid vertex fixture cannot pass silently.
+Five physical/pool sizes test native full-size behavior, odd dimensions, HDR
+color and poisoned unused regions. The UV gradient comparison allows one
+documented 1/256-texel sampler-address rounding cell, not arbitrary image drift.
 
 The following paths are current **local fixtures**, not tracked dependencies.
 Check their existence first. On a fresh clone, restore an authorized capture

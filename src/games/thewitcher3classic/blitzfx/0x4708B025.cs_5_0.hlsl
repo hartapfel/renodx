@@ -1,4 +1,5 @@
 #include "scene_pool.hlsli"
+#include "../shared.h"
 
 // BlitzFX screen-space shadow inputs retain output-sized pool allocations.
 // ---- Created with 3Dmigoto v1.3.16 on Sat Oct 24 00:58:54 2026
@@ -72,6 +73,10 @@ void main(uint3 vThreadID : SV_DispatchThreadID)
   r3.z = 1 + -r3.y;
   r0.yz = r3.xz + -r2.xz;
   r0.yz = r1.yz * cb0[23].zw + r0.yz;
+  // BlitzFX's current/previous WVPs are unjittered even while the scene uses
+  // our Halton projection. Account for the actual raster-sample displacement.
+  r0.yz += float2(shader_injection.blitz_shadow_jitter_delta_x,
+                 shader_injection.blitz_shadow_jitter_delta_y);
   r1.yz = cmp(r0.yz < float2(0,0));
   r0.w = (int)r1.z | (int)r1.y;
   r1.yz = cmp(float2(1,1) < r0.yz);

@@ -21,6 +21,8 @@ struct State {
   Plan plan;
   bool failed = false;
   uint32_t jitter_index = 0;
+  std::array<float, 2> previous_jitter{};
+  bool previous_jitter_valid = false;
   uint64_t scaled_frames = 0, reconstructed_frames = 0;
 };
 // These hooks are pinned with the object-history hooks and may outlive ReShade.
@@ -30,6 +32,7 @@ struct Frame {
   uint8_t* view;
   Plan plan;
   std::array<float, 2> jitter{};
+  std::array<float, 2> shadow_jitter_delta{};
   bool temporal_seen = false;
   bool reconstructed = false;
   bool post_restored = false;
@@ -76,13 +79,17 @@ inline void Publish(const Plan& plan) {
   }
   if (plan.quality == 0) state->failed = false;
   if (state->failed) return;
-  if (state->plan != plan) state->jitter_index = 0;
+  if (state->plan != plan) {
+    state->jitter_index = 0;
+    state->previous_jitter_valid = false;
+  }
   state->plan = plan;
 }
 inline void Disable(bool reset_failure = false) {
   std::lock_guard lock(state->mutex);
   state->plan = {};
   state->jitter_index = 0;
+  state->previous_jitter_valid = false;
   if (reset_failure) state->failed = false;
 }
 
@@ -119,6 +126,11 @@ inline void RenderHook(uint8_t* renderer, uint8_t* submitted, void* world) {
         (8 * uint64_t{plan.output_width} * plan.output_height + input_pixels - 1) / input_pixels, 32, 1024));
     const uint32_t index = state->jitter_index++ % phases + 1;
     frame.jitter = {Halton(index, 2), Halton(index, 3)};
+    // Raster displacement is -jitter. BlitzFX's shadow reprojection matrices
+    // omit it, so history UVs need current-minus-previous jitter in input UVs.
+    if (state->previous_jitter_valid)
+      frame.shadow_jitter_delta = {(frame.jitter[0] - state->previous_jitter[0]) / plan.width,
+                                   (frame.jitter[1] - state->previous_jitter[1]) / plan.height};
   }
   std::array<std::array<float, 2>, 2> saved_jitter;
   constexpr size_t cameras[] = {0x10, 0x410};
@@ -141,13 +153,18 @@ inline void RenderHook(uint8_t* renderer, uint8_t* submitted, void* world) {
   }
   std::lock_guard lock(state->mutex);
   ++state->scaled_frames;
-  if (frame.reconstructed && frame.post_restored) ++state->reconstructed_frames;
+  if (frame.reconstructed && frame.post_restored) {
+    ++state->reconstructed_frames;
+    state->previous_jitter = frame.jitter;
+    state->previous_jitter_valid = true;
+  }
   else {
     // Menus/loading can legitimately omit TAA. Suspend the reduced viewport,
     // then rearm after a successful native-size gameplay resolve. Only an
     // encountered-but-broken reconstruction boundary is a latched failure.
     state->failed = frame.temporal_seen;
     state->plan = {};
+    state->previous_jitter_valid = false;
   }
 }
 

@@ -13,6 +13,46 @@ render targets are cloned to signed RGBA16F; the swapchain proxy encodes HDR10.
 
 ## BlitzFX compatibility
 
+The 2026-10-26 object-lighting fix restores 64 environment-probe hemisphere
+selectors across eight hair, tail and forward-material shaders. The decompiler
+had rounded an integer flag to zero, sampling the wrong atlas hemisphere.
+The user confirmed correct hair/eye lighting and full valid motion coverage
+with the corrected shaders live. The normal Release addon includes the fix;
+fresh-launch verification remains to be recorded. Directional-probe and full
+motion fixtures pass on WARP/NVIDIA. See the compatibility handoff for the
+shader list, native-instruction audit and reproduction steps.
+
+The object-lighting revision isolates current motion-frame data in PS b11,
+preserving native PS b12 lighting/fog constants. It retains vector math and all
+coverage/history paths. Full object and foliage WARP/NVIDIA checks pass, including
+distinct native stage-frame buffers and zero clip/previous-position differences.
+This binding change alone did not fix the report; the hemisphere correction
+above addresses the proven cause.
+
+The 2026-10-26 PBR follow-up preserves native UNORM storage for the three material
+G-buffer attachments. They hold bounded roughness/normals/material fields rather
+than scene radiance; upgrading them to FP16 admits invalid PBR inputs. Native
+DXBC replay on WARP/NVIDIA eliminates captured nonfinite output with UNORM inputs
+while retaining HDR lighting. Scene/postprocess FP16 storage remains active.
+The user confirmed the rebuilt travel-post fix works; see the handoff.
+
+The refractive-raindrop revision maps both captured/archive particle variants'
+scene-color UVs into the active half-size render rectangle. Native depth/fog
+mapping and opacity are retained. WARP/NVIDIA native comparisons pass; live
+and restarted Quality/Performance acceptance is pending. RTSS overlay support
+was restored through a Witcher-only RTSS profile (prefer D3D11, automatic HDR),
+with no overlay-specific addon change. Exact settings are in the handoff.
+
+The 2026-10-25 ReShade discovery fix restores BlitzFX configuration and world
+rendering after the black-screen startup failure (user confirmed). A corrected
+integer lookup row removes the mod water seam in DLAA and Quality (user confirmed).
+The latest filmic fix selects the rising shoulder inflection for weather curves
+with multiple positive roots, instead of retaining a bounded/descending shoulder.
+It is active in live testing; packaged visual acceptance is pending. The mild
+contact-shadow follow-up corrects history UV for our jitter in both DLAA and
+upscaling, with native compute constants restored after injection. See the
+handoff for evidence, verification status and required live-override cleanup.
+
 The first compatibility revision supports the captured BlitzFX 1.1.0 path;
 combined in-game verification remains pending. See the
 [compatibility handoff](../../../docs/WITCHER3_CLASSIC_BLITZFX_COMPATIBILITY.md)

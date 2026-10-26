@@ -56,6 +56,7 @@ ShaderInjectData shader_injection = {
 
 struct __declspec(uuid("de5bfd39-2532-4eb9-ac11-94d4df036e87")) BloomRouting {
   std::atomic<bool> blitz_drawn = false;
+  std::array<std::atomic<uint64_t>, 3> native_material_views{};
 };
 
 // Detect the executed composite, not merely an installed DLL or compiled PSO.
@@ -65,6 +66,75 @@ void OnBloomInitDevice(reshade::api::device* device) {
 }
 void OnBloomDestroyDevice(reshade::api::device* device) {
   renodx::utils::data::Delete<BloomRouting>(device);
+}
+
+// Material data is UNORM, not scene radiance. The broad scene-color rule also
+// matches Classic's three G-buffer attachments. In BlitzFX PBR this admits
+// roughness > 1, unquantized normals and invalid packed material fields.
+void OnMaterialTargets(reshade::api::command_list* cmd, uint32_t count,
+                       const reshade::api::resource_view* rtvs, reshade::api::resource_view dsv) {
+  if (!witcher3classic::blitzfx::runtime_aa || count != 3 || !dsv.handle
+      || cmd->get_device()->get_api() != reshade::api::device_api::d3d11) return;
+  auto* data = renodx::utils::data::Get<BloomRouting>(cmd->get_device());
+  if (!data || (data->native_material_views[0].load(std::memory_order_relaxed) == rtvs[0].handle
+      && data->native_material_views[1].load(std::memory_order_relaxed) == rtvs[1].handle
+      && data->native_material_views[2].load(std::memory_order_relaxed) == rtvs[2].handle)) return;
+
+  const auto depth = cmd->get_device()->get_resource_desc(
+      renodx::utils::resource::GetResourceFromView(cmd->get_device(), dsv));
+  if (depth.texture.format != reshade::api::format::r24_g8_typeless
+      && depth.texture.format != reshade::api::format::d24_unorm_s8_uint) return;
+  std::array<reshade::api::resource, 3> resources{};
+  for (uint32_t i = 0; i < 3; ++i) {
+    bool material = false;
+    renodx::utils::resource::GetResourceViewInfo(rtvs[i], [&](const auto& view) {
+      if (view.is_clone || view.desc.format != reshade::api::format::r8g8b8a8_unorm) return;
+      resources[i] = view.original_resource;
+    });
+    if (!resources[i].handle) return;
+    renodx::utils::resource::GetResourceInfo(resources[i], [&](const auto& info) {
+      material = !info.is_clone && !info.is_swap_chain
+          && ((!info.clone_target && !info.clone_enabled)
+              || (info.clone_target && info.clone_target->name == "Classic scene color"))
+          && info.desc.type == reshade::api::resource_type::texture_2d
+          && info.desc.texture.format == reshade::api::format::r8g8b8a8_unorm
+          && info.desc.texture.width == depth.texture.width
+          && info.desc.texture.height == depth.texture.height
+          && info.desc.texture.depth_or_layers == 1 && info.desc.texture.samples == 1;
+    });
+    if (!material) return;
+  }
+
+  for (uint32_t i = 0; i < 3; ++i) {
+    std::vector<uint64_t> views;
+    renodx::utils::resource::UpdateResourceInfo(resources[i], [&](auto* info) {
+      info->clone_enabled = false;
+      info->clone_can_deactivate = false;
+      info->clone_target = nullptr;
+      views.assign(info->resource_view_handles.begin(), info->resource_view_handles.end());
+    });
+    for (const auto handle : views) {
+      renodx::utils::resource::UpdateResourceViewInfo({handle}, [](auto* view) {
+        view->clone_enabled = false;
+        view->clone_can_deactivate = false;
+        view->clone_target = nullptr;
+      });
+    }
+    data->native_material_views[i].store(rtvs[i].handle, std::memory_order_relaxed);
+  }
+  // A shared cloning callback may already have rebound the FP16 targets.
+  // Rebind the application's native views once, independent of callback order.
+  cmd->bind_render_targets_and_depth_stencil(count, rtvs, dsv);
+  reshade::log::message(reshade::log::level::info,
+      "Witcher Classic: preserving native UNORM material G-buffer storage for BlitzFX lighting.");
+}
+
+void OnMaterialViewDestroyed(reshade::api::device* device, reshade::api::resource_view view) {
+  if (auto* data = renodx::utils::data::Get<BloomRouting>(device)) {
+    for (auto& cached : data->native_material_views) {
+      if (cached.load(std::memory_order_relaxed) == view.handle) cached.store(0, std::memory_order_relaxed);
+    }
+  }
 }
 void OnBloomPresent(reshade::api::command_queue*, reshade::api::swapchain* swapchain,
                     const reshade::api::rect*, const reshade::api::rect*, uint32_t, const reshade::api::rect*) {
@@ -78,21 +148,27 @@ bool OnNativeBloomInject(reshade::api::command_list* cmd) {
   return true;
 }
 
-// b13 is unused by BF3EF83C, but may belong to a subsequent native compute
+// b13 is unused by these replacements, but may belong to a later native compute
 // shader. Restore the actual binding without enabling global state snapshots.
-thread_local std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>> bloom_compute_constants;
-bool OnBlitzBloomInject(reshade::api::command_list* cmd) {
-  bloom_compute_constants.emplace_back();
+thread_local std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>> blitz_compute_constants;
+bool OnBlitzComputeInject(reshade::api::command_list* cmd) {
+  blitz_compute_constants.emplace_back();
   reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native())->CSGetConstantBuffers(
-      13, 1, bloom_compute_constants.back().GetAddressOf());
+      13, 1, blitz_compute_constants.back().GetAddressOf());
+  const auto* frame = witcher3classic::temporal::upscale_engine::active;
+  shader_injection.blitz_shadow_jitter_delta_x = frame ? frame->shadow_jitter_delta[0] : 0.f;
+  shader_injection.blitz_shadow_jitter_delta_y = frame ? frame->shadow_jitter_delta[1] : 0.f;
   return true;
 }
-void OnBlitzBloomDrawn(reshade::api::command_list* cmd) {
-  if (!bloom_compute_constants.empty()) {
+void OnBlitzComputeDrawn(reshade::api::command_list* cmd) {
+  if (!blitz_compute_constants.empty()) {
     reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native())->CSSetConstantBuffers(
-        13, 1, bloom_compute_constants.back().GetAddressOf());
-    bloom_compute_constants.pop_back();
+        13, 1, blitz_compute_constants.back().GetAddressOf());
+    blitz_compute_constants.pop_back();
   }
+}
+void OnBlitzBloomDrawn(reshade::api::command_list* cmd) {
+  OnBlitzComputeDrawn(cmd);
   if (auto* data = renodx::utils::data::Get<BloomRouting>(cmd->get_device())) {
     data->blitz_drawn.store(true, std::memory_order_relaxed);
   }
@@ -123,8 +199,8 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     {0x620431CF, {.crc32 = 0x620431CF, .code = __0x620431CF, .on_inject = &OnNativeBloomInject}},  // Additive bloom with lens dirt.
     {0x0CB5EA21, {.crc32 = 0x0CB5EA21, .code = __0x0CB5EA21, .on_inject = &OnNativeBloomInject}},  // Screen-blended effect composite.
     {0x2825099C, {.crc32 = 0x2825099C, .code = __0x2825099C, .on_inject = [](auto*) { return false; }}},  // BlitzFX water; preserve native lighting b13.
-    {0xBF3EF83C, {.crc32 = 0xBF3EF83C, .code = __0xBF3EF83C, .on_inject = &OnBlitzBloomInject, .on_drawn = &OnBlitzBloomDrawn}},  // BlitzFX bloom strength and subrect.
-    {0x4708B025, {.crc32 = 0x4708B025, .code = __0x4708B025, .on_inject = [](auto*) { return false; }}},  // BlitzFX shadow subrect.
+    {0xBF3EF83C, {.crc32 = 0xBF3EF83C, .code = __0xBF3EF83C, .on_inject = &OnBlitzComputeInject, .on_drawn = &OnBlitzBloomDrawn}},  // BlitzFX bloom strength and subrect.
+    {0x4708B025, {.crc32 = 0x4708B025, .code = __0x4708B025, .on_inject = &OnBlitzComputeInject, .on_drawn = &OnBlitzComputeDrawn}},  // BlitzFX shadow subrect and jitter history.
     {0x58959EAD, {.crc32 = 0x58959EAD, .code = __0x58959EAD, .on_inject = [](auto*) { return false; }}},  // BlitzFX shadow subrect.
     {0xCA115962, {.crc32 = 0xCA115962, .code = __0xCA115962, .on_inject = [](auto*) { return false; }}},  // BlitzFX current-depth / reconstructed-color reflection prep.
     {0x4E0137BC, {.crc32 = 0x4E0137BC, .code = __0x4E0137BC, .on_inject = [](auto*) { return false; }}},  // BlitzFX water reflection history subrect.
@@ -134,6 +210,8 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     {0xB73522BB, {.crc32 = 0xB73522BB, .code = __0xB73522BB, .on_inject = [](auto*) { return false; }}},  // BlitzFX DoF color dilation.
     {0xAE334616, {.crc32 = 0xAE334616, .code = __0xAE334616, .on_inject = [](auto*) { return false; }}},  // BlitzFX DoF composite.
     {0x249DA2F1, {.crc32 = 0x249DA2F1, .code = __0x249DA2F1, .on_inject = [](auto*) { return false; }}},  // BlitzFX camera motion blur.
+    {0x1F3A90A1, {.crc32 = 0x1F3A90A1, .code = __0x1F3A90A1, .on_inject = [](auto*) { return false; }}},  // BlitzFX refractive rain.
+    {0x1C74D220, {.crc32 = 0x1C74D220, .code = __0x1C74D220, .on_inject = [](auto*) { return false; }}},  // Refractive rain without extra particle varying.
     CustomShaderEntry(0x0E583BCD),  // BlitzFX: blended environment filmic curves.
     CustomShaderEntry(0x5AA6AFFF),  // BlitzFX: exposed filmic curve, before scene LUT.
     CustomShaderEntry(0x114D8828),  // BlitzFX: final grade, CA, borders and output.
@@ -827,6 +905,8 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     renodx::utils::settings::use_presets = true;
     reshade::register_event<reshade::addon_event::init_swapchain>(&OnInitSwapchain);
     reshade::register_event<reshade::addon_event::init_device>(&OnBloomInitDevice);
+    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&OnMaterialTargets);
+    reshade::register_event<reshade::addon_event::destroy_resource_view>(&OnMaterialViewDestroyed);
     reshade::register_event<reshade::addon_event::destroy_device>(&OnBloomDestroyDevice);
     reshade::register_event<reshade::addon_event::present>(&OnBloomPresent);
 
@@ -867,11 +947,15 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
                                               .on_inject = [](auto*) { return false; },
                                           });
     }
-    for (const auto hash : {0x4E0137BCu, 0xCA115962u, 0x657A6576u, 0x4708B025u, 0x58959EADu,
-                            0xB018A95Au, 0x48885E0Du, 0xB73522BBu, 0xAE334616u, 0x249DA2F1u}) custom_shaders.at(hash).on_replace = [](auto*) {
+    for (const auto hash : {0x4E0137BCu, 0xCA115962u, 0x657A6576u, 0x58959EADu,
+                            0xB018A95Au, 0x48885E0Du, 0xB73522BBu, 0xAE334616u, 0x249DA2F1u,
+                            0x1F3A90A1u, 0x1C74D220u}) custom_shaders.at(hash).on_replace = [](auto*) {
       const auto* frame = witcher3classic::temporal::upscale_engine::active;
       return witcher3classic::blitzfx::runtime_aa && frame
           && frame->plan.width < frame->plan.output_width;
+    };
+    custom_shaders.at(0x4708B025).on_replace = [](auto*) {
+      return witcher3classic::blitzfx::runtime_aa && witcher3classic::temporal::upscale_engine::active;
     };
     custom_shaders.at(0x3EDDC379).on_replace = [](auto*) { return IsCustom() && shader_injection.sharpening_mode != 0.f; };
     custom_shaders.at(0x3EDDC379).on_inject = [](auto*) { return false; };
@@ -894,6 +978,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         .new_format = reshade::api::format::r16g16b16a16_float,
         .use_resource_view_cloning = true,
         .usage_include = reshade::api::resource_usage::render_target,
+        .name = "Classic scene color",
     });
     // Preserve encoded HDR through the full-size scene/UI buffer and final copy.
     renodx::mods::swapchain::resource_upgrade_infos.push_back({
@@ -901,10 +986,13 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         .new_format = reshade::api::format::r16g16b16a16_float,
         .use_resource_view_cloning = true,
         .usage_include = reshade::api::resource_usage::render_target,
+        .name = "Classic scene color",
     });
   } else if (reason == DLL_PROCESS_DETACH) {
     reshade::unregister_event<reshade::addon_event::init_swapchain>(&OnInitSwapchain);
     reshade::unregister_event<reshade::addon_event::init_device>(&OnBloomInitDevice);
+    reshade::unregister_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&OnMaterialTargets);
+    reshade::unregister_event<reshade::addon_event::destroy_resource_view>(&OnMaterialViewDestroyed);
     reshade::unregister_event<reshade::addon_event::destroy_device>(&OnBloomDestroyDevice);
     reshade::unregister_event<reshade::addon_event::present>(&OnBloomPresent);
     reshade::unregister_addon(module);

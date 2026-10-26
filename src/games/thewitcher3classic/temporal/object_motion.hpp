@@ -303,7 +303,7 @@ class ObjectMotion {
       std::array<ID3D11Buffer*, 4> saved_constants = {};
       context->VSGetConstantBuffers(8, 4, saved_constants.data());
       for (size_t i = 0; i < saved_constants.size(); ++i) saved_constants_[i].Attach(saved_constants[i]);
-      context->PSGetConstantBuffers(12, 1, &saved_constants_[4]);
+      context->PSGetConstantBuffers(11, 1, &saved_constants_[4]);
     }
     std::array<ID3D11UnorderedAccessView*, 7> uavs = {};
     context->OMGetRenderTargetsAndUnorderedAccessViews(0, nullptr, nullptr, saved_target_count_, 8 - saved_target_count_, uavs.data());
@@ -315,8 +315,10 @@ class ObjectMotion {
                                                                           : nullptr,
                                  deformed ? deformed_.world : saved_constants_[1].Get(), previous_constants_[0].Get(), previous_constants_[1].Get()};
       context->VSSetConstantBuffers(8, 4, constants);
+      // Motion uses the VS frame, while native PS b12 retains its independent
+      // lighting/fog values. Sharing the slot can change character/horse shading.
       auto* current_frame = frame_constants.Get();
-      context->PSSetConstantBuffers(12, 1, &current_frame);
+      context->PSSetConstantBuffers(11, 1, &current_frame);
     }
     active_foliage_ = foliage;
     if (foliage) {
@@ -380,7 +382,7 @@ class ObjectMotion {
       ID3D11Buffer* constants[] = {saved_constants_[0].Get(), saved_constants_[1].Get(), saved_constants_[2].Get(), saved_constants_[3].Get()};
       context->VSSetConstantBuffers(8, 4, constants);
       auto* current_frame = saved_constants_[4].Get();
-      context->PSSetConstantBuffers(12, 1, &current_frame);
+      context->PSSetConstantBuffers(11, 1, &current_frame);
     }
     for (auto& target : saved_targets_) target.Reset();
     for (auto& view : saved_srvs_) view.Reset();

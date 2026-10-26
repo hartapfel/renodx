@@ -28,47 +28,70 @@ float ClassicFindSecondDerivativeRoot(float a, float b, float c, float d, float 
   float A1 = 3.0f * a * b * d * (e - c * f);
   float A0 = a * d * d * (f * f - e * f) + b * b * d * (e - c * f);
 
-  // If A3 = 0, curve is degenerate → no inflection
-  if (abs(A3) < 1e-12f)
-    return 0.f;
-
-  // Normalize to monic cubic: x^3 + ax^2 + bx + c = 0
-  float invA3 = 1.0f / A3;
-  float an = A2 * invA3;
-  float bn = A1 * invA3;
-  float cn = A0 * invA3;
-
-  // Depressed cubic t^3 + p t + q = 0  with x = t - a/3
-  float an_3 = an / 3.0f;
-  float p = bn - an * an_3;
-  float q = 2.0f * an * an * an / 27.0f - an * bn / 3.0f + cn;
-
-  float half_q = 0.5f * q;
-  float Delta = half_q * half_q + (p / 3.0f) * (p / 3.0f) * (p / 3.0f);
-
-  // Real root output
-  float t;
-
-  if (Delta >= 0.f) {
-    float sqrtD = sqrt(Delta);
-    float u = (-half_q + sqrtD);
-    float v = (-half_q - sqrtD);
-
-    // Use signed cube root
-    float u_c = renodx::math::SignPow(u, 1.0f / 3.0f);
-    float v_c = renodx::math::SignPow(v, 1.0f / 3.0f);
-    t = u_c + v_c;
+  float3 roots = -1.f;
+  if (abs(A3) < 1e-12f) {
+    // C == 1 removes the cubic term, not necessarily the inflection.
+    if (abs(A2) > 1e-12f) {
+      const float discriminant = A1 * A1 - 4.f * A2 * A0;
+      if (discriminant >= 0.f) {
+        roots.xy = (-A1 + float2(1.f, -1.f) * sqrt(discriminant)) / (2.f * A2);
+      }
+    } else if (abs(A1) > 1e-12f) {
+      roots.x = -A0 / A1;
+    }
   } else {
-    // 3 real roots → trig branch
-    float m = 2.0f * sqrt(-p / 3.0f);
-    float angle = acos((-half_q) / sqrt(-(p * p * p) / 27.0f));
-    t = m * cos(angle / 3.0f);
+
+    // Normalize to monic cubic: x^3 + ax^2 + bx + c = 0
+    float invA3 = 1.0f / A3;
+    float an = A2 * invA3;
+    float bn = A1 * invA3;
+    float cn = A0 * invA3;
+
+    // Depressed cubic t^3 + p t + q = 0  with x = t - a/3
+    float an_3 = an / 3.0f;
+    float p = bn - an * an_3;
+    float q = 2.0f * an * an * an / 27.0f - an * bn / 3.0f + cn;
+
+    float half_q = 0.5f * q;
+    float Delta = half_q * half_q + (p / 3.0f) * (p / 3.0f) * (p / 3.0f);
+
+    // Real root output
+    if (Delta >= 0.f) {
+      float sqrtD = sqrt(Delta);
+      float u = (-half_q + sqrtD);
+      float v = (-half_q - sqrtD);
+
+      // Use signed cube root
+      float u_c = renodx::math::SignPow(u, 1.0f / 3.0f);
+      float v_c = renodx::math::SignPow(v, 1.0f / 3.0f);
+      roots.x = u_c + v_c - an_3;
+    } else {
+      // Weather curves can have two positive inflections. The largest root
+      // may lie on the descending tail; consider every root instead.
+      float m = 2.0f * sqrt(-p / 3.0f);
+      float angle = acos(clamp((-half_q) / sqrt(-(p * p * p) / 27.0f), -1.f, 1.f));
+      roots = m * cos((angle + float3(0.f, 6.28318530718f, 12.56637061436f)) / 3.f) - an_3;
+    }
   }
 
-  float x = t - an_3;
-
-  // Only meaningful inflection is positive
-  return max(x, 0.f);
+  float pivot = 0.f;
+  float peak_slope = max(0.f, ClassicDerivative(0.f, a, b, c, d, e, f));
+  [unroll] for (int i = 0; i < 3; ++i) {
+    float x = roots[i];
+    if (x < 0.f) continue;
+    // Refine cancellation in Cardano's small root before evaluating its slope.
+    [unroll] for (int j = 0; j < 2; ++j) {
+      const float derivative = (3.f * A3 * x + 2.f * A2) * x + A1;
+      if (abs(derivative) > 1e-12f)
+        x -= (((A3 * x + A2) * x + A1) * x + A0) / derivative;
+    }
+    const float slope = ClassicDerivative(x, a, b, c, d, e, f);
+    if (x >= 0.f && slope > peak_slope) {
+      pivot = x;
+      peak_slope = slope;
+    }
+  }
+  return pivot;
 }
 
 float3 ClassicExtendNative(float3 color, float3 abc, float3 def, float native_scale) {

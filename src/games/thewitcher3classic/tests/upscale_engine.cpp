@@ -15,6 +15,14 @@ Plan plan{853, 480, 1280, 720, 1};
 bool reconstruct = true, expect_scaled = true, temporal_seen = true;
 unsigned render_calls = 0, post_calls = 0;
 std::set<std::array<float, 2>> samples;
+std::array<float, 2> shadow_delta{};
+unsigned blitz_resizes = 0;
+void ResizeBlitz(uint8_t* renderer_state, uint32_t width, uint32_t height) {
+  ++blitz_resizes;
+  const uint32_t dimensions[] = {width, height};
+  std::memcpy(renderer_state + 4, dimensions, sizeof(dimensions));
+  std::memcpy(renderer_state + 0xca4, dimensions, sizeof(dimensions));
+}
 
 void Jitter(uint8_t* camera, float x, float y, uint32_t width, uint32_t height) {
   *reinterpret_cast<float*>(camera + 0x340) = x / width * 2.f;
@@ -55,6 +63,7 @@ void Render(uint8_t* owner, uint8_t* frame, void* world) {
     assert(*reinterpret_cast<float*>(local_camera.data() + 0x344) == 0.f);
     for (const auto value : active->jitter) assert(value >= -0.5f && value <= 0.5f);
     samples.insert(active->jitter);
+    shadow_delta = active->shadow_jitter_delta;
     active->temporal_seen = temporal_seen;
     active->reconstructed = reconstruct;
   } else assert(!active);
@@ -65,6 +74,26 @@ int main() {
   using namespace witcher3classic;
   int saved_aa = 2;
   assert(!blitzfx::Initialize());  // No audited BlitzFX module in this fixture.
+  assert(!blitzfx::SynchronizeResolution(3840, 2160));
+  std::array<uint8_t, 0xcb0> blitz_state{};
+  blitzfx::runtime_state = blitz_state.data();
+  blitzfx::resize_function = ResizeBlitz;
+  assert(!blitzfx::SynchronizeResolution(3840, 2160));  // Not initialized.
+  blitz_state[2] = 1;
+  ResizeBlitz(blitz_state.data(), 1, 1);  // Missed real DXGI resize.
+  blitz_resizes = 0;
+  assert(blitzfx::SynchronizeResolution(3840, 2160) && blitz_resizes == 1);
+  assert(!blitzfx::SynchronizeResolution(3840, 2160) && blitz_resizes == 1);
+  assert(!blitzfx::SynchronizeResolution(0, 2160));
+  assert(!blitzfx::SynchronizeResolution(1, 1));  // Discovery/minimized view.
+  assert(!blitzfx::SynchronizeResolution(16384, 2160));
+  assert(!blitzfx::SynchronizeResolution(8192, 8192));
+  assert(blitzfx::SynchronizeResolution(1920, 1080) && blitz_resizes == 2);
+  *reinterpret_cast<uint32_t*>(blitz_state.data() + 0xca4) = 1;
+  assert(blitzfx::SynchronizeResolution(1920, 1080) && blitz_resizes == 3);
+  assert(!blitzfx::SynchronizeResolution(1920, 1080));
+  blitzfx::runtime_state = nullptr;
+  blitzfx::resize_function = nullptr;
   blitzfx::temporal_enabled = true;
   { const blitzfx::ScopedTemporalOwner scope(true); assert(!blitzfx::runtime_aa); }
   blitzfx::runtime_aa = &saved_aa;
@@ -95,6 +124,7 @@ int main() {
   Publish(plan);
   RenderHook(renderer.data(), submitted.data(), pool.data());
   assert(!active && state->scaled_frames == 1 && state->reconstructed_frames == 1 && !state->failed);
+  assert(shadow_delta == (std::array<float, 2>{0, 0}));
   assert(*reinterpret_cast<uint32_t*>(submitted.data() + 0x828) == 1280);
   assert(*reinterpret_cast<float*>(submitted.data() + 0x360) == 0.5f / 1280.f);
   assert(*reinterpret_cast<float*>(submitted.data() + 0x764) == 0.5f / 720.f);
@@ -104,6 +134,8 @@ int main() {
   reconstruct = false;
   temporal_seen = false;
   RenderHook(renderer.data(), submitted.data(), pool.data());
+  assert(std::abs(shadow_delta[0] - (-.25f / 853.f)) < 1e-8f);
+  assert(std::abs(shadow_delta[1] - (1.f / 3.f / 480.f)) < 1e-8f);
   assert(!active && !state->failed && state->plan.width == 0);
   assert(*reinterpret_cast<uint32_t*>(submitted.data() + 0x828) == 1280);
   expect_scaled = false;
@@ -153,5 +185,6 @@ int main() {
   }
   Disable(true);
   assert(state->jitter_index == 0);
+  assert(!state->previous_jitter_valid);
   std::cout << "PASS menu recovery, hard failure latch, scene/post scope, view/resize guards, 32/72-phase geometry jitter, unjittered-camera isolation and restoration\n";
 }

@@ -642,7 +642,9 @@ void main(
   r2.w = r2.w + r2.w;
   r2.xyz = -r2.www * r1.xyz + r2.xyz;
   r2.w = cmp(r1.z < 0);
-  r3.x = r2.w ? 0.000000 : 0;
+  // Native integer bit 1 selects the other environment-probe hemisphere.
+  // The decompiler rounded its float bit pattern to zero before the int-to-float conversion.
+  r3.x = r2.w ? 1.f : 0.f;
   r4.xyzw = float4(0.5,-0.5,-0.5,0.5) * r1.xyxy;
   r3.y = -r7.z * r0.w + 1;
   r3.y = max(0.00100000005, r3.y);
@@ -690,7 +692,7 @@ void main(
     r3.z = rsqrt(r3.z);
     r7.xyz = r3.zzz * r2.xyz;
     r6.w = cmp(r7.z < 0);
-    r7.z = r6.w ? 0.000000 : 0;
+    r7.z = r6.w ? 1.f : 0.f;
     r8.xyzw = float4(0.5,-0.5,-0.5,0.5) * r7.xyxy;
     r7.x = -r2.z * r3.z + 1;
     r7.x = max(0.00100000005, r7.x);
@@ -749,7 +751,7 @@ void main(
       r3.w = rsqrt(r3.w);
       r8.xyz = r3.www * r2.xyz;
       r6.w = cmp(r8.z < 0);
-      r7.w = r6.w ? 0.000000 : 0;
+      r7.w = r6.w ? 1.f : 0.f;
       r8.xyzw = float4(0.5,-0.5,-0.5,0.5) * r8.xyxy;
       r9.x = -r2.z * r3.w + 1;
       r9.x = max(0.00100000005, r9.x);
@@ -806,7 +808,7 @@ void main(
       r4.x = rsqrt(r4.x);
       r8.xyz = r4.xxx * r2.xyz;
       r6.w = cmp(r8.z < 0);
-      r7.w = r6.w ? 0.000000 : 0;
+      r7.w = r6.w ? 1.f : 0.f;
       r8.xyzw = float4(0.5,-0.5,-0.5,0.5) * r8.xyxy;
       r9.x = -r2.z * r4.x + 1;
       r9.x = max(0.00100000005, r9.x);
@@ -863,7 +865,7 @@ void main(
       r4.x = rsqrt(r4.x);
       r8.xyz = r4.xxx * r2.xyz;
       r6.w = cmp(r8.z < 0);
-      r7.w = r6.w ? 0.000000 : 0;
+      r7.w = r6.w ? 1.f : 0.f;
       r8.xyzw = float4(0.5,-0.5,-0.5,0.5) * r8.xyxy;
       r9.x = -r2.z * r4.x + 1;
       r9.x = max(0.00100000005, r9.x);
@@ -920,7 +922,7 @@ void main(
       r4.x = rsqrt(r4.x);
       r8.xyz = r4.xxx * r2.xyz;
       r6.w = cmp(r8.z < 0);
-      r7.w = r6.w ? 0.000000 : 0;
+      r7.w = r6.w ? 1.f : 0.f;
       r8.xyzw = float4(0.5,-0.5,-0.5,0.5) * r8.xyxy;
       r9.x = -r2.z * r4.x + 1;
       r9.x = max(0.00100000005, r9.x);
@@ -977,7 +979,7 @@ void main(
       r3.z = rsqrt(r3.z);
       r8.xyz = r3.zzz * r2.xyz;
       r3.w = cmp(r8.z < 0);
-      r4.x = r3.w ? 0.000000 : 0;
+      r4.x = r3.w ? 1.f : 0.f;
       r8.xyzw = float4(0.5,-0.5,-0.5,0.5) * r8.xyxy;
       r6.w = -r2.z * r3.z + 1;
       r6.w = max(0.00100000005, r6.w);
@@ -1009,7 +1011,7 @@ void main(
     r3.xyz = t22.SampleLevel(s11_s, r3.xy, 1).xyz;
     r4.yzw = r2.www * r3.xyz + r4.yzw;
     r3.x = cmp(r2.z < 0);
-    r3.y = r3.x ? 0.000000 : 0;
+    r3.y = r3.x ? 1.f : 0.f;
     r8.xyzw = float4(0.5,-0.5,-0.5,0.5) * r2.xyxy;
     r2.x = 1 + -r2.z;
     r2.x = max(0.00100000005, r2.x);

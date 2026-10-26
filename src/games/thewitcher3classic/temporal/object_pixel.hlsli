@@ -1,10 +1,10 @@
 #ifndef WITCHER_MOTION_DIMENSIONS
-#ifndef WITCHER_MOTION_FRAME
-cbuffer MotionFrame : register(b12) { float4 motion_frame[269]; }
-#define WITCHER_MOTION_FRAME motion_frame
-#endif
-#define WITCHER_MOTION_DIMENSIONS WITCHER_MOTION_FRAME[23].xy
-#define WITCHER_MOTION_JITTER WITCHER_MOTION_FRAME[15].xy
+// PS b12 is native lighting/fog state and need not match the VS frame buffer.
+// b11 is unused by all audited non-foliage material PSs. Bind the same VS frame
+// data as before here, without replacing the native pixel-stage frame constants.
+cbuffer MotionFrame : register(b11) { float4 motion_frame[269]; }
+#define WITCHER_MOTION_DIMENSIONS motion_frame[23].xy
+#define WITCHER_MOTION_JITTER motion_frame[15].xy
 #endif
 
 void WriteObjectMotion(float4 position, float4 previous_clip, float history,
