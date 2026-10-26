@@ -72,7 +72,7 @@ void main(
   float4 previous_clip : TEXCOORD10,
   nointerpolation float motion_history : TEXCOORD11,
   out float4 o0 : SV_Target0,
-  out float2 object_motion : SV_Target3,
+  out float4 object_motion : SV_Target3,
   out float object_depth : SV_Target4)
 {
   float4 r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15,r16,r17,r18,r19,r20,r21,r22,r23,r24,r25;

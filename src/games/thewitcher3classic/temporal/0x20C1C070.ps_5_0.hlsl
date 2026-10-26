@@ -77,7 +77,7 @@ void main(
   float4 previous_clip : TEXCOORD10,
   nointerpolation float motion_history : TEXCOORD11,
   out float4 o0 : SV_Target0,
-  out float2 object_motion : SV_Target3,
+  out float4 object_motion : SV_Target3,
   out float object_depth : SV_Target4)
 {
 

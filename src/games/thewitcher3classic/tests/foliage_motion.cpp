@@ -12,13 +12,15 @@ using namespace witcher3classic::temporal;
 
 int main(int argc, char** argv) {
   std::cout << std::unitbuf;
-  assert(argc == 2 || argc == 3);
+  assert(argc >= 2 && argc <= 4);
+  const bool hardware = std::find(argv + 2, argv + argc, std::string_view("--hardware")) != argv + argc;
+  if (std::find(argv + 2, argv + argc, std::string_view("--object-only")) != argv + argc) witcher3classic::optics::motion_mode = 1.f;
   const std::filesystem::path captures = argv[1], embeds = "build/thewitcher3classic.include/embed";
   ComPtr<ID3D11Device> device;
   ComPtr<ID3D11DeviceContext> base;
-  auto result = D3D11CreateDevice(nullptr, argc == 3 ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP,
+  auto result = D3D11CreateDevice(nullptr, hardware ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP,
                                   nullptr, D3D11_CREATE_DEVICE_DEBUG, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &base);
-  if (FAILED(result)) result = D3D11CreateDevice(nullptr, argc == 3 ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP,
+  if (FAILED(result)) result = D3D11CreateDevice(nullptr, hardware ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP,
                                                  nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &base);
   assert(SUCCEEDED(result));
   ComPtr<ID3D11DeviceContext1> context;
@@ -283,6 +285,11 @@ int main(int argc, char** argv) {
     assert(SUCCEEDED(reflect(native.data(), native.size(), __uuidof(ID3D11ShaderReflection), &reflection)));
     D3D11_SHADER_DESC desc;
     assert(SUCCEEDED(reflection->GetDesc(&desc)));
+    for (UINT i = 0; i < desc.BoundResources; ++i) {
+      D3D11_SHADER_INPUT_BIND_DESC binding;
+      assert(SUCCEEDED(reflection->GetResourceBindingDesc(i, &binding)));
+      assert(binding.Type == D3D_SIT_CBUFFER || binding.BindPoint != 119);
+    }
     std::string fields, assignments;
     for (UINT i = 0; i < desc.InputParameters; ++i) {
       D3D11_SIGNATURE_PARAMETER_DESC p;

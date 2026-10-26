@@ -42,7 +42,37 @@ class Camera {
            && std::abs((*pixels)[0]) <= 0.5f && std::abs((*pixels)[1]) <= 0.5f;
   }
 
+  bool BlurHistoryContinuous() {
+    if (!constants_) return false;
+    // The unjittered inverse view-projection columns are camera[13..16].
+    // inverseVP * (0,0,1,0) yields the camera origin; column 16 yields a
+    // point on its forward axis. Proven against live frame[0].xyz and the
+    // c48810 upload (c51af0 history stride 0x2d0). No GPU readback.
+    std::array<float, 3> eye{}, direction{};
+    bool valid = std::abs(constants_[63]) > 1e-8f && std::abs(constants_[67]) > 1e-8f;
+    float length = 0.f;
+    for (size_t i = 0; i < 3; ++i) {
+      eye[i] = constants_[60 + i] / constants_[63];
+      direction[i] = constants_[64 + i] / constants_[67] - eye[i];
+      valid &= std::isfinite(eye[i]) && std::isfinite(direction[i]);
+      length += direction[i] * direction[i];
+    }
+    valid &= length > 1e-10f;
+    if (!valid) { blur_pose_valid_ = false; return false; }
+    float distance = 0.f, facing = 0.f;
+    for (size_t i = 0; i < 3; ++i) {
+      direction[i] /= std::sqrt(length);
+      distance += (eye[i] - blur_eye_[i]) * (eye[i] - blur_eye_[i]);
+      facing += direction[i] * blur_direction_[i];
+    }
+    const bool continuous = blur_pose_valid_ && distance <= 9.f && facing >= 0.7071f;
+    blur_eye_ = eye; blur_direction_ = direction; blur_pose_valid_ = true;
+    return continuous;
+  }
+
  private:
   const float* constants_ = nullptr;
+  std::array<float, 3> blur_eye_{}, blur_direction_{};
+  bool blur_pose_valid_ = false;
 };
 }  // namespace witcher3classic::temporal

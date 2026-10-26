@@ -13,6 +13,7 @@
 #include "./prepare.hpp"
 #include "./object_motion.hpp"
 #include "./object_shaders.hpp"
+#include "../optics/pipeline.hpp"
 
 namespace witcher3classic::temporal {
 inline float mode = 1.f;
@@ -32,6 +33,7 @@ struct __declspec(uuid("fdb6913b-a729-490b-b0f3-46ba64e4b346")) DeviceData {
   DeviceData() { objects.uploads.track_writes = true; }
   Dlss dlss;
   Prepare prepare;
+  optics::Pipeline optics;
   Camera camera;
   ObjectMotion objects;
   ComPtr<ID3D11DeviceContext1> motion_context;
@@ -40,6 +42,9 @@ struct __declspec(uuid("fdb6913b-a729-490b-b0f3-46ba64e4b346")) DeviceData {
   std::chrono::steady_clock::time_point last_time;
   reshade::api::swapchain* swapchain = nullptr;
   uint64_t frame = 0, last_resolve = UINT64_MAX;
+  uint64_t last_optical_capture = UINT64_MAX;
+  std::chrono::steady_clock::time_point last_optical_time;
+  bool dlss_attempted = false, dlss_ready = false;
   bool attempted = false, ready = false, logged = false, logged_objects = false;
   bool hooks_attempted = false;
   bool logged_deformed = false, logged_rigid = false, logged_hair = false;
@@ -104,7 +109,7 @@ inline void OnMotionExecute(reshade::api::command_list* cmd, reshade::api::comma
 }
 
 inline bool OnObjectVertex(reshade::api::command_list* cmd) {
-  if (mode == 0.f || object_motion == 0.f) return false;
+  if ((mode == 0.f && !optics::MotionActive()) || object_motion == 0.f) return false;
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   if (!data || !data->ready || !object_engine::state->enabled.load(std::memory_order_relaxed)) return false;
   auto* shader_state = renodx::utils::shader::GetCurrentState(cmd);
@@ -157,7 +162,7 @@ inline bool OnObjectVertex(reshade::api::command_list* cmd) {
   return accepted;
 }
 inline bool OnObjectPixel(reshade::api::command_list* cmd) {
-  if (mode == 0.f || object_motion == 0.f) return false;
+  if ((mode == 0.f && !optics::MotionActive()) || object_motion == 0.f) return false;
   const auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   return data && data->objects.active_draw;
 }
@@ -171,7 +176,7 @@ inline constexpr auto ObjectDrawBoundary = []<typename Context>(Context& context
   auto* data = renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device());
   if (!data || !data->objects.HasPendingPass() || !data->motion_context
       || context.cmd_list->get_native() != data->motion_native_handle) return {};
-  bool keep = mode != 0.f && object_motion != 0.f && data->ready && !context.IsDispatch()
+  bool keep = (mode != 0.f || optics::MotionActive()) && object_motion != 0.f && data->ready && !context.IsDispatch()
               && object_engine::state->enabled.load(std::memory_order_relaxed);
   if (keep) {
     auto* state = renodx::utils::shader::GetCurrentState(context.cmd_list);
@@ -186,14 +191,14 @@ inline constexpr auto ObjectDrawBoundary = []<typename Context>(Context& context
   return {};
 };
 inline constexpr auto ObjectDrawPost = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context> {
-  if (mode == 0.f || object_motion == 0.f) return {};
+  if ((mode == 0.f && !optics::MotionActive()) || object_motion == 0.f) return {};
   const auto* data = renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device());
   if (!data || !data->objects.active_draw) return {};
   return {.post_callback = [](Context& context, const void*) { OnObjectDrawn(context.cmd_list); }, .replay = true};
 };
 
 inline bool OnTemporalDraw(reshade::api::command_list* cmd) {
-  if (mode == 0.f || cmd->get_device()->get_api() != reshade::api::device_api::d3d11) return true;
+  if ((mode == 0.f && !optics::NeedsTemporalInputs()) || cmd->get_device()->get_api() != reshade::api::device_api::d3d11) return true;
   if (upscale_engine::active) upscale_engine::active->temporal_seen = true;
   auto* device = cmd->get_device();
   auto* data = renodx::utils::data::Get<DeviceData>(device);
@@ -224,12 +229,17 @@ inline bool OnTemporalDraw(reshade::api::command_list* cmd) {
       status = std::format("Native TAA: GPU preparation failed (0x{:08X})", uint32_t(data->prepare.error));
       return true;
     }
-    if (!data->dlss.Initialize(native, std::filesystem::path(executable).parent_path() / L"renodx-witcher3classic-dlss")) {
+    data->ready = true;
+  }
+  if (mode != 0.f && !data->dlss_attempted) {
+    data->dlss_attempted = true;
+    wchar_t executable[32768] = {};
+    GetModuleFileNameW(nullptr, executable, DWORD(std::size(executable)));
+    data->dlss_ready = data->dlss.Initialize(native, std::filesystem::path(executable).parent_path() / L"renodx-witcher3classic-dlss");
+    if (!data->dlss_ready) {
       status = std::format("Native TAA: {} (0x{:08X})", data->dlss.status, data->dlss.error);
       reshade::log::message(reshade::log::level::warning, status.c_str());
-      return true;
     }
-    data->ready = true;
   }
   if (!data->ready || data->last_resolve == data->frame) return true;
   std::array<float, 2> jitter;
@@ -253,7 +263,7 @@ inline bool OnTemporalDraw(reshade::api::command_list* cmd) {
   target_texture->GetDesc(&target_desc);
   // The native pool remains output-sized. Reconstruction consumes only the
   // main view's rendered subrectangle, never a downsampled full-resolution frame.
-  if (data->planned_output_width != target_desc.Width || data->planned_output_height != target_desc.Height) {
+  if (data->dlss_ready && (data->planned_output_width != target_desc.Width || data->planned_output_height != target_desc.Height)) {
     data->planned_output_width = target_desc.Width;
     data->planned_output_height = target_desc.Height;
     resolution_status = std::format("Output: {} x {}", target_desc.Width, target_desc.Height);
@@ -291,13 +301,25 @@ inline bool OnTemporalDraw(reshade::api::command_list* cmd) {
       object_motion = 0.f;
     }
   }
-  object_engine::state->enabled.store(object_motion != 0.f, std::memory_order_relaxed);
+  object_engine::state->enabled.store(object_motion != 0.f && (mode != 0.f || optics::MotionActive()), std::memory_order_relaxed);
   const bool objects = object_motion != 0.f && data->objects.HasFrame(data->frame);
   if (!data->prepare.Run(context.Get(), scene.Get(), depth.Get(), objects ? data->objects.surfaces[0].Get() : nullptr,
                          camera.Get(), frame.Get(), render_width, render_height,
                          objects ? data->objects.surfaces[1].Get() : nullptr)) return true;
   data->objects.Finish(context.Get(), data->frame);
   const auto now = std::chrono::steady_clock::now();
+  if (optics::custom) {
+    const bool optical_consecutive = data->last_optical_capture != UINT64_MAX && data->last_optical_capture + 1 == data->frame;
+    const bool optical_history = data->camera.BlurHistoryContinuous() && optical_consecutive;
+    const float optical_elapsed = optical_consecutive ? std::chrono::duration<float,std::milli>(now-data->last_optical_time).count() : 16.667f;
+    if (data->optics.Capture(context.Get(), data->prepare.views[1].Get(), data->prepare.views[2].Get(),
+        objects ? data->objects.surfaces[0].Get() : nullptr, objects ? data->objects.surfaces[1].Get() : nullptr,
+        frame.Get(), render_width, render_height, jitter[0], jitter[1], optical_elapsed, optical_history, data->frame)) {
+      data->last_optical_capture = data->frame;
+      data->last_optical_time = now;
+    }
+  }
+  if (mode == 0.f || !data->dlss_ready) return true;
   const bool gap = data->last_resolve == UINT64_MAX || data->frame != data->last_resolve + 1;
   const float elapsed = gap ? 16.667f : std::chrono::duration<float, std::milli>(now - data->last_time).count();
   const DlssInputs inputs{
@@ -313,8 +335,8 @@ inline bool OnTemporalDraw(reshade::api::command_list* cmd) {
   };
   if (!data->dlss.Evaluate(context.Get(), inputs)) {
     status = std::format("Native TAA: {} (0x{:08X})", data->dlss.status, data->dlss.error);
-    data->ready = false;
-    object_engine::Disable();
+    data->dlss_ready = false;
+    if (!optics::MotionActive()) object_engine::Disable();
     upscale_engine::Disable();
     reshade::log::message(reshade::log::level::warning, status.c_str());
     return true;
@@ -419,7 +441,7 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
     }
     // BlitzFX suppresses the native AA draw in its TAA mode, so initialization
     // cannot wait for that draw. Install the already audited render hooks here.
-    const bool enabled = mode != 0.f && (!data || !data->attempted || data->ready);
+    const bool enabled = (mode != 0.f || optics::NeedsTemporalInputs()) && (!data || !data->attempted || data->ready);
     if (enabled && !object_engine::state->installed) {
       // BlitzFX also creates a temporary hook-discovery swapchain. Bootstrap
       // only from Classic's actual window, after that initialization is over.
@@ -429,7 +451,15 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
   }
   if (!data) return;
   if (data->motion_context) data->objects.ClosePass(data->motion_context.Get());
-  if (mode == 0.f) {
+  if (mode == 0.f && data->dlss_attempted) {
+    data->resolved.Reset();
+    data->dlss.Shutdown();
+    data->dlss_attempted = data->dlss_ready = false;
+    data->planned_output_width = data->planned_output_height = 0;
+    data->last_resolve = UINT64_MAX;
+    status = "Native TAA (Custom effects active)";
+  }
+  if (mode == 0.f && !optics::NeedsTemporalInputs()) {
     upscale_engine::Disable(true);
     object_engine::Disable();
     renodx::utils::data::Delete<DeviceData>(device);
@@ -440,7 +470,7 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
   if (!data->swapchain) data->swapchain = swapchain;
   if (data->swapchain == swapchain) {
     const auto selected_quality = static_cast<size_t>(std::clamp(quality, 0.f, 4.f));
-    if (data->ready && data->last_resolve == data->frame && object_engine::state->installed) {
+    if (mode != 0.f && data->ready && data->last_resolve == data->frame && object_engine::state->installed) {
       const auto& resolution = data->render_resolutions[selected_quality];
       upscale_engine::Publish({resolution.width, resolution.height, data->planned_output_width,
                               data->planned_output_height, static_cast<uint32_t>(selected_quality)});

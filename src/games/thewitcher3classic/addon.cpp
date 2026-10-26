@@ -21,6 +21,9 @@
 
 namespace {
 float settings_mode = 0.f;
+float video_auto_hdr = 1.f;
+bool draw_effects = false;
+float depth_controls_mode = 1.f;
 bool detected_peak = false;
 
 ShaderInjectData shader_injection = {
@@ -46,8 +49,7 @@ ShaderInjectData shader_injection = {
     .custom_lens_dirt = 1.f,
     .custom_sunshafts_strength = 1.f,
     .custom_blur = 1.f,
-    .chromatic_aberration_intensity = 0.7f,
-    .chromatic_aberration_start_offset = 0.7f,
+    .chromatic_aberration_intensity = 1.f,
     .vignette_strength = 1.f,
     .vignette_black_floor = 1.f,
     .lut_strength = 1.f,
@@ -138,13 +140,15 @@ void OnMaterialViewDestroyed(reshade::api::device* device, reshade::api::resourc
 }
 void OnBloomPresent(reshade::api::command_queue*, reshade::api::swapchain* swapchain,
                     const reshade::api::rect*, const reshade::api::rect*, uint32_t, const reshade::api::rect*) {
+  witcher3classic::optics::custom = shader_injection.tone_map_type == CLASSIC_TONE_MAP_PSYCHOV31;
   if (auto* data = renodx::utils::data::Get<BloomRouting>(swapchain->get_device())) {
     data->blitz_drawn.store(false, std::memory_order_relaxed);
   }
 }
 bool OnNativeBloomInject(reshade::api::command_list* cmd) {
   const auto* data = renodx::utils::data::Get<BloomRouting>(cmd->get_device());
-  shader_injection.blitz_bloom_active = data && data->blitz_drawn.load(std::memory_order_relaxed) ? 1.f : 0.f;
+  shader_injection.blitz_bloom_active = (witcher3classic::optics::custom && witcher3classic::optics::bloom_mode == 1.f)
+      || (data && data->blitz_drawn.load(std::memory_order_relaxed)) ? 1.f : 0.f;
   return true;
 }
 
@@ -152,6 +156,7 @@ bool OnNativeBloomInject(reshade::api::command_list* cmd) {
 // shader. Restore the actual binding without enabling global state snapshots.
 thread_local std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>> blitz_compute_constants;
 bool OnBlitzComputeInject(reshade::api::command_list* cmd) {
+  shader_injection.blitz_bloom_active = witcher3classic::optics::custom && witcher3classic::optics::bloom_mode == 1.f ? -1.f : 0.f;
   blitz_compute_constants.emplace_back();
   reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native())->CSGetConstantBuffers(
       13, 1, blitz_compute_constants.back().GetAddressOf());
@@ -174,7 +179,56 @@ void OnBlitzBloomDrawn(reshade::api::command_list* cmd) {
   }
 }
 
+bool OnOpticsInject(reshade::api::command_list* cmd) {
+  using namespace witcher3classic::temporal;
+  auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  if (!data || !data->motion_context || show_object_vectors != 0.f
+      || shader_injection.tone_map_type != CLASSIC_TONE_MAP_PSYCHOV31) return true;
+  auto* context = data->motion_context.Get();
+  ComPtr<ID3D11ShaderResourceView> source;
+  context->PSGetShaderResources(0, 1, &source);
+  if (!source) return true;
+  ComPtr<ID3D11Resource> resource; ComPtr<ID3D11Texture2D> texture;
+  source->GetResource(&resource);
+  if (FAILED(resource.As(&texture))) return true;
+  D3D11_TEXTURE2D_DESC desc; texture->GetDesc(&desc);
+  D3D11_VIEWPORT viewport; UINT count = 1;
+  context->RSGetViewports(&count, &viewport);
+  if (count != 1 || viewport.TopLeftX != 0 || viewport.TopLeftY != 0
+      || viewport.Width != float(desc.Width) || viewport.Height != float(desc.Height)) return true;
+  const float sharpening = shader_injection.chromatic_aberration_mode != 0.f
+      && shader_injection.chromatic_aberration_intensity > 0.f && shader_injection.sharpening_mode != 0.f
+      ? shader_injection.sharpening_strength : 0.f;
+  if (auto* filtered = data->optics.Run(context, source.Get(), desc.Width, desc.Height, data->frame, sharpening)) {
+    data->optics.saved_scene = source;
+    context->PSSetShaderResources(0, 1, &filtered);
+    if (sharpening > 0.f) {
+      data->optics.saved_sharpening = shader_injection.sharpening_strength;
+      shader_injection.sharpening_strength = 0.f;
+    }
+  }
+  return true;
+}
+void OnOpticsDrawn(reshade::api::command_list* cmd) {
+  auto* data = renodx::utils::data::Get<witcher3classic::temporal::DeviceData>(cmd->get_device());
+  if (!data || !data->optics.saved_scene || !data->motion_context) return;
+  auto* source = data->optics.saved_scene.Get();
+  data->motion_context->PSSetShaderResources(0, 1, &source);
+  data->optics.saved_scene.Reset();
+  if (data->optics.saved_sharpening >= 0.f) {
+    shader_injection.sharpening_strength = data->optics.saved_sharpening;
+    data->optics.saved_sharpening = -1.f;
+  }
+}
+
 renodx::mods::shader::CustomShaders custom_shaders = {
+    CustomShaderEntry(0x043049C7),  // SDR video with vertex fade.
+    CustomShaderEntry(0x30C6DAFA),  // Opaque SDR video.
+    CustomShaderEntry(0x7542753B),  // Premultiplied video with vertex fade.
+    CustomShaderEntry(0xA850FB8D),  // Video with alpha plane and vertex fade.
+    CustomShaderEntry(0x989EB8B2),  // Premultiplied alpha-plane video with vertex fade.
+    CustomShaderEntry(0xDC4FAC37),  // Video with alpha plane.
+    CustomShaderEntry(0xDCEB62A5),  // Premultiplied video with alpha plane.
     CustomShaderEntry(0xB4953357),  // Native exposure and filmic curve.
     CustomShaderEntry(0xAEE0B973),  // Manual exposure.
     CustomShaderEntry(0xAE7D5FA8),  // Blended environment exposure/filmic curves.
@@ -193,6 +247,8 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0xA1C06A7D),  // Texture vignette, no chromatic aberration.
     CustomShaderEntry(0xC4D2D4F6),  // Texture vignette and chromatic aberration.
     CustomShaderEntry(0x6ED58557),  // Native depth blur, before temporal reconstruction.
+    CustomShaderEntry(0x1A70FFE2),  // Native motion-blur composite bypass.
+    CustomShaderEntry(0x9A905454),  // BlitzFX vanilla depth-blur composite bypass.
     CustomShaderEntry(0x3EDDC379),  // Bypass native pre-AA sharpening in RCAS mode.
     CustomShaderEntry(0x56BDBC86),  // Shared bloom/shafts extraction.
     CustomShaderEntry(0xBAEDA9BD),  // Masked sky feeding light shafts.
@@ -224,6 +280,10 @@ renodx::mods::shader::CustomShaders custom_shaders = {
 };
 
 bool IsCustom() { return shader_injection.tone_map_type == CLASSIC_TONE_MAP_PSYCHOV31; }
+
+float DepthControlMode() {
+  return witcher3classic::optics::dof_mode == 2.f ? depth_controls_mode : witcher3classic::optics::dof_mode;
+}
 
 // HDR settings appear in this order. Move a complete Setting block to reorder.
 // DLSS preferences at the end are global; DrawAddon renders their dropdown UI.
@@ -527,14 +587,168 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return settings_mode >= 1.f; },
     },
     new renodx::utils::settings::Setting{
-        .key = "FxBloom",
-        .binding = &shader_injection.custom_bloom,
+        .key = "FxMotionBlurMode",
+        .binding = &witcher3classic::optics::motion_mode,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .label = "Motion Blur",
+        .section = "Motion Blur",
+        .tooltip = "Replaces native motion blur. Object Only follows visible object movement while excluding camera-only motion. Camera-followed subjects stay sharp. Requires Object Motion enabled in DLSS Tab. Keep native Anti-aliasing enabled.",
+        .labels = {"Camera + Object", "Object Only", "Off"},
+        .is_enabled = &IsCustom,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxMotionBlurStrength",
+        .binding = &witcher3classic::optics::motion_strength,
+        .default_value = 50.0f,
+        .label = "Motion Blur Strength",
+        .section = "Motion Blur",
+        .tooltip = "Exposure duration: 0 disables blur, 50 uses 1/60 second, 100 uses 1/30 second. Frame-rate compensated using the vector history interval. Invalid/new history stays sharp.",
+        .min = 0.0f,
+        .max = 100.0f,
+        .is_enabled = [] { return IsCustom() && witcher3classic::optics::motion_mode != 2.f; },
+        .parse = [](float value) { return value * 0.02f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxDepthOfFieldMode",
+        .binding = &witcher3classic::optics::dof_mode,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Depth of Field",
+        .section = "Depth of Field",
+        .tooltip = "Custom replaces native depth blur and BlitzFX bokeh with separate foreground/background disk filters after reconstruction. Focus is set by the lens controls below. Native shows the native depth-blur control; Custom shows the lens controls. Off disables depth blur and retains the last controls, grayed out.",
+        .labels = {"Native", "Custom", "Off"},
+        .is_enabled = &IsCustom,
+        .on_change_value = [](float previous, float current) {
+          // Store this per preset, including when entering Off from an older
+          // preset that predates the remembered-control setting.
+          if (current < 2.f || previous < 2.f)
+            renodx::utils::settings::FindSetting("FxDepthOfFieldControls")->Set(current < 2.f ? current : previous)->Write();
+        },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxDepthBlur",
+        .binding = &shader_injection.custom_blur,
         .default_value = 50.f,
-        .label = "Bloom",
-        .section = "Effects",
-        .tooltip = "With BlitzFX: replaces Bloom Scattering (0-100 = 0.00-1.00) and removes native uniform bloom. Underwater scattering and lens dirt remain separate. Without BlitzFX: 0 is off, 50 is native strength, 100 doubles it; requires native Bloom.",
+        .label = "Native Depth Blur",
+        .section = "Depth of Field",
+        .tooltip = "Depth-blur radius: 0 removes it, 50 is native, 100 doubles it. Requires native Blur. Does not control Motion Blur or Witcher Senses.",
         .min = 0.f,
         .max = 100.f,
+        .is_enabled = [] { return IsCustom() && witcher3classic::optics::dof_mode == 0.f; },
+        .parse = [](float value) { return value * 0.02f; },
+        .is_visible = [] { return DepthControlMode() == 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxDepthOfFieldStrength",
+        .binding = &witcher3classic::optics::dof_strength,
+        .default_value = 50.0f,
+        .label = "Depth of Field Strength",
+        .section = "Depth of Field",
+        .tooltip = "Scales the circle of confusion. 0 keeps the scene sharp; 50 uses the specified lens; 100 doubles its defocus.",
+        .min = 0.0f,
+        .max = 100.0f,
+        .is_enabled = [] { return IsCustom() && witcher3classic::optics::dof_mode == 1.f; },
+        .parse = [](float value) { return value * 0.02f; },
+        .is_visible = [] { return DepthControlMode() == 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxFocusDistance",
+        .binding = &witcher3classic::optics::focus_distance,
+        .default_value = 20.0f,
+        .label = "Focus Distance (m)",
+        .section = "Depth of Field",
+        .tooltip = "Distance from the camera where objects remain in focus. Background and foreground blur are calculated separately.",
+        .min = 0.1f,
+        .max = 200.0f,
+        .format = "%.2f",
+        .is_enabled = [] { return IsCustom() && witcher3classic::optics::dof_mode == 1.f; },
+        .is_visible = [] { return DepthControlMode() == 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxFocalLength",
+        .binding = &witcher3classic::optics::focal_length,
+        .default_value = 32.5f,
+        .label = "Focal Length (mm)",
+        .section = "Depth of Field",
+        .tooltip = "Optical focal length for depth of field only; does not change the game camera FOV. Longer lenses produce stronger defocus.",
+        .min = 10.0f,
+        .max = 200.0f,
+        .format = "%.2f",
+        .is_enabled = [] { return IsCustom() && witcher3classic::optics::dof_mode == 1.f; },
+        .is_visible = [] { return DepthControlMode() == 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxAperture",
+        .binding = &witcher3classic::optics::aperture,
+        .default_value = 2.8f,
+        .label = "Aperture (f-number)",
+        .section = "Depth of Field",
+        .tooltip = "Lower f-numbers give a shallower depth of field. Higher values keep more of the scene sharp.",
+        .min = 0.7f,
+        .max = 22.0f,
+        .format = "%.2f",
+        .is_enabled = [] { return IsCustom() && witcher3classic::optics::dof_mode == 1.f; },
+        .is_visible = [] { return DepthControlMode() == 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxNearBlurStrength",
+        .binding = &witcher3classic::optics::near_strength,
+        .default_value = 0.0f,
+        .label = "Foreground Blur",
+        .section = "Depth of Field",
+        .tooltip = "Controls foreground coverage independently from background defocus. 0 removes foreground spread; 50 uses Custom coverage.",
+        .min = 0.0f,
+        .max = 50.0f,
+        .is_enabled = [] { return IsCustom() && witcher3classic::optics::dof_mode == 1.f; },
+        .parse = [](float value) { return value * 0.02f; },
+        .is_visible = [] { return DepthControlMode() == 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxBloomMode",
+        .binding = &witcher3classic::optics::bloom_mode,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Bloom Implementation",
+        .section = "Bloom",
+        .tooltip = "Custom replaces native uniform bloom and BlitzFX Bloom Scattering with its own HDR filter. Native restores their original settings; the Custom strength slider does not alter BlitzFX configuration.",
+        .labels = {"Native", "Custom"},
+        .is_enabled = &IsCustom,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxBloomSize",
+        .binding = &witcher3classic::optics::bloom_size,
+        .default_value = 2.0f,
+        .label = "Bloom Size",
+        .section = "Bloom",
+        .tooltip = "Custom enhanced multi-scale Gaussian spread. Larger values use more blur passes and increase GPU cost.",
+        .min = 0.1f,
+        .max = 3.0f,
+        .format = "%.2f",
+        .is_enabled = [] { return IsCustom() && witcher3classic::optics::bloom_mode == 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxBloomExtraction",
+        .binding = &witcher3classic::optics::bloom_extraction,
+        .default_value = 3.0f,
+        .label = "Bloom Highlight Selection",
+        .section = "Bloom",
+        .tooltip = "Custom brightness polynomial: 1 includes more low-intensity light; 4 concentrates bloom around highlights. Extended HDR energy is preserved.",
+        .min = 1.0f,
+        .max = 4.0f,
+        .format = "%.2f",
+        .is_enabled = [] { return IsCustom() && witcher3classic::optics::bloom_mode == 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxBloom",
+        .binding = &witcher3classic::optics::bloom_strength,
+        .default_value = 15.f,
+        .label = "Bloom Strength",
+        .section = "Bloom",
+        .tooltip = "Custom bloom strength: 0 removes the replacement glow, 50 is reference, 100 doubles it.",
+        .min = 0.f,
+        .max = 100.f,
+        .is_enabled = [] { return IsCustom() && witcher3classic::optics::bloom_mode == 1.f; },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
@@ -542,22 +756,10 @@ renodx::utils::settings::Settings settings = {
         .binding = &shader_injection.custom_sunshafts_strength,
         .default_value = 50.f,
         .label = "Sunshafts Strength",
-        .section = "Effects",
-        .tooltip = "Scales masked sky input to light shafts. 0 removes it, 50 is reference strength, 100 doubles the input. Requires native Light Shafts. Without BlitzFX, Bloom also scales the shared composite.",
+        .section = "Sunshafts",
+        .tooltip = "Scales masked sky input to light shafts. 0 removes it, 50 is reference strength, 100 doubles the input. Requires native Light Shafts. Lens dirt and the replacement bloom are independent.",
         .min = 0.f,
         .max = 100.f,
-        .parse = [](float value) { return value * 0.02f; },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "FxDepthBlur",
-        .binding = &shader_injection.custom_blur,
-        .default_value = 50.f,
-        .label = "Blur",
-        .section = "Effects",
-        .tooltip = "Depth-blur radius: 0 removes it, 50 is native, 100 doubles it. Requires native Blur. Does not control Motion Blur or Witcher Senses.",
-        .min = 0.f,
-        .max = 100.f,
-        .is_enabled = &IsCustom,
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
@@ -565,7 +767,7 @@ renodx::utils::settings::Settings settings = {
         .binding = &shader_injection.custom_lens_dirt,
         .default_value = 50.f,
         .label = "Lens Dirt",
-        .section = "Effects",
+        .section = "Lens Dirt",
         .tooltip = "Scales the dirt texture in the bloom composite. 0 removes dirt, 50 is reference strength, 100 doubles it. Requires native Camera Lens Effects.",
         .min = 0.f,
         .max = 100.f,
@@ -577,7 +779,7 @@ renodx::utils::settings::Settings settings = {
         .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
         .default_value = 1.f,
         .label = "Vignette Black Floor",
-        .section = "Effects",
+        .section = "Vignette",
         .tooltip = "Perfect Black darkens without adding a colored black floor. Above strength 50, it darkens progressively while retaining detail under partial vignette masks. Native retains the game's vignette color.",
         .labels = {"Native", "Perfect Black"},
         .is_enabled = &IsCustom,
@@ -587,7 +789,7 @@ renodx::utils::settings::Settings settings = {
         .binding = &shader_injection.vignette_strength,
         .default_value = 50.f,
         .label = "Vignette Strength",
-        .section = "Effects",
+        .section = "Vignette",
         .tooltip = "Scales the game's radial and texture-based vignettes. 0 removes them; 50 uses native strength; 100 doubles the strength. Requires the game's Vignetting option.",
         .min = 0.f,
         .max = 100.f,
@@ -595,14 +797,38 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
+        .key = "FxSharpeningMode",
+        .binding = &shader_injection.sharpening_mode,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 0.f,
+        .label = "Replace Native Sharpening",
+        .section = "Sharpening",
+        .tooltip = "Replaces the game's sharpening with Lilium RCAS after DLSS or native TAA. Works with native Sharpening off. Requires the PsychoV tone mapper.",
+        .is_enabled = &IsCustom,
+        .is_global = true,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxSharpening",
+        .binding = &shader_injection.sharpening_strength,
+        .default_value = 0.f,
+        .label = "Lilium RCAS Strength",
+        .section = "Sharpening",
+        .tooltip = "0 disables sharpening while replacement remains active. Higher values enhance detail with noise attenuation. HUD and menu graphics are unaffected.",
+        .min = 0.f,
+        .max = 100.f,
+        .is_enabled = [] { return IsCustom() && shader_injection.sharpening_mode != 0.f; },
+        .parse = [](float value) { return value * 0.01f; },
+        .is_global = true,
+    },
+    new renodx::utils::settings::Setting{
         .key = "FxChromaticAberrationMode",
         .binding = &shader_injection.chromatic_aberration_mode,
         .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
         .default_value = 0.f,
         .label = "Chromatic Aberration",
-        .section = "Effects",
-        .tooltip = "Native follows the game's setting. RenoDX replaces it with lens dispersion after sharpening, even when native CA is off.",
-        .labels = {"Native", "RenoDX"},
+        .section = "Chromatic Aberration",
+        .tooltip = "Native follows the game setting. Custom uses its authored radial lens curve and bounded linear-light filtering after reconstruction; works with native CA disabled.",
+        .labels = {"Native", "Custom"},
         .is_enabled = &IsCustom,
     },
     new renodx::utils::settings::Setting{
@@ -610,36 +836,35 @@ renodx::utils::settings::Settings settings = {
         .binding = &shader_injection.chromatic_aberration_intensity,
         .default_value = 0.7f,
         .label = "CA Intensity",
-        .section = "Effects",
-        .tooltip = "Red/green lens separation. 0 removes fringing in RenoDX mode.",
+        .section = "Chromatic Aberration",
+        .tooltip = "0 disables lens distortion and dispersion. 1 uses the reference lens curve. Higher values exaggerate the curve.",
         .min = 0.f,
         .max = 5.f,
         .format = "%.2f",
         .is_enabled = [] { return IsCustom() && shader_injection.chromatic_aberration_mode != 0.f; },
     },
     new renodx::utils::settings::Setting{
-        .key = "FxChromaticAberrationStartOffset",
-        .binding = &shader_injection.chromatic_aberration_start_offset,
-        .default_value = 0.7f,
-        .label = "CA Start Offset",
-        .section = "Effects",
-        .tooltip = "Protects the center: 0 starts at the center; values near 1 confine fringing to the edges.",
-        .min = 0.f,
-        .max = 0.95f,
-        .format = "%.2f",
-        .is_enabled = [] { return IsCustom() && shader_injection.chromatic_aberration_mode != 0.f; },
-    },
-    new renodx::utils::settings::Setting{
         .key = "FxFilmGrain",
         .binding = &shader_injection.film_grain,
-        .default_value = 0.f,
+        .default_value = 50.f,
         .label = "Perceptual Film Grain",
-        .section = "Effects",
+        .section = "Film Grain",
         .tooltip = "Luminance-adaptive grain after reconstruction, sharpening, CA and tone mapping. 0 disables it. HUD and menu graphics are unaffected.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
         .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FxVideoAutoHDR",
+        .binding = &video_auto_hdr,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Video AutoHDR",
+        .section = "Video",
+        .tooltip = "Expands prerendered SDR video to HDR using BT.2446 Method A. Uses Game Brightness and Peak Brightness; Off or Vanilla preserves the original video colors. Fades and subtitles are preserved.",
+        .labels = {"Off", "BT2446A"},
+        .is_enabled = &IsCustom,
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
@@ -710,6 +935,14 @@ renodx::utils::settings::Settings settings = {
         .section = "About",
     },
     new renodx::utils::settings::Setting{
+        .key = "FxDepthOfFieldControls",
+        .binding = &depth_controls_mode,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .max = 1.f,
+        .is_visible = [] { return false; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "AADevelopment",
         .binding = &witcher3classic::temporal::mode,
         .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
@@ -730,24 +963,6 @@ renodx::utils::settings::Settings settings = {
         .binding = &witcher3classic::temporal::exclude_vegetation,
         .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
         .default_value = 0.f,
-        .is_global = true,
-        .is_visible = [] { return false; },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "FxSharpeningMode",
-        .binding = &shader_injection.sharpening_mode,
-        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
-        .default_value = 0.f,
-        .is_global = true,
-        .is_visible = [] { return false; },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "FxSharpening",
-        .binding = &shader_injection.sharpening_strength,
-        .default_value = 0.f,
-        .min = 0.f,
-        .max = 100.f,
-        .parse = [](float value) { return value * 0.01f; },
         .is_global = true,
         .is_visible = [] { return false; },
     },
@@ -786,6 +1001,7 @@ renodx::utils::settings::Settings settings = {
 void OnPresetOff() {
   renodx::utils::settings::ResetSettings();
   renodx::utils::settings::UpdateSetting("ToneMapper", CLASSIC_TONE_MAP_VANILLA);
+  renodx::utils::settings::UpdateSetting("FxVideoAutoHDR", 0.f);
 }
 
 void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
@@ -815,6 +1031,12 @@ void ShowHint(const char* text) {
 void DrawAddon(reshade::api::effect_runtime* runtime) {
   if (!ImGui::BeginTabBar("ClassicTabs")) return;
   if (ImGui::BeginTabItem("HDR")) {
+    draw_effects = false;
+    renodx::utils::settings::OnRegisterOverlay(runtime);
+    ImGui::EndTabItem();
+  }
+  if (ImGui::BeginTabItem("Effects")) {
+    draw_effects = true;
     renodx::utils::settings::OnRegisterOverlay(runtime);
     ImGui::EndTabItem();
   }
@@ -824,7 +1046,7 @@ void DrawAddon(reshade::api::effect_runtime* runtime) {
     bool enabled = mode != 0.f;
     if (ImGui::Checkbox("Enable DLSS", &enabled))
       changed |= renodx::utils::settings::UpdateSetting("AADevelopment", enabled ? 1.f : 0.f);
-    ShowHint("Keep Anti-aliasing enabled in the game. DLSS replaces native AA and automatically bypasses BlitzFX TAA when present. Off restores the selected AA implementation.");
+    ShowHint("Keep Anti-aliasing enabled in the game. DLSS replaces native AA and automatically bypasses BlitzFX TAA when present. Custom optical effects require the native AA boundary; with them active, Off uses native TAA instead of BlitzFX TAA.");
     ImGui::SeparatorText("Image Quality");
     ImGui::BeginDisabled(!enabled);
     int selected_quality = std::clamp(static_cast<int>(quality), 0, 4);
@@ -837,20 +1059,6 @@ void DrawAddon(reshade::api::effect_runtime* runtime) {
     if (ImGui::Combo("Upscaling Model", &selected_model, models, 5))
       changed |= renodx::utils::settings::UpdateSetting("DLSSModel", static_cast<float>(selected_model));
     ShowHint("Requests the selected NVIDIA model. Unsupported models fall back to the DLL default. Driver overrides may take precedence.");
-    ImGui::EndDisabled();
-
-    ImGui::SeparatorText("Sharpening");
-    ImGui::BeginDisabled(!IsCustom());
-    bool replace_sharpening = shader_injection.sharpening_mode != 0.f;
-    if (ImGui::Checkbox("Replace Native Sharpening", &replace_sharpening))
-      changed |= renodx::utils::settings::UpdateSetting("FxSharpeningMode", replace_sharpening ? 1.f : 0.f);
-    ShowHint("Replaces the game's sharpening with Lilium RCAS after DLSS or native TAA, before chromatic aberration and grain. Works with native Sharpening off. Requires the PsychoV tone mapper.");
-    ImGui::BeginDisabled(!replace_sharpening);
-    float sharpness = shader_injection.sharpening_strength * 100.f;
-    if (ImGui::SliderFloat("Lilium RCAS Strength", &sharpness, 0.f, 100.f, "%.0f"))
-      changed |= renodx::utils::settings::UpdateSetting("FxSharpening", sharpness);
-    ShowHint("0 disables sharpening while replacement remains active. Higher values enhance detail with noise attenuation. HUD and menu graphics are unaffected.");
-    ImGui::EndDisabled();
     ImGui::EndDisabled();
 
     ImGui::BeginDisabled(!enabled);
@@ -903,6 +1111,20 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (!reshade::register_addon(module)) return FALSE;
     renodx::utils::settings::global_name = "renodx-thewitcher3classic";
     renodx::utils::settings::use_presets = true;
+    // Keep one ordered settings list and the normal preset/reset/save behavior.
+    // Video AutoHDR is an HDR conversion option; all optical effects live in Effects.
+    for (auto* setting : settings) {
+      const bool effect = setting->key.starts_with("Fx") && setting->key != "FxVideoAutoHDR";
+      setting->is_visible = [effect, visible = std::move(setting->is_visible)] {
+        return effect == draw_effects && (!visible || visible());
+      };
+    }
+    // Gate replacement itself so Off uses native bytecode, without extending
+    // the shared injection layout used by the existing HDR/motion shaders.
+    for (const auto hash : {0x043049C7u, 0x30C6DAFAu, 0x7542753Bu, 0xA850FB8Du,
+                            0x989EB8B2u, 0xDC4FAC37u, 0xDCEB62A5u}) {
+      custom_shaders.at(hash).on_replace = [](auto*) { return IsCustom() && video_auto_hdr == 1.f; };
+    }
     reshade::register_event<reshade::addon_event::init_swapchain>(&OnInitSwapchain);
     reshade::register_event<reshade::addon_event::init_device>(&OnBloomInitDevice);
     reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&OnMaterialTargets);
@@ -962,6 +1184,32 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     custom_shaders.at(0xFBF141A1).on_replace = [](auto*) { return IsCustom() && shader_injection.sharpening_mode != 0.f; };
     custom_shaders.at(0xFBF141A1).on_inject = [](auto*) { return false; };
     custom_shaders.at(0x6ED58557).on_replace = [](auto*) { return IsCustom() && shader_injection.custom_blur != 1.f; };
+    for (const auto hash : {0x649AF4FAu, 0x5CBEC131u, 0x9F48B203u, 0x1E28F70Eu, 0xA1C06A7Du, 0xC4D2D4F6u,
+                            0x114D8828u, 0xA123EB15u, 0x399CBE16u, 0x445EB59Cu, 0x4FC8DAEBu, 0xE276DFB3u}) {
+      custom_shaders.at(hash).on_inject = &OnOpticsInject;
+      custom_shaders.at(hash).on_drawn = &OnOpticsDrawn;
+    }
+    custom_shaders.at(0x1A70FFE2).on_replace = [](auto*) { return IsCustom(); };
+    custom_shaders.at(0x1A70FFE2).on_inject = [](auto*) { return false; };
+    custom_shaders.at(0x9A905454).on_replace = [](auto*) { return IsCustom() && witcher3classic::optics::dof_mode != 0.f; };
+    custom_shaders.at(0x9A905454).on_inject = [](auto*) { return false; };
+    custom_shaders.at(0x6ED58557).on_draw = [](auto*) { return !IsCustom() || witcher3classic::optics::dof_mode == 0.f; };
+    // The BlitzFX composite also writes SV_Depth. Keep that native side effect
+    // and the blend/stencil operation when removing its colour contribution.
+    custom_shaders.at(0xAE334616).on_replace = [](auto*) {
+      const auto* frame = witcher3classic::temporal::upscale_engine::active;
+      return IsCustom() || (frame && frame->plan.width < frame->plan.output_width);
+    };
+    custom_shaders.at(0xAE334616).on_inject = [](auto*) {
+      shader_injection.blitz_bloom_active = IsCustom() && witcher3classic::optics::dof_mode != 0.f ? -2.f : 0.f;
+      return true;
+    };
+    custom_shaders.at(0x249DA2F1).on_replace = [](auto*) {
+      const auto* frame = witcher3classic::temporal::upscale_engine::active;
+      return IsCustom() || (frame && frame->plan.width < frame->plan.output_width);
+    };
+    custom_shaders.at(0x249DA2F1).on_inject = &OnBlitzComputeInject;
+    custom_shaders.at(0x249DA2F1).on_drawn = &OnBlitzComputeDrawn;
     renodx::mods::shader::force_pipeline_cloning = true;
     renodx::mods::shader::expected_constant_buffer_index = 13;
     renodx::mods::shader::expected_constant_buffer_space = 0;

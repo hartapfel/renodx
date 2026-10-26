@@ -127,6 +127,127 @@ int main(int argc, char** argv) {
     };
     const auto run = [&](ID3DBlob* code) { return render(code->GetBufferPointer(), code->GetBufferSize()); };
     {
+      texture(0,W,H,scene);
+      auto native_blur_bypass=Compiled("0x1A70FFE2.ps_5_0.hlsl");
+      auto expected=scene;
+      for(size_t i=3;i<expected.size();i+=4) expected[i]=1.f;
+      if(Difference(expected,run(native_blur_bypass.Get()))>1e-6f) throw std::runtime_error("Native motion blur bypass changed sharp RGB/alpha");
+      for(const auto hash : {"0x9A905454.ps_5_0.hlsl","0xAE334616.ps_5_0.hlsl"}) {
+        injection.blitz_bloom_active=-2;inject();
+        if(Difference(std::vector<float>(W*H*4),run(Compiled(hash).Get()))>1e-6f)
+          throw std::runtime_error("BlitzFX DoF bypass did not preserve transparent composite");
+      }
+      injection.blitz_bloom_active=0;inject();
+      std::cout<<"PASS native motion blur sharp copy and BlitzFX depth-blur/DoF transparent composites\n";
+    }
+    if (std::find(argv + 2, argv + argc, std::string("--video-only")) != argv + argc) {
+      const char* video_vertex = R"(
+struct V {
+#ifdef WITH_COLOR
+  float4 color:COLOR0;
+#endif
+  float2 uv:TEXCOORD0;
+  float4 p:SV_Position;
+};
+V main(uint id:SV_VertexID) {
+  V v;v.uv=float2((id<<1)&2,id&2);v.p=float4(v.uv*float2(2,-2)+float2(-1,1),0,1);
+#ifdef WITH_COLOR
+  v.color=float4(0,0,0,FADE);
+#endif
+  return v;
+})";
+      ctx->PSSetSamplers(3, 1, sampler.GetAddressOf());
+      for (const char* hash : {"043049C7", "30C6DAFA", "7542753B", "A850FB8D", "989EB8B2", "DC4FAC37", "DCEB62A5"}) {
+        const auto native = Read(root / (std::string("0x") + hash + ".cso"));
+        const auto code = Compiled(std::string("0x") + hash + ".ps_5_0.hlsl");
+        const bool with_color = std::string(hash) != "30C6DAFA" && std::string(hash) != "DC4FAC37" && std::string(hash) != "DCEB62A5";
+        const bool premultiplied = std::string(hash) == "7542753B" || std::string(hash) == "989EB8B2" || std::string(hash) == "DCEB62A5";
+        for (const char* fade : {"0", "0.37", "1"}) {
+          const D3D_SHADER_MACRO definitions[] = {{"FADE", fade}, {with_color ? "WITH_COLOR" : nullptr, "1"}, {nullptr, nullptr}};
+          ComPtr<ID3DBlob> vertex_code;
+          Check(D3DCompile(video_vertex, strlen(video_vertex), nullptr, definitions, nullptr, "main", "vs_5_0", 0, 0, &vertex_code, nullptr));
+          ComPtr<ID3D11VertexShader> vertex;
+          Check(dev->CreateVertexShader(vertex_code->GetBufferPointer(), vertex_code->GetBufferSize(), nullptr, &vertex));
+          ctx->VSSetShader(vertex.Get(), nullptr, 0);
+          // Independently replay original DXBC with neutral, saturated, outside-
+          // nominal-range samples and alpha-plane endpoints/intermediate values.
+          for (const auto& ycbcr : {std::array{16.f/255, 128.f/255, 128.f/255},
+                                   std::array{235.f/255, 128.f/255, 128.f/255},
+                                   std::array{.5f, .1f, .9f}, std::array{.5f, .9f, .1f},
+                                   std::array{0.f, 0.f, 0.f}, std::array{1.f, 1.f, 1.f}}) {
+            for (float alpha : {0.f, .6f, 1.f}) {
+              for (UINT slot = 0; slot < 3; ++slot) {
+                texture(slot, 1, 1, std::vector<float>(4, ycbcr[slot]));
+              }
+              texture(3, 1, 1, std::vector<float>(4, alpha));
+              injection.tone_map_type = 0;
+              inject();
+              const auto original = render(native.data(), native.size());
+              if (Difference(original, run(code.Get())) > 2e-6f) throw std::runtime_error(std::string(hash) + " video native RGB/alpha changed");
+              injection.tone_map_type = 1;
+              inject();
+              const auto hdr = run(code.Get());
+              Difference(hdr, hdr);  // Reject nonfinite channels, including black.
+              for (size_t i = 0; i < hdr.size(); i += 4) {
+                if (hdr[i+3] != original[i+3]) throw std::runtime_error("Video fade/alpha changed");
+                if (premultiplied && hdr[i+3] == 0.f && (hdr[i] != 0.f || hdr[i+1] != 0.f || hdr[i+2] != 0.f)) {
+                  throw std::runtime_error("Transparent premultiplied video is not black");
+                }
+              }
+            }
+          }
+        }
+        std::cout << "PASS video " << hash << " native RGB/alpha, finite HDR, fades and premultiplication\n";
+      }
+      // Opaque variant's vertex signature is still bound. Test absolute output
+      // nits independently of UI white across Game Brightness and gamut modes.
+      const auto code = Compiled("0x30C6DAFA.ps_5_0.hlsl");
+      std::vector<float> ramp(W*H*4);
+      for (UINT y = 0; y < H; ++y) {
+        for (UINT x = 0; x < W; ++x) {
+          for (UINT c = 0; c < 4; ++c) ramp[(y*W+x)*4+c] = 16.f/255 + (float(x)/(W-1))/1.164f;
+        }
+      }
+      texture(0, W, H, ramp);
+      texture(1, 1, 1, std::vector<float>(4, 128.f/255));
+      texture(2, 1, 1, std::vector<float>(4, 128.f/255));
+      // Rebind the opaque signature: the last alpha-plane variant uses it too.
+      for (float peak : {100.f, 1000.f, 4000.f}) {
+        for (float game_white : {100.f, 203.f, 400.f}) {
+          std::vector<float> reference;
+          for (float ui_white : {100.f, 203.f, 400.f}) {
+            for (float gamut : {0.f, 3.f}) {
+              injection.peak_white_nits = peak;
+              injection.diffuse_white_nits = game_white;
+              injection.graphics_white_nits = ui_white;
+              injection.psychov_gamut_compression_mode = gamut;
+              inject();
+              auto output = run(code.Get());
+              Difference(output, output);
+              for (auto& value : output) value = std::copysign(std::pow(std::abs(value), 2.2f), value) * ui_white;
+              for (UINT x = 0; x < W; ++x) {
+                const float nits = output[x*4];
+                if (nits < -1e-5f || nits > peak*1.001f || (x && nits < output[(x-1)*4]-1e-4f)) {
+                  throw std::runtime_error("Video gray ramp is unbounded/nonmonotonic");
+                }
+              }
+              if (output[0] > .001f || std::abs(output[(W-1)*4]-peak) > peak*.001f) {
+                throw std::runtime_error("Video black/peak endpoint mismatch");
+              }
+              // Alpha is not light; exclude it from the UI-white comparison.
+              for (size_t i = 3; i < output.size(); i += 4) output[i] = 1.f;
+              if (!reference.empty() && Difference(reference, output) > peak*.0001f) {
+                throw std::runtime_error("UI brightness changed video luminance");
+              }
+              reference = output;
+            }
+          }
+        }
+      }
+      std::cout << "PASS video black, peak, monotonic gray and UI-white independence: 54 configurations\n";
+      return 0;
+    }
+    {
       const auto saved = injection;
       const auto code = Compiled("0x620431CF.ps_5_0.hlsl");
       const auto native = Read(root.parent_path() / "20261022/originals/0x620431CF.cso");
@@ -660,6 +781,16 @@ float4 main(float4 pos : SV_Position) : SV_Target {
         ctx->Unmap(staging.Get(), 0);
         return result;
       };
+      {
+        texture(52,W,H,scene);
+        injection.tone_map_type=1;inject();
+        const auto copy=Compiled("0x249DA2F1.cs_5_0.hlsl");
+        auto expected=scene;
+        for(size_t i=0;i<expected.size();i+=4) expected[i+3]=expected[i];
+        if(Difference(expected,compute_render(copy->GetBufferPointer(),copy->GetBufferSize(),W))>1e-6f)
+          throw std::runtime_error("BlitzFX camera-blur bypass changed sharp RGB/native alpha");
+        std::cout<<"PASS BlitzFX camera motion blur bypass sharp RGB/native alpha\n";
+      }
       for (UINT active_size : {64u, 42u, 38u, 32u, 22u}) {
         frame.resize(96); frame[92] = frame[93] = float(active_size);
         frame[94] = frame[95] = 1.f / active_size; buffer(0, frame);
@@ -679,27 +810,26 @@ float4 main(float4 pos : SV_Position) : SV_Target {
             texture(slot, size, size, pixels);
           }
         };
-        // The slider replaces only BloomScattering. Compare each setting to
-        // the original shader with that absolute value, including underwater
-        // scattering, then vary BlitzFX's setting without changing the result.
+        // Native mode preserves BlitzFX's own bloom control. Replacement mode
+        // suppresses only uniform scattering, retaining the underwater term.
         for (float underwater : {0.f, .4f}) {
           bloom_custom[182] = underwater;
-          for (float strength : {0.f, .1f, .5f, 1.f, 2.f}) {
-            bloom_custom[168] = strength * .5f; buffer(2, bloom_custom);
-            inputs(active_size);
-            const auto expected = compute_render(bloom_native.data(), bloom_native.size(), active_size);
-            inputs(W);
-            injection.custom_bloom = strength; inject();
+          for (float replacement : {0.f, -1.f}) {
+            injection.blitz_bloom_active = replacement; inject();
             for (float blitz_setting : {0.f, .01f, .1f, .5f, 1.f}) {
-              bloom_custom[168] = blitz_setting; buffer(2, bloom_custom);
+              bloom_custom[168] = replacement < 0 ? 0.f : blitz_setting;
+              buffer(2, bloom_custom); inputs(active_size);
+              const auto expected = compute_render(bloom_native.data(), bloom_native.size(), active_size);
+              bloom_custom[168] = blitz_setting;
+              buffer(2, bloom_custom); inputs(W);
               const auto actual = compute_render(bloom_code->GetBufferPointer(), bloom_code->GetBufferSize(), active_size);
               if (Difference(expected, actual) > .00001f)
-                throw std::runtime_error("BlitzFX absolute bloom/subrect/underwater mismatch at " + std::to_string(active_size));
-              if (strength == 0.f && underwater == 0.f) {
+                throw std::runtime_error("BlitzFX replacement bloom/subrect/underwater mismatch at " + std::to_string(active_size));
+              if (replacement < 0.f && underwater == 0.f) {
                 for (UINT y = 0; y < active_size; ++y) for (UINT x = 0; x < active_size; ++x) for (UINT c = 0; c < 4; ++c) {
                   const float scene_value = .01f * x + .02f * y + .1f * (c == 3 ? 0 : c);
                   if (std::abs(actual[(y * active_size + x) * 4 + c] - scene_value) > 1e-6f)
-                    throw std::runtime_error("BlitzFX Bloom zero changed the unscattered scene");
+                    throw std::runtime_error("BlitzFX replacement bloom changed the unscattered scene");
                 }
               }
             }
@@ -717,7 +847,7 @@ float4 main(float4 pos : SV_Position) : SV_Target {
       }
       injection = saved_injection; inject();
       ctx->CSSetShader(nullptr, nullptr, 0);
-      std::cout << "PASS BlitzFX absolute bloom: five slider levels independent of five BlitzFX values, underwater isolation, injection fallback and five poisoned subrects\n";
+      std::cout << "PASS BlitzFX bloom: native control, replacement bypass, underwater isolation, injection fallback and five poisoned subrects\n";
       const auto shadow_native = Read(blitz / "scene-shaders/0x4708B025.cso");
       const auto shadow_code = Compiled("0x4708B025.cs_5_0.hlsl");
       std::vector<float> shadow_frame(840), shadow_matrices(128);
@@ -869,8 +999,7 @@ float4 main(float4 pos : SV_Position) : SV_Target {
       const auto sharp = run(code.Get());
       if (Difference(base, sharp) < 1e-5f) throw std::runtime_error("RCAS ineffective");
       injection.chromatic_aberration_mode = 1;
-      injection.chromatic_aberration_intensity = 5;
-      injection.chromatic_aberration_start_offset = .7f;
+      injection.chromatic_aberration_intensity = 1;
       inject();
       const auto fringe = run(code.Get());
       if (Difference(sharp, fringe) < 1e-5f) throw std::runtime_error("CA ineffective");

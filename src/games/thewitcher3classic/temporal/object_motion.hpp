@@ -10,6 +10,8 @@
 #include "./foliage_motion.hpp"
 #include "./object_engine.hpp"
 #include "./rigid_motion.hpp"
+#include "../optics/settings.hpp"
+#include "../optics/motion_camera.hpp"
 
 namespace witcher3classic::temporal {
 class ObjectMotion {
@@ -52,6 +54,11 @@ class ObjectMotion {
   }
 
   bool Begin(ID3D11DeviceContext1* context, uint64_t frame, bool reference_pose = false, bool deformed = false, bool rigid = false, bool forward = false, uint32_t foliage = 0) {
+    if (blur_vectors_ != optics::ObjectOnly()) {
+      ClosePass(context);
+      blur_vectors_ = optics::ObjectOnly();
+      surfaces[0].Reset(); targets_[0].Reset(); prepared_frame_ = UINT64_MAX;
+    }
     if (!foliage) ClosePass(context);
     rejection = "Waiting for main-scene depth";
     if (active_draw || !depth_) return false;
@@ -218,7 +225,7 @@ class ObjectMotion {
       for (size_t i = 0; i < 2; ++i) {
         if (!targets_[i] || !surfaces[i]) {
           Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
-          const D3D11_TEXTURE2D_DESC desc{width_, height_, 1, 1, i == 0 ? DXGI_FORMAT_R16G16_FLOAT : DXGI_FORMAT_R32_FLOAT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET};
+          const D3D11_TEXTURE2D_DESC desc{width_, height_, 1, 1, i == 0 ? (blur_vectors_ ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R16G16_FLOAT) : DXGI_FORMAT_R32_FLOAT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET};
           error = device->CreateTexture2D(&desc, nullptr, &texture);
           if (FAILED(error)) return false;
           error = device->CreateRenderTargetView(texture.Get(), nullptr, &targets_[i]);
@@ -320,6 +327,18 @@ class ObjectMotion {
       auto* current_frame = frame_constants.Get();
       context->PSSetConstantBuffers(11, 1, &current_frame);
     }
+    // This SRV is absent from every registered native material. Keep all native
+    // lighting constant slots intact, including the independent PS frame.
+    context->PSGetShaderResources(119, 1, &saved_blur_transform_);
+    ID3D11ShaderResourceView* blur_transform = nullptr;
+    if (blur_vectors_) {
+      Microsoft::WRL::ComPtr<ID3D11Buffer> foliage_view;
+      if (foliage) context->VSGetConstantBuffers(0, 1, &foliage_view);
+      blur_transform = blur_camera_.Prepare(context, foliage ? foliage_view.Get() : view.Get(),
+          foliage ? foliage_.previous[0] : previous_constants_[0].Get(), frame_constants.Get(),
+          foliage ? foliage_.previous[5] : previous_constants_[1].Get(), frame);
+    }
+    context->PSSetShaderResources(119, 1, &blur_transform);
     active_foliage_ = foliage;
     if (foliage) {
       std::array<ID3D11Buffer*, 7> saved = {};
@@ -353,6 +372,9 @@ class ObjectMotion {
 
   void End(ID3D11DeviceContext1* context, bool retain_foliage_targets = false) {
     if (!active_draw) return;
+    auto* blur_transform = saved_blur_transform_.Get();
+    context->PSSetShaderResources(119, 1, &blur_transform);
+    saved_blur_transform_.Reset();
     const bool retain = retain_foliage_targets && active_foliage_ && saved_target_count_ == 3
                         && std::ranges::all_of(saved_uavs_, [](const auto& view) { return !view; });
     std::array<ID3D11RenderTargetView*, 8> targets;
@@ -446,6 +468,9 @@ class ObjectMotion {
   }
 
  private:
+  optics::MotionCamera blur_camera_;
+  bool blur_vectors_ = false;
+  Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> saved_blur_transform_;
   uint32_t width_ = 0, height_ = 0, previous_capacity_ = 0;
   uint32_t viewport_width_ = 0, viewport_height_ = 0;
   uint64_t prepared_frame_ = UINT64_MAX, bone_prepared_frame_ = UINT64_MAX;

@@ -183,19 +183,30 @@ for the exact inputs, tests, remaining limits and build status.
 ## Menu
 
 All setting definitions are explicit `new Setting{...}` entries in one ordered
-`Settings settings` list in `addon.cpp`. Move a complete entry to reorder HDR
-controls; no `Control` table or initialization-time append loops construct the
-menu. The global DLSS preferences are declared at the end of that list; its
-separate ImGui tab retains the requested dropdown/diagnostic UI. The initialization
-loop only migrates saved legacy global values, and does not construct settings.
-The HDR section order is Tone Mapping → Scene Color Grading → Color Grading →
-PsychoV-31 → Effects → Options/Instructions/Links/About. Advanced mode exposes
-both grading sections and PsychoV controls. Existing setting keys are retained.
+`Settings settings` list in `addon.cpp`. Move a complete entry to reorder its
+controls. The initialization loop wraps visibility to select the HDR or Effects
+tab; it does not construct/reorder settings. Existing keys, defaults, preset
+storage and reset behavior are preserved. Global DLSS preferences remain in the
+same list, with its separate ImGui dropdown/diagnostic UI.
 
-The addon frame has **HDR** and **DLSS** tabs. HDR retains its existing presets,
-settings, effects and information sections. DLSS has Enable DLSS at the top,
-then Image Quality, Sharpening, Performance, Diagnostics and Status. Its global preferences are independent
-of HDR presets/Off. Existing AA preferences migrate from preset 1 once.
+The addon frame has **HDR → Effects → DLSS** tabs. HDR contains Tone Mapping,
+Scene Color Grading, Color Grading, PsychoV-31, Video AutoHDR and the existing
+Options/Instructions/Links/About sections. Advanced mode exposes the grading
+sections and PsychoV controls. Effects has Motion Blur, Depth of Field, Bloom,
+Sunshafts, Lens Dirt, Vignette, Sharpening, Chromatic Aberration and Film Grain.
+Sharpening retains its global storage; the other optical effects retain their
+per-preset values. HDR and Effects share the standard preset selector.
+DLSS contains Enable DLSS, Image Quality, Performance, Diagnostics and Status.
+Its global preferences remain independent of HDR presets/Off.
+
+Depth of Field's Native mode shows only Native Depth Blur; Custom shows only
+its strength and lens controls. Off keeps the last group visible but disabled.
+Hidden per-preset `FxDepthOfFieldControls` remembers that group across restarts;
+old presets without the field use their active mode, or Custom when already Off.
+Changing modes never resets either group's values. Motion strength is disabled
+in Off, and custom Bloom controls are disabled in Native mode. CA intensity and
+RCAS strength remain disabled until their replacements are selected.
+
 Fresh DLSS settings default to enabled with **Quality** and **model M**.
 Saved user choices are preserved; unsupported models retain the DLL fallback.
 The HDR instructions explain Windows HDR and display peak setup. Peak Brightness
@@ -235,13 +246,13 @@ are concise hover tooltips rather than persistent instruction paragraphs.
 
 ## Effects and reconstruction order
 
-The Hartapfel Remastered implementations are ported to Classic's DXBC passes:
+The retained Remastered controls and Custom optical replacements use Classic's DXBC passes:
 
-- **HDR → Effects → Blur** scales native depth-blur radius: 0 off, 50 native,
+- **Effects → Depth of Field → Native Depth Blur** scales depth-blur radius in Native DoF mode: 0 off, 50 native,
   100 double. It preserves the native sky treatment and alpha composite, and does
   not control Motion Blur or Witcher Senses.
-- **Chromatic Aberration** selects Native or RenoDX lens dispersion, with
-  intensity and center-protection sliders. RenoDX works when native CA is off;
+- **Chromatic Aberration** selects Native or Custom lens dispersion, with
+  an intensity slider. Custom works when native CA is off;
   its intensity zero removes native fringing too.
 - **Perceptual Film Grain** uses the shared luminance-adaptive grain algorithm,
   after tone mapping and before UI. Default 0; Remastered strength 50 is available.
@@ -251,21 +262,22 @@ The Hartapfel Remastered implementations are ported to Classic's DXBC passes:
   levels, before PsychoV, without blending in a colored floor. Above 50, optical
   density preserves detail in partial masks. Native mode retains the original
   colored blend. No-vignette permutations remain vignette-free.
-- **DLSS → Sharpening → Replace Native Sharpening** bypasses Classic's pre-TAA
+- **Effects → Sharpening → Replace Native Sharpening** bypasses Classic's pre-TAA
   sharpening and uses **Lilium RCAS Strength** after reconstruction. It works with
   native Sharpening disabled, or with native TAA when DLSS is off. Replacement
   defaults off; strength 0 means no sharpening when replacement is on.
 
 These controls require PsychoV, matching Remastered's custom-effect gating.
 Vanilla and Preset Off preserve native effects. Sharpening preferences are global
-in the DLSS tab; HDR effect preferences remain per preset. Existing saved vegetation
+in the Effects tab; HDR effect preferences remain per preset. Existing saved vegetation
 preferences are retained even though the new default is off.
 
 Captured order: depth blur `6ED58557` → bloom/native sharpening `3EDDC379` →
 LUT → native TAA/DLSS `201C53B4` → final grade. RCAS replaces the native sharpen
 with a center-sampling bypass and runs in all six final-grade permutations, before
 native or custom CA. Grain follows PsychoV in that same pass. No extra fullscreen
-render target or pass is introduced; HUD/video rendering follows unchanged.
+render target or pass was introduced by those original controls. The Custom
+pipeline below adds optical scratch passes; HUD/video rendering follows afterward.
 
 `tests/effects.cpp` runs the actual Release FXC bytecode on WARP and NVIDIA:
 six original-DXBC Vanilla comparisons; RCAS zero/active; CA active; changing grain
@@ -287,8 +299,8 @@ then toggle DLSS off/on. Confirm full-resolution UI and matching scene/vector
 viewports in DevKit. Keep native Anti-aliasing enabled.
 
 The main addon frame uses the standard RenoDX Off / Preset 1-3 selector, followed
-by Simple / Advanced settings mode. Simple shows Tone Mapping and Effects;
-Advanced adds Color Grading and PsychoV-31 before Effects. Preset Off restores
+by Simple / Advanced settings mode on HDR. Simple shows Tone Mapping;
+Advanced adds Color Grading and PsychoV-31. Effects has its own tab. Preset Off restores
 native tone mapping and default effects while retaining HDR transport.
 
 Exposure uses 0-100 with 50 = neutral (1x). Values saved by the initial test
@@ -319,24 +331,66 @@ of the native Hable curve. Vanilla skips this limiter.
 
 Effects sliders use 0 = off, 50 = reference strength, 100 = double:
 
-- **Bloom** scales the native additive and screen-blended effect composites.
-  When BlitzFX's bloom composite runs, it instead replaces BlitzFX's Bloom
-  Scattering setting: 0–100 maps directly to 0.00–1.00, independently of the
-  BlitzFX menu value. Native uniform bloom is removed to avoid double bloom;
-  underwater scattering, lens dirt and the other screen-blended effects remain.
+- **Bloom Strength** controls the Custom replacement bloom. It no longer changes
+  BlitzFX's Bloom Scattering setting. Custom mode removes native uniform bloom
+  and BlitzFX uniform scattering; underwater scattering and lens dirt remain.
+  Native mode restores original bloom controls and ignores Custom strength.
 - **Lens Dirt** scales only the dirt texture contribution.
 - **Sunshafts Strength** scales masked sky input before extraction. The
-  native threshold makes its response nonlinear; without BlitzFX, Bloom also
-  scales the shared composite. Requires the game's Light Shafts option.
+  native threshold makes its response nonlinear. Requires the game's Light Shafts option.
 
 The screen-blended HDR path prevents `(1 - scene)` from subtracting bright
 scene values. Vanilla at default effect settings retains native arithmetic.
-These controls require the corresponding game effects to be enabled.
+Lens dirt and sunshafts require the corresponding game effects to be enabled.
+Custom bloom instead requires the native Anti-aliasing render boundary.
 BlitzFX routing uses a per-device flag from its executed bloom pass, reset at
 Present; it does not poll DLLs, scan resources, read back GPU data or wait for
 the GPU. Verify performance with DevKit and offline replay tests disabled.
 
+## Video AutoHDR
+
+See the custom optical effects notes below for the separate gameplay effects; video
+AutoHDR does not pass through their scene-depth/motion pipeline.
+
+**HDR → Video → Video AutoHDR** offers Off / BT2446A, defaulting to BT2446A,
+as in the Ezio Trilogy HDR mods. It expands prerendered SDR video only.
+Game Brightness controls the inverse curve; Peak Brightness sets its highlight
+endpoint. UI Brightness does not change the resulting video luminance.
+Off and the Vanilla tone mapper select original game bytecode; Preset Off
+also sets Video AutoHDR to Off. Reset All restores its enabled default.
+
+The native `0x043049C7` draw was verified through DevKit: three R8 Y/Cb/Cr
+planes, straight vertex-alpha fade, and an existing full-resolution FP16 output
+clone before separate menu/UI draws. `video/` also covers the matching opaque,
+premultiplied and separate-alpha-plane variants: `30C6DAFA`, `7542753B`,
+`A850FB8D`, `989EB8B2`, `DC4FAC37`, `DCEB62A5`. Native YCbCr conversion,
+alpha and fade multiplication remain intact. Other Scaleform color-transform
+and debug-video permutations are not automatically replaced by pattern matches.
+
+`video/common.hlsli` follows Ezio's gamma-2.4 SDR decode and BT.2446A mapping
+at `peak * 203 / game_white`, then normalizes the result to `peak / ui_white`
+and encodes it for Classic's gamma-2.2 composition. Unlike Ezio, Classic has no
+final presentation shoulder to invert. The existing proxy applies UI-white
+scaling and BT.2020/PQ output once. BT.709 gamut mode compresses video into
+BT.709; wide-gamut modes preserve the expanded result.
+
+Video fixtures pass on WARP/NVIDIA: seven native RGB/alpha comparisons, fades,
+premultiplication, finite HDR, and 54 black/peak/monotonic-gray/UI-white
+configurations per adapter. See [tests/README.md](tests/README.md). In-game
+acceptance should include the opening video, a prerendered cinematic, subtitles,
+fades, and switching Off/BT2446A/Vanilla. The user confirmed startup with the
+matching-runtime build; that does not establish every video's visual acceptance.
+
 ## Build and verify
+
+Build the game addon and loaded DevKit from matching shared-runtime headers.
+An isolated checkout is suitable for shader tests but its DLL must not be
+deployed alongside a DevKit built from a different runtime revision. The first
+Video AutoHDR package exposed this: the two builds used the same shared
+pipeline-layout UUID with different map/value layouts and crashed during
+device initialization, before any video draw. The replacement package was
+linked from the normal workspace with AutoHDR retained. Do not substitute an
+isolated test DLL for the normal build merely because its shader tests pass.
 
 Temporal AA/DLSS input investigation uses DevKit's opt-in
 `devkit_capture_shader_inputs` tool, targeting native TAA shader `0x201C53B4`.
@@ -451,3 +505,163 @@ LOD changes and menu return. Disable DevKit captures and debug views for matched
 CPU/GPU timing. In-game acceptance and matched timing remain separate from the
 synthetic tests; see the [current handoff](../../../docs/WITCHER3_CLASSIC_HDR_HANDOFF.md)
 for the exact deployed build and outstanding checks.
+
+## Custom optical effects (2026-10-26)
+
+The optical filters are game-local. Required copyright/license notices are
+retained in `optics/LICENSE.optics`. Build `thewitcher3classic` with the normal
+root `clang-x64-release` preset. Reference-source provenance and the original
+implementation manifest remain in the investigation archive.
+
+### Controls and order
+
+The Effects tab has separate Motion Blur, Depth of Field and Bloom sections:
+
+- Motion Blur: Camera + Object / Object Only / Off. Strength 50 is a 1/60 second
+  shutter; 100 is 1/30 second. All three custom modes bypass the old native and
+  BlitzFX blur composites. Invalid/new history stays sharp. Object Only follows the visible screen trajectory, bounded by both visible
+  and camera-removed object speeds. Camera-followed subjects therefore stay
+  sharp. Object Only requires Object Motion enabled; vegetation exclusion also excludes its individual blur.
+- Depth of Field: Native / Custom / Off. Custom exposes strength, manual focus distance
+  in metres, focal length in millimetres, aperture and foreground coverage. Focus
+  does not follow the game's cinematic focus. Zero strength stays sharp. Native
+  restores game/BlitzFX DoF and enables the existing Native Depth Blur slider.
+- Bloom: Native / Custom, strength, size and highlight selection. Default Custom size
+  2 / selection 3 / strength 50 matches the reference enhanced Gaussian filter.
+  Larger sizes increase pass count and GPU cost. It is independent of BlitzFX's
+  Bloom Scattering setting. Native mode restores the original settings.
+- Chromatic Aberration: Native / Custom. Intensity 1 uses the reference lens mapping. Existing saved preferences persist. Intensity 0 removes
+  both native and replacement fringing. This includes lens warp, not just an
+  RGB displacement.
+
+New modes default to Camera + Object, Custom DoF and Custom Bloom. They require
+PsychoV. Vanilla/Preset Off retain native effects. Keep native Anti-aliasing
+on: filters run after DLSS or native TAA. If DLSS is off but the new filters
+need inputs, BlitzFX TAA is routed through Classic's native TAA boundary. With
+those filters disabled and DLSS off, normal BlitzFX TAA routing returns.
+The replacements do not require native Blur/Motion Blur/Bloom enabled;
+disabling these native options can avoid their unused intermediate work.
+
+Order: scene/exposure/LUT -> TAA or DLSS -> Custom bloom -> near/far DoF -> motion
+blur -> RCAS -> lens warp/CA -> final analytic grade, vignette and PsychoV ->
+perceptual grain -> UI. Classic's source is already linear BT.709: do not copy
+an additional extended-sRGB decode into this chain. Signed color is retained, with
+finite output bounded only for FP16 storage. NGX's signed residual is unchanged.
+
+### Implementation and invariants
+
+`optics/pipeline.hpp` owns pooled scratch and isolated D3D11 context state.
+Capture retains prepared depth/vectors, copies the native frame CB as a whole
+resource, and records render dimensions, raster jitter and history interval.
+Run executes once per main-scene frame before all twelve final-grade variants,
+substituting only a scratch PS t0 during the grade and restoring the original
+binding afterward. NGX output/history and native scene textures are not modified.
+Missing/current-frame-invalid inputs skip the new filter draws.
+
+Private `F3C20001` implements signed-CoC near/far reduction, 49/97-tap Vogel
+DoF disks, premultiplied foreground coverage and bilateral reconstruction.
+Motion uses reference velocity units, five tile-max reductions, neighborhood
+max, depth/radius bake, two half-resolution McGuire gathers and coverage blend.
+The measured history interval controls half-shutter scaling and rate bounds.
+Depth and velocity sample the same jittered render grid at the output position;
+jitter is removed once. Missing consecutive frames or camera cuts exceeding
+3 metres / 45 degrees suppress blur. Camera pose uses the existing verified,
+read-only CPU camera contract, with no synchronous GPU readback.
+
+For Object Only, `motion_camera.hpp` and `F3C20002` form
+`currentUnjitteredVP * inverse(previousVP)` on the GPU. Transforming homogeneous
+previous positions yields `Pcurrent(Xprevious)`, removing translation, rotation
+and projection changes before perspective division. This identifies the object contribution without subtracting an approximate
+camera vector at current depth. Blur then follows the visible XY trajectory,
+scaled by min(1, object_speed / screen_speed), with output-pixel speed units.
+That Remastered rule preserves camera-follow cancellation; ZW alone would
+blur a subject that moves through the world but stays still on screen. Current/previous jitter are handled
+separately; the matrix is cached per camera-buffer pair/frame.
+
+Existing object histories and vertex outputs are unchanged. XY remains the
+full DLSS vector. Only Object Only mode expands the motion attachment from
+RG16F to RGBA16F; ZW stores blur-only motion. The signed object-depth validity
+contract stays intact. PS t119 is audited unused and saved/restored around
+covered draws; native lighting constants are untouched. Switching mode resets
+only that motion attachment. No additional geometry replay is introduced.
+
+| Effect | Native boundary | Retained behavior |
+|---|---|---|
+| Classic motion blur | `1A70FFE2` | Sharp t0 RGB; alpha 1 |
+| BlitzFX motion blur | `249DA2F1` | Sharp t52 RGB; red-channel alpha |
+| Classic depth blur | `6ED58557` | Disabled only in Custom/Off DoF |
+| BlitzFX depth blur | `9A905454` | Transparent color; SV_Depth 1 |
+| BlitzFX bokeh | `AE334616` | Transparent color/native depth for bypass; corrected pool sampling in Native mode |
+| Native uniform bloom | `620431CF`, `0CB5EA21` | Separate dirt/sunshafts retained |
+| BlitzFX bloom | `BF3EF83C` | Underwater scattering retained; early sharp copy when inactive |
+
+The existing `blitz_bloom_active` field is per-draw routing: 0/1 for native bloom,
+-1 for replacement BlitzFX bloom, -2 for the DoF bypass. Each relevant injection
+callback sets it. This does not write BlitzFX configuration. Compute b13 is
+restored after dispatch. Native intermediates are not globally skipped before
+proving that other effects do not consume them.
+
+Custom source map: `mb_velocity.frag`, `mb_tile.frag`, `mb_bake.frag`,
+`mb_mcguire.frag`, `mb_composite.frag`; `dof_ratio.frag`, `dof_down.frag`,
+`dof_blur.frag`, `dof_blend.frag`; `bright.frag`, `gaussian.frag`,
+`kawase_sum.frag`; `lens_mapping.glsl`, `lens_filter.glsl`, with orchestration
+in `src/engine/render/scene_post.cpp`. Classic CA lives in
+`effects/chromatic_aberration.hlsli`. RCAS sharpens once before cubic lens
+sampling instead of repeating a complete sharpen operation at each lens tap.
+
+### Evidence and acceptance
+
+Live original-shader/input evidence is under
+`tmp/witcher3classic-investigation/pt-optics-20261026/`. In that scene TAA
+`201C53B4` is draw 1762; final `114D8828` is draw 1764. Quality renders
+2560x1440 in a 3840x2160 pool. Earlier native motion-blur captures are under
+`temporal-dev/devkit-live/dlss-audit/`, with original final-composite DXBC in
+`hdr-permutations-20261023/cache/`. These captures are evidence, not runtime
+requirements.
+
+WARP/NVIDIA optics tests cover HDR and signed colors, focus identity/defocus,
+zero-motion identity, Object Only camera exclusion and actual object blur,
+30/60/120/240 FPS shutter equivalence, history reset, odd-size resize, state
+restoration and 32 camera transforms with distinct current/previous jitters.
+Object/foliage regressions also exercise expanded RGBA motion output without
+changing native lighting, alpha coverage, clip or previous-position results.
+See `tests/README.md` for reproducible commands.
+
+The normal Release addon was linked and installed through the existing game
+symlink: SHA256 `92EC6D8C9B46305809441F1D8E598A50490B4EC6B552E8CB0EAC5C03D33721A5`,
+8,395,776 bytes. The optical/native-effects tests pass on WARP/NVIDIA; full
+Object Only geometry/foliage and BlitzFX regressions pass on NVIDIA. Original
+two-channel geometry/foliage regressions pass on WARP. The previous installed
+DLL and exact logs/manifest are archived in the evidence directory above.
+
+The user confirmed that the new effects look correct in-game, except that
+Object Only blurred camera-followed Geralt. The follow-up applies Remastered's
+visible-trajectory rule: XY * min(1, length(ZW in pixels) / length(XY in pixels)).
+This limits object-only blur to actual screen movement while keeping the exact
+camera-removed data and DLSS XY vectors intact. Combined mode is unchanged.
+The follow-up also renames effect options to Custom and removes the CA centre
+offset control and its shader behavior; stale saved values are ignored. The
+160-byte injection layout keeps that old field as reserved padding.
+
+The follow-up passes WARP/NVIDIA camera-follow, optical and native-effects
+regressions. It is built and installed through the normal game-folder symlink:
+SHA256 `85BA3F7D068F24B189FD2E7E569FE225EF61518D26C19C55156E9BCCBD7BFE77`,
+8,389,120 bytes. The earlier hash describes the original optical build. The
+follow-up's restarted visual acceptance remains pending. Compare walking/running
+Geralt in Object Only and Camera + Object; verify the torso remains sharp when
+tracked, visible limb motion still blurs, and static backgrounds remain sharp
+in Object Only. Check the Custom labels and intensity-only CA controls.
+Check camera-only and animation-only movement, moving foliage, cuts, cutscenes,
+near/far silhouettes, CA zero/reference, Bloom zero/reference/Native, Quality,
+DLAA and native TAA, menu/video transitions and resizing. Debug vector views
+skip the optical chain. Measure performance with capture/debug off; GPU fixtures
+are not proof of in-game performance or visual acceptance. Eliminating unused
+native intermediate work remains a measured follow-up, not an assumed saving.
+
+
+Menu-only verification for the Effects-tab revision: all 53 pre-existing
+explicit defaults match the preceding source, including the user's tuned focus,
+focal length, foreground blur, bloom, CA and film-grain defaults. No shader or
+rendering changes are included. After relaunch, verify HDR/Effects/DLSS order;
+Native -> Off -> Custom -> Off depth controls; disabled Off controls; preset
+switching/restart while Off; and persistent RCAS preferences in Effects.

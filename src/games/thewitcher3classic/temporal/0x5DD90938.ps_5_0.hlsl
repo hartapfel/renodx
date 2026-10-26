@@ -59,7 +59,7 @@ void main(
   out float4 o0 : SV_Target0,
   out float4 o1 : SV_Target1,
   out float4 o2 : SV_Target2,
-  out float2 object_motion : SV_Target3,
+  out float4 object_motion : SV_Target3,
   out float object_depth : SV_Target4)
 {
   float4 r0,r1,r2,r3,r4,r5,r6;

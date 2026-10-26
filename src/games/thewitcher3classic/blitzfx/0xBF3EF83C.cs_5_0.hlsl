@@ -37,6 +37,16 @@ RWTexture2D<float4> output_color : register(u0);
 [numthreads(8, 8, 1)]
 void main(uint3 vThreadID : SV_DispatchThreadID)
 {
+  // With replacement bloom, retain only the independent underwater term.
+  // Avoid the nine bloom samples when that term is inactive as well.
+  if (RENODX_PEAK_WHITE_NITS > 0.f && shader_injection.blitz_bloom_active < 0.f && cb2[45].z == 0.f) {
+    uint width, height; output_color.GetDimensions(width, height);
+    if (all(vThreadID.xy < uint2(width, height))) {
+      float3 scene = t52.Load(int3(vThreadID.xy, 0)).rgb;
+      output_color[vThreadID.xy] = scene.rgbr;
+    }
+    return;
+  }
   float4 r0,r1,r2,r3,r4;
   uint4 bitmask, uiDest;
   float4 fDest;
@@ -77,11 +87,10 @@ void main(uint3 vThreadID : SV_DispatchThreadID)
   r1.x = dot(r1.xyz, float3(0.212599993,0.715200007,0.0722000003));
   r1.x = 1 + -r1.x;
   r1.x = cb2[45].z * r1.x;
-  // Replace BloomScattering rather than scaling BlitzFX's configured value.
-  // UI 0..100 maps to scattering 0..1; retain the separate underwater term.
-  r1.x = max(RENODX_PEAK_WHITE_NITS > 0.f
-                 ? saturate(shader_injection.custom_bloom * 0.5f)
-                 : cb2[42].x,
+  // Replacement bloom is generated independently after reconstruction. Keep
+  // underwater scattering, and restore BlitzFX's own setting in Native mode.
+  r1.x = max(RENODX_PEAK_WHITE_NITS > 0.f && shader_injection.blitz_bloom_active < 0.f
+                 ? 0.f : cb2[42].x,
              r1.x);
   r0.xyzw = -r2.xyzx + r0.xyzw;
   r0.xyzw = r1.xxxx * r0.xyzw + r2.xyzx;

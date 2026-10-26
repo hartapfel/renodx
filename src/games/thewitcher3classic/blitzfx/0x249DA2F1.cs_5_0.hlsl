@@ -1,4 +1,5 @@
 #include "scene_pool.hlsli"
+#include "../shared.h"
 RWTexture2D<float4> u0 : register(u0);
 // ---- Created with 3Dmigoto v1.3.16 on Sat Oct 24 01:58:50 2026
 Texture2D<float4> t52 : register(t52);
@@ -27,6 +28,11 @@ cbuffer cb0 : register(b0)
 [numthreads(8, 8, 1)]
 void main(uint3 vThreadID : SV_DispatchThreadID)
 {
+  if (RENODX_TONE_MAP_TYPE == CLASSIC_TONE_MAP_PSYCHOV31 && RENODX_PEAK_WHITE_NITS > 0.f) {
+    uint width, height; u0.GetDimensions(width, height);
+    if (all(vThreadID.xy < uint2(width, height))) u0[vThreadID.xy] = t52.Load(int3(vThreadID.xy,0)).rgbr;
+    return;
+  }
   uint mask_width, mask_height, color_width, color_height;
   t51.GetDimensions(mask_width, mask_height);
   t52.GetDimensions(color_width, color_height);

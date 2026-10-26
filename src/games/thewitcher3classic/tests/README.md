@@ -78,6 +78,26 @@ clang-cl /std:c++20 /EHsc /O2 /DNOMINMAX src/games/thewitcher3classic/tests/prob
 
 ## Inputs and execution
 
+For Video AutoHDR, use a directory containing original `0xHASH.cso` files
+for `043049C7`, `30C6DAFA`, `7542753B`, `A850FB8D`, `989EB8B2`, `DC4FAC37`
+and `DCEB62A5`. These are three-plane video programs from Classic's native
+shader cache/dump. Do not substitute the new embedded replacements.
+
+```bat
+tmp\classic-tests\effects.exe <original-video-CSO-directory> --video-only
+tmp\classic-tests\effects.exe <original-video-CSO-directory> --video-only --hardware
+```
+
+This isolated mode needs no captured bloom/blur/BlitzFX constants. It compares
+native RGB and alpha for all seven variants across neutral, chromatic and
+outside-range YCbCr inputs, vertex fades and alpha-plane values. HDR checks
+reject nonfinite outputs and preserve alpha/premultiplication. A further 54
+configurations check black, peak, monotonic gray and independence from UI white
+across three display peaks, three game whites, three UI whites and two gamut
+modes. The menu's Off/Vanilla routing uses original bytecode; the fixture also
+checks the shader's defensive Vanilla bypass. Live subtitle/fade and menu
+acceptance is separate from these GPU results.
+
 For the 2026-10-26 environment-hemisphere regression:
 
 ```bat
@@ -285,3 +305,34 @@ object coverage, final NGX vectors and the resulting temporal image separately.
 Repeat performance measurements with capture/debug disabled and unchanged
 settings. Record which checks were actually performed; never infer full scene
 acceptance from these bounded fixtures.
+
+## Custom optical pipeline
+
+Build normal Release embeds first. Compile `optics.cpp` with C++20, `/EHsc /O2
+/DNOMINMAX`, `/Ibuild/thewitcher3classic.include`, and link `d3d11.lib dxgi.lib
+user32.lib`. Run without arguments for WARP or with `--hardware` for NVIDIA.
+Scratch runner: `tmp/witcher3classic-investigation/pt-optics-20261026/test-optics.cmd`.
+This deterministic fixture requires no captured binaries.
+
+It exercises the production pipeline: HDR energy, signed gamut, focused plane
+identity and defocus, near/far coverage, zero-motion identity, object-only
+camera exclusion/actual object blur, 30/60/120/240 FPS shutter equivalence,
+history reset, odd-size resize, once-per-frame execution, context restoration,
+RCAS scratch execution and 32 camera transforms against independent DirectXMath
+projections with distinct jitters. The debug layer is checked if available.
+
+`object_motion.cpp` and `foliage_motion.cpp` accept `--object-only`, optionally
+after `--hardware`. These exercise RGBA motion storage and transform binding
+while preserving the existing lighting/coverage/clip/history assertions. Native
+reflection audits PS t119. Existing geometry checks validate XY; the optical
+fixture separately checks blur-only ZW selection.
+
+The effects fixture checks native motion-blur sharp copy and transparent
+BlitzFX depth-blur/DoF composites. With `--blitzfx`, it additionally checks the
+compute blur bypass and replacement bloom with uniform scattering zeroed,
+underwater isolation, Native mode and poisoned pool borders. CA fixtures use the reference intensity of 1. The center-offset setting was
+removed; the lens curve now has a fixed reference shape. Motion tests also
+cover camera-followed subjects, nearly stationary screen motion, opposite
+camera/object directions and the screen-speed bound from Remastered.
+Build/link only after the game releases its addon DLL and follow
+the mod README's separate live acceptance checklist.

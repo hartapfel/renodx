@@ -34,7 +34,7 @@ struct ShaderInjectData {
   float sharpening_strength;
   float chromatic_aberration_mode;
   float chromatic_aberration_intensity;
-  float chromatic_aberration_start_offset;
+  float reserved_optics;  // Preserve the 160-byte injection layout.
   float film_grain;
   float random_seed;
   float vignette_strength;
@@ -79,7 +79,6 @@ cbuffer classic_injection : register(b13) {
 #define CUSTOM_SHARPENING shader_injection.sharpening_strength
 #define CUSTOM_CA_MODE shader_injection.chromatic_aberration_mode
 #define CUSTOM_CA_INTENSITY shader_injection.chromatic_aberration_intensity
-#define CUSTOM_CA_START_OFFSET shader_injection.chromatic_aberration_start_offset
 #define RENODX_SWAP_CHAIN_OUTPUT_PRESET renodx::draw::SWAP_CHAIN_OUTPUT_PRESET_HDR10
 #define RENODX_SWAP_CHAIN_DECODING renodx::draw::ENCODING_GAMMA_2_2
 #define RENODX_SWAP_CHAIN_SCALING_NITS shader_injection.graphics_white_nits

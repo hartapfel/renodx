@@ -23,7 +23,9 @@ int main(int argc, char** argv) {
   const bool hardware = argc > 2 && std::string_view(argv[2]) == "--hardware";
   const bool forward_only = argc > 2 && std::string_view(argv[argc - 1]) == "--forward-only";
   const bool hair_clip_only = argc > 2 && std::string_view(argv[argc - 1]) == "--hair-clip-only";
-  assert(argc == 2 || (argc == 3 && (hardware || forward_only || hair_clip_only)) || (argc == 4 && hardware && (forward_only || hair_clip_only)));
+  const bool object_only = argc > 2 && std::string_view(argv[argc - 1]) == "--object-only";
+  if (object_only) witcher3classic::optics::motion_mode = 1.f;
+  assert(argc == 2 || (argc == 3 && (hardware || forward_only || hair_clip_only || object_only)) || (argc == 4 && hardware && (forward_only || hair_clip_only || object_only)));
   const std::filesystem::path originals = argv[1], shaders = "build/thewitcher3classic.include/embed";
   using ReflectShader = HRESULT(WINAPI*)(const void*, SIZE_T, REFIID, void**);
   const auto reflect_shader = reinterpret_cast<ReflectShader>(GetProcAddress(LoadLibraryW(L"d3dcompiler_47.dll"), "D3DReflect"));
@@ -39,6 +41,7 @@ int main(int argc, char** argv) {
       D3D11_SHADER_INPUT_BIND_DESC binding;
       assert(SUCCEEDED(reflection->GetResourceBindingDesc(i,&binding)));
       assert(binding.Type != D3D_SIT_CBUFFER || binding.BindPoint != 11);
+      assert(binding.Type == D3D_SIT_CBUFFER || binding.BindPoint != 119);
     }
   }
   ComPtr<ID3D11Device> device;

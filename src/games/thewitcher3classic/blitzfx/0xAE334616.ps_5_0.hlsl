@@ -1,5 +1,6 @@
 #include "dof_kernel.hlsli"
 #include "scene_pool.hlsli"
+#include "../shared.h"
 // ---- Created with 3Dmigoto v1.3.16 on Sat Oct 24 01:44:49 2026
 Texture2D<float4> t52 : register(t52);
 
@@ -30,6 +31,13 @@ void main(
   out float4 o0 : SV_Target0,
   out float oDepth : SV_Depth)
 {
+  // Per-draw routing; the scene remains untouched by native alpha blending,
+  // while depth/stencil behavior is identical to the native composite.
+  if (RENODX_PEAK_WHITE_NITS > 0.f && shader_injection.blitz_bloom_active == -2.f) {
+    o0 = 0.f;
+    oDepth = 1.f;
+    return;
+  }
 
   uint color_width, color_height;
   t50.GetDimensions(color_width, color_height);
