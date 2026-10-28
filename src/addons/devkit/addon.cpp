@@ -5,6 +5,10 @@
 
 #define ImTextureID ImU64
 
+// Inspected addons may use a different layout for the same utility UUID.
+// Keep DevKit's C++ state independent of those release binaries.
+#define RENODX_PRIVATE_DATA_NAMESPACE 0x4445564Bu
+
 #include <d3d11.h>
 #include <d3d12.h>
 #include <Windows.h>
@@ -4291,6 +4295,8 @@ void OnDestroyDevice(reshade::api::device* device) {
     devkit_primary_device_api.store(0u, std::memory_order_release);
   }
   std::unique_lock device_lock(device_data->mutex);
+  // Drain readers under the list lock, then release the owned mutex before deletion.
+  device_lock.unlock();
   renodx::utils::data::Delete<DeviceData>(device);
 }
 
