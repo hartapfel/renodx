@@ -18,11 +18,14 @@
 #include "../../utils/swapchain.hpp"
 #include "./shared.h"
 #include "./temporal/runtime.hpp"
+#include "./volumetrics/runtime.hpp"
+#include "./lighting/runtime.hpp"
 
 namespace {
 float settings_mode = 0.f;
 float video_auto_hdr = 1.f;
 bool draw_effects = false;
+bool draw_graphics = false;
 float depth_controls_mode = 1.f;
 bool detected_peak = false;
 
@@ -75,7 +78,7 @@ void OnBloomDestroyDevice(reshade::api::device* device) {
 // roughness > 1, unquantized normals and invalid packed material fields.
 void OnMaterialTargets(reshade::api::command_list* cmd, uint32_t count,
                        const reshade::api::resource_view* rtvs, reshade::api::resource_view dsv) {
-  if (!witcher3classic::blitzfx::runtime_aa || count != 3 || !dsv.handle
+  if (count != 3 || !dsv.handle
       || cmd->get_device()->get_api() != reshade::api::device_api::d3d11) return;
   auto* data = renodx::utils::data::Get<BloomRouting>(cmd->get_device());
   if (!data || (data->native_material_views[0].load(std::memory_order_relaxed) == rtvs[0].handle
@@ -124,11 +127,20 @@ void OnMaterialTargets(reshade::api::command_list* cmd, uint32_t count,
     }
     data->native_material_views[i].store(rtvs[i].handle, std::memory_order_relaxed);
   }
+  if(auto* lighting=renodx::utils::data::Get<witcher3classic::lighting::DeviceData>(cmd->get_device())) {
+    auto* albedo=reinterpret_cast<ID3D11Resource*>(resources[0].handle);
+    if(lighting->contact.albedo_resource.Get()!=albedo) {
+      lighting->contact.albedo.Reset();lighting->contact.albedo_resource.Reset();
+      Microsoft::WRL::ComPtr<ID3D11Device> device;albedo->GetDevice(&device);
+      if(SUCCEEDED(device->CreateShaderResourceView(albedo,nullptr,&lighting->contact.albedo)))
+        lighting->contact.albedo_resource=albedo;
+    }
+  }
   // A shared cloning callback may already have rebound the FP16 targets.
   // Rebind the application's native views once, independent of callback order.
   cmd->bind_render_targets_and_depth_stencil(count, rtvs, dsv);
   reshade::log::message(reshade::log::level::info,
-      "Witcher Classic: preserving native UNORM material G-buffer storage for BlitzFX lighting.");
+      "Witcher Classic: preserving native UNORM material G-buffer storage.");
 }
 
 void OnMaterialViewDestroyed(reshade::api::device* device, reshade::api::resource_view view) {
@@ -211,7 +223,9 @@ bool OnOpticsInject(reshade::api::command_list* cmd) {
 }
 void OnOpticsDrawn(reshade::api::command_list* cmd) {
   auto* data = renodx::utils::data::Get<witcher3classic::temporal::DeviceData>(cmd->get_device());
-  if (!data || !data->optics.saved_scene || !data->motion_context) return;
+  if (!data || !data->optics.saved_scene || !data->motion_context) {
+    return;
+  }
   auto* source = data->optics.saved_scene.Get();
   data->motion_context->PSSetShaderResources(0, 1, &source);
   data->optics.saved_scene.Reset();
@@ -222,6 +236,120 @@ void OnOpticsDrawn(reshade::api::command_list* cmd) {
 }
 
 renodx::mods::shader::CustomShaders custom_shaders = {
+    {0x05FE9FA8, {.crc32 = 0x05FE9FA8, .code = __0x05FE9FA8,
+        .on_replace = &witcher3classic::lighting::OnShadow,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+    {0x0AB3A292, {.crc32 = 0x0AB3A292, .code = __0x0AB3A292,
+        .on_replace = &witcher3classic::lighting::OnLocalLight,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+    {0x3946E96C, {.crc32 = 0x3946E96C, .code = __0x3946E96C,
+        .on_replace = &witcher3classic::lighting::OnLocalLight,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+    {0x3CED9DA6, {.crc32 = 0x3CED9DA6, .code = __0x3CED9DA6,
+        .on_replace = &witcher3classic::lighting::OnLocalLight,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+    {0x3FFDA0D9, {.crc32 = 0x3FFDA0D9, .code = __0x3FFDA0D9,
+        .on_replace = &witcher3classic::lighting::OnLocalLight,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+    {0x4E4E4B53, {.crc32 = 0x4E4E4B53, .code = __0x4E4E4B53,
+        .on_replace = &witcher3classic::lighting::OnHair,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+    {0x72225972, {.crc32 = 0x72225972, .code = __0x72225972,
+        .on_replace = &witcher3classic::lighting::OnLocalLight,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+    {0x95991F6F, {.crc32 = 0x95991F6F, .code = __0x95991F6F,
+        .on_replace = &witcher3classic::lighting::OnLocalLight,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+    {0xD3573BB9, {.crc32 = 0xD3573BB9, .code = __0xD3573BB9,
+        .on_replace = &witcher3classic::lighting::OnLocalLight,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+    {0xED6CEFE4, {.crc32 = 0xED6CEFE4, .code = __0xED6CEFE4,
+        .on_replace = &witcher3classic::lighting::OnLocalLight,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+    {0xFB29B4E6, {.crc32 = 0xFB29B4E6, .code = __0xFB29B4E6,
+        .on_replace = &witcher3classic::lighting::OnLighting,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+    {0xC8C78997, {.crc32 = 0xC8C78997, .code = __0xC8C78997,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnFog,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0x4EF2AAF8, {.crc32 = 0x4EF2AAF8, .code = __0x4EF2AAF8,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnParticle,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0x44ECC136, {.crc32 = 0x44ECC136, .code = __0x44ECC136,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnForward,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0x2472CF83, {.crc32 = 0x2472CF83, .code = __0x2472CF83,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnForward,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0x8C9C55EC, {.crc32 = 0x8C9C55EC, .code = __0x8C9C55EC,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnForward,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0x28D7BDFE, {.crc32 = 0x28D7BDFE, .code = __0x28D7BDFE,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnWater,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0xFD1D6FBF, {.crc32 = 0xFD1D6FBF, .code = __0xFD1D6FBF,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnForward,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0xFAB74FB3, {.crc32 = 0xFAB74FB3, .code = __0xFAB74FB3,
+        .on_replace = [](auto*) { return witcher3classic::lighting::player_control != 0.f || witcher3classic::volumetrics::mode != 0.f; },
+        .on_inject = [](auto* cmd) {
+          if (witcher3classic::lighting::player_control != 0.f) witcher3classic::lighting::Bind(cmd,false);
+          return witcher3classic::volumetrics::OnForward(cmd);
+        },
+        .on_drawn = [](auto* cmd) {
+          witcher3classic::lighting::OnDrawn(cmd);
+          witcher3classic::volumetrics::OnDrawn(cmd);
+        }}},
+    {0x02A34C28, {.crc32 = 0x02A34C28, .code = __0x02A34C28,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnParticle,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0xA7921C82, {.crc32 = 0xA7921C82, .code = __0xA7921C82,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnParticle,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0x4FBB126B, {.crc32 = 0x4FBB126B, .code = __0x4FBB126B,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnForward,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0x5F9AE754, {.crc32 = 0x5F9AE754, .code = __0x5F9AE754,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnForward,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0x105478E1, {.crc32 = 0x105478E1, .code = __0x105478E1,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnParticle,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0x22FD7485, {.crc32 = 0x22FD7485, .code = __0x22FD7485,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnForward,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0xBC930752, {.crc32 = 0xBC930752, .code = __0xBC930752,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnForward,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0x22D1E925, {.crc32 = 0x22D1E925, .code = __0x22D1E925,
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnForward,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     CustomShaderEntry(0x043049C7),  // SDR video with vertex fade.
     CustomShaderEntry(0x30C6DAFA),  // Opaque SDR video.
     CustomShaderEntry(0x7542753B),  // Premultiplied video with vertex fade.
@@ -229,6 +357,14 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0x989EB8B2),  // Premultiplied alpha-plane video with vertex fade.
     CustomShaderEntry(0xDC4FAC37),  // Video with alpha plane.
     CustomShaderEntry(0xDCEB62A5),  // Premultiplied video with alpha plane.
+    {0x47CC9FA1, {.crc32 = 0x47CC9FA1, .code = __0x47CC9FA1,
+        .on_replace = &witcher3classic::volumetrics::OnReflectionTrace,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    {0x406B9233, {.crc32 = 0x406B9233, .code = __0x406B9233,
+        .on_replace = &witcher3classic::volumetrics::OnReflectionInput,
+        .on_inject = [](auto*) { return false; },
+        .on_drawn = &witcher3classic::volumetrics::OnReflectionInputDrawn}},
     CustomShaderEntry(0xB4953357),  // Native exposure and filmic curve.
     CustomShaderEntry(0xAEE0B973),  // Manual exposure.
     CustomShaderEntry(0xAE7D5FA8),  // Blended environment exposure/filmic curves.
@@ -254,7 +390,7 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0xBAEDA9BD),  // Masked sky feeding light shafts.
     {0x620431CF, {.crc32 = 0x620431CF, .code = __0x620431CF, .on_inject = &OnNativeBloomInject}},  // Additive bloom with lens dirt.
     {0x0CB5EA21, {.crc32 = 0x0CB5EA21, .code = __0x0CB5EA21, .on_inject = &OnNativeBloomInject}},  // Screen-blended effect composite.
-    {0x2825099C, {.crc32 = 0x2825099C, .code = __0x2825099C, .on_inject = [](auto*) { return false; }}},  // BlitzFX water; preserve native lighting b13.
+    {0x2825099C, {.crc32 = 0x2825099C, .code = __0x2825099C, .on_inject = &witcher3classic::volumetrics::OnWater, .on_drawn = &witcher3classic::volumetrics::OnDrawn}},  // BlitzFX water; preserve native lighting b13.
     {0xBF3EF83C, {.crc32 = 0xBF3EF83C, .code = __0xBF3EF83C, .on_inject = &OnBlitzComputeInject, .on_drawn = &OnBlitzBloomDrawn}},  // BlitzFX bloom strength and subrect.
     {0x4708B025, {.crc32 = 0x4708B025, .code = __0x4708B025, .on_inject = &OnBlitzComputeInject, .on_drawn = &OnBlitzComputeDrawn}},  // BlitzFX shadow subrect and jitter history.
     {0x58959EAD, {.crc32 = 0x58959EAD, .code = __0x58959EAD, .on_inject = [](auto*) { return false; }}},  // BlitzFX shadow subrect.
@@ -288,6 +424,224 @@ float DepthControlMode() {
 // HDR settings appear in this order. Move a complete Setting block to reorder.
 // DLSS preferences at the end are global; DrawAddon renders their dropdown UI.
 renodx::utils::settings::Settings settings = {
+    new renodx::utils::settings::Setting{
+        .key = "GfxLighting",
+        .binding = &witcher3classic::lighting::shading,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.0f,
+        .label = "Surface Lighting",
+        .section = "Lighting",
+        .tooltip = "Native preserves the original materials. Custom uses GGX with height-correlated visibility for deferred sun, moon and local lights. Keeps weather, reflection probes and skin transmission. Intended for use without BlitzFX PBR lighting.",
+        .labels = {"Native", "Custom PBR"},
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxAmbientAO",
+        .binding = &witcher3classic::lighting::ambient_ao,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.0f,
+        .label = "Ambient Occlusion Influence",
+        .section = "Lighting",
+        .tooltip = "Ambient Only confines deferred ambient occlusion to indirect lighting. Direct lights retain their own shadows instead of receiving a second AO darkening.",
+        .labels = {"Native", "Ambient Only"},
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxSoftShadows",
+        .binding = &witcher3classic::lighting::soft_shadows,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.0f,
+        .label = "Directional Shadows",
+        .section = "Shadows",
+        .tooltip = "Custom uses blocker-dependent soft shadows with filtered cascade transitions. Only the existing sun/moon shadow mask changes; cloud and terrain shadows are retained.",
+        .labels = {"Native", "Custom Soft Shadows"},
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxSunDiameter",
+        .binding = &witcher3classic::lighting::sun_diameter,
+        .default_value = 0.15f,
+        .label = "Light Angular Diameter",
+        .section = "Shadows",
+        .tooltip = "Apparent diameter of the sun or moon, in degrees. 0.535 approximates the real sun. Larger values broaden penumbras with blocker distance. Does not change the visible sun disk.",
+        .min = 0.05f,
+        .max = 2.0f,
+        .format = "%.3f degrees",
+        .is_enabled = [] { return witcher3classic::lighting::soft_shadows != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxContactShadows",
+        .binding = &witcher3classic::lighting::contact_shadows,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.0f,
+        .label = "Contact Shadows",
+        .section = "Shadows",
+        .tooltip = "Adds short sun/moon shadows from visible depth detail. Complements shadow maps; cannot see offscreen or transparent blockers. A short reach reduces screen-space artifacts.",
+        .labels = {"Off", "On"},
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxContactLength",
+        .binding = &witcher3classic::lighting::contact_length,
+        .default_value = 0.3f,
+        .label = "Contact Shadow Reach",
+        .section = "Shadows",
+        .tooltip = "Maximum distance searched toward the light, in metres. Default is 0.3 m. Limits the search toward the light. Sampling also has a fixed screen-space range, so close-ups can reach that limit first. Increasing reach does not spread the samples farther apart.",
+        .min = 0.05f,
+        .max = 1.0f,
+        .format = "%.2f m",
+        .is_enabled = [] { return witcher3classic::lighting::contact_shadows != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxPlayerFill",
+        .binding = &witcher3classic::lighting::player_control,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.0f,
+        .label = "Player Fill Light",
+        .section = "Player Lighting",
+        .tooltip = "Controls the artificial camera-following fill lights identified by the engine. Torches, spells and other world lights retain their intensity. This is an artistic control, not a physical light source.",
+        .labels = {"Native", "Custom"},
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxPlayerStrength",
+        .binding = &witcher3classic::lighting::player_strength,
+        .default_value = 0.2f,
+        .label = "Fill Light Strength",
+        .section = "Player Lighting",
+        .tooltip = "Scales the artificial player fill lights. 1 retains native intensity; 0 removes them. Does not change scene exposure.",
+        .min = 0.0f,
+        .max = 1.0f,
+        .format = "%.2f",
+        .is_enabled = [] { return witcher3classic::lighting::player_control != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxPlayerUnify",
+        .binding = &witcher3classic::lighting::player_unify,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.0f,
+        .label = "Match Character and World Fill",
+        .section = "Player Lighting",
+        .tooltip = "Uses the world fill-light scale on characters too, reducing the camera-light brightness boost on characters. Keeps disabled scene lights disabled.",
+        .labels = {"Off", "On"},
+        .is_enabled = [] { return witcher3classic::lighting::player_control != 0.f; },
+    },
+
+    new renodx::utils::settings::Setting{
+        .key = "GfxVolumetrics",
+        .binding = &witcher3classic::volumetrics::mode,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Atmospheric Fog",
+        .section = "Volumetric Sunlight and Fog",
+        .tooltip = "Native keeps the game's atmospheric fog. Custom uses a three-dimensional fog volume lit by the sun or moon, with scene and cloud shadows. Follows the current weather. Experimental: water and transparent-surface coverage is being validated.",
+        .labels = {"Native", "Custom"},
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxFogDensity",
+        .binding = &witcher3classic::volumetrics::density,
+        .default_value = 1.0f,
+        .label = "Fog Density",
+        .section = "Volumetric Sunlight and Fog",
+        .tooltip = "Scales the amount of fog supplied by the current weather. 0 removes the custom fog; 1 uses the weather density. Increasing density both obscures the background and scatters more light.",
+        .min = 0.f,
+        .max = 4.0f,
+        .format = "%.2f",
+        .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxFogStart",
+        .binding = &witcher3classic::volumetrics::start_distance,
+        .default_value = 0.0f,
+        .label = "Fog Start Distance",
+        .section = "Volumetric Sunlight and Fog",
+        .tooltip = "Distance from the camera in metres before custom fog begins. A short fade prevents a hard boundary. This does not move lights or their shadows.",
+        .min = 0.f,
+        .max = 200.0f,
+        .format = "%.0f m",
+        .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxFogLight",
+        .binding = &witcher3classic::volumetrics::light_strength,
+        .default_value = 1.0f,
+        .label = "Light Scattering",
+        .section = "Volumetric Sunlight and Fog",
+        .tooltip = "Scales sunlight and moonlight scattered by the fog. 0 removes their contribution while retaining ambient fog and its density. Higher values make illuminated shafts more prominent.",
+        .min = 0.f,
+        .max = 4.0f,
+        .format = "%.2f",
+        .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxFogAnisotropy",
+        .binding = &witcher3classic::volumetrics::anisotropy,
+        .default_value = 0.6f,
+        .label = "Scattering Directionality",
+        .section = "Volumetric Sunlight and Fog",
+        .tooltip = "0 scatters light equally in all directions. Higher values concentrate it toward the light, making shafts brightest when looking toward the sun or moon.",
+        .min = 0.f,
+        .max = 0.8f,
+        .format = "%.2f",
+        .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxFogHeight",
+        .binding = &witcher3classic::volumetrics::height_falloff,
+        .default_value = 1.0f,
+        .label = "Height Falloff",
+        .section = "Volumetric Sunlight and Fog",
+        .tooltip = "Controls how quickly fog thins above the weather-defined ground layer. 1 follows the weather gradient; 0 keeps density uniform with height. Higher values concentrate fog closer to the ground.",
+        .min = 0.f,
+        .max = 4.0f,
+        .format = "%.2f",
+        .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f; },
+    },
+
+    new renodx::utils::settings::Setting{
+        .key = "GfxFogResolutionQuality",
+        .binding = &witcher3classic::volumetrics::resolution_quality,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 4.f,
+        .label = "Volume Resolution",
+        .section = "Fog Quality",
+        .tooltip = "1: Low (previous resolution), 2: Medium, 3: High, 4: Ultra. Higher levels add detail across the screen and along fog/light shafts, reducing coarse sampling. Increases GPU time and video memory. Changes apply immediately with Custom fog.",
+        .min = 1.f,
+        .max = 4.f,
+        .format = "%d / 4",
+        .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxFogShadowQuality",
+        .binding = &witcher3classic::volumetrics::shadow_quality,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 4.f,
+        .label = "Lighting Shadow Quality",
+        .section = "Fog Quality",
+        .tooltip = "1: 4 samples (previous quality), 2: 9, 3: 16, 4: 25. More samples smooth sun/moon shadows within the fog and reduce sampling artifacts. Increases GPU time without increasing volume memory. Does not change fog density or light strength.",
+        .min = 1.f,
+        .max = 4.f,
+        .format = "%d / 4",
+        .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxWater",
+        .binding = &witcher3classic::water::mode,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Water Shading",
+        .section = "Water",
+        .tooltip = "Native keeps the active water material. Custom replaces above-water absorption, scattering and surface lighting, using the existing waves and reflections. Works with Native or Custom atmospheric fog. Experimental; underwater rendering remains native.",
+        .labels = {"Native", "Custom"},
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxWaterClarity",
+        .binding = &witcher3classic::water::clarity,
+        .default_value = 0.5f,
+        .label = "Water Clarity",
+        .section = "Water",
+        .tooltip = "Controls suspended-particle scattering in Custom water. 1 uses a 2-metre scattering distance; higher values reveal more of the river bed, while lower values make the water murkier. Surface reflections still follow the viewing angle and current lighting.",
+        .min = .25f,
+        .max = 4.f,
+        .format = "%.2f",
+        .is_enabled = [] { return witcher3classic::water::mode != 0.f; },
+    },
+
     new renodx::utils::settings::Setting{
         .key = "SettingsMode",
         .binding = &settings_mode,
@@ -590,7 +944,7 @@ renodx::utils::settings::Settings settings = {
         .key = "FxMotionBlurMode",
         .binding = &witcher3classic::optics::motion_mode,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 0.f,
+        .default_value = 1.f,
         .label = "Motion Blur",
         .section = "Motion Blur",
         .tooltip = "Replaces native motion blur. Object Only follows visible object movement while excluding camera-only motion. Camera-followed subjects stay sharp. Requires Object Motion enabled in DLSS Tab. Keep native Anti-aliasing enabled.",
@@ -613,7 +967,7 @@ renodx::utils::settings::Settings settings = {
         .key = "FxDepthOfFieldMode",
         .binding = &witcher3classic::optics::dof_mode,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f,
+        .default_value = 0.f,
         .label = "Depth of Field",
         .section = "Depth of Field",
         .tooltip = "Custom replaces native depth blur and BlitzFX bokeh with separate foreground/background disk filters after reconstruction. Focus is set by the lens controls below. Native shows the native depth-blur control; Custom shows the lens controls. Off disables depth blur and retains the last controls, grayed out.",
@@ -800,7 +1154,7 @@ renodx::utils::settings::Settings settings = {
         .key = "FxSharpeningMode",
         .binding = &shader_injection.sharpening_mode,
         .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
-        .default_value = 0.f,
+        .default_value = 1.f,
         .label = "Replace Native Sharpening",
         .section = "Sharpening",
         .tooltip = "Replaces the game's sharpening with Lilium RCAS after DLSS or native TAA. Works with native Sharpening off. Requires the PsychoV tone mapper.",
@@ -846,7 +1200,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "FxFilmGrain",
         .binding = &shader_injection.film_grain,
-        .default_value = 50.f,
+        .default_value = 0.f,
         .label = "Perceptual Film Grain",
         .section = "Film Grain",
         .tooltip = "Luminance-adaptive grain after reconstruction, sharpening, CA and tone mapping. 0 disables it. HUD and menu graphics are unaffected.",
@@ -1028,15 +1382,47 @@ void ShowHint(const char* text) {
   ImGui::EndTooltip();
 }
 
+void ApplyGraphicsPreset(bool improved) {
+  std::vector<std::pair<std::string, float>> values;
+  for (const auto* setting : settings) {
+    if (!setting->key.starts_with("Gfx")) continue;
+    // Graphics mode selectors use zero for Native/Off. Custom-only sliders
+    // retain the approved defaults while inactive in the vanilla preset.
+    values.emplace_back(setting->key,
+                        !improved && setting->value_type == renodx::utils::settings::SettingValueType::INTEGER && !setting->labels.empty()
+                            ? 0.f
+                            : setting->default_value);
+  }
+  renodx::utils::settings::UpdateSettings(values);
+  if (renodx::utils::settings::preset_index != 0)
+    renodx::utils::settings::SaveSettings();
+}
+
 void DrawAddon(reshade::api::effect_runtime* runtime) {
   if (!ImGui::BeginTabBar("ClassicTabs")) return;
   if (ImGui::BeginTabItem("HDR")) {
     draw_effects = false;
+    draw_graphics = false;
     renodx::utils::settings::OnRegisterOverlay(runtime);
     ImGui::EndTabItem();
   }
   if (ImGui::BeginTabItem("Effects")) {
     draw_effects = true;
+    draw_graphics = false;
+    renodx::utils::settings::OnRegisterOverlay(runtime);
+    ImGui::EndTabItem();
+  }
+  if (ImGui::BeginTabItem("Graphics")) {
+    draw_effects = false;
+    draw_graphics = true;
+    ImGui::BeginDisabled(renodx::utils::settings::preset_index == 0);
+    if (ImGui::Button("Vanilla Graphics")) ApplyGraphicsPreset(false);
+    ShowHint("Restores native lighting, shadows, player fill, atmospheric fog and water by disabling this tab's overrides. HDR, Effects, DLSS and the game's graphics options are unchanged. Saved to the selected preset; select Preset #1, #2 or #3 to use.");
+    ImGui::SameLine();
+    if (ImGui::Button("Improved Graphics")) ApplyGraphicsPreset(true);
+    ShowHint("Restores the recommended defaults for every setting in this tab, including custom lighting, soft and contact shadows, player fill, fog and water. HDR, Effects and DLSS are unchanged. Saved to the selected preset; select Preset #1, #2 or #3 to use.");
+    ImGui::EndDisabled();
+    ImGui::Separator();
     renodx::utils::settings::OnRegisterOverlay(runtime);
     ImGui::EndTabItem();
   }
@@ -1115,8 +1501,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     // Video AutoHDR is an HDR conversion option; all optical effects live in Effects.
     for (auto* setting : settings) {
       const bool effect = setting->key.starts_with("Fx") && setting->key != "FxVideoAutoHDR";
-      setting->is_visible = [effect, visible = std::move(setting->is_visible)] {
-        return effect == draw_effects && (!visible || visible());
+      const bool graphics = setting->key.starts_with("Gfx");
+      setting->is_visible = [effect, graphics, visible = std::move(setting->is_visible)] {
+        return effect == draw_effects && graphics == draw_graphics && (!visible || visible());
       };
     }
     // Gate replacement itself so Off uses native bytecode, without extending
@@ -1126,6 +1513,12 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
       custom_shaders.at(hash).on_replace = [](auto*) { return IsCustom() && video_auto_hdr == 1.f; };
     }
     reshade::register_event<reshade::addon_event::init_swapchain>(&OnInitSwapchain);
+    reshade::register_event<reshade::addon_event::init_device>(&witcher3classic::volumetrics::OnInit);
+    reshade::register_event<reshade::addon_event::init_device>(&witcher3classic::lighting::OnInit);
+    reshade::register_event<reshade::addon_event::destroy_device>(&witcher3classic::volumetrics::OnDestroy);
+    reshade::register_event<reshade::addon_event::destroy_device>(&witcher3classic::lighting::OnDestroy);
+    reshade::register_event<reshade::addon_event::present>(&witcher3classic::volumetrics::OnPresent);
+    reshade::register_event<reshade::addon_event::present>(&witcher3classic::lighting::OnPresent);
     reshade::register_event<reshade::addon_event::init_device>(&OnBloomInitDevice);
     reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&OnMaterialTargets);
     reshade::register_event<reshade::addon_event::destroy_resource_view>(&OnMaterialViewDestroyed);
@@ -1184,6 +1577,8 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     custom_shaders.at(0xFBF141A1).on_replace = [](auto*) { return IsCustom() && shader_injection.sharpening_mode != 0.f; };
     custom_shaders.at(0xFBF141A1).on_inject = [](auto*) { return false; };
     custom_shaders.at(0x6ED58557).on_replace = [](auto*) { return IsCustom() && shader_injection.custom_blur != 1.f; };
+    for(const auto hash : {0xB4953357u,0xAEE0B973u,0xAE7D5FA8u,0x51F4E5FDu})
+      custom_shaders.at(hash).on_inject = &witcher3classic::volumetrics::OnReflectionCapture;
     for (const auto hash : {0x649AF4FAu, 0x5CBEC131u, 0x9F48B203u, 0x1E28F70Eu, 0xA1C06A7Du, 0xC4D2D4F6u,
                             0x114D8828u, 0xA123EB15u, 0x399CBE16u, 0x445EB59Cu, 0x4FC8DAEBu, 0xE276DFB3u}) {
       custom_shaders.at(hash).on_inject = &OnOpticsInject;
@@ -1210,6 +1605,56 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     };
     custom_shaders.at(0x249DA2F1).on_inject = &OnBlitzComputeInject;
     custom_shaders.at(0x249DA2F1).on_drawn = &OnBlitzComputeDrawn;
+    // Lighting must work without the motion-extended VS signature as well.
+    const std::array<std::pair<uint32_t,std::span<const uint8_t>>,6> forward_lighting{{
+      {0x12B76681u,__0xF3C40010},
+      {0x20C1C070u,__0xF3C40011},
+      {0x30F033B5u,__0xF3C40012},
+      {0x9B839F3Bu,__0xF3C40013},
+      {0xB18EC2FBu,__0xF3C40014},
+      {0xEB8C3FAEu,__0xF3C40015},
+    }};
+    for (UINT i=0;i<forward_lighting.size();++i) {
+      const auto [hash,code]=forward_lighting[i];
+      auto& shader=custom_shaders.at(hash);
+      auto previous_replace=shader.on_replace;
+      auto previous_inject=shader.on_inject;
+      auto previous_drawn=shader.on_drawn;
+      shader.on_replace=[previous_replace,i,code](auto* cmd) {
+        bool replace=previous_replace ? previous_replace(cmd) : true;
+        if(!replace && (witcher3classic::lighting::player_control!=0.f || witcher3classic::lighting::ambient_ao!=0.f))
+          witcher3classic::lighting::BindColorOnly(cmd,i,code);
+        return replace;
+      };
+      shader.on_inject=[previous_inject](auto* cmd) {
+        bool inject=previous_inject ? previous_inject(cmd) : true;
+        if(witcher3classic::lighting::player_control!=0.f || witcher3classic::lighting::ambient_ao!=0.f)
+          witcher3classic::lighting::Bind(cmd,false);
+        return inject;
+      };
+      shader.on_drawn=[previous_drawn](auto* cmd) {
+        witcher3classic::lighting::OnDrawn(cmd);
+        if(previous_drawn)previous_drawn(cmd);
+      };
+    }
+    {
+      auto& shader=custom_shaders.at(0xFD1D6FBF);
+      auto previous_replace=shader.on_replace;
+      auto previous_inject=shader.on_inject;
+      auto previous_drawn=shader.on_drawn;
+      shader.on_replace=[previous_replace](auto* cmd) {
+        return (previous_replace && previous_replace(cmd)) || witcher3classic::lighting::player_control!=0.f || witcher3classic::lighting::ambient_ao!=0.f;
+      };
+      shader.on_inject=[previous_inject](auto* cmd) {
+        bool inject=previous_inject ? previous_inject(cmd) : true;
+        if(witcher3classic::lighting::player_control!=0.f || witcher3classic::lighting::ambient_ao!=0.f)
+          witcher3classic::lighting::Bind(cmd,false);
+        return inject;
+      };
+      shader.on_drawn=[previous_drawn](auto* cmd) {
+        witcher3classic::lighting::OnDrawn(cmd);if(previous_drawn)previous_drawn(cmd);
+      };
+    }
     renodx::mods::shader::force_pipeline_cloning = true;
     renodx::mods::shader::expected_constant_buffer_index = 13;
     renodx::mods::shader::expected_constant_buffer_space = 0;
@@ -1238,6 +1683,12 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     });
   } else if (reason == DLL_PROCESS_DETACH) {
     reshade::unregister_event<reshade::addon_event::init_swapchain>(&OnInitSwapchain);
+    reshade::unregister_event<reshade::addon_event::init_device>(&witcher3classic::volumetrics::OnInit);
+    reshade::unregister_event<reshade::addon_event::init_device>(&witcher3classic::lighting::OnInit);
+    reshade::unregister_event<reshade::addon_event::destroy_device>(&witcher3classic::volumetrics::OnDestroy);
+    reshade::unregister_event<reshade::addon_event::destroy_device>(&witcher3classic::lighting::OnDestroy);
+    reshade::unregister_event<reshade::addon_event::present>(&witcher3classic::volumetrics::OnPresent);
+    reshade::unregister_event<reshade::addon_event::present>(&witcher3classic::lighting::OnPresent);
     reshade::unregister_event<reshade::addon_event::init_device>(&OnBloomInitDevice);
     reshade::unregister_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&OnMaterialTargets);
     reshade::unregister_event<reshade::addon_event::destroy_resource_view>(&OnMaterialViewDestroyed);

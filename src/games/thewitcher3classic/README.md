@@ -665,3 +665,861 @@ focal length, foreground blur, bloom, CA and film-grain defaults. No shader or
 rendering changes are included. After relaunch, verify HDR/Effects/DLSS order;
 Native -> Off -> Custom -> Off depth controls; disabled Off controls; preset
 switching/restart while Off; and persistent RCAS preferences in Effects.
+
+
+## Atmospheric rendering and water — 2026-10-27 development checkpoint
+
+The Graphics tab sits between Effects and DLSS. Atmospheric Fog and Water
+Shading each default to **Native**, independently. Custom fog exposes density,
+start distance (metres), directional-light scattering, anisotropy and height
+falloff. Custom water exposes clarity. Existing HDR, optical and DLSS defaults
+and the 160-byte shader injection ABI are unchanged.
+
+### Research and implemented model
+
+The fog architecture follows the frustum-volume approach described by
+[Wronski, SIGGRAPH 2014](https://www.realtimerendering.com/advances/s2014/wronski/bwronski_volumetric_fog_siggraph2014.pdf):
+store coefficients in a camera-aligned volume, then integrate scattering and
+transmittance along its rays. The implementation uses logarithmic **radial**
+distance, 160 columns, aspect-dependent rows (90 at 16:9), 96 cells and 97
+integration boundaries over 0.1–1000 m. This is not a depth-linear texture.
+`volumetrics/math.hlsli` implements Beer–Lambert extinction and normalized HG;
+`0xF3C30001` injects weather ambient plus sun/moon lighting and native cascade,
+terrain and cloud visibility; `0xF3C30002` integrates with the incoming segment
+transmittance before updating it. See also
+[Unity's volume math](https://github.com/Unity-Technologies/Graphics/blob/master/Packages/com.unity.render-pipelines.core/ShaderLibrary/VolumeRendering.hlsl)
+and [PBRT transmittance](https://pbr-book.org/4ed/Volume_Scattering/Transmittance).
+
+Water is a single-layer, homogeneous optical material, using the game's waves,
+water-exclusion volumes and existing SSR/fallback reflection chain. Its design
+is informed by [Epic's Single Layer Water model](https://dev.epicgames.com/documentation/unreal-engine/single-layer-water-shading-model-in-unreal-engine),
+[PBRT dielectric Fresnel](https://www.pbr-book.org/4ed/Reflection_Models/Specular_Reflection_and_Transmission)
+and [Filament's GGX/Smith BRDF](https://google.github.io/filament/main/filament.html).
+The material uses IOR 1.333, complementary reflection/transmission, depth-based
+Beer–Lambert absorption, homogeneous single scattering and direct sun/moon
+specular. Normal derivatives broaden unresolved direct-light highlights.
+Refraction traces a Snell ray through the opaque depth buffer using
+perspective-correct reciprocal-W interpolation. At most 16 coarse steps and
+five refinements find a depth crossing; a final plane solve refines its optical
+length. This bounded traversal is based on
+[McGuire and Mara's screen-space ray tracing](https://jcgt.org/published/0003/04/04/paper.pdf),
+not a full-resolution DDA or geometry ray tracer. Foreground/depth-error and
+screen-edge checks reject unreliable hits. Missing geometry falls back to the
+unshifted background with its measured submerged path, not an opaque deep-water
+color. A 5 cm intersection-coverage fade removes full-interface shading over
+foreground terrain. The user accepted both looking-down refraction and shores.
+
+Absorption at 650/550/450 nm is approximated as RGB
+(0.3594, 0.0654, 0.0110) m^-1; molecular scattering is
+(0.0007, 0.0014, 0.0033) m^-1. Source:
+[NASA Ocean Optics Protocols, Volume IV, Table 1.1](https://oceancolor.gsfc.nasa.gov/docs/protocols/Protocols_Ver4_VolIV.pdf),
+which attributes absorption to Pope/Fry and the selected scattering values to
+Buitveld. This three-wavelength RGB approximation is **not** spectral integration
+or a measurement of any in-game river. Neutral suspended scattering defaults to
+0.5 m^-1 (a 2 m scattering mean free path), an authored river-material choice.
+Clarity scales that scattering distance; molecular absorption stays fixed.
+It does not tint the final image to match the sky. The first test used only
+0.015 m^-1 suspended scattering and was visibly too clear.
+Native water uses its own authored ambient input cb0[11].rgb; BlitzFX uses
+its dedicated water-sky ambient texture t7. Do not use frame[40] here: that
+is the atmospheric in-scattering source, not water illumination. Direct sunlight uses
+the captured lighting constants and the native water shadow calculations.
+
+### Native integration and binding contracts
+
+- `C8C78997` is the atmospheric composite: reverse depth t0, unfogged HDR scene
+  t1, AO mask t2, native frame b12 (4304 bytes), lighting b13.
+  The original sky-black branch and AO influence remain. Custom applies
+  `scene * T + L`. Missing/invalid private resources fall back to native math.
+- `volumetrics/runtime.hpp` runs at that pass once per frame. Compute uses a
+  separate D3D11 context state; native constant buffers are never overwritten.
+  Forward sampling uses PS t116/t117 and s11, restored after each draw. The native
+  comparison sampler is reused rather than assuming its comparison direction.
+- Sky `BC930752`, native water `28D7BDFE`, BlitzFX water `2825099C` and the
+  registered forward material families consume the same integrated atmosphere.
+  Additive materials use transmittance; ordinary forward fog receives L/(1-T)
+  and opacity 1-T, preserving the native lerp contract.
+- Custom water snapshots only the active render rectangle of **pre-fog t1** into
+  a private floating-point texture at C8. It also copies the native frame CB on
+  the GPU. This avoids fogging the river bed through air before applying water,
+  or attempting unstable inverse-fog division. No CPU readback or geometry
+  replay is involved. Native water mode makes no such copy.
+- Water uses PS t113 (frame snapshot), t114 (unfogged color), t115 (one float4
+  of extent/clarity/validity), s12. All are scoped and restored. Captures must
+  match the current frame/context and active extent. Resizes recreate only the
+  affected texture. The copied frame's rows 210–213 reconstruct world position
+  from **integer** pixels and reverse depth. View rows 1–4 / projection 13–16
+  project it back to pixel centers; the captured corner/center round trip was
+  within 0.001 pixel. Depth loads use active pixel coordinates, not allocation UV.
+- `water/shading.hlsli` returns base RGB with air fog already applied and a linear
+  reflection weight F*T. Native reflection composite `35624BD6` **squares** the
+  water-mask alpha, so both water adapters encode sqrt(weight). Native normal
+  packing, exclusions and BlitzFX's third output remain. Underwater branches
+  remain native; this is an above-water material replacement.
+- The registered water shaders do not use RenoDX's ordinary b13 injection;
+  b13 belongs to native lighting. Keep this invariant when adding variants.
+
+### Proven transparent-distance error and live feedback
+
+The original new `SampleClassicFogPixel` incorrectly divided by SV_Position.w.
+An actual D3D11 perspective rasterizer test proves that this pipeline supplies
+clip W/view Z there (not GLSL's reciprocal gl_FragCoord.w). At the river,
+raw diagnostic output before tonemapping measured a surface 11.2266 m away,
+while the old helper sampled at 0.0928 m. The corrected expression multiplies
+abs(W) by the view-ray length. It fixes the shared transparent helper, not a
+water-specific brightness multiplier. The user reports the live native-water
+correction **looks better**; that is not full acceptance of the later Custom
+water material.
+
+Fog was visually accepted with BlitzFX and reported working without it. The
+standalone river then exposed the distance error. Evidence/captures/build tools
+are under `tmp/witcher3classic-investigation/volumetrics-20261027/`: Native/Custom
+river references, `water-distance-values.exr`, original shader decompilations,
+constant captures, numerical tests and build logs. Temporary diagnostic colors
+have been removed from the live native-water shader.
+
+### Validation and remaining work
+
+WARP and NVIDIA pass the volumetric, native-fog composite and water fixtures;
+see tests/README.md. The fog's native branch is exactly equal to captured
+original bytecode in that fixture; custom masked composition differs by at most
+1.90735e-6. An actual rasterizer test catches the W-versus-reciprocal mistake.
+The production-resolution synthetic volume benchmark measured ~0.02245 ms GPU
+and ~0.00115 ms CPU submission on RTX 5090, **not an in-game performance result**.
+It excludes water, transparent sampling, cloud/terrain textures and capture cost.
+The D3D debug layer was unavailable, so numerical/state tests ran without it.
+
+The water Release build is installed through the game-folder symlink (8,610,816
+bytes, SHA256 `5AC3F036EB596EA78DAD2C2BD70FE329C4E6AF56D575D45D06508CA19EE817AB`).
+Its shared shading/resource tests pass. The user rejected this initial water
+build as too bright, patchy and too clear underwater. The corrected live
+revision described below has been accepted; its replacement DLL is pending. First test
+the same river without BlitzFX, Custom water with both fog modes, clarity,
+shoreline/boats and grazing reflections. Then test DLAA, Quality and Performance,
+underwater transitions, weather/time changes, cuts and save/menu recovery.
+Restore BlitzFX for a separate comparison only while the game is closed.
+
+Known limits: no local torch/spot volumetric injection or volume temporal
+reprojection yet; the distant volume clamps to its last integrated boundary.
+SSR still has its existing screen-edge/history/occlusion limitations. Water
+retains the native water ambient input and environmental reflections; it
+does not implement spectral optics, caustics, full rough refraction or a new
+underwater renderer. Standalone forward variants FAB74FB3 and 2472CF83 were
+identified in the dump but remain an audited-coverage follow-up; do not claim
+all transparent permutations or all weather states are validated.
+
+Session state: BlitzFX was temporarily disabled for the standalone comparison
+by renaming `blitz-fx.asi` to `blitz-fx.asi.volumetrics-disabled`. Confirm actual
+files before restoring. The previous live override used the scratch `water-live` folder. The game was
+closed before linking; ReShade.ini has no persisted LivePath and the default
+live directory is empty, so restart clears that override. **Do not
+use DevKit's global unload-live-shaders command as cleanup:** it removes all
+runtime replacements, including other addon shaders. Restore production content
+or restart instead.
+
+
+Water visual follow-up: diagnostic RGB separated foam, shadow visibility and
+reflection weight; another shader output the actual submerged path length.
+The latter reached 15–28 m at sampled river pixels, confirming the clear-water
+coefficients could retain too much green/blue background contrast. Fog-source
+frame[40] was approximately (4.93,5.94,7.24) and was incorrectly used as surface
+ambient. The corrected adapters pass native cb0[11] / BlitzFX t7 instead.
+The river default now uses a 2 m particle-scattering mean free path, adjustable
+through Water Clarity. Both changes preserve Fresnel, specular highlights and
+the complete reflection pass. All temporary diagnostic/no-SSR changes were
+removed. The user reports **“yes, waaay better”** with this live revision.
+
+Evidence: `water-components.exr`, `water-depth-values.exr`,
+`water-new-inputs.json`, `water-lighting-medium-fixed.exr` and corresponding
+analysis JSON under the existing scratch directory. The final capture has only
+finite pixels. Preview PNGs are reduced-exposure SDR inspection aids, not
+colorimetric HDR comparisons. The test now poisons atmospheric frame[40] while
+checking independently supplied water ambient, preventing this input-confusion
+regression. Broader weather/water-body and BlitzFX acceptance is still pending.
+
+
+Water sunlight transport: with Custom fog, an analytic exponential-height-medium
+integral attenuates incoming sunlight before it reaches water. Camera-path
+transmittance still applies once at final composition. The same incoming-light
+integral is used in the custom fog injection shader. This follows the distinction
+between opaque visibility and medium transmittance in
+[PBRT's direct-light integration](https://pbr-book.org/4ed/Light_Transport_II_Volume_Rendering/Volume_Scattering_Integrators).
+It is not a fixed highlight multiplier or another cloud shadow: native weather
+light color and cloud/terrain/cascade visibility remain inputs. Vacuum leaves
+light unchanged; density, height and sun elevation determine the loss.
+
+This remains a local single-scattering approximation: the light integral is
+bounded to the fog volume's 1000 m range, treats the height medium as continuous,
+and does not model the camera-relative start-distance cutout on the incoming
+light ray. It does not rescale native opaque surfaces' lighting or solve new
+sky/SSR transport. Global atmospheric attenuation already authored into the
+weather light is retained, not reconstructed. Do not claim a calibrated physical
+match for every weather state or water body.
+
+Looking-down follow-up replaced the single estimated-bottom-plane projection
+with the bounded depth traversal described above. The first traversal fixed
+the displaced riverbed/plants but exposed invalid-hit shoreline fallbacks;
+preserving the unshifted background and fading contact coverage fixed those.
+Evidence: `water-refraction-trace.exr`, `water-shore-fallback.exr`.
+The next water-only live update added incoming local-fog sunlight attenuation;
+the user reported **"much better!"**. `water-sun-before.exr` and
+`water-sun-after.exr` record that comparison. Both output captures are finite.
+These are live native-water checks without BlitzFX. The matching fog-injection
+change is compiled/tested but requires the next DLL restart to run in-game;
+the installed initial-water DLL does not yet contain these follow-ups.
+The current live path remains the scratch `water-live` directory, containing
+only the native water hash. No diagnostic color or reflection-disable branch
+is active. Rebuild/link the Release addon after the game closes, then verify
+the combined fog/water result without relying on this live override.
+
+
+### Igni/particle fog regression and late emissive water reflections (2026-10-27)
+
+The live paused Igni comparison exposed missing sparks in Custom fog. Four
+replacements (A7921C82, 8C9C55EC, 5F9AE754, 22FD7485) had prepended a new
+SV_Position parameter, moving their native TEXCOORD inputs to different
+registers. D3D11 consumes the register layout, not just semantic names. Move
+SV_Position after the existing native inputs. The user confirmed sparks returned
+with the corrected live shaders. Do not fix this by boosting particle brightness
+or bypassing fog. The actual A792 spark PS now has a GPU regression test using
+the native VS output layout and exact unfogged-emission comparison.
+[Microsoft signature/linkage contract](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-signatures).
+
+Active fire variants 4EF2AAF8 (additive) and 44ECC136 (premultiplied alpha) now
+consume the custom volume at the particle fragment while retaining native
+soft-depth, texture, animation, color and lifetime terms. Additive particles
+receive T only; alpha particles retain their native premultiplied-alpha contract
+with L/T. The 2472CF83 additive variant applies custom transmittance after its
+native gamma decode, so transmittance stays linear. A compiled signature audit
+checks all 16 fog/water replacements against captured original DXBC.
+FAB74FB3 remains a separate forward-skin follow-up: its decompilation contains
+an unresolved raw-buffer instruction; no speculative skin replacement was kept.
+
+Snapshot `igni-draws1.json` shows water at draw 1225, SSR/composition 1227-1239,
+and Igni particle families at 1271-1287. These effects cannot appear in that
+same-frame native reflection source because they have not yet been drawn.
+The new `water/reflections.hpp` captures the missing late additive layer during
+its original draws and adds a bounded screen-space reflection before the
+scene tonemap/optical effects, and hence before Classic's reconstruction pass.
+There is no geometry replay or CPU texture readback.
+
+- Water writes world normal XY, view depth and linear F*T coverage to private
+  MRT4. Both native and BlitzFX water adapters retain their original MRTs.
+- Late additive A7921C82 / 02A34C28 / 4EF2AAF8 / 105478E1 also write MRT4,
+  this time to emission RGB + nearest emitting view depth. Only native ONE/ONE
+  additive draws are accepted. Original RGB/alpha/depth and native blending are
+  untouched. Derived independent blend states are cached; private blending adds
+  emission and takes MIN depth. Render targets/blend state restore after draws.
+- Capture runs only with Custom water and a valid current-frame water capture.
+  Pre-water particles are left to the original path. Resizes invalidate captures;
+  menu/stale frames and frames without emissive draws do not compose old data.
+- Compute shader F3C40001 projects a reflected ray and traverses a separate
+  transparent depth layer (up to 64 steps, 60 m), with opaque-depth occlusion,
+  screen-edge/distance fade and the water's existing Fresnel/camera-fog weight.
+  Custom fog also attenuates the particle-to-water path. Native-fog mode retains
+  the particle's native camera-fog approximation. The resolved scene feeds the
+  existing optics chain; all temporary SRV substitutions restore afterward.
+
+This is an experimental single-layer screen-space extension, not ray tracing.
+It cannot reflect hidden/off-screen emitters. Thin sparks can fall between
+bounded samples; overlapping emitters share their nearest depth and summed
+radiance. Native environment/SSR still supplies the other reflections. The
+approach follows the perspective-correct screen-space traversal cited above;
+[Godot's SSR documentation](https://docs.godotengine.org/en/stable/tutorials/3d/environment_and_post_processing.html)
+explains why ordinary opaque-depth SSR misses transparent objects. This explicit
+particle layer supplies the missing depth, with the limitations just described.
+There are two render-sized FP16 capture targets plus a scene resolve texture;
+in-game cost has not yet been measured. No claim of free reflections is made.
+
+Validation: original spark output/fog composition pass WARP and NVIDIA. The
+reflection fixture checks a reflected emissive plane against expected Fresnel
+energy, unchanged native color, MRT/blend restoration, frame freshness and
+foreground occlusion. Initial reflection implementation still requires linking
+and the paused in-game Igni comparison; do not report reflection acceptance from
+the earlier spark-fix feedback. Source/build/capture logs remain under the
+existing `volumetrics-20261027` scratch folder. BlitzFX remains temporarily
+renamed to `.volumetrics-disabled` for this standalone test.
+
+
+Deployment update: Release linked successfully on 2026-10-27 after Classic
+closed. Installed game-folder symlink points to
+`build/Release/renodx-thewitcher3classic.addon64`, 8,679,424 bytes, SHA256
+`2DF7E477A56D77EDB96016761ABC497A476675FCDBF3D68CCAE8487C9E76F292`.
+This supersedes the earlier initial-water build status above: the embedded
+shaders now include the accepted refraction/shore/sunlight fixes, the four
+particle linkage fixes, added active particle fog variants and the first late
+emissive reflection path. WARP/NVIDIA reflection and actual-spark tests pass,
+as does the 16-shader native-signature audit. Live spark restoration was accepted
+before linking; in-game reflection appearance/performance and the matching
+volumetric incoming-sunlight update still require the requested restart check.
+BlitzFX is still `blitz-fx.asi.volumetrics-disabled`. Do not mistake that standalone
+result for a combined BlitzFX acceptance. Build log: `particle-release.log`.
+
+
+First reflection build follow-up: the user's initial Igni test exposed two
+separate issues. The scene blowout was NOT reflection energy: native water and
+zero reflection emission did not fix it, but restoring original 4EF2AAF8 did.
+The decompiler translated DXBC `and mask, 0x3f800000` into numeric 1065353216
+instead of selecting float 1.0. Replace that line with `mask ? 1.f : 0.f`.
+The full UV/radial-domain original-bytecode test now matches exactly on WARP and
+NVIDIA, with custom transmittance checked separately. The corrected live fire
+was accepted as normal. Earlier signature/math tests did not detect this
+material-code error; do not rely on compilation or signatures alone.
+
+Reflections were absent because runtime guards rejected the actual game inputs:
+A792 uses ONE/INV_SRC_ALPHA with output alpha zero (therefore additive), and the
+pre-tonemap scene is R11G11B10_FLOAT. The capture now accepts that exact blend
+contract only for the audited zero-alpha shaders. Resolve accepts R11 input and
+writes an RGBA16F result, converting through the compute shader rather than an
+invalid cross-format CopyResource. Partial-pool padding is cleared; original
+compatible float formats retain their existing copy path. The reflection GPU
+fixture now exercises these captured blend/format contracts on WARP and NVIDIA.
+A one-time log confirms actual reflection composition, instead of inferring it
+from shader registration. These changes require another Release link/restart;
+water reflection appearance/performance remains pending until verified live.
+Evidence: `igni-broken.exr`, `igni-neutral.exr`, `igni-native4ef.exr`,
+`igni-glow-fixed.exr`, `igni-particle-draw.json`, `igni-tonemap-draw.json`,
+`igni-glow-test.log`, `igni-contract-test.log` in the existing scratch directory.
+Temporary native CSO comparisons and zero-emission overrides were removed;
+all nine current live HLSL overrides contain production code.
+
+
+Corrected Release installed after shutdown: 8,679,424 bytes, SHA256
+`76FD647A8758A5AAE4A65C931118F80A809C0AA528DBF2815EBA06643C10592B`.
+This includes the exact-bytecode glow fix and captured blend/format support.
+It supersedes the rejected `2DF7E477...` build. Log: `igni-corrected-release.log`.
+Post-restart reflection verification is pending.
+
+
+### 2026-10-27: emissive reflection noise follow-up
+
+The 76FD647A build composed reflections successfully, but the user reported
+moving bright speckles across the water during Igni. The fresh captured frame
+`igni-current-noise.exr` agrees. Earlier `igni-noisy.exr` and
+`igni-noisy-custom.exr` were stale resources left from a Native-water state;
+always queue a fresh snapshot and resolve the current final draw/RTV before
+comparing live images. A valid old resource handle is not proof of freshness.
+
+F3C40001 now traces at half width and height into a separate RGBA16F radiance
+texture (alpha holds surface view depth). Projected ray segments are clipped
+to the viewport before selecting the 64 traversal steps. Without clipping,
+near-camera rays could cross the whole visible region in their first step,
+missing valid emitters. Intersection travel uses perspective-correct depth.
+Valid water misses retain zero radiance and valid depth for normalization.
+
+F3C40002 reconstructs only reflected radiance with 17 spatial taps in a 7x7
+half-resolution footprint, weighted by distance, water depth and normal.
+It rejects opaque foreground/land and preserves the original scene channels
+and alpha. Sample locations match the tracer's even full-resolution pixels.
+The sharp scene is added only after filtering. There is no temporal history,
+so ended effects cannot leave old reflected emission through history reuse.
+This is a spatial stabilization step, not a complete temporal denoiser or a
+claim of physically complete reflections. Screen-space visibility, single
+particle-depth layer, additive overlap and missing off-screen emitters remain
+limitations. Moving-scene stability and performance still need live testing.
+
+Design reference: AMD FidelityFX reflection denoiser spatial reconstruction:
+https://gpuopen.com/manuals/fidelityfx_sdk/techniques/denoiser/
+This implementation does not port its temporal reprojection/history stages.
+Perspective-correct screen-space traversal reference:
+https://jcgt.org/published/0003/04/04/paper.pdf
+
+The production capture/trace/filter fixture passes on WARP and NVIDIA. Uniform
+plane energy is preserved within two FP16-store quantization error bounds;
+the R11-to-RGBA16F case allows 0.003 absolute error (WARP measured 2.59766
+against expected 2.6). Sparse checker emission has mean 4 before/after and
+variance 1.80434 after filtering versus 16 before, with exact land exclusion,
+unchanged base G/B and alpha. This controlled spatial test does not establish
+temporal noise elimination in the game. Logs: `igni-filter-final-build.log`,
+`igni-filter-final-test.log`, `igni-filter-release.log` in the session scratch
+directory. Accepted refraction, shoreline, fog/sun attenuation and particle
+material/linkage fixes remain intact. BlitzFX is still temporarily disabled.
+
+Reflection-noise Release linked after shutdown: 8,684,544 bytes, SHA256
+44E6FF5ED453982033DE3A62EA90AA4F7187B950B0588ED814C813B1ED0765AE.
+The game addon symlink points to this Release file. In-game noise acceptance
+is pending; do not describe the controlled filter test as live confirmation.
+
+
+### 2026-10-27: replace rejected particle SSR with native history input
+
+The user rejected the 44E6FF5E reflection-filter build: Igni reflections still
+looked poor. Its spatial test results did not predict acceptable live quality.
+That implementation is superseded, not an accepted optional mode.
+
+Primary reference is now the actual MIT-licensed BlitzFX source:
+https://github.com/sven-luepke/blitz-fx/tree/659e239cfcba9cf0362621486ecdb241b0eee168
+See water/THIRD_PARTY.md for the relevant files and full license. The local
+read-only reference is under the session scratch directory's blitz-source/.
+PreSSRDownsamplePS samples a reprojected previous raw HDR scene with four linear
+taps; post_processing_renderer.cpp saves that scene before postprocessing.
+WaterSSRCompositePS uses reprojection and neighborhood-clamped temporal history.
+BlitzFX does NOT implement our rejected additional particle-depth ray tracer.
+
+The standalone addon now replaces native pre-SSR downsample 406B9233. Its source
+and DXBC were freshly captured through DevKit; the original checksum matches
+BlitzFX's source shader mapping (4dfdf166-8c757f04-342c4883-d999a91d).
+Capture ordering in native-ssr-draws.json: atmospheric fog 1182, SSR preparation
+1193, water 1197, SSR history 1210, water composition 1211, late Igni 1234-1250,
+raw exposure/curve 1258, final analytic grade 1288. Draw indices are snapshot-
+specific. The old extra reflection overlay ran at the final grade, AFTER
+temporal reconstruction, despite an earlier log describing it as pre-tonemap.
+Do not reuse that incorrect earlier timing description.
+
+Implementation:
+- water/reflections.hpp saves raw scene color at the four native exposure-curve
+  permutations B4953357/AEE0B973/AE7D5FA8/51F4E5FD, before tone mapping.
+- It requests capture only when this frame's native SSR preparation ran with
+  Custom water. The color includes the late particle draws naturally; no
+  particle shader whitelist or additional particle MRT is needed.
+- One reusable opaque-depth history is copied immediately AFTER SSR input
+  preparation, BEFORE water writes depth. The previous depth has already been
+  consumed by that draw. One raw-color copy and one 4304-byte camera copy follow
+  at exposure. No CPU readback, replay, new draw or compute dispatch.
+- Private PS t108..t113 carry current depth, previous depth, previous raw color,
+  previous/current camera data and parameters; s12 is linear-clamp. All bindings
+  are saved and restored. Native b0/b3/b12 are untouched.
+- Both histories are cropped to the actual render extent, preserving DLSS
+  render-to-pool semantics. RGBA32F/RGBA16F/R11G11B10 color and native typeless
+  R24 depth are supported without cross-format copies.
+- 406B9233 reconstructs world position with the current inverse VP, projects with
+  the previous view/projection (including its actual jitter), validates previous
+  opaque depth, and averages four bilinear HDR samples. It removes the native
+  luma-10 limit only on the valid history path.
+- Exact native fallback applies for startup, skipped frames, resize, disocclusion,
+  off-screen/behind-camera reprojection, large camera displacement/rotation or
+  invalid data. Custom-water disable invalidates history. No radiance history
+  accumulation is added; a vanished effect disappears from the input next frame.
+- The existing native SSR trace, temporal clamp and water composition remain
+  responsible for reflection placement/stabilization and the accepted water
+  Fresnel/fog weighting. Native water mode remains native.
+- With BlitzFX active its different pre-SSR shader remains in control; our
+  native-only callback does not capture or add another reflection. Existing
+  BlitzFX render-subrect fixes stay registered.
+
+Removed the F3C40001/F3C40002 compute shaders, extra water/particle MRT outputs,
+blend-state capture machinery and final-grade reflection overlay. The particle
+fog linkage and 4EF2AAF8 material bit-mask correction remain. Old raytracer tests
+are archived in scratch, not treated as proof of the new integration.
+
+Validation: current Release shader embeds and addon object compile. The rewritten
+water_reflections.cpp runs the production history scope and 406B9233 shader
+against original DXBC fallback. WARP and NVIDIA pass all three color formats,
+native R24 depth, HDR values above the native limit, one-frame effect expiration,
+frame gaps, camera cuts, depth disocclusion, resizing, exact private binding
+restoration and unchanged native targets. A spatial radiance ramp checks camera
+translation and previous-frame projection jitter, including poisoned oversized
+pool margins. Jitter sampling allows the D3D11 minimum 8-bit subtexel precision.
+The existing native glow/spark/fog equivalence tests, 16-shader linkage audit,
+water refraction/shore/fog-attenuation tests also pass.
+Logs: ssr-history-build.log, ssr-history-test.log,
+ssr-history-fog-regression.log, ssr-history-water-regression.log,
+ssr-history-release.log in tmp/witcher3classic-investigation/volumetrics-20261027/.
+
+Limits and next verification: this follows BlitzFX's screen-space approximation,
+not complete particle geometry reflection. Transparent objects reuse opaque
+depth for reprojection, off-screen information is unavailable, and there is one
+frame of source latency. Check paused and moving Igni, then cessation, camera pans,
+DLAA/Quality/Performance, Native/Custom water, menu/save loads, and performance.
+BlitzFX remains temporarily disabled for the first standalone test; combined
+BlitzFX behavior has not been verified live with this build. No performance
+numbers or visual acceptance are claimed from the synthetic tests.
+
+Native-SSR Release linked after shutdown: 8,668,672 bytes; SHA256
+BA8294D1CEA927A24D130C410415C0762800FF8526D734AC3497AD259E9267FE.
+Game-folder symlink deploys this file. Live appearance/performance acceptance
+is pending. This supersedes the rejected 44E6FF5E reflection-filter build.
+
+
+### Native-SSR follow-up: empty depth history (2026-10-27)
+
+The user reported no reflections in BA8294D1. Live diagnostics proved the addon
+was capturing HDR and replacing 406B9233, but the depth-validation branch rejected
+383,965 of 518,400 input pixels (the geometry region). A separate numeric output
+showed current raw depth and projected reciprocal Z were consistent while old
+raw depth was exactly zero. The exact B4953357 input capture contains the paused
+Igni sparks/fire, so this was not an absent particle source.
+
+Root cause: CopySubresourceRegion used a non-null crop box on the game's
+D3D11_BIND_DEPTH_STENCIL resource. D3D11 only permits whole-subresource copies
+for depth-stencil sources. The first fixture had the correct R24 typeless format
+but ONLY BIND_SHADER_RESOURCE, hiding this distinction. Adding the actual depth-
+stencil bind flag reproduces the missing reflections on both WARP and NVIDIA.
+The corrected fixture uses a real D24 depth-stencil view and ClearDepthStencilView
+for changes (UpdateSubresource is also inappropriate for a depth-stencil target).
+
+The history depth now retains the full native allocation and uses CopyResource.
+Only color remains cropped to the actual render extent; shader Load coordinates
+for depth already address that top-left extent and do not sample pool padding.
+Allocation-size changes are checked independently of render-size changes.
+This supersedes the claim above that both history textures are cropped.
+The depth rejection remains enabled; there is no permanent validation bypass.
+
+Source/API evidence:
+https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-copysubresourceregion
+
+Evidence under the same session scratch directory: ssr-missing-inputs.json,
+ssr-rejections.exr (red channel 5 = depth rejection), ssr-depth-debug.exr
+(R=current raw depth, G=previous raw depth, B=projected reciprocal view Z),
+ssr-raw-hdr-input.exr, ssr-depth-copy-before.log, ssr-depth-copy-after.log,
+ssr-depth-copy-build.log. Before test fails both devices; after passes all color
+formats, history lifecycle, disocclusion, camera/jitter and state checks.
+
+Temporary diagnostic 406B9233 shaders were replaced by the normal production
+shader in ssr-live/ before requesting shutdown. No global live-unload was used.
+The runtime depth-copy correction requires a Release link/restart. Live visual
+acceptance is still pending; capture success alone is not enough.
+
+
+## 2026-10-27: native SSR needs transparent intersection depth
+
+Status: user rebuilt 018D635A3AE4D09A28EFE14DB16F61B7218EF8CEC7DCBEF90BEAB7DC35BC16AB
+(depth-copy repair), but still reported no Igni reflection. The new particle-depth
+revision below is compiled and GPU-tested; in-game appearance is NOT yet verified.
+Do not describe the prior depth-copy repair as the complete reflection fix.
+
+Evidence from PID 24720, paused river/Igni, BlitzFX disabled:
+- Exact input to native trace 47CC9FA1 contains the late sparks in t1. The whole
+  depth-copy repair is working; this is no longer an empty-history problem.
+- Capture the FIRST 88367C34 occurrence to preserve trace output immediately.
+  BDAA334B occurs after 50944A49 fills non-water pixels, so its t1 contains more
+  than the raw trace. These textures are full-size pooled allocations: inspect
+  only the current 960x540 viewport, not their stale 3840x2160 remainder.
+- Native trace hits opaque scenery under/behind the transparent particles.
+  A few sparks appear near the far bank instead of beneath their actual location.
+  A late HDR color copy alone cannot provide the missing transparent intersections.
+- Scratch evidence under tmp/witcher3classic-investigation/volumetrics-20261027:
+  ssr-second-inputs.json, ssr-second-color.exr, ssr-direct-inputs.json,
+  ssr-direct.exr, ssr-water-mask.exr, native-ssr-trace-full.*, trace-draw.json.
+
+Implementation:
+- water/particle_depth.hpp appends one R16_FLOAT scalar MRT at slot 4 to the
+  ORIGINAL four audited additive particle draws (A7921C82, 02A34C28, 4EF2AAF8,
+  105478E1). MIN blending retains nearest linear view Z. Native blend targets,
+  DSV, sample mask and blend constants are preserved/restored. There is no
+  geometry replay and no separate particle ray tracer or full-screen overlay.
+- The PS writes clip W/view Z only for emitted luminance above 0.001 in native
+  scene units; empty billboard texels write the 65504 sentinel. Critically,
+  D3D11 SV_Position.w here is view Z, NOT reciprocal view Z. Native color and
+  fog transmittance are unchanged. Existing fire glow bit-select repair remains.
+- 406B9233 reads last frame's particle depth at private t114. Four depth taps
+  cover its color prefilter footprint. The previous/current camera transforms
+  convert it to current device depth, with the existing cut/disocclusion gates.
+  Projection Z and the reversed native depth texture are different conventions:
+  deviceZ = (clip.z/clip.w - frame[22].y) / frame[22].x.
+- Its additional R32_FLOAT output at MRT1 is quarter resolution and contains
+  ONLY emissive depth, with a far sentinel elsewhere. This avoids changing the
+  native opaque downsample footprint in frames/pixels with no emission.
+- 47CC9FA1 uses private t114 ONLY for its four ray-intersection SampleLevel
+  reads, taking nearer(native opaque, emissive). Its t2.Load ray-origin depth
+  MUST stay native, or the water ray begins on the particle instead of water.
+  The 719-line decompiled original was checked against original DXBC on GPU;
+  both MRT outputs match exactly when intersection depth is identical.
+- Empty frames use the original trace directly: no extra per-step depth fetch.
+  Captured depth is valid for exactly the corresponding previous HDR frame;
+  gaps, mode changes, resize and missing particles cannot retain stale surfaces.
+- Native SSR history/clamping, mip filtering, Fresnel mask and composition remain
+  in use. No second tracing dispatch or new temporal accumulation is introduced.
+- BlitzFX active: its replacement pre-SSR shader does not request this history;
+  the standalone particle capture/trace remains inactive. Verify separately if
+  BlitzFX is re-enabled. Accepted refraction, shoreline and sun/fog fixes remain.
+
+Validation (WARP and NVIDIA):
+- test-water-reflection-trace.cmd / trace-equivalence.log: original 47CC9FA1 vs
+  modified trace max error 0 on both targets, point/linear sampling, both native
+  fallback branches; adding nearer intersection depths changes hits, preserving
+  the native water mask.
+- test-water-reflections.cmd / particle-depth-history.log: actual R16 MRT path,
+  4 m -> .75 conventional / .25 reversed depth; transparent holes; no stale
+  particle frame; native target/blend/private SRV restoration; prior HDR format,
+  cropped-pool, jitter, camera cut, disocclusion and resize regressions.
+- test-composite.cmd / particle-depth-color.log: actual Igni glow PS with extra
+  MRT keeps original RGB; 1992 emitting pixels store 8 m and 2104 transparent
+  pixels store the sentinel. Original spark/glow and custom fog checks pass.
+- build-object.cmd compiles Release source/embeds without linking the loaded DLL.
+  Full Release link and user visual acceptance are still pending at this entry.
+
+Research/context: this is a deliberate extension beyond BlitzFX's color-history
+approach. Opaque-only SSR cannot reliably locate transparent effects; see
+https://docs.godotengine.org/en/latest/tutorials/3d/environment_and_post_processing.html
+and Unity HDRP's documented transparent-depth limitation:
+https://docs.unity.cn/Packages/com.unity.render-pipelines.high-definition%4012.1/manual/Override-Screen-Space-Reflection.html
+The method still has screen-space/off-screen limits, one-frame history latency,
+and a single nearest transparent layer. Camera reprojection uses the opaque
+correspondence shared with the HDR input; fast camera/effect motion needs visual
+validation rather than a claim of exact multi-layer transparency.
+
+Next verification: rebuild only when Classic is closed; Custom fog + Custom
+water, paused Igni first, then animated casting and camera movement, DLAA and
+DLSS Quality. Confirm sparks/color unchanged, correctly located reflection,
+absence of old moving noise, clean disappearance after fire ends, Native water
+unchanged, and acceptable frame cost. Use exact before-draw captures, not stale
+pooled resources. Do not globally unload DevKit live replacements.
+
+
+## Lighting extension and reflection confirmation (2026-10-27)
+
+The user confirmed the repaired native-SSR Igni reflections work after rebuilding.
+The lighting extension is documented in [LIGHTING.md](LIGHTING.md), including
+primary research, captured engine contracts, implementation and limitations.
+Graphics now includes native-pass PBR, ambient-only AO influence, PCSS soft
+shadows, contact shadows, HairWorks shadow quality and player-fill controls.
+All new modes default Native/Off. Release shader embeds and addon object compile;
+final lighting and forward object-motion tests pass on WARP and NVIDIA.
+Full Release linking and in-game lighting acceptance are pending at this entry.
+Existing fog, water, refraction and reflection fixes are retained.
+
+Deployment follow-up: the addon was linked at 23:49:15 and Classic restarted
+at 23:49:22. No implementation source is newer than that DLL. DevKit confirms
+embedded addon replacements for FB29B4E6 (directional/IBL), 05FE9FA8 (shadow
+mask) and 4E4E4B53 (HairWorks), with no disk override for those shaders. Thus
+Release linking is complete; visual acceptance of the new modes remains pending.
+
+
+## Standalone water seam repair (2026-10-28)
+
+See [EFFECT_AUDIT.md](EFFECT_AUDIT.md) for the confirmed metadata-row repair,
+live acceptance, regression coverage and remaining BlitzFX comparison work.
+The corrected 28D7BDFE shader restores integer row 1 in the terrain atlas
+metadata lookup, matching the earlier BlitzFX 2825099C compatibility fix.
+All sunlight/reflection/refraction/fog contributions are restored. WARP and
+NVIDIA water tests pass; the user confirmed the live scene is correct.
+Full Release DLL linking is still pending game shutdown at this entry.
+
+
+## Lighting/shadow comparison revision (2026-10-28)
+
+See LIGHTING.md, Direct BlitzFX comparison revision, for the source comparison,
+material-aware filtered contact shadows, native material storage in standalone,
+local shadow-atlas bit-decode fixes and specular anti-aliasing. Release embeds
+and object compile; GPU tests pass on WARP/NVIDIA. Full DLL linking and live
+acceptance are pending game shutdown at this entry. Keep the accepted water fix.
+
+
+Deployment follow-up: the lighting/shadow comparison revision was linked in
+Release after Classic exited. The existing game-folder symlink resolves to
+the rebuilt build/Release/renodx-thewitcher3classic.addon64 (9,204,224 bytes).
+Build log and SHA-256: effect-audit-20261028/build-release-shadow.log and
+release-shadow-build.json under the investigation scratch directory.
+All final WARP/NVIDIA checks pass; in-game acceptance remains pending.
+
+
+Graphics default follow-up: the user accepted the lighting/shadow improvements
+and requested the screenshot configuration as defaults. See LIGHTING.md,
+Accepted Graphics defaults, for exact values and the clean removal of the
+HairWorks Shadow Quality setting. Existing saved profiles are not overwritten.
+
+
+## Interior fog exclusion (2026-10-28)
+
+Custom atmospheric fog now uses the game's authored interior entry/exit texture
+at native PS t24 (R16G16_FLOAT, half-resolution pooled allocation). Its channels
+are radial distances normalized by lighting b13[34].z. This is independent of
+the AO texture t2, previously mislabeled as an indoor mask in these notes.
+The current building capture has a 2560x1440 render viewport, a 1920x1080
+pooled interior texture and distance scale 120 m. Native water's t24 handling
+and the local BlitzFX source independently establish the distance/order contract.
+
+Fog density is zero inside these volumes. A two-metre cubic fade lies on the
+outdoor side of each boundary, preserving darkness inside without abruptly
+turning the outdoor medium on. The fade is integrated over each logarithmic
+radial cell to avoid whole-slice pops when crossing a doorway. Reversed entry/
+exit order covers the camera starting indoors and subsequent re-entry; equal
+values denote open air. Active half-resolution pixel coordinates avoid stale
+pool contents in DLSS modes. Missing/unsupported interior data retains the
+previous fog behavior. Native fog mode is unchanged.
+
+The shared integrated volume supplies opaque surfaces, forward materials,
+particles and water. Fog seen through a doorway resumes outside the interior;
+outdoor fog in front of an interior still contributes along that outdoor path.
+This uses authored interior volumes, not inferred wall/roof geometry, so spaces
+without a native dimmer volume are not automatically classified as interiors.
+Native distance-based dimmer weakening is deliberately not applied to density.
+
+Validation: Release shader embeds and addon object compile. volumetrics.cpp
+passes on WARP and NVIDIA: exact interior vacuum, entering/exiting intervals,
+moving doorway optical lengths, no-volume sentinels, missing/invalid data,
+poisoned pooled borders, and existing lighting/density/state regressions.
+Native fog/particle composite tests also pass; native fallback has zero error.
+The D3D debug layer was unavailable. Evidence is in
+tmp/witcher3classic-investigation/interior-fog-20261028.
+
+Release DLL linking completed after game shutdown. Live visual acceptance remains pending.
+Build target: thewitcher3classic, preset clang-x64-release; generated shader
+embed: build/thewitcher3classic.include/embed/0xF3C30001.h. After relaunch, check
+the current building, walk slowly through its doorway, look outside from inside,
+then check a cave mouth and a fully enclosed cave. Repeat in DLAA and DLSS
+Quality, including transparent particles/water, and compare Native fog mode.
+No temporary live overrides were installed for this revision.
+
+
+## Fog quality controls (2026-10-28)
+
+Graphics -> Fog Quality provides two independent integer sliders, enabled in
+Custom Atmospheric Fog mode and saved per preset. Both default to 2/4.
+
+| Level | Volume Resolution at 16:9 | Lighting Shadow Quality |
+|---|---|---|
+| 1 | 160x90x96 (previous resolution) | 4 PCF taps (previous sampling) |
+| 2 | 240x135x128 | 9 PCF taps |
+| 3 | 320x180x192 | 16 PCF taps |
+| 4 | 384x216x256 | 25 PCF taps |
+
+Volume rows follow camera aspect, independently of DLSS render scale. Higher
+resolution improves both screen detail and radial integration, at additional
+GPU and video-memory cost. The two FP16 volume textures use approximately
+21/64/169/325 MiB at these 16:9 settings. Lighting quality samples the same
+shadow footprint more densely, increasing GPU work without extra volume memory.
+It controls sunlight/moonlight visibility in the fog, not surface-lighting
+quality. Sampling positions are deterministic; no temporal jitter is added.
+Existing fog density, light strength, interior exclusion and 1000 m range remain.
+
+Changes apply on the next atmospheric pass; volumes reallocate only when their
+dimensions change. Graphics preset buttons reset quality to the new defaults;
+Vanilla Graphics disables Custom fog rather than setting these sliders to zero.
+No HDR injection ABI or private forward-sampling layout changed.
+
+Validation: Release shader/object build and WARP/NVIDIA volumetrics tests pass.
+Tests cover all actual quality allocations, increasing/decreasing resolution,
+parameter/aspect bounds, homogeneous extinction and lighting energy, analytic
+PCF edge weights for all four sample counts, and the existing interior/pooled
+resource/state regressions. The D3D debug layer was unavailable. Live visual
+quality and frame cost remain to be checked in the user's noisy scene.
+Evidence: tmp/witcher3classic-investigation/fog-quality-20261028.
+
+Build thewitcher3classic with clang-x64-release after closing the game. Inspect
+embed/0xF3C30001.h, then restart and compare 1/1, 2/2 and 4/4 in a fixed scene.
+Move the camera across shafts/foliage and an interior boundary; check DLAA and
+DLSS, preset persistence, immediate quality changes and Native fog bypass.
+
+
+## Toussaint fog height correction (2026-10-28)
+
+The captured Toussaint scene used the registered C8C78997 atmospheric pass,
+valid shadows, and an all-outdoor t24 interior sentinel. Custom fog was active.
+Its weather height offset was 2185.51855 m, camera Z 3.00987 m, base density
+0.000253701, and mean vertical coefficient 0.002238057. The custom exponential
+height profile reduced local density roughly 23 times more than the native
+reciprocal profile 1/(1 + max(height,0)*coefficient).
+
+Use that reciprocal weather profile in volume extinction and the analytic
+incoming-light integral shared with water. Beer-Lambert path integration remains
+exponential. The existing mean of directional weather coefficients, 1000 m fog
+range, quality controls and native interior exclusion remain in use. This
+corrects the previously documented exponential height model, and is not an exact
+reproduction of the native directional 16-step atmospheric integrator.
+
+Validation: Release shader embeds/addon object compile; volumetrics and water
+tests pass on WARP and NVIDIA. The captured weather regression checks absolute
+scattering/transmittance; sunlight is checked against numerical quadrature at
+high altitude, near-horizontal directions, ground crossings, and tiny falloff.
+The D3D debug layer was unavailable. Live visual acceptance remains pending.
+Evidence: tmp/witcher3classic-investigation/toussaint-fog-20261028.
+Build target thewitcher3classic with clang-x64-release after game shutdown;
+inspect embeds 0xF3C30001.h and 0x28D7BDFE.h. After restart compare this Toussaint
+view, another region, and a doorway with Custom Atmospheric Fog on/off.
+
+Release DLL linking completed after game shutdown; the game-folder symlink resolves to the updated build. Visual acceptance after relaunch remains pending.
+
+
+## Toussaint distant haze follow-up (2026-10-28)
+
+The height-profile correction alone did not resolve the reported appearance.
+Live diagnostics confirmed ClassicFogReady and nonzero volumetric scattering.
+Matched native/custom atmospheric-pass views show clear nearby weather in both,
+but significantly reduced mountain haze in Custom mode. The replacement stopped
+accumulating at 1000 m while this weather specifies 16707.9 m. A captured depth
+sample places 2.1% of opaque pixels beyond the old cutoff (distant mountains).
+Evidence images: toussaint-fog-20261028/custom-scene.png and native-scene.png,
+using identical preview exposure; these are pre-final-grading scene buffers.
+
+Both scatter and integration now use max(local grid range, native weather range)
+and publish the same range to opaque/forward sampling. This supersedes the fixed
+1000 m camera-ray limit documented above. Local density is not boosted. Grid
+allocation and dispatch counts are unchanged; covering a longer distance spreads
+the logarithmic slices more widely, so Volume Resolution still controls detail.
+Incoming sunlight retains its previous finite local-medium attenuation path,
+including water; weather lighting already represents the global atmosphere.
+
+Validation: the old shader fails the new distant-transmittance regression; the
+updated shaders pass it on WARP and NVIDIA, together with reference radiance,
+100 m transmittance, published sampling range, and interior intervals beyond
+1000 m. Existing quality, interior and water tests also pass. The Release shader
+embeds and addon object compile. The D3D debug layer was unavailable.
+Diagnostic overrides were replaced with production shader code, their scratch
+file removed, and the original live path restored before game shutdown.
+After relaunch, verify mountain haze in the same Toussaint view, nearby clarity,
+doorway darkness, and another region. This change does not reproduce the native
+artistic desaturation/opacity curve or directional weather blending exactly.
+
+
+## Contact shadows: BlitzFX sampling restoration (2026-10-28)
+
+The original 24-tap implementation spread evenly spaced samples over the entire
+world-space reach. Close-up rays therefore sampled widely separated pixels and
+created repeated silhouettes. Two subsequent repairs were rejected in-game:
+continuous dense tracing filled the heuristic depth slab into broad shadows;
+removing that slab and bias for exact cell/surface intersections caused faceted
+self-shadowing and flicker. Their synthetic width tests were insufficient and
+must not be cited as visual acceptance or proof of a physically correct result.
+
+The current trace restores the original material rules, depth bias, thickness
+and 400x hit ramps. Sampling follows BlitzFX 1.1.0 ContactShadowsCS: 16 taps,
+fixed normalized screen spacing (6 * renderHeight / (1920 * renderWidth)),
+and a static per-pixel phase with the tree-specific offset. Reach limits the
+world distance without redistributing the taps. Default remains 0.3 m; saved
+values are retained. Native near-plane protection, screen-edge fade, physical
+reach fade and the existing depth/normal bilateral filter remain intact.
+
+The exact user-supplied BlitzFX archive was extracted and disassembled to verify
+these rules. The matching local source is commit
+659e239cfcba9cf0362621486ecdb241b0eee168. Differences are deliberate: our static
+phase uses interleaved gradient noise instead of the external blue-noise map;
+we retain the existing spatial filter and do not add normal-mapped self-shadowing.
+The first sampling-only build was also rejected for noise/flicker; restoring
+BlitzFX's trace without its temporal stabilization was insufficient. The current
+revision adds contact-mask history as described below. It does not claim parity
+with BlitzFX's complete combined-shadow pipeline. Trace work is 16 samples;
+actual total frame cost remains unmeasured.
+
+Validation: Release embed and addon object compile. Production lighting tests
+pass on WARP and NVIDIA, including fixed sampling at 0.08/0.16/0.3/0.6 m across
+axes/directions/subpixel phases and a shallow sloped plane that must not shadow
+itself. The original stretched trace and rejected DDA fail the new suite.
+The former thin-surface footprint fixture is removed because its zero-thickness
+assumption does not validate the chosen screen-space heuristic. Existing native
+lighting, PCSS, material, hair, binding-range, resize and pooled-bound tests pass.
+An additional GPU comparison executes the original BlitzFX package bytecode with
+matched static offsets: character-blocker masks match exactly on both adapters
+for both axes and light directions, away from our added bounds/fades. This is
+limited shader evidence, not a claim of whole-scene or temporal equivalence.
+
+Evidence: tmp/witcher3classic-investigation/contact-blitz-20261028, including
+reference.cpp/reference.cmd and the extracted original shaders. Logs:
+tmp/contact-blitz-tests.log, contact-blitz-reference.log,
+contact-blitz-original-negative.log and contact-blitz-dda-negative.log.
+The in-game screenshot confirms the rejected version's faceted forehead/neck.
+DevKit accepted diagnostic shadow overrides, but they did not change the active
+addon output; they were restored and the temporary file/path cleaned up.
+
+Build target: thewitcher3classic, preset clang-x64-release; inspect generated
+embed/0xF3C40021.h. After relaunch, compare contact shadows off/on in this same
+close-up, inspect idle animation for flicker, then change reach and camera angle.
+Also check foliage and DLSS/DLAA. Live acceptance remains pending.
+
+Deployment: Release DLL linked after shutdown; game-folder symlink hash verified.
+Build log: tmp/contact-blitz-release.log. Scene acceptance is still pending.
+
+
+### Contact-shadow temporal stabilization
+
+Contact shadows now filter current observations spatially before temporal
+reprojection and history clipping, matching BlitzFX's ordering. The same 3x3
+filter reuses an existing GPU texture; the final shadow draw does not blur again.
+The 16-tap trace and 0.3 m default remain unchanged. Motion-aware history rejects
+invalid or uncovered animated surfaces rather than dragging old shadows.
+
+Release embeds/object and WARP/NVIDIA regression tests pass. The Release DLL was verified after relaunch, and the user accepted the current
+appearance on 2026-10-28. Broader animation/performance validation remains open.
+Large shadow size alone is not evidence of an error. See [LIGHTING.md](LIGHTING.md)
+for the algorithm, rejected scene experiments, validation and remaining limits.

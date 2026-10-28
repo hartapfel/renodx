@@ -1,3 +1,4 @@
+#include "../lighting/parameters.hlsli"
 ByteAddressBuffer Raw20 : register(t20);
 // ---- Created with 3Dmigoto v1.3.16 on Fri Oct 23 09:31:09 2026
 Texture2D<float4> t23 : register(t23);
@@ -61,19 +62,27 @@ cbuffer cb1 : register(b1)
 #define cmp -
 
 
+#ifndef RENO_NO_OBJECT_MOTION
 #include "./object_pixel.hlsli"
+#endif
 
 void main(
   float4 v0 : TEXCOORD0,
   float4 v1 : TEXCOORD1,
-  float4 v2 : TEXCOORD2,
+  float3 v2 : TEXCOORD2,
   float3 v3 : TEXCOORD3,
   float4 v4 : SV_Position0,
+#ifndef RENO_NO_OBJECT_MOTION
   float4 previous_clip : TEXCOORD10,
   nointerpolation float motion_history : TEXCOORD11,
-  out float4 o0 : SV_Target0,
+#endif
+  out float4 o0 : SV_Target0
+#ifndef RENO_NO_OBJECT_MOTION
+  ,
   out float4 object_motion : SV_Target3,
-  out float object_depth : SV_Target4)
+  out float object_depth : SV_Target4
+#endif
+)
 {
   float4 r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15,r16,r17,r18,r19,r20,r21,r22,r23,r24,r25;
   uint4 bitmask, uiDest;
@@ -355,6 +364,7 @@ void main(
   r7.w = cb4[22].x + -0.200000003;
   r8.x = cmp(cb2[16].x < 0);
   r8.x = r8.x ? 1 : cb12[71].x;
+    float recipient_fill = r8.x;
   r8.w = cb4[21].x + 1;
   r9.w = 1 / r8.w;
   r10.w = 1 + -r2.w;
@@ -456,13 +466,11 @@ void main(
       r19.xw = cb13[r16.w+63].yy * r22.xy;
       r19.xw = r19.xw / r22.zz;
       r19.xw = r19.xw * float2(0.5,-0.5) + float2(0.5,0.5);
-      if (10 == 0) r21.y = 0; else if (10+20 < 32) {       r21.y = (uint)r22.w << (32-(10 + 20)); r21.y = (uint)r21.y >> (32-10);      } else r21.y = (uint)r22.w >> 20;
-      if (10 == 0) r21.z = 0; else if (10+10 < 32) {       r21.z = (uint)r22.w << (32-(10 + 10)); r21.z = (uint)r21.z >> (32-10);      } else r21.z = (uint)r22.w >> 10;
-      r21.yz = (uint2)r21.yz;
-      r20.x = (int)r22.w & 1023;
-      r20.x = (uint)r20.x;
-      r21.w = (uint)r22.w >> 30;
-      r22.z = (uint)r21.w;
+      float4 atlas = DecodeShadowAtlas(r22.w);
+      r21.y = atlas.x;
+      r21.z = atlas.y;
+      r20.x = atlas.z;
+      r22.z = atlas.w;
       r21.w = cmp(0 < r20.x);
       if (r21.w != 0) {
         r19.xw = r19.xw * r20.xx + r21.yz;
@@ -535,7 +543,7 @@ void main(
       r17.w = r20.x * r17.w;
       r17.w = r17.w * r9.w;
       r17.w = 0.318309873 * r17.w;
-      r20.xyz = cb13[r16.w+61].xyz * r17.www;
+      r20.xyz = (cb13[r16.w+61].xyz * PlayerFillScale(asuint(cb13[r16.w+61].w),recipient_fill,cb12[71].x)) * r17.www;
       r16.xyz = r18.www * r20.xyz + r16.xyz;
       r17.w = dot(r18.xyz, r2.xyz);
       r18.x = cmp(0 < r17.w);
@@ -558,7 +566,7 @@ void main(
       } else {
         r18.xyz = float3(0,0,0);
       }
-      r18.xyz = cb13[r16.w+61].xyz * r18.xyz;
+      r18.xyz = (cb13[r16.w+61].xyz * PlayerFillScale(asuint(cb13[r16.w+61].w),recipient_fill,cb12[71].x)) * r18.xyz;
       r17.xyz = r18.www * r18.xyz + r17.xyz;
     }
     r15.w = (int)r15.w + 1;
@@ -1173,13 +1181,15 @@ void main(
   r1.xyz = r3.xyz * r1.xyz;
   r1.xyz = cb13[55].xyz * r1.xyz;
   r1.xyz = r17.xyz * cb12[183].www + r1.xyz;
-  r0.w = cb12[69].x + cb12[69].y;
+  r0.w = AMBIENT_ONLY_AO ? 1.f : cb12[69].x + cb12[69].y;
   r3.xyz = r8.xyw * r0.www;
   r1.xyz = r1.xyz * r0.www;
   r2.xyz = r2.xyz * r8.zzz + r3.xyz;
   r1.xyz = r4.xyz * r2.xyz + r1.xyz;
   o0.xyz = r0.xyz * r8.zzz + r1.xyz;
   o0.w = 1;
+#ifndef RENO_NO_OBJECT_MOTION
   WriteObjectMotion(v4, previous_clip, motion_history, object_motion, object_depth);
+#endif
   return;
 }

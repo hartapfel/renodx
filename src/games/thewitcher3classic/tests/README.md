@@ -336,3 +336,231 @@ cover camera-followed subjects, nearly stationary screen motion, opposite
 camera/object directions and the screen-speed bound from Remastered.
 Build/link only after the game releases its addon DLL and follow
 the mod README's separate live acceptance checklist.
+
+
+### Atmospheric fog and Custom water
+
+`volumetrics.cpp` exercises the real production volume pipeline on WARP and
+NVIDIA: constant-medium analytic radiance/transmittance, vacuum, shadowing,
+independent density/light controls, start/height profiles, dense finite output,
+odd sizes, frame freshness and context/SRV/sampler restoration. `--hardware`
+selects NVIDIA; optional `--benchmark` measures only its synthetic volume path.
+
+`fog_composite.cpp` takes the capture directory containing `cb3.bin`, `cb12.bin`
+and `native-fog.cso`. It compares the embedded C8 shader's Native branch with
+original bytecode and checks custom L/T with the captured suppression mask.
+It also rasterizes a real clip-W=32 triangle to validate transparent radial
+fog lookup. Do not substitute a hand-written reciprocal-W input for this test.
+
+`water.cpp` uses the production snapshot/binding pipeline and compiles
+`water_test.hlsl`, which includes the production water math/shading. It checks
+Fresnel against independent dielectric equations, Beer–Lambert attenuation,
+zero/near-zero extinction integrals, finite GGX, water-then-air composition,
+reflection weighting, independent water ambient with a poisoned atmospheric
+source, a poisoned allocation border, exact GPU frame-CB copy,
+stale-frame rejection, restoration and odd resize. Run from the repo root in
+a VS developer shell with LLVM available:
+
+```bat
+clang-cl /std:c++20 /EHsc /O2 /DNOMINMAX src/games/thewitcher3classic/tests/water.cpp /Fe:tmp/test-water.exe /Fo:tmp/test-water.obj /link d3d11.lib d3dcompiler.lib dxgi.lib user32.lib
+tmp\test-water.exe
+tmp\test-water.exe --hardware
+```
+
+Do not define NDEBUG: these fixtures use assertions. The shader test exercises
+the shared material; it does not certify every native/BlitzFX geometry adapter,
+all water exclusion volumes, live SSR quality or in-game cost. The complete
+Release shaders must also compile and the README's live comparisons must pass.
+
+
+The water fixture additionally uses a genuine perspective camera and synthetic
+depth planes to check normal/oblique Snell-ray hits, foreground/empty/far-depth
+rejection and screen-edge/parallel-ray fallbacks. Expected refraction coordinates
+come from independent analytic plane intersections. Its local-fog light-path
+test compares GPU transmittance with 10,000-step CPU quadrature across heights,
+upward/downward/horizontal light and vacuum. The volume fixture checks the
+unoccluded-minus-occluded sunlight energy against a homogeneous-medium closed
+form including incoming-light extinction, not merely a brightness threshold.
+All three fixtures pass WARP and NVIDIA for the refraction/shore/sunlight
+revision. The D3D11 debug layer was unavailable; these are numerical/state tests,
+not a substitute for driver validation or broader in-game weather coverage.
+
+
+Particle fog/linkage: `fog_signatures.py PATH_TO_ORIGINAL_DXBC_DUMP` compares
+native input/output registers and component locations with all compiled fog and
+water replacements. Preserve the original position of every TEXCOORD; appending
+SV_Position is allowed only at the upstream VS's matching position. The
+`fog_composite.cpp` fixture additionally requires
+`particle-originals/0xA7921C82.ps_5_0.cso` beneath its capture-directory argument.
+It renders the actual original and replacement spark pixel shaders using a VS
+with the native output layout. It checks identical native emission and exactly
+T-scaled additive emission with a custom volume (no added atmospheric radiance).
+
+`water_reflections.cpp` uses the production MRT capture/resolve class, synthetic
+emissive and water planes, and compiled F3C40001. Build like water.cpp with
+`/Ibuild/thewitcher3classic.include`; run on WARP and with `--hardware`. Checks:
+reflected energy, native color unchanged, original MRT/blend state restored,
+once-per-frame resolve, no stale/empty-particle reuse, foreground occlusion.
+The tests do not certify live SSR stability, all particle materials, BlitzFX's
+render order or performance. Verify those in-game after linking.
+
+
+The composite fixture also requires `particle-originals/0x4EF2AAF8.ps_5_0.cso`.
+It compares the glow material against original bytecode over the full UV domain,
+covering the radial bit-mask-to-float selection that caused the first live Igni
+blowout. Both WARP and NVIDIA report zero native difference. Reflection tests
+also cover the live R11G11B10 scene source converted to RGBA16F and
+ONE/INV_SRC_ALPHA blending with the shader's zero alpha; previous fixtures only
+exercised RGBA float and ONE/ONE and therefore missed those runtime rejections.
+
+
+The reflection fixture now exercises both F3C40001 and F3C40002, including
+half-resolution tracing and the production spatial reconstruction. A separate
+sparse checker-radiance test asserts average energy, reduced spatial variance,
+exact land/foreground exclusion and unchanged base channels/alpha. Use the
+fresh generated embeds before compiling. Two FP16 stores in the R11 conversion
+case require a 0.003 error budget; do not mistake quantization for missing-ray
+energy loss. The uniform-plane fixture also caught the projected segment
+escaping the viewport before the first intersection; clipping must precede
+the fixed-step traversal. Live moving Igni noise remains a separate check.
+
+
+The earlier F3C40001/F3C40002 reflection tests above are historical: those shaders
+and the rejected particle ray tracer have been removed. water_reflections.cpp
+now tests production previous-raw-HDR input to the native SSR pass. It requires
+particle-originals/0x406B9233.ps_5_0.cso under the session scratch directory and
+the current generated embed/0x406B9233.h. The same test-water-reflections.cmd
+builds and runs WARP/NVIDIA. Tests cover exact original fallback, HDR preservation,
+all supported color formats, captured R24 typeless depth, camera translation and
+jitter on a radiance ramp, render-pool cropping, history lifecycle and state
+restoration. These are integration invariants; live Igni quality and GPU cost
+must still be checked separately.
+
+
+Depth-copy regression: the source MUST have both D3D11_BIND_DEPTH_STENCIL and
+D3D11_BIND_SHADER_RESOURCE, with an actual D24_UNORM_S8_UINT DSV. A typeless R24
+texture with only SRV binding incorrectly permits a cropped copy and failed to
+reproduce the game's empty-history bug. Change depth with ClearDepthStencilView,
+not UpdateSubresource. The production history must copy the full allocation,
+even when the source render viewport is smaller. Color cropping remains valid.
+
+
+### Transparent depth for native SSR (2026-10-27)
+
+`water_reflection_trace.cpp` compares both outputs against original 47CC9FA1
+DXBC with captured camera constants and synthetic water/depth/color inputs.
+Point/linear samplers and both fallback branches match exactly on WARP/NVIDIA.
+A separate intersection-depth layer must change hits without changing coverage.
+Use scratch `test-water-reflection-trace.cmd`; original bytecode and captured
+trace-cb3.bin/trace-cb12.bin are local fixture dependencies.
+
+`water_reflections.cpp` now tests original-draw particle depth capture, .75/.25
+conventional/reversed projection conversion, expired/transparent depths, and
+native blend/RTV/SRV restoration. `fog_composite.cpp` verifies actual fire PS
+color equivalence with an extra depth MRT and actual rasterized clip W=8.
+The fire fixture uses nonzero radiance (1992 visible / 2104 transparent pixels),
+so zero-valued output cannot accidentally pass the depth coverage assertion.
+These tests do not replace the pending live visual/performance check.
+
+
+### Native lighting extension (2026-10-27)
+
+See ../LIGHTING.md for captured shader hashes, data contracts and test scope.
+Compile generated embeds with the established clang-x64-release preset before
+running lighting.cpp. Local test-lighting.cmd in
+tmp/witcher3classic-investigation/lighting-20261027 compiles and runs WARP and
+NVIDIA tests. Fixtures include originals/*.cso and lighting/shadow/hair captured
+constant buffers in that same scratch folder; they are not portable bundled
+fixtures. test-object-motion.cmd runs object_motion.cpp --forward-only on both
+adapters. Both final runs passed. These checks establish native equivalence,
+control isolation, valid shadow output and unchanged motion coverage; actual
+game quality/performance and the runtime color-only binding still need checking.
+
+
+### Water metadata row regression (2026-10-28)
+
+water.cpp extracts and executes the production 28D7BDFE metadata-load block.
+A 64-tile table has different world-bounds and atlas-UV rows. Reading row 0
+twice (the old float-denormal-to-integer bug) returns zero and fails; the
+original row 0/row 1 contract passes on WARP and NVIDIA. This is a focused
+load-coordinate regression, not full water pixel-shader equivalence. Run
+tmp/witcher3classic-investigation/volumetrics-20261027/test-water.cmd from
+the repository root. See ../EFFECT_AUDIT.md for native-bytecode evidence.
+
+
+### Direct lighting/shadow audit regression (2026-10-28)
+
+lighting.cpp now includes nonzero packed local-light shadow atlas offsets and
+layers; the old decoder fails against original DXBC, the repair matches. The
+contact fixture runs production ContactPipeline with R24G8 depth/stencil,
+grass, billboard trees, excluded hair/leaves/translucency, back-facing
+characters, ranged constant bindings, resize and larger-pool bounds.
+Scratch effect-audit-20261028/test-atlas-before.log records the reproduced old
+failure. test-shadow-final.log and test-motion-final.log record the new checks.
+Use the existing lighting-20261027/test-lighting.cmd and test-object-motion.cmd.
+
+
+### Interior fog density (2026-10-28)
+
+`volumetrics.cpp` binds an actual R16G16_FLOAT interior texture to production
+`Pipeline::Generate`. Analytic optical lengths cover outside/inside interval
+ordering, entry and exit ramps, moving boundaries, equal-boundary sentinels,
+far interiors and missing/invalid data. Every integrated cell before an indoor
+exit must be exactly (0,0,0,1). A poisoned larger pool checks active-rectangle
+coordinates in every ray; CS t3 must be restored after injection. Run the
+existing volumetrics-20261027/test.cmd after regenerating Release shader embeds.
+The companion test-composite.cmd retains native fog/particle equivalence checks.
+These tests do not establish coverage for caves lacking native dimmer volumes.
+
+
+The lighting fixture additionally requires interior-fog-20261028/0xFAB74FB3.cso
+and hair-transparent-cb1/2/4.bin captured from the original transparent-hair
+draw. It checks native RGBA, tagged-fill control isolation, and original versus
+replacement hair lighting across camera directions and packed shadow tiles.
+It recompiles the former incorrect numeric decoder as a negative control; that
+shader must differ, while the corrected shaders must match native bytecode.
+The old-hair-atlas.cso artifact stays in scratch. Run lighting-20261027/
+test-lighting.cmd, then test-object-motion.cmd for the shared forward bodies.
+
+
+Fog quality: volumetrics.cpp now allocates every production volume level and
+resizes in both directions. Only the last center cell is copied for these large
+fixtures. A known PCF edge independently checks the 4/9/16/25-tap weights, while
+homogeneous-medium checks ensure quality does not change density or light energy.
+Use volumetrics-20261027/test.cmd after regenerating the Release shader embed.
+
+
+Toussaint height profile: volumetrics.cpp replays the captured base density,
+height offset and vertical coefficients on a horizontal ray and compares the
+integrated radiance/transmittance with an independent reciprocal-height closed
+form. water.cpp checks the shared incoming-light integral against 10000-step
+quadrature for ground crossings, high altitude, horizontal/nearly horizontal
+light, and tiny falloff at large height. The water fixture explicitly selects
+clarity 1 for its reference medium instead of inheriting UI defaults.
+Run volumetrics-20261027/test.cmd and test-water.cmd after regenerating embeds.
+
+
+Distant weather haze: volumetrics.cpp checks the captured 16707.9 m Toussaint
+range against constant-height Beer-Lambert radiance/transmittance, tests a 100 m
+sample, reads back the published sampling range, and checks an authored interior
+between 1000 and 4000 m. The previous fixed-range shader fails the new reference.
+Run volumetrics-20261027/test.cmd and test-water.cmd after rebuilding embeds.
+
+Contact-shadow sampling: lighting.cpp checks fixed sampling as reach changes,
+with both axes/directions and three subpixel phases, and rejects self-shadowing
+on a shallow sloped plane. Run lighting-20261027/test-lighting.cmd after rebuilding
+Release embeds. Original stretched and rejected DDA traces fail the suite.
+The former zero-thickness footprint fixture was not a useful visual predictor
+for this heuristic and is removed. Scratch contact-blitz-20261028/reference.cmd
+runs the exact BlitzFX 1.1.0 bytecode against production masks with matched static
+noise; interior character-blocker cases match on WARP/NVIDIA. The binary needs to
+be extracted from the user's blitz.shaders archive; it is not distributed here.
+Live animation/foliage acceptance is still necessary.
+
+Temporal contact shadows: contact_history.cpp runs the production history shader
+on controlled multi-frame noise and motion/depth fixtures. It checks attenuation,
+object and jitter reprojection, disocclusion, immediate blocker removal, cut/light/
+settings resets and offscreen rejection. Run contact-blitz-20261028/test-history.cmd
+on WARP/NVIDIA. lighting.cpp separately tests actual ContactPipeline history
+resources and ranged constant copies, gaps/failure recovery, real accumulation
+and immediate settings invalidation. These checks complement live animation QA.

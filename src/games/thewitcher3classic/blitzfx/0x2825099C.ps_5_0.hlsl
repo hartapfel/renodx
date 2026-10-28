@@ -1,4 +1,6 @@
+#include "../volumetrics/sample.hlsli"
 #include "scene_pool.hlsli"
+#include "../water/shading.hlsli"
 
 // BlitzFX water: convert render UVs only when sampling the native scene pool.
 // ---- Created with 3Dmigoto v1.3.16 on Sat Oct 24 00:35:12 2026
@@ -117,6 +119,7 @@ void main(
   out float4 o1 : SV_Target1,
   out float o2 : SV_Target2)
 {
+
   const float4 icb[] = { { 1.000000, 0, 0, 0},
                               { 0, 1.000000, 0, 0},
                               { 0, 0, 1.000000, 0},
@@ -1235,6 +1238,7 @@ void main(
   r5.xy = r3.xy * float2(2.5,2.5) + float2(0.5,0.5);
   r5.z = r4.z ? 0 : 1;
   o1.xyz = r5.xyz * r0.www;
+  float custom_water_coverage = saturate(r0.w);
   r5.xyz = cb2[0].xyz + -v2.xyz;
   r0.w = dot(r5.xyz, r5.xyz);
   r1.x = rsqrt(r0.w);
@@ -1382,6 +1386,18 @@ void main(
     r1.z = cb2[48].x * r1.z;
     r1.z = exp2(r1.z);
     r1.w = r1.z * r0.y;
+    // Replace atmospheric fog only; underwater scattering/refraction is retained.
+    ClassicForwardFog(v0, r1.w, r7);
+    if (ClassicWaterReady()) {
+      float4 water = ShadeClassicWater(t15,v0,v2.xyz,r2.yzw,cb3[0].xyz,cb3[1].xyz,r0.x,t7.Load(int3(0,0,0)).xyz,0.f,r7);
+      float3 excluded = t6.SampleLevel(s7_s,BlitzScenePoolUV(v0.xy*cb2[23].zw,cb2[23].xy,cb0[1].xy),0).rgb;
+      o0 = float4(lerp(excluded,water.rgb,custom_water_coverage),0.f);
+      // Captured 35624BD6 reflection composite squares the stored mask.
+      o1.w = sqrt(max(0.f,water.a*custom_water_coverage));
+
+      o2 = .9f*saturate(2.f-.1f*sqrt(max(r0.w,0.f)));
+      return;
+    }
     r9.z = 1 + -r9.y;
     r3.yz = r9.xz * float2(2,2) + float2(-1,-1);
     r2.x = max(9.99999975e-006, r2.x);
