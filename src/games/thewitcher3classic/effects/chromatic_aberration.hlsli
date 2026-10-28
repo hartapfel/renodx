@@ -2,6 +2,7 @@
 #define SRC_GAMES_THEWITCHER3CLASSIC_CHROMATIC_ABERRATION_HLSLI_
 
 #include "./lilium_rcas.hlsli"
+#include "./lens_mapping.hlsli"
 
 // Ghost of Tsushima's Sharpening -> CA sampling. Sharpen each texel before
 // bilinear reconstruction so displaced taps sample the same sharpened image.
@@ -19,26 +20,13 @@ float3 WitcherSampleFringe(Texture2D<float4> scene, float2 uv, uint2 size) {
       weight.y);
 }
 
-// Custom lens mapping (MIT, LoreanXavier / Hartapfel; see optics/LICENSE.optics).
-// The scene source is already linear BT.709.
-float2 WitcherLensSource(float2 uv, uint2 size, float dispersion) {
-  const float aspect = float(size.x) / size.y;
-  const float2 p = (uv * 2.f - 1.f) * float2(aspect / (16.f / 9.f), 1.f);
-  const float radius = saturate(length(p) * 0.52240777f);
-  const float dome = 1.f - sin(1.5707964f * radius);
-  const float2 offset = pow(radius, 1.75f) * 84.f * float2(1.f / (1080.f * aspect), 1.f / 1080.f)
-      * p * rsqrt(max(dot(p, p) + dome * dome, 1e-12f));
-  return lerp(uv, uv * 0.9f + 0.050000012f + offset * dispersion,
-      CUSTOM_CA_INTENSITY);
-}
-
 float4 WitcherLensWeights(float f) {
   return float4(-0.5f*f+f*f-0.5f*f*f*f, 1.f-2.5f*f*f+1.5f*f*f*f,
       0.5f*f+2.f*f*f-1.5f*f*f*f, -0.5f*f*f+0.5f*f*f*f);
 }
 
 float WitcherLensSample(Texture2D<float4> scene, float2 uv, uint2 size, float dispersion, uint channel) {
-  const float2 q = WitcherLensSource(uv, size, dispersion);
+  const float2 q = WitcherLensSource(uv, size, dispersion, CUSTOM_CA_INTENSITY);
   const float2 dx = ddx(q), dy = ddy(q);
   const float footprint = max(length(dx * size), length(dy * size));
   float area = 0.f;

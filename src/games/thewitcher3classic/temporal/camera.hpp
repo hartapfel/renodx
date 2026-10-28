@@ -24,10 +24,17 @@ class Camera {
     constexpr std::array<uint8_t, 24> copy = {139,2,137,1,139,66,4,137,65,4,139,66,8,137,65,8,139,66,12,137,65,12,139,66};
     if (std::memcmp(image + 0xc48810, render.data(), render.size()) != 0
         || std::memcmp(image + 0xc51af0, copy.data(), copy.size()) != 0) return false;
-    MEMORY_BASIC_INFORMATION memory;
-    if (!VirtualQuery(image + 0x2ccb750, &memory, sizeof(memory)) || memory.State != MEM_COMMIT
-        || (memory.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0
-        || static_cast<const uint8_t*>(memory.BaseAddress) + memory.RegionSize < image + 0x2ccb750 + 2880) return false;
+    // VirtualQuery groups adjacent pages by protection, not by object. The
+    // camera upload crosses two pages; patched images can split those into
+    // separate readable regions (observed during DX11 device creation).
+    for (const uint8_t* cursor = image + 0x2ccb750; cursor < image + 0x2ccb750 + 2880;) {
+      MEMORY_BASIC_INFORMATION memory{};
+      if (!VirtualQuery(cursor, &memory, sizeof(memory)) || memory.State != MEM_COMMIT
+          || (memory.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) return false;
+      const auto* end = static_cast<const uint8_t*>(memory.BaseAddress) + memory.RegionSize;
+      if (end <= cursor) return false;
+      cursor = end;
+    }
     constants_ = reinterpret_cast<const float*>(image + 0x2ccb750);
     return true;
   }
@@ -40,6 +47,14 @@ class Camera {
     (*pixels)[1] = -constants_[1];
     return std::isfinite((*pixels)[0]) && std::isfinite((*pixels)[1])
            && std::abs((*pixels)[0]) <= 0.5f && std::abs((*pixels)[1]) <= 0.5f;
+  }
+
+  // Same fingerprint-verified CPU upload used by Jitter. FG takes one bounded
+  // snapshot on the render thread; no staging buffer or GPU synchronization.
+  bool Snapshot(std::array<float, 720>* output) const {
+    if (!constants_ || !output) return false;
+    std::memcpy(output->data(),constants_,sizeof(*output));
+    return true;
   }
 
   bool BlurHistoryContinuous() {

@@ -1,5 +1,23 @@
 # The Witcher 3 Classic HDR (experimental)
 
+DLSS Frame Generation implementation and verification are documented in
+[frame_generation/README.md](frame_generation/README.md). The Release addon now
+runs DX12 FG alongside Classic's DX11 DLSS/DLAA: live 2x generation is confirmed,
+with 4x/6x, Auto and Dynamic exercised by standalone hardware tests. Controls
+are in the existing DLSS menu. HDR10 and windowed/borderless mode are required;
+the DX12 bridge starts immediately and FG can be toggled during gameplay.
+FG defaults to Off only when no saved preference exists; FG settings persist. Game performance,
+complete HUD/HDR visual acceptance and normal game shutdown still need QA.
+
+Release packaging uses `package-release.cmd` or `package-release.ps1`, matching
+the standalone addons. Pass `-Build` to build the Release target first; optional
+`-Version` and `-OutputDirectory` select the archive name and destination.
+The default destination is `build/Release/packages`. The script takes production
+NVIDIA binaries and licenses from `bin/streamline-2.14.16` (or `-StreamlineSdk`),
+checks NVIDIA signatures, verifies every archived file against its source, and
+writes a separate SHA256 checksum. The ZIP contains only the addon, required
+NVIDIA DLLs and licenses under `bin/x64`.
+
 For developers adding DLSS to another game, start with the
 [DLSS integration playbook](../../../docs/DLSS_INTEGRATION_PLAYBOOK.md), then the
 [object-motion guide](../../../docs/OBJECT_MOTION_VECTOR_INTEGRATION.md) and

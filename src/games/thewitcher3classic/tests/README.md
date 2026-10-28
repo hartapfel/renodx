@@ -1,5 +1,103 @@
 # Classic temporal reconstruction regression fixtures
 
+## HDR10 presenter, HUD capture and camera fixtures
+
+The implementation checkpoint and known limits are in
+[frame_generation/README.md](../frame_generation/README.md).
+Install the official SDK with `../frame_generation/install-sdk.ps1` first.
+From an x64 VS developer command prompt at the repository root:
+
+```bat
+clang-cl /nologo /std:c++20 /EHsc /O2 /DNOMINMAX src/games/thewitcher3classic/tests/frame_generation_presenter.cpp /Fe:tmp/witcher3classic-fg/presenter.exe /Fo:tmp/witcher3classic-fg/presenter.obj /link d3d11.lib d3d12.lib dxgi.lib user32.lib
+clang-cl /nologo /std:c++20 /EHsc /O2 /DNOMINMAX src/games/thewitcher3classic/tests/frame_generation_swapchain.cpp /Fe:tmp/witcher3classic-fg/facade.exe /Fo:tmp/witcher3classic-fg/facade.obj /link d3d11.lib d3d12.lib dxgi.lib user32.lib
+clang-cl /nologo /std:c++20 /EHsc /O2 /DNOMINMAX /Iexternal/Detours/include /Ibuild/thewitcher3classic.include src/games/thewitcher3classic/tests/frame_generation_hud.cpp /Fe:tmp/witcher3classic-fg/hud.exe /Fo:tmp/witcher3classic-fg/hud.obj /link d3d11.lib d3dcompiler.lib dxgi.lib user32.lib
+clang-cl /nologo /std:c++20 /EHsc /O2 /DNOMINMAX src/games/thewitcher3classic/tests/frame_generation_camera.cpp /Fe:tmp/witcher3classic-fg/camera.exe /Fo:tmp/witcher3classic-fg/camera.obj /link user32.lib
+```
+
+Stop on any compiler failure. Run `presenter.exe` and `facade.exe` with the
+absolute installed SDK `bin/x64` directory as their argument. The presenter
+briefly focuses its test window (NVIDIA disables interpolation without focus),
+then restores the prior foreground window. It checks real 2x/4x/6x presents,
+6x with UI recomposition requested, missing-input suspension, resize and
+shutdown. It attempts to enable the optional D3D12 debug layer and explicitly
+reports if unavailable. Run outside the process sandbox if NGX shutdown stalls;
+do not remove signature verification.
+
+Run `hud.exe <absolute-original-shader-dump-directory>` after building the
+Classic shader target. It compares all three new UI shaders against original
+`0xC38B68F9.ps_5_0.cso`, `0xD7880DBE.ps_5_0.cso`, and `0x7560E408.ps_5_0.cso`.
+WARP must preserve target-0 color bit-for-bit and accumulate R8 alpha correctly.
+It also exercises unknown-write and unsupported-blend rejection.
+
+Run `camera.exe tmp/witcher3classic-fg/camera.bin`. This fixture is the 720-word
+b10 upload captured on 2026-10-28, exported from `camera-capture.json` using
+`struct.pack('<720I', *capturedWords)`. It checks the independently captured
+camera position/FOV and raw-depth reprojection; its expected pose belongs to
+that capture. All capture artifacts remain in ignored scratch storage.
+
+These fixtures do not hook the game and do not establish Classic image quality,
+latency, UI coverage, or performance. Keep assertions enabled.
+
+## Frame Generation foundation
+
+See [research, contracts and live verification](../frame_generation/README.md).
+These are standalone tests. They do not inject FG into the running game.
+
+From an x64 VS developer command prompt, with assertions enabled:
+
+```bat
+if not exist tmp\witcher3classic-fg mkdir tmp\witcher3classic-fg
+clang-cl /nologo /std:c++20 /EHsc /O2 /DNOMINMAX src/games/thewitcher3classic/tests/frame_generation_interop.cpp /Fe:tmp/witcher3classic-fg/interop.exe /Fo:tmp/witcher3classic-fg/interop.obj /link d3d11.lib d3d12.lib dxgi.lib
+if errorlevel 1 exit /b 1
+tmp\witcher3classic-fg\interop.exe
+if errorlevel 1 exit /b 1
+tmp\witcher3classic-fg\interop.exe --warp
+```
+
+Hardware mode selects NVIDIA; WARP verifies API behavior separately. The fixture
+checks all bytes of RGB10A2 color, R32 depth, signed RG16F motion and R8 alpha
+across three queued frames, delayed consumption, backpressure/reuse, invalid
+formats/extents and different-size allocations. CPU readback is test-only.
+
+Extract the official Streamline 2.14.16 x64 release into
+`tmp/witcher3classic-fg/sdk`, or substitute your SDK path below. The repository's
+2.8 headers are deliberately rejected; no global build/dependency update is
+needed for the standalone probe:
+
+```bat
+clang-cl /nologo /std:c++20 /EHsc /O2 /DNOMINMAX /Itmp/witcher3classic-fg/sdk/include src/games/thewitcher3classic/tests/frame_generation_sdk.cpp /Fe:tmp/witcher3classic-fg/sdk-probe.exe /Fo:tmp/witcher3classic-fg/sdk-probe.obj /link d3d12.lib dxgi.lib user32.lib
+if errorlevel 1 exit /b 1
+rem No argument: only policy and official options mapping assertions.
+tmp\witcher3classic-fg\sdk-probe.exe
+rem SDK bin/x64 argument: also initialize/query/shut down the signed runtime.
+tmp\witcher3classic-fg\sdk-probe.exe "%CD%\tmp\witcher3classic-fg\sdk\bin\x64"
+```
+
+Policy checks include multiplier limits, Dynamic versus Auto, invalid targets,
+and refusal without complete HDR/Reflex/presentation/HUD/gameplay prerequisites.
+The runtime probe reports capabilities, not frame interpolation. It creates no
+display swapchain and changes no driver profile. Logs are under
+`tmp/witcher3classic-fg/sdk-logs`. The sandboxed NGX shutdown stalled on this
+machine; the unrestricted standalone run completed. Never bypass signature
+verification to work around a probe failure.
+
+The integrated addon exposes FG controls and has generated frames in Classic.
+Build the full Release target with the game closed; object-only compilation
+does not replace the installed addon. Live evidence and remaining acceptance
+checks are recorded in the FG README.
+
+The native timing fixture uses mocked SDK callbacks and an actual worker
+thread/message queue. It verifies matching command tokens when simulation runs
+ahead, marker ordering, one-shot consumption, unknown commands, old-session
+and recycled-token rejection, and PCL ping dispatch at the pump. It does not
+prove native hook addresses or game input latency.
+
+```bat
+clang-cl /nologo /std:c++20 /EHsc /O2 /DNOMINMAX /Itmp/witcher3classic-fg/sdk/include src/games/thewitcher3classic/tests/frame_generation_engine.cpp /Fe:tmp/witcher3classic-fg/engine.exe /Fo:tmp/witcher3classic-fg/engine.obj /link d3d11.lib d3d12.lib dxgi.lib user32.lib
+if errorlevel 1 exit /b 1
+tmp\witcher3classic-fg\engine.exe
+```
+
 Start with the [DLSS integration playbook](../../../../docs/DLSS_INTEGRATION_PLAYBOOK.md).
 These fixtures exercise game-local CPU logic and actual D3D11 shaders. They do
 not certify every game scene or replace live capture/visual acceptance.
@@ -564,3 +662,59 @@ settings resets and offscreen rejection. Run contact-blitz-20261028/test-history
 on WARP/NVIDIA. lighting.cpp separately tests actual ContactPipeline history
 resources and ranged constant copies, gaps/failure recovery, real accumulation
 and immediate settings invalidation. These checks complement live animation QA.
+
+
+### Frame Generation lens mapping regression
+
+`frame_generation_distortion.cpp` uses the Release embedded `0xF3CF0001`
+shader. Build like `frame_generation_hud.cpp` (same include/link arguments),
+then run without arguments. It checks signed FP16 forward/inverse mapping at
+16:9 and ultrawide across CA intensity 0..5 and verifies cached texture reuse.
+`frame_generation_presenter.cpp` also exercises the optional distortion tag,
+field updates and null-tag removal. Its visible window must retain focus;
+NVIDIA intentionally stops interpolation if it loses focus.
+
+For captured gameplay inputs, run
+`python analyze_frame_generation_inputs.py <inputs-directory>` with NumPy.
+The capture causes deliberate stalls and is not a performance benchmark.
+
+### Live Frame Generation switching
+
+Run `frame_generation_presenter.exe <production-SDK-bin/x64> --toggle`
+with its window focused. It starts Off and switches through 2x, Off, then 3x
+on the same swapchain. It asserts live mode changes and actual generated
+presents. The 2026-10-28 hardware run passed: 60/115/60/180 displayed frames
+for four batches of 60 rendered frames, including resize and clean shutdown.
+The D3D12 debug layer was unavailable; this is hardware validation only.
+After the Release rebuild, verify in game: start with no saved DLSSFGMode
+(Off), enable FG during gameplay, change its settings, restart and confirm
+those choices persist. Existing user preferences must not be reset.
+
+### Radial-menu and post-menu HUD coverage
+
+`frame_generation_hud.cpp` now requires seven original DXBC files in its
+input directory: C38B68F9, D7880DBE, 7560E408, F1A79FBF, 72826F5B,
+CC0C2DF3 and D98FBA78, named `0xHASH.ps_5_0.cso`. The new originals were
+dumped through DevKit from the radial menu and subsequent gameplay.
+WARP verifies unchanged FP16 color, accumulated R8 alpha, native-state
+restoration, stencil-only write-mask handling and next-frame recovery.
+Rebuild `thewitcher3classic` in Release, restart, open/close the signs/items
+radial menu repeatedly, and confirm FG stays active while valid gameplay
+inputs remain available; inspect icons, text and clipped menu elements.
+
+`frame_generation_ui.cpp` covers the full 198-entry `ui_shaders.hpp` family.
+Compile with the same flags/libraries as the HUD fixture and run with a
+directory containing original `0xHASH.ps_5_0.cso` files. WARP compares all
+color channels and emitted coverage against original DXBC using three
+patterned texture/constant cases. The 2026-10-28 run passed all 594 cases
+with zero FP32 color error. It also checks sorted registration order.
+The HUD fixture tests smaller/equal-size offscreen UI targets between
+main-HUD draws. Live vanilla-HUD, minimap/filter and radial-menu visual
+acceptance remains necessary; absent shader permutations are not certified.
+
+Additive HUD: the HUD fixture verifies native SRC_ALPHA/ONE blending keeps
+the pre-UI scene valid, latches only optional alpha invalidity, does not
+recapture later UI, and restores alpha on the next frame. The presenter
+`--toggle` run removes/restores UIAlpha for 30 frames per mode and checks
+actual generation plus conditional UI recomposition. Hardware passed
+60/90 displayed frames for 30 alpha-less frames at 2x/3x, respectively.

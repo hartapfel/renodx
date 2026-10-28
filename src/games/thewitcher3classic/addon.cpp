@@ -20,12 +20,19 @@
 #include "./temporal/runtime.hpp"
 #include "./volumetrics/runtime.hpp"
 #include "./lighting/runtime.hpp"
+#include "./frame_generation/runtime.hpp"
+#include "./frame_generation/factory.hpp"
 
 namespace {
 float settings_mode = 0.f;
 float video_auto_hdr = 1.f;
 bool draw_effects = false;
 bool draw_graphics = false;
+// FG preferences are independent of SR quality and HDR presets.
+auto& fg_mode = witcher3classic::frame_generation::mode;
+auto& fg_multiplier = witcher3classic::frame_generation::multiplier;
+auto& fg_target_fps = witcher3classic::frame_generation::target_fps;
+auto& fg_hud_quality = witcher3classic::frame_generation::hud_quality;
 float depth_controls_mode = 1.f;
 bool detected_peak = false;
 
@@ -479,7 +486,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "GfxContactLength",
         .binding = &witcher3classic::lighting::contact_length,
-        .default_value = 0.3f,
+        .default_value = 1.0f,
         .label = "Contact Shadow Reach",
         .section = "Shadows",
         .tooltip = "Maximum distance searched toward the light, in metres. Default is 0.3 m. Limits the search toward the light. Sampling also has a fixed screen-space range, so close-ups can reach that limit first. Increasing reach does not spread the samples farther apart.",
@@ -535,7 +542,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "GfxFogDensity",
         .binding = &witcher3classic::volumetrics::density,
-        .default_value = 1.0f,
+        .default_value = 0.4f,
         .label = "Fog Density",
         .section = "Volumetric Sunlight and Fog",
         .tooltip = "Scales the amount of fog supplied by the current weather. 0 removes the custom fog; 1 uses the weather density. Increasing density both obscures the background and scatters more light.",
@@ -583,7 +590,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "GfxFogHeight",
         .binding = &witcher3classic::volumetrics::height_falloff,
-        .default_value = 1.0f,
+        .default_value = 2.0f,
         .label = "Height Falloff",
         .section = "Volumetric Sunlight and Fog",
         .tooltip = "Controls how quickly fog thins above the weather-defined ground layer. 1 follows the weather gradient; 0 keeps density uniform with height. Higher values concentrate fog closer to the ground.",
@@ -1096,7 +1103,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "FxBloom",
         .binding = &witcher3classic::optics::bloom_strength,
-        .default_value = 15.f,
+        .default_value = 5.f,
         .label = "Bloom Strength",
         .section = "Bloom",
         .tooltip = "Custom bloom strength: 0 removes the replacement glow, 50 is reference, 100 doubles it.",
@@ -1188,7 +1195,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "FxChromaticAberrationIntensity",
         .binding = &shader_injection.chromatic_aberration_intensity,
-        .default_value = 0.7f,
+        .default_value = 0.5f,
         .label = "CA Intensity",
         .section = "Chromatic Aberration",
         .tooltip = "0 disables lens distortion and dispersion. 1 uses the reference lens curve. Higher values exaggerate the curve.",
@@ -1341,6 +1348,45 @@ renodx::utils::settings::Settings settings = {
         .is_visible = [] { return false; },
     },
     new renodx::utils::settings::Setting{
+        .key = "DLSSFGMode",
+        .binding = &fg_mode,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .min = 0.f,
+        .max = 3.f,
+        .is_global = true,
+        .is_visible = [] { return false; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLSSFGMultiplier",
+        .binding = &fg_multiplier,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 2.f,
+        .min = 2.f,
+        .max = 6.f,
+        .is_global = true,
+        .is_visible = [] { return false; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLSSFGTargetFPS",
+        .binding = &fg_target_fps,
+        .default_value = 0.f,
+        .min = 0.f,
+        .max = 1000.f,
+        .is_global = true,
+        .is_visible = [] { return false; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "DLSSFGHUDQuality",
+        .binding = &fg_hud_quality,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .min = 0.f,
+        .max = 1.f,
+        .is_global = true,
+        .is_visible = [] { return false; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "AAObjectVectors",
         .binding = &witcher3classic::temporal::show_object_vectors,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
@@ -1447,6 +1493,43 @@ void DrawAddon(reshade::api::effect_runtime* runtime) {
     ShowHint("Requests the selected NVIDIA model. Unsupported models fall back to the DLL default. Driver overrides may take precedence.");
     ImGui::EndDisabled();
 
+    ImGui::SeparatorText("Frame Generation");
+    ImGui::TextWrapped("%s", witcher3classic::frame_generation::status.load());
+    int selected_fg_mode = static_cast<int>(std::clamp(fg_mode, 0.f, 3.f));
+    const char* fg_modes[] = {"Off", "Fixed", "Auto", "Dynamic"};
+    if (ImGui::Combo("Frame Generation Mode", &selected_fg_mode, fg_modes, 4))
+      changed |= renodx::utils::settings::UpdateSetting("DLSSFGMode", static_cast<float>(selected_fg_mode));
+    if (selected_fg_mode && !witcher3classic::frame_generation::transport_active)
+      ImGui::TextWrapped("Frame Generation is unavailable in this session. Check the status above; HDR10 and windowed or borderless display mode are required.");
+    if (witcher3classic::frame_generation::transport_active)
+      ImGui::TextWrapped("Changes apply during gameplay. Your Frame Generation settings are saved automatically.");
+    if (witcher3classic::frame_generation::transport_active)
+      ImGui::Text("Last rendered frame: %u displayed frame(s)", witcher3classic::frame_generation::frames_presented.load());
+    if (selected_fg_mode == 3 && witcher3classic::frame_generation::transport_active && !witcher3classic::frame_generation::dynamic_supported)
+      ImGui::TextWrapped("Dynamic MFG is unavailable on the active NVIDIA runtime. Select Fixed or Auto.");
+    ImGui::BeginDisabled(selected_fg_mode == 0);
+    ShowHint("Fixed uses a selected multiplier. Auto can suspend generation when it would reduce performance. Dynamic adjusts the multiplier toward the display refresh rate or your target. Available modes depend on NVIDIA runtime support. Reflex is required while generating frames.");
+    if (selected_fg_mode == 3) {
+      float target_fps = std::clamp(fg_target_fps, 0.f, 1000.f);
+      if (ImGui::SliderFloat("Target Frame Rate", &target_fps, 0.f, 1000.f, target_fps == 0.f ? "Display refresh rate" : "%.0f FPS"))
+        changed |= renodx::utils::settings::UpdateSetting("DLSSFGTargetFPS", target_fps);
+      ShowHint("Zero follows the display. With VSync active, NVIDIA uses the display refresh rate instead of a custom target.");
+    } else {
+      int selected_multiplier = static_cast<int>(std::clamp(fg_multiplier, 2.f, 6.f)) - 2;
+      const char* multipliers[] = {"2x", "3x", "4x", "5x", "6x"};
+      if (ImGui::Combo("Frame Multiplier", &selected_multiplier, multipliers,
+                        static_cast<int>(std::clamp(witcher3classic::frame_generation::max_multiplier.load(), 2u, 6u)) - 1))
+        changed |= renodx::utils::settings::UpdateSetting("DLSSFGMultiplier", static_cast<float>(selected_multiplier + 2));
+      ShowHint("Includes the rendered frame: 2x adds one generated frame; 6x adds five. The active runtime must support the selected multiplier. Generated frames do not increase simulation or input-update frequency.");
+    }
+    int selected_hud_quality = static_cast<int>(std::clamp(fg_hud_quality, 0.f, 1.f));
+    const char* hud_qualities[] = {"Standard", "Enhanced HUD"};
+    if (ImGui::Combo("HUD Quality", &selected_hud_quality, hud_qualities, 2))
+      changed |= renodx::utils::settings::UpdateSetting("DLSSFGHUDQuality", static_cast<float>(selected_hud_quality));
+    ShowHint("Enhanced HUD separately interpolates and recomposes the scene and interface. It costs additional GPU time and memory. Additive HUD effects temporarily use standard UI handling. NVIDIA driver overrides may take precedence. FG model presets are managed by NVIDIA; this is separate from the upscaling model above.");
+    ImGui::EndDisabled();
+    ImGui::TextWrapped("Reflex is automatic. Generation pauses for the ReShade overlay, active ReShade effects, or incomplete scene inputs.");
+
     ImGui::BeginDisabled(!enabled);
     ImGui::SeparatorText("Performance");
     bool exclude_foliage = exclude_vegetation != 0.f;
@@ -1467,6 +1550,12 @@ void DrawAddon(reshade::api::effect_runtime* runtime) {
         "Scene color supplied to DLSS before reconstruction. Later game effects still affect this display."};
     ShowHint(help[view]);
     if (ImGui::TreeNode("Advanced Diagnostics")) {
+      if (ImGui::Button("Capture Frame Generation Inputs")) {
+        witcher3classic::frame_generation::diagnostics::status = "Close this overlay to capture two generated gameplay frames";
+        witcher3classic::frame_generation::diagnostics::remaining = 2;
+      }
+      ImGui::TextWrapped("%s", witcher3classic::frame_generation::diagnostics::status.load());
+      ShowHint("Saves exact color, HUDless, UI alpha, depth, motion and camera inputs in renodx-frame-generation-logs. Causes a brief diagnostic stall; use only for troubleshooting.");
       bool objects = object_motion != 0.f;
       if (ImGui::Checkbox("Object Motion", &objects))
         changed |= renodx::utils::settings::UpdateSetting("AAObjectMotion", objects ? 1.f : 0.f);
@@ -1495,6 +1584,18 @@ extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "Classic 1.
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
   if (reason == DLL_PROCESS_ATTACH) {
     if (!reshade::register_addon(module)) return FALSE;
+#if __has_include("../../../bin/streamline-2.14.16/include/sl.h")
+    witcher3classic::frame_generation::output_constants=&shader_injection;
+    reshade::register_event<reshade::addon_event::init_device>(&witcher3classic::frame_generation::factory::OnInitDevice);
+    reshade::register_event<reshade::addon_event::destroy_device>(&witcher3classic::frame_generation::factory::OnDestroyDevice);
+#endif
+    for (const auto& [hash,code] : witcher3classic::frame_generation::ui_shaders) {
+      custom_shaders.emplace(hash, renodx::mods::shader::CustomShader{
+          .crc32=hash, .code=code,
+          .on_replace=&witcher3classic::frame_generation::OnUI,
+          .on_inject=[](auto*) { return false; },
+          .on_drawn=&witcher3classic::frame_generation::OnUIDrawn});
+    }
     renodx::utils::settings::global_name = "renodx-thewitcher3classic";
     renodx::utils::settings::use_presets = true;
     // Keep one ordered settings list and the normal preset/reset/save behavior.
@@ -1682,6 +1783,10 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         .name = "Classic scene color",
     });
   } else if (reason == DLL_PROCESS_DETACH) {
+#if __has_include("../../../bin/streamline-2.14.16/include/sl.h")
+    reshade::unregister_event<reshade::addon_event::init_device>(&witcher3classic::frame_generation::factory::OnInitDevice);
+    reshade::unregister_event<reshade::addon_event::destroy_device>(&witcher3classic::frame_generation::factory::OnDestroyDevice);
+#endif
     reshade::unregister_event<reshade::addon_event::init_swapchain>(&OnInitSwapchain);
     reshade::unregister_event<reshade::addon_event::init_device>(&witcher3classic::volumetrics::OnInit);
     reshade::unregister_event<reshade::addon_event::init_device>(&witcher3classic::lighting::OnInit);
@@ -1706,6 +1811,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
   renodx::mods::swapchain::Use(reason, &shader_injection);
   renodx::mods::shader::Use(reason, custom_shaders, &shader_injection);
   witcher3classic::temporal::Use(reason);
+  witcher3classic::frame_generation::Use(reason);
   renodx::utils::random::Use(reason, {&shader_injection.random_seed});
   return TRUE;
 }
