@@ -8,11 +8,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <bit>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <memory>
-#include <map>
+#include "motion_resources.hpp"
+#include "motion_plan.hpp"
 #include <mutex>
 #include <shared_mutex>
 #include <span>
@@ -23,33 +24,18 @@
 
 namespace witcher::motion {
 using namespace reshade::api;
-inline float mode = 1.f, shutter_angle = 180.f, object_shutter_angle = 180.f, sample_count = 16.f;
-inline float camera_motion = 1.f, object_motion = 1.f;
-inline float half_resolution = 0.f;
-inline std::atomic_uint32_t active_chains = 0;
-inline std::array<std::span<const uint8_t>, 9> code;
+inline float mode = 1.f, motion_mode = 0.f, strength = 1.f;
+inline std::array<std::span<const uint8_t>, 3> code;
 constexpr uint32_t PRIVATE_SPACE = 57;
 inline const sampler_desc linear_sampler = {};
 inline const descriptor_range_with_static_samplers linear_range = {
     {0, 0, PRIVATE_SPACE, 1, shader_stage::compute, 1, descriptor_type::sampler}, &linear_sampler};
-// Camera data plus two grids at D3D12's maximum 2D texture size.
-constexpr uint64_t SCRATCH_BYTES = (WITCHER_MOTION_HEADER + 2ull * (16384 / WITCHER_MOTION_TILE) * (16384 / WITCHER_MOTION_TILE)) * 16ull;
-enum class Pass { none, depth, prefilter, blur, resolve };
-struct Settings {
-  float angle;
-  uint32_t samples, diagnostic = 0;
-  float seconds = 0;
-  uint32_t components = WITCHER_MOTION_CAMERA | WITCHER_MOTION_OBJECT;
-  float object_angle = 180.f;
-  uint32_t cache_enabled = 1, half_resolution = 0;
-  uint32_t cache_width = 0, cache_height = 0, half_width = 0, half_height = 0;
-};
-struct SettingsPage { resource buffer; void* mapped; D3D12_GPU_VIRTUAL_ADDRESS address; uint32_t used = 0; };
+enum class Pass { none, depth, resolve };
 struct Layout {
   pipeline_layout handle = {};
   uint32_t scratch = UINT32_MAX, settings = UINT32_MAX;
-  bool projection = false, native_blur = false, native_resolve = false;
-  std::array<pipeline, 9> pipelines = {};
+  bool projection = false;
+  std::array<pipeline, 3> pipelines = {};
 };
 struct __declspec(uuid("3152e019-2795-40a4-814c-3d038cd51de2")) CommandData {
   std::shared_ptr<Layout> compute, graphics;
@@ -62,29 +48,27 @@ struct __declspec(uuid("3152e019-2795-40a4-814c-3d038cd51de2")) CommandData {
   D3D12_GPU_VIRTUAL_ADDRESS scratch_address = 0;
   uint64_t scratch_bytes = 0;
   uint32_t motion_width = 0, motion_height = 0;
-  std::shared_ptr<Layout> prepared;
   Settings frame_settings;
+  std::shared_ptr<Allocation> allocation;
+  std::vector<std::shared_ptr<Allocation>> recording;
+  std::vector<std::shared_ptr<Queue>> queues;
+  bool untracked_queue = false;
+  std::array<Settings, 12> stages;
   D3D12_GPU_VIRTUAL_ADDRESS settings_address = 0;
-  uint32_t skipped_stages = 0;
+
 };
-// A mode change takes effect at the next chain boundary. Once native work was
-// skipped, finish the prepared replacement even if the UI changes meanwhile.
-inline void EndChain(CommandData* state) {
-  if (state->skipped_stages) active_chains.fetch_sub(1, std::memory_order_relaxed);
-  state->skipped_stages = 0;
-  state->prepared.reset();
-}
 struct __declspec(uuid("3da22c95-ff07-43af-9de5-5869dddd462c")) DeviceData {
   std::shared_mutex mutex;
   std::unordered_map<uint64_t, Pass> native_pipelines;
   std::unordered_map<uint64_t, std::shared_ptr<Layout>> layouts;
-  // Command-list destruction is not a GPU completion signal. Keep scratch
-  // allocations alive until device teardown, without a fence/readback/wait.
-  std::vector<resource> scratch_buffers;
-  bool logged_active = false, logged_skip = false;
+  ResourcePool pool;
+  std::unordered_map<command_queue*, std::shared_ptr<Queue>> queues;
+  bool logged_active = false;
   uint32_t logged_fallbacks = 0;
-  std::vector<SettingsPage> settings_pages;
-  std::map<std::array<uint32_t, 7>, D3D12_GPU_VIRTUAL_ADDRESS> settings_cache;
+  std::chrono::steady_clock::time_point last_conversion;
+  float interval = 0;
+  uint64_t conversion_frame = UINT64_MAX, resolved = 0;
+
 };
 
 // Visit dynamic bindings in all ReShade representations. Other addons may
@@ -206,7 +190,7 @@ inline void OnDestroyLayout(device* dev, pipeline_layout handle) {
 inline void OnBindTables(command_list* cmd, shader_stage stages, pipeline_layout layout, uint32_t, uint32_t count, const descriptor_table*) {
   // D3D12 emits a count-zero notification for Set*RootSignature. Ordinary
   // descriptor-table updates need no work, lookup, allocation or mirroring.
-  if (count != 0 || (mode != 1.f && active_chains.load(std::memory_order_relaxed) == 0)) return;
+  if (count != 0 || mode != 1.f) return;
   auto* state = cmd->get_private_data<CommandData>();
   if (!state) return;
   const bool compute = (stages & shader_stage::compute) != shader_stage{0};
@@ -237,16 +221,10 @@ inline void OnInitPipeline(device* dev, pipeline_layout layout, uint32_t count, 
     if (!shader.code || !shader.code_size) continue;
     const auto hash = renodx::utils::hash::ComputeCRC32(static_cast<const uint8_t*>(shader.code), shader.code_size);
     const auto pass = hash == 0x9F1C32F1 ? Pass::depth
-                      : hash == 0x5388164E ? Pass::prefilter
-                      : hash == 0x47C602BB ? Pass::blur
                       : (hash == 0x866E78BC || hash == 0x2B7AF9F0) ? Pass::resolve : Pass::none;
     if (pass != Pass::none) {
       const std::unique_lock lock(data->mutex);
       data->native_pipelines[value.handle] = pass;
-      if (auto it = data->layouts.find(layout.handle); it != data->layouts.end()) {
-        it->second->native_blur |= pass == Pass::blur;
-        it->second->native_resolve |= pass == Pass::resolve;
-      }
       char message[160];
       std::snprintf(message, sizeof(message), "Motion Blur: detected native %08X, layout %llX, private bindings %s.",
                     hash, static_cast<unsigned long long>(layout.handle), data->layouts.contains(layout.handle) ? "available" : "missing");
@@ -261,7 +239,7 @@ inline void OnDestroyPipeline(device* dev, pipeline value) {
   }
 }
 inline void OnBindPipeline(command_list* cmd, pipeline_stage stages, pipeline value) {
-  if ((mode != 1.f && active_chains.load(std::memory_order_relaxed) == 0)
+  if (mode != 1.f
       || (stages & pipeline_stage::compute_shader) == pipeline_stage{0}) return;
   auto* state = cmd->get_private_data<CommandData>();
   if (!state) return;
@@ -274,7 +252,7 @@ inline void OnBindPipeline(command_list* cmd, pipeline_stage stages, pipeline va
 inline bool Prepare(device* dev, Layout* layout, uint32_t index) {
   if (layout->pipelines[index].handle) return true;
   shader_desc shader = {code[index].data(), code[index].size()};
-  if (index != 4) {
+  if (index != 2) {
     const pipeline_subobject subobject = {pipeline_subobject_type::compute_shader, 1, &shader};
     return dev->create_pipeline(layout->handle, 1, &subobject, &layout->pipelines[index]);
   }
@@ -290,110 +268,68 @@ inline bool Prepare(device* dev, Layout* layout, uint32_t index) {
       {pipeline_subobject_type::depth_stencil_state, 1, &depth}};
   return dev->create_pipeline(layout->handle, static_cast<uint32_t>(std::size(subobjects)), subobjects, &layout->pipelines[index]);
 }
-// Grow only on a resolution/mode change. Retain retired buffers until device
-// teardown because command-list reset/destruction does not imply GPU completion.
+// Each recording owns every allocation it references. Growth copies only the
+// camera header; the old allocation retires with the same recording fence.
 inline bool EnsureScratch(command_list* cmd, DeviceData* data, CommandData* state, uint64_t bytes) {
   if (state->scratch_bytes >= bytes) return true;
-  bytes = (bytes + 65535ull) & ~65535ull;
-  auto* dev = cmd->get_device();
-  resource buffer;
-  const bool copy = state->scratch.handle != 0;
-  if (!dev->create_resource(resource_desc(bytes, memory_heap::gpu_only, resource_usage::unordered_access | resource_usage::copy_source | resource_usage::copy_dest),
-                            nullptr, copy ? resource_usage::copy_dest : resource_usage::unordered_access, &buffer)) return false;
-  if (copy) {
+  auto allocation = data->pool.Acquire(reinterpret_cast<ID3D12Device*>(cmd->get_device()->get_native()), bytes);
+  if (!allocation) return false;
+  const resource buffer{reinterpret_cast<uint64_t>(allocation->scratch.Get())};
+  if (state->scratch.handle) {
     cmd->barrier(state->scratch, resource_usage::unordered_access, resource_usage::copy_source);
+    cmd->barrier(buffer, resource_usage::unordered_access, resource_usage::copy_dest);
     cmd->copy_buffer_region(state->scratch, 0, buffer, 0, WITCHER_MOTION_HEADER * 16u);
     cmd->barrier(state->scratch, resource_usage::copy_source, resource_usage::unordered_access);
     cmd->barrier(buffer, resource_usage::copy_dest, resource_usage::unordered_access);
   }
-  data->scratch_buffers.push_back(buffer);
+  state->allocation = allocation;
+  state->recording.push_back(allocation);
   state->scratch = buffer;
-  state->scratch_bytes = bytes;
-  state->scratch_address = reinterpret_cast<ID3D12Resource*>(buffer.handle)->GetGPUVirtualAddress();
+  state->scratch_bytes = allocation->bytes;
+  state->scratch_address = allocation->scratch->GetGPUVirtualAddress();
   return true;
 }
-// Prepare every fallible resource/PSO/CBV operation before suppressing a native
-// stage. The recognized prefilter -> blur -> resolve chain shares one layout;
-// its only intermediate consumers are the two following stages. Freeze the
-// settings and transfer the camera now, leaving no allocation at final resolve.
 inline bool PrepareFrame(command_list* cmd, DeviceData* data, CommandData* state, uint32_t x, uint32_t y) {
   auto* dev = cmd->get_device();
-  if (!state->compute) return false;
-  if (!state->depth_encoded) return false;
-  if (!state->graphics || !state->graphics->projection) return false;
-  if (state->topology == 0) return false;
-  // Native resolves use 16x16 groups. Bound textures provide exact dimensions
-  // in the shader; ceil-dividing these counts preserves partial edge groups.
-  if (x > 1024 || y > 1024) return false;
-  for (uint32_t i = 0; i < 3; ++i) if (!Prepare(dev, state->compute.get(), i)) return false;
-  if (!Prepare(dev, state->compute.get(), 5) || !Prepare(dev, state->compute.get(), 6) || !Prepare(dev, state->compute.get(), 7) || !Prepare(dev, state->compute.get(), 8)) return false;
-  Settings settings = {std::clamp(shutter_angle, 0.f, 360.f),
-                       static_cast<uint32_t>(std::clamp(sample_count, 16.f, 128.f)), 0, 0.f,
-                       (camera_motion != 0.f ? WITCHER_MOTION_CAMERA : 0u)
-                           | (object_motion != 0.f ? WITCHER_MOTION_OBJECT : 0u),
-                       std::clamp(object_shutter_angle, 0.f, 360.f), 1, half_resolution != 0.f ? 1u : 0u};
-  // Equal effective shutters already bypass camera separation. At full
-  // resolution the original FP16 fetch is cheaper than caching FP32 vectors.
-  settings.cache_enabled = settings.half_resolution
-                           || ((settings.components & WITCHER_MOTION_CAMERA) ? settings.angle : 0.f)
-                                  != ((settings.components & WITCHER_MOTION_OBJECT) ? settings.object_angle : 0.f);
-  settings.cache_width = settings.cache_enabled ? state->motion_width : 0u;
-  settings.cache_height = settings.cache_enabled ? state->motion_height : 0u;
-  settings.half_width = settings.half_resolution ? x * 8u : 0u;
-  settings.half_height = settings.half_resolution ? y * 8u : 0u;
-  // Dispatch dimensions bound these allocations, not the bound texture sizes.
-  // Menus can use a smaller active viewport in a larger pooled texture. Give
-  // shaders the actual capacities so they can fall back without root-UAV OOBs.
-  if (!EnsureScratch(cmd, data, state, SCRATCH_BYTES + uint64_t(settings.cache_width) * settings.cache_height * 16ull
-                          + uint64_t(settings.half_width) * settings.half_height * 16ull)) return false;
-  if (!Prepare(dev, state->graphics.get(), 4)) return false;
-  // Immutable 256-byte CBV records: changing a slider appends a record, never
-  // overwrites memory the GPU might still be reading. Pages are mapped once;
-  // ordinary frames just reuse an address. Root CBVs also coexist with HDR's
-  // injector, which rejects layouts already containing unrelated root constants.
-  const std::array<uint32_t, 7> settings_key = {std::bit_cast<uint32_t>(settings.angle),
-                                              std::bit_cast<uint32_t>(settings.object_angle),
-                                              settings.samples | (settings.components << 8) | (settings.half_resolution << 16),
-                                              settings.cache_width, settings.cache_height, settings.half_width, settings.half_height};
-  auto cached = data->settings_cache.find(settings_key);
-  if (cached == data->settings_cache.end()) {
-    if (data->settings_pages.empty() || data->settings_pages.back().used == 65536) {
-      SettingsPage page = {};
-      if (!dev->create_resource(resource_desc(65536, memory_heap::cpu_to_gpu, resource_usage::constant_buffer),
-                                nullptr, resource_usage::constant_buffer, &page.buffer)) return false;
-      if (!dev->map_buffer_region(page.buffer, 0, 65536, map_access::write_only, &page.mapped)) {
-        dev->destroy_resource(page.buffer);
-        return false;
-      }
-      page.address = reinterpret_cast<ID3D12Resource*>(page.buffer.handle)->GetGPUVirtualAddress();
-      data->settings_pages.push_back(page);
-    }
-    auto& page = data->settings_pages.back();
-    std::memcpy(static_cast<uint8_t*>(page.mapped) + page.used, &settings, sizeof(settings));
-    cached = data->settings_cache.emplace(settings_key, page.address + page.used).first;
-    page.used += 256;
+  if (!state->compute || !state->depth_encoded || !state->graphics || !state->graphics->projection
+      || !state->topology || x > 512 || y > 512) return false;
+  if (!Prepare(dev, state->compute.get(), 0) || !Prepare(dev, state->graphics.get(), 2)) return false;
+  Settings settings{};
+  settings.interval = state->frame_settings.interval;
+  settings.strength = std::clamp(strength, 0.f, 2.f);
+  settings.mode = static_cast<uint32_t>(std::clamp(motion_mode, 0.f, 2.f));
+  settings.output_width = x * 16u; settings.output_height = y * 16u;
+  settings.motion_width = state->motion_width; settings.motion_height = state->motion_height;
+  const Plan plan(settings);
+  state->stages = plan.stages;
+  if (!EnsureScratch(cmd, data, state, plan.bytes)) return false;
+  if (state->allocation->used + 12u * 256u > 65536u) return false;
+  state->settings_address = state->allocation->constants->GetGPUVirtualAddress() + state->allocation->used;
+  for (const auto& record : state->stages) {
+    std::memcpy(state->allocation->mapped + state->allocation->used, &record, sizeof(record));
+    state->allocation->used += 256;
   }
   auto* native = reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native());
-  // Do not change either root signature or any game-owned argument. Direct
-  // root UAVs avoid allocating/switching descriptor heaps altogether.
   cmd->barrier(state->scratch, resource_usage::unordered_access, resource_usage::unordered_access);
   native->SetGraphicsRootUnorderedAccessView(state->graphics->scratch, state->scratch_address);
-  native->SetPipelineState(reinterpret_cast<ID3D12PipelineState*>(state->graphics->pipelines[4].handle));
+  native->SetPipelineState(reinterpret_cast<ID3D12PipelineState*>(state->graphics->pipelines[2].handle));
   native->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
   cmd->draw(1, 1, 0, 0);
   const dynamic_state topology = dynamic_state::primitive_topology;
   cmd->bind_pipeline_states(1, &topology, &state->topology);
   cmd->barrier(state->scratch, resource_usage::unordered_access, resource_usage::unordered_access);
   native->SetPipelineState(reinterpret_cast<ID3D12PipelineState*>(state->native_pipeline.handle));
-  state->prepared = state->compute;
   state->frame_settings = settings;
-  state->settings_address = cached->second;
+  state->allocation->objects.emplace_back(reinterpret_cast<IUnknown*>(state->graphics->pipelines[2].handle));
+  state->allocation->objects.emplace_back(reinterpret_cast<IUnknown*>(state->graphics->handle.handle));
+  state->allocation->objects.emplace_back(reinterpret_cast<IUnknown*>(state->compute->pipelines[0].handle));
+  state->allocation->objects.emplace_back(reinterpret_cast<IUnknown*>(state->compute->handle.handle));
   return true;
 }
 inline bool OnDispatch(command_list* cmd, uint32_t x, uint32_t y, uint32_t z) {
-  if ((mode != 1.f && active_chains.load(std::memory_order_relaxed) == 0) || !x || !y || z != 1) return false;
+  if (mode != 1.f || !x || !y || z != 1) return false;
   auto* state = cmd->get_private_data<CommandData>();
-  if (!state || state->pass == Pass::none || (mode != 1.f && !state->skipped_stages)) return false;
+  if (!state || state->pass == Pass::none) return false;
   auto* dev = cmd->get_device();
   auto* data = dev->get_private_data<DeviceData>();
   const std::unique_lock lock(data->mutex);
@@ -406,74 +342,49 @@ inline bool OnDispatch(command_list* cmd, uint32_t x, uint32_t y, uint32_t z) {
   };
   if (!state->compute) return fallback(1, "Motion Blur: native fallback; compute layout has no private bindings.");
   if (state->pass == Pass::depth) {
-    EndChain(state);
     state->depth_encoded = false;
-    if (!Prepare(dev, state->compute.get(), 3)) return fallback(2, "Motion Blur: native fallback; depth conversion pipeline creation failed.");
-    if (!EnsureScratch(cmd, data, state, SCRATCH_BYTES)) return false;
+    if (!Prepare(dev, state->compute.get(), 1)) return fallback(2, "Motion Blur: native fallback; depth conversion pipeline creation failed.");
+    state->allocation.reset(); state->scratch = {}; state->scratch_bytes = 0;
+    if (x > 1024 || y > 1024 || !EnsureScratch(cmd, data, state, WITCHER_MOTION_HEADER * 16u)) return false;
+    // The game converts motion twice in some frames. Time the first conversion
+    // of each presented scene, never the microseconds between those two passes.
+    if (data->conversion_frame != data->pool.frame) {
+      const auto now = std::chrono::steady_clock::now();
+      const float elapsed = std::chrono::duration<float>(now - data->last_conversion).count();
+      data->interval = elapsed >= .001f && elapsed <= .25f ? elapsed : 0.f;
+      data->last_conversion = now;
+      data->conversion_frame = data->pool.frame;
+    }
+    state->frame_settings.interval = data->interval;
+    state->allocation->objects.emplace_back(reinterpret_cast<IUnknown*>(state->compute->pipelines[1].handle));
+    state->allocation->objects.emplace_back(reinterpret_cast<IUnknown*>(state->compute->handle.handle));
     state->motion_width = x * 8u;
     state->motion_height = y * 8u;
     cmd->barrier(state->scratch, resource_usage::unordered_access, resource_usage::unordered_access);
     reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native())->SetComputeRootUnorderedAccessView(state->compute->scratch, state->scratch_address);
-    cmd->bind_pipeline(pipeline_stage::compute_shader, state->compute->pipelines[3]);
+    cmd->bind_pipeline(pipeline_stage::compute_shader, state->compute->pipelines[1]);
     cmd->dispatch(x, y, z);
     cmd->bind_pipeline(pipeline_stage::compute_shader, state->native_pipeline);
     state->depth_encoded = true;
     return true;
   }
-  if (state->pass == Pass::prefilter) {
-    EndChain(state);
-    // This 8x8 prefilter can run at QUARTER output resolution (confirmed
-    // by native b0 and resource captures); motion-input size is independent.
-    // Reserve for that upper bound now. Actual resolve groups/texture sizes
-    // still drive reconstruction, including partial edges and lower ratios.
-    if (!state->compute->native_blur || !state->compute->native_resolve
-        || x > 512 || y > 512
-        || !PrepareFrame(cmd, data, state, x * 2u, y * 2u)) return false;
-    active_chains.fetch_add(1, std::memory_order_relaxed);
-    state->skipped_stages = 1;
-    return true;
-  }
-  if (state->pass == Pass::blur) {
-    if (state->skipped_stages != 1 || state->prepared != state->compute) return false;
-    state->skipped_stages = 2;
-    return true;
-  }
-  if (!state->prepared && !PrepareFrame(cmd, data, state, x, y))
+  if (!PrepareFrame(cmd, data, state, x, y))
     return fallback(4, "Motion Blur: native fallback; reconstruction preflight unavailable.");
-  const auto settings = state->frame_settings;
   auto* native = reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native());
-  cmd->barrier(state->scratch, resource_usage::unordered_access, resource_usage::unordered_access);
   native->SetComputeRootUnorderedAccessView(state->compute->scratch, state->scratch_address);
-  native->SetComputeRootConstantBufferView(state->compute->settings, state->settings_address);
-  if (settings.cache_enabled) {
-    cmd->bind_pipeline(pipeline_stage::compute_shader, state->compute->pipelines[5]);
-    cmd->dispatch((state->motion_width + 7u) / 8u, (state->motion_height + 7u) / 8u, 1);
-    cmd->barrier(state->scratch, resource_usage::unordered_access, resource_usage::unordered_access);
-  }
   cmd->bind_pipeline(pipeline_stage::compute_shader, state->compute->pipelines[0]);
-  cmd->dispatch((x + 7u) / 8u, (y + 7u) / 8u, 1);
-  cmd->barrier(state->scratch, resource_usage::unordered_access, resource_usage::unordered_access);
-  cmd->bind_pipeline(pipeline_stage::compute_shader, state->compute->pipelines[1]);
-  cmd->dispatch((x + 63u) / 64u, (y + 63u) / 64u, 1);
-  cmd->barrier(state->scratch, resource_usage::unordered_access, resource_usage::unordered_access);
-  cmd->bind_pipeline(pipeline_stage::compute_shader, state->compute->pipelines[settings.half_resolution ? 7 : settings.cache_enabled ? 8 : 2]);
-  cmd->dispatch(settings.half_resolution ? x : x * 2u, settings.half_resolution ? y : y * 2u, 1);
-  if (settings.half_resolution) {
+  for (uint32_t stage = 0; stage < state->stages.size(); ++stage) {
+    const auto& record = state->stages[stage];
     cmd->barrier(state->scratch, resource_usage::unordered_access, resource_usage::unordered_access);
-    cmd->bind_pipeline(pipeline_stage::compute_shader, state->compute->pipelines[6]);
-    cmd->dispatch(x * 2u, y * 2u, 1);
+    native->SetComputeRootConstantBufferView(state->compute->settings, state->settings_address + stage * 256u);
+    cmd->dispatch((record.target_width + 7u) / 8u, (record.target_height + 7u) / 8u, 1);
   }
   cmd->bind_pipeline(pipeline_stage::compute_shader, state->native_pipeline);
-  if (state->skipped_stages == 2 && !data->logged_skip) {
-    reshade::log::message(reshade::log::level::info,
-                         "Motion Blur: redundant native prefilter and blur skipped; replacement preflight completed before suppression.");
-    data->logged_skip = true;
-  }
-  EndChain(state);
   state->depth_encoded = false;
+  ++data->resolved;
   if (!data->logged_active) {
     reshade::log::message(reshade::log::level::info,
-                         "Motion Blur: native-binding reconstruction active; cached separated motion, optional half-resolution reconstruction, no descriptor/CBV tracking.");
+                         "Motion Blur: Classic optical reconstruction active; five reductions, two gathers, fence-retired bounded scratch.");
     data->logged_active = true;
   }
   return true;
@@ -485,31 +396,65 @@ inline void OnDestroyDevice(device* dev) {
   auto* data = dev->get_private_data<DeviceData>();
   if (!data) return;
   for (auto& [key, layout] : data->layouts) for (auto pso : layout->pipelines) if (pso.handle) dev->destroy_pipeline(pso);
-  for (const auto& page : data->settings_pages) {
-    dev->unmap_buffer_region(page.buffer);
-    dev->destroy_resource(page.buffer);
-  }
-  for (auto buffer : data->scratch_buffers) dev->destroy_resource(buffer);
   dev->destroy_private_data<DeviceData>();
 }
 inline void OnInitCommand(command_list* cmd) {
   if (cmd->get_device()->get_api() == device_api::d3d12) cmd->create_private_data<CommandData>();
 }
+inline void OnResetCommand(command_list* cmd) {
+  auto* state = cmd->get_private_data<CommandData>();
+  auto* data = cmd->get_device()->get_private_data<DeviceData>();
+  if (!state || !data) return;
+  const std::unique_lock lock(data->mutex);
+  data->pool.Retire(&state->recording, &state->queues, state->untracked_queue);
+  *state = CommandData{};
+}
 inline void OnDestroyCommand(command_list* cmd) {
-  if (auto* state = cmd->get_private_data<CommandData>()) EndChain(state);
+  OnResetCommand(cmd);
   cmd->destroy_private_data<CommandData>();
 }
-inline void OnResetCommand(command_list* cmd) {
-  if (auto* state = cmd->get_private_data<CommandData>()) {
-    state->compute.reset();
-    state->graphics.reset();
-    state->compute_handle = {};
-    state->graphics_handle = {};
-    state->native_pipeline = {};
-    state->pass = Pass::none;
-    state->topology = 0;
-    state->depth_encoded = false;
-    EndChain(state);
+inline void OnInitQueue(command_queue* queue) {
+  auto* data = queue->get_device()->get_private_data<DeviceData>();
+  if (!data) return;
+  auto q = std::make_shared<Queue>();
+  q->native = reinterpret_cast<ID3D12CommandQueue*>(queue->get_native());
+  if (FAILED(reinterpret_cast<ID3D12Device*>(queue->get_device()->get_native())->CreateFence(
+          0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&q->fence)))) return;
+  const std::unique_lock lock(data->mutex);
+  data->queues[queue] = std::move(q);
+}
+inline void OnExecute(command_queue* queue, command_list* cmd) {
+  auto* state = cmd->get_private_data<CommandData>();
+  if (!state || state->recording.empty()) return;
+  auto* data = cmd->get_device()->get_private_data<DeviceData>();
+  const std::unique_lock lock(data->mutex);
+  if (auto it = data->queues.find(queue); it != data->queues.end()) {
+    if (std::find(state->queues.begin(), state->queues.end(), it->second) == state->queues.end()) state->queues.push_back(it->second);
+  } else state->untracked_queue = true;
+}
+inline void OnDestroyQueue(command_queue* queue) {
+  auto* data = queue->get_device()->get_private_data<DeviceData>();
+  if (!data) return;
+  const std::unique_lock lock(data->mutex);
+  if (auto it = data->queues.find(queue); it != data->queues.end()) {
+    auto& q = *it->second;
+    if (FAILED(q.native->Signal(q.fence.Get(), ++q.serial))) q.serial = UINT64_MAX;
+    q.native = nullptr;
+    data->queues.erase(it);
+  }
+}
+inline void OnPresent(command_queue* queue, swapchain*, const rect*, const rect*, uint32_t, const rect*) {
+  auto* data = queue->get_device()->get_private_data<DeviceData>();
+  if (!data) return;
+  const std::unique_lock lock(data->mutex);
+  ++data->pool.frame;
+  data->pool.Collect();
+  if (data->pool.frame % 300 == 0) {
+    char message[256];
+    std::snprintf(message, sizeof(message), "Motion Blur: scratch %.2f MiB, peak %.2f MiB, %zu allocations, %llu resolves, interval %.3f ms.",
+                  data->pool.bytes / 1048576., data->pool.peak_bytes / 1048576., data->pool.allocations.size(),
+                  static_cast<unsigned long long>(data->resolved), data->interval * 1000.f);
+    reshade::log::message(reshade::log::level::info, message);
   }
 }
 inline void Use(DWORD reason) {
@@ -517,6 +462,10 @@ inline void Use(DWORD reason) {
   if (reason == DLL_PROCESS_ATTACH) reshade::register_event<reshade::addon_event::event>(callback); \
   else if (reason == DLL_PROCESS_DETACH) reshade::unregister_event<reshade::addon_event::event>(callback)
   WITCHER_MOTION_EVENT(init_device, OnInitDevice);
+  WITCHER_MOTION_EVENT(init_command_queue, OnInitQueue);
+  WITCHER_MOTION_EVENT(destroy_command_queue, OnDestroyQueue);
+  WITCHER_MOTION_EVENT(execute_command_list, OnExecute);
+  WITCHER_MOTION_EVENT(present, OnPresent);
   WITCHER_MOTION_EVENT(destroy_device, OnDestroyDevice);
   WITCHER_MOTION_EVENT(init_command_list, OnInitCommand);
   WITCHER_MOTION_EVENT(destroy_command_list, OnDestroyCommand);

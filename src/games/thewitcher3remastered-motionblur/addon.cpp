@@ -40,118 +40,41 @@ renodx::utils::settings::Settings settings = {
         .on_change_value = [](float, float current) { witcher::motion::activation::enhanced.store(current == 1.f, std::memory_order_relaxed); },
     },
     new renodx::utils::settings::Setting{
-        .key = "MotionBlurCamera",
-        .binding = &witcher::motion::camera_motion,
-        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
-        .default_value = 1.f,
-        .label = "Camera Motion Blur",
-        .section = "Motion Sources",
-        .tooltip = "Blur from camera movement and rotation. Disable this and leave Object Motion Blur on to blur moving objects without blurring the scene during camera sway.",
-        .labels = {"Off", "On"},
+        .key = "ClassicMotionMode",
+        .binding = &witcher::motion::motion_mode,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f,
+        .label = "Motion Blur",
+        .section = "Motion Blur",
+        .tooltip = "Object Only follows visible object motion and keeps camera-followed subjects sharp. Off keeps the scene sharp.",
+        .labels = {"Camera + Object", "Object Only", "Off"},
         .is_enabled = []() { return witcher::motion::mode == 1.f; },
     },
     new renodx::utils::settings::Setting{
-        .key = "MotionBlurCameraIntensity",
-        .binding = &witcher::motion::shutter_angle,
+        .key = "ClassicMotionStrength",
+        .binding = &witcher::motion::strength,
         .default_value = 50.f,
-        .label = "Camera Intensity",
-        .section = "Motion Sources",
-        .tooltip = "0 removes blur, 50 is a 180-degree shutter, and 100 is a 360-degree shutter. Per-frame motion naturally adjusts the blur to the rendered frame rate.",
+        .label = "Strength",
+        .section = "Motion Blur",
+        .tooltip = "Exposure duration: 0 disables blur, 50 uses 1/60 second, 100 uses 1/30 second. Frame-rate compensated using consecutive native motion-conversion intervals. New or interrupted history stays sharp.",
         .min = 0.f,
         .max = 100.f,
         .format = "%.0f",
-        .is_enabled = []() { return witcher::motion::mode == 1.f && witcher::motion::camera_motion != 0.f; },
-        .parse = [](float value) { return value * 3.6f; },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "MotionBlurObjects",
-        .binding = &witcher::motion::object_motion,
-        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
-        .default_value = 1.f,
-        .label = "Object Motion Blur",
-        .section = "Motion Sources",
-        .tooltip = "Blur from object movement and animation. With Camera Motion Blur off, trails follow visible screen motion and exclude camera-only movement, keeping camera-followed subjects sharp. Equal intensities with both toggles on preserve combined blur; both toggles off remove it.",
-        .labels = {"Off", "On"},
-        .is_enabled = []() { return witcher::motion::mode == 1.f; },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "MotionBlurObjectIntensity",
-        .binding = &witcher::motion::object_shutter_angle,
-        .default_value = 50.f,
-        .label = "Object Intensity",
-        .section = "Motion Sources",
-        .tooltip = "0 removes blur, 50 is a 180-degree shutter, and 100 is a 360-degree shutter. Per-frame motion naturally adjusts the blur to the rendered frame rate.",
-        .min = 0.f,
-        .max = 100.f,
-        .format = "%.0f",
-        .is_enabled = []() { return witcher::motion::mode == 1.f && witcher::motion::object_motion != 0.f; },
-        .parse = [](float value) { return value * 3.6f; },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "MotionBlurHalfResolution",
-        .binding = &witcher::motion::half_resolution,
-        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
-        .default_value = 1.f,
-        .label = "Half-Resolution Blur",
-        .section = "Quality",
-        .tooltip = "Reduce reconstruction cost using a half-width, half-height blur with depth/motion-aware upsampling. Static detail and incompatible edges use full-resolution reconstruction. Full resolution retains finer moving detail.",
-        .labels = {"Off", "On"},
-        .is_enabled = []() { return witcher::motion::mode == 1.f; },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "MotionBlurSamples",
-        .binding = &witcher::motion::sample_count,
-        .default_value = 16.f,
-        // Keep numeric sample counts in the existing config; older slider
-        // values select the nearest tier without changing the storage format.
-        .min = 16.f,
-        .max = 128.f,
-        .parse = [](float value) {
-          if (value < 24.f) return 16.f;
-          if (value < 48.f) return 32.f;
-          if (value < 96.f) return 64.f;
-          return 128.f;
-        },
-        .is_visible = []() { return false; },
-    },
-    new renodx::utils::settings::Setting{
-        .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
-        .label = "Sample Quality",
-        .section = "Quality",
-        .tooltip = "Maximum samples per pixel. Higher tiers reduce noise on long trails at a greater GPU cost. Increasing intensity does not increase this sample budget.",
-        .is_enabled = []() { return witcher::motion::mode == 1.f; },
-        .on_draw = []() {
-          constexpr const char* labels[] = {"16 Samples - Low", "32 Samples - Medium", "64 Samples - High", "128 Samples - Ultra"};
-          int selected = 0;
-          while (selected < 3 && witcher::motion::sample_count > float(16 << selected)) ++selected;
-          bool changed = false;
-          if (ImGui::BeginCombo("Sample Quality", labels[selected])) {
-            for (int index = 0; index < 4; ++index) {
-              if (ImGui::Selectable(labels[index], index == selected)) {
-                renodx::utils::settings::UpdateSetting("MotionBlurSamples", float(16 << index));
-                changed = true;
-              }
-              if (index == selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-          }
-          return changed;
-        },
+        .is_enabled = []() { return witcher::motion::mode == 1.f && witcher::motion::motion_mode != 2.f; },
+        .parse = [](float value) { return value / 50.f; },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
         .label = "Reset All Settings",
         .section = "Options",
-        .tooltip = "Restore the default mode, motion sources, intensities and sample quality.",
+        .tooltip = "Restore the mod motion blur defaults.",
         .on_change = []() { renodx::utils::settings::ResetSettings(); },
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
-        .label = "Mode: Enhanced = automatic custom blur. Native = game's On/Off setting.\n\n"
-                 "Object-only: Camera Off, Object On.\n\n"
-                 "Intensity: Adjust each source separately. 0 = off; 50 = 180-degree shutter.\n\n"
-                 "Quality: Start at Low. Higher tiers smooth trails at a higher GPU cost.\n\n"
-                 "Half-Resolution Blur: Faster, with softer moving detail. Off keeps full resolution.\n\n"
+        .label = "Enhanced uses an improved motion blur filter. Native follows the game's On/Off setting.\n\n"
+                 "Object Only excludes camera-only motion. Camera-followed subjects stay sharp.\n\n"
+                 "Strength: 50 = 1/60 second; 100 = 1/30 second.\n\n"
                  "Settings save automatically. Compare blur while moving.",
         .section = "How to Use",
     },
@@ -229,20 +152,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     // Keep the existing preset1 storage so saved slider values survive the
     // simplified menu. Native mode replaces the old Preset Off selector.
     renodx::utils::settings::use_presets = false;
-    // Seed each new control once from the former shared intensity. Never
-    // overwrite an independently saved value, including an explicit zero.
-    const auto section = renodx::utils::settings::global_name + "-preset1";
-    float legacy_intensity;
-    if (reshade::get_config_value(nullptr, section.c_str(), "MotionBlurIntensity", legacy_intensity)
-        && std::isfinite(legacy_intensity)) {
-      for (const char* key : {"MotionBlurCameraIntensity", "MotionBlurObjectIntensity"}) {
-        float saved_intensity;
-        if (!reshade::get_config_value(nullptr, section.c_str(), key, saved_intensity)) {
-          reshade::set_config_value(nullptr, section.c_str(), key, std::clamp(legacy_intensity, 0.f, 100.f));
-        }
-      }
-    }
-    witcher::motion::code = {__0xF3B10000, __0xF3B10001, __0xF3B10002, __0x9F1C32F1, __0xF3B10004, __0xF3B10005, __0xF3B10006, __0xF3B10007, __0xF3B10008};
+    // New keys intentionally avoid reinterpreting the former shutter-angle
+    // sliders as Classic's fixed exposure duration.
+    witcher::motion::code = {__0xF3B10000, __0x9F1C32F1, __0xF3B10004};
   }
   witcher::motion::Use(reason);
   renodx::utils::settings::Use(reason, &settings);

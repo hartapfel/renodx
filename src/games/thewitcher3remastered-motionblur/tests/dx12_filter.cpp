@@ -3,7 +3,7 @@
  */
 // Hardware GPU timestamps for the actual shipping DXIL, with half-resolution
 // FP16 native motion/depth and a full-resolution FP16 HDR scene and output.
-// Usage: motion_performance.exe <baseline-CSO-folder> <candidate-CSO-folder>
+// Run from the repository root after building the Release compute embed.
 #define NOMINMAX
 #include <d3d12.h>
 #include <dxgi1_6.h>
@@ -20,20 +20,18 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include "../motion_blur_config.h"
+#include "../motion_plan.hpp"
 using Microsoft::WRL::ComPtr;
 using namespace DirectX::PackedVector;
 void Check(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("D3D12 failure: " + std::to_string(unsigned(hr))); }
 int main(int argc, char** argv) { try {
-  if (argc < 3 || argc > 6) throw std::runtime_error("Expected baseline/candidate folders, optional motion scale, rotation/pan, batch count");
-  const float motion_scale = argc >= 4 ? std::stof(argv[3]) : 1.f;
-  const bool rotation = argc >= 5 && std::string(argv[4]) == "rotation";
-  const unsigned batches = argc == 6 ? std::clamp(std::stoi(argv[5]), 1, 1024) : 1;
-  const float angle = .025f * motion_scale;
-  constexpr unsigned W = 3840, H = 2160, MW = W / 2, MH = H / 2;
-  constexpr unsigned TX = (W + WITCHER_MOTION_TILE - 1) / WITCHER_MOTION_TILE;
-  constexpr unsigned TY = (H + WITCHER_MOTION_TILE - 1) / WITCHER_MOTION_TILE;
-  constexpr unsigned RUNS = 7, WARMUP = 2;
+  constexpr unsigned W=3840,H=2160,MW=W/2,MH=H/2;
+  const float motion_scale=1.f, angle=.025f;
+  const bool rotation=true;
+  witcher::motion::Settings settings{};
+  settings.interval=1.f/60.f;settings.strength=1.f;settings.mode=1;
+  settings.output_width=W;settings.output_height=H;settings.motion_width=MW;settings.motion_height=MH;
+  const witcher::motion::Plan plan(settings);
   ComPtr<ID3D12Device> dev; Check(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&dev)));
   ComPtr<IDXGIFactory4> factory; Check(CreateDXGIFactory2(0, IID_PPV_ARGS(&factory)));
   ComPtr<IDXGIAdapter1> adapter; Check(factory->EnumAdapterByLuid(dev->GetAdapterLuid(), IID_PPV_ARGS(&adapter)));
@@ -99,7 +97,7 @@ int main(int argc, char** argv) { try {
     cmd->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
     transition(textures[i].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
   }
-  std::vector<std::array<float, 4>> initial(WITCHER_MOTION_CACHE + 2 * MW * MH);
+  std::vector<std::array<float, 4>> initial(plan.bytes/16);
   initial[0] = {1, 0, 1, 0}; initial[1] = {MW, MH, 1.f / MW, 1.f / MH};
   initial[2] = {1, 0, 0, 0}; initial[3] = {0, 1, 0, 0}; initial[4] = {0, 0, 1, 0}; initial[5] = {.05f * motion_scale, -.006f * motion_scale, 0, 1};
   if (rotation) {
@@ -112,14 +110,15 @@ int main(int argc, char** argv) { try {
   cmd->CopyBufferRegion(scratch.Get(), 0, scratch_upload.Get(), 0, initial.size() * 16);
   transition(scratch.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS); submit();
   D3D12_DESCRIPTOR_RANGE ranges[] = {{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 0, 0}, {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0}};
-  D3D12_ROOT_PARAMETER parameters[4]{};
+  D3D12_ROOT_PARAMETER parameters[5]{};
   for (unsigned i = 0; i < 2; ++i) { parameters[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; parameters[i].DescriptorTable = {1, &ranges[i]}; }
   parameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV; parameters[2].Descriptor = {0, 57};
   parameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; parameters[3].Descriptor = {0, 57};
+  parameters[4].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV; parameters[4].Descriptor={0,0};
   D3D12_STATIC_SAMPLER_DESC sampler{}; sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
   sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
   sampler.MaxLOD = D3D12_FLOAT32_MAX; sampler.RegisterSpace = 57; sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
-  D3D12_ROOT_SIGNATURE_DESC root_desc{4, parameters, 1, &sampler, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+  D3D12_ROOT_SIGNATURE_DESC root_desc{5, parameters, 1, &sampler, D3D12_ROOT_SIGNATURE_FLAG_NONE};
   ComPtr<ID3DBlob> blob, error; Check(D3D12SerializeRootSignature(&root_desc, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &error));
   ComPtr<ID3D12RootSignature> root; Check(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&root)));
   ComPtr<ID3D12DescriptorHeap> heap; D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 4, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
@@ -132,59 +131,49 @@ int main(int argc, char** argv) { try {
   auto output_handle = heap->GetCPUDescriptorHandleForHeapStart(); output_handle.ptr += 3 * stride;
   D3D12_UNORDERED_ACCESS_VIEW_DESC ud{}; ud.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; ud.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
   dev->CreateUnorderedAccessView(textures[2].Get(), nullptr, &ud, output_handle);
-  ComPtr<ID3D12PipelineState> pipelines[2][7];
-  for (unsigned version = 0; version < 2; ++version) for (unsigned pass = 0; pass < (version ? 7u : 3u); ++pass) {
-    const std::string path = std::string(argv[version + 1]) + "/0xF3B1000" + char('0' + (pass < 3 ? pass : pass + 2)) + ".cso";
-    std::ifstream file(path, std::ios::binary); std::vector<char> shader{std::istreambuf_iterator<char>(file), {}};
-    D3D12_COMPUTE_PIPELINE_STATE_DESC pd{}; pd.pRootSignature = root.Get(); pd.CS = {shader.data(), shader.size()};
-    Check(dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pipelines[version][pass])));
-  }
-  ComPtr<ID3D12QueryHeap> queries; D3D12_QUERY_HEAP_DESC query_desc{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, RUNS * 6, 0}; Check(dev->CreateQueryHeap(&query_desc, IID_PPV_ARGS(&queries)));
-  auto timestamps = buffer(RUNS * 6 * 8, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_NONE);
-  auto constants = buffer(256, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_FLAG_NONE);
-  struct Settings { float angle; unsigned samples, diagnostic; float seconds; unsigned components; float object_angle; unsigned cache_enabled, half_resolution;
-    unsigned cache_width = MW, cache_height = MH, half_width = (W + 1) / 2, half_height = (H + 1) / 2;
-  } settings{180, 16, 0, 0, 3, 180, 0, 0};
-  const std::array<Settings, 5> cases{{{36,16,0,0,3,180,0,0}, {180,16,0,0,3,252,0,0}, {360,16,0,0,3,360,0,0}, {180,32,0,0,3,252,0,0}, {180,64,0,0,3,252,0,0}}};
-  std::cout << "case,version,batch,total_ms,cache_ms,tile_ms,neighbor_ms,reconstruct_ms,upsample_ms\n";
-  for (unsigned scenario = 0; scenario < cases.size(); ++scenario) {
-    for (unsigned version = 0; version < 3; ++version) {
-      settings = cases[scenario]; settings.half_resolution = version == 2; settings.cache_enabled = version != 0 && (version == 2 || settings.angle != settings.object_angle);
-      Check(constants->Map(0, nullptr, &mapped)); std::memcpy(mapped, &settings, sizeof(settings)); constants->Unmap(0, nullptr);
-      // Reuse every resource and PSO across thousands of repeated frames.
-      // Submit small batches to avoid a long single command list/TDR and to
-      // expose any sustained cost growth separately from startup warmup.
-      for (unsigned batch = 0; batch < batches; ++batch) {
-      ID3D12DescriptorHeap* heaps[] = {heap.Get()}; cmd->SetDescriptorHeaps(1, heaps); cmd->SetComputeRootSignature(root.Get());
-      cmd->SetComputeRootDescriptorTable(0, heap->GetGPUDescriptorHandleForHeapStart());
-      auto handle = heap->GetGPUDescriptorHandleForHeapStart(); handle.ptr += 3 * stride; cmd->SetComputeRootDescriptorTable(1, handle);
-      cmd->SetComputeRootUnorderedAccessView(2, scratch->GetGPUVirtualAddress()); cmd->SetComputeRootConstantBufferView(3, constants->GetGPUVirtualAddress());
-      for (unsigned run = 0; run < RUNS; ++run) {
-        cmd->EndQuery(queries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, run * 6);
-        const unsigned order[] = {3, 0, 1, 2, 4};
-        for (unsigned step = 0; step < 5; ++step) {
-          unsigned pass = order[step];
-          if ((pass != 3 || settings.cache_enabled) && (pass != 4 || version == 2)) {
-            cmd->SetPipelineState(pipelines[version != 0][pass == 2 ? (version == 2 ? 5 : settings.cache_enabled ? 6 : 2) : pass].Get());
-            unsigned width = pass == 3 || (pass == 2 && version == 2) ? MW : W;
-            unsigned height = pass == 3 || (pass == 2 && version == 2) ? MH : H;
-            cmd->Dispatch(pass == 0 ? TX : pass == 1 ? (TX + 7) / 8 : (width + 7) / 8,
-                          pass == 0 ? TY : pass == 1 ? (TY + 7) / 8 : (height + 7) / 8, 1);
-            uav_barrier();
-          }
-          cmd->EndQuery(queries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, run * 6 + step + 1);
-        }
-      }
-      cmd->ResolveQueryData(queries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, RUNS * 6, timestamps.Get(), 0); submit();
-      UINT64* data; Check(timestamps->Map(0, nullptr, reinterpret_cast<void**>(&data))); std::array<std::vector<double>, 6> times;
-      for (unsigned run = WARMUP; run < RUNS; ++run) {
-        times[0].push_back(double(data[run * 6 + 5] - data[run * 6]) * 1000 / frequency);
-        for (unsigned pass = 0; pass < 5; ++pass) times[pass + 1].push_back(double(data[run * 6 + pass + 1] - data[run * 6 + pass]) * 1000 / frequency);
-      }
-      timestamps->Unmap(0, nullptr); std::cout << scenario << ',' << (version == 0 ? "baseline" : version == 1 ? "cached-full" : "cached-half") << ',' << batch;
-      for (auto& values : times) { std::sort(values.begin(), values.end()); std::cout << ',' << values[values.size() / 2]; } std::cout << '\n';
-      }
+  std::ifstream file("build/thewitcher3remastered-motionblur.include/embed/0xF3B10000.cso",std::ios::binary);
+  std::vector<char> shader{std::istreambuf_iterator<char>(file),{}};
+  D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};pd.pRootSignature=root.Get();pd.CS={shader.data(),shader.size()};
+  ComPtr<ID3D12PipelineState> pipeline;Check(dev->CreateComputePipelineState(&pd,IID_PPV_ARGS(&pipeline)));
+  auto constants=buffer(13*256,D3D12_HEAP_TYPE_UPLOAD,D3D12_RESOURCE_STATE_GENERIC_READ,D3D12_RESOURCE_FLAG_NONE);
+  Check(constants->Map(0,nullptr,&mapped));
+  for(unsigned stage=0;stage<12;++stage) std::memcpy(static_cast<char*>(mapped)+stage*256,&plan.stages[stage],sizeof(settings));
+  float native[64]{};native[20]=W-1.f;native[21]=H-1.f;
+  std::memcpy(static_cast<char*>(mapped)+12*256,native,sizeof(native));constants->Unmap(0,nullptr);
+  ComPtr<ID3D12QueryHeap> query;D3D12_QUERY_HEAP_DESC qh{D3D12_QUERY_HEAP_TYPE_TIMESTAMP,2,0};Check(dev->CreateQueryHeap(&qh,IID_PPV_ARGS(&query)));
+  auto times=buffer(16,D3D12_HEAP_TYPE_READBACK,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_FLAG_NONE);
+  std::vector<double> elapsed;
+  for(unsigned run=0;run<24;++run) {
+    ID3D12DescriptorHeap* heaps[]={heap.Get()};cmd->SetDescriptorHeaps(1,heaps);cmd->SetComputeRootSignature(root.Get());
+    cmd->SetComputeRootDescriptorTable(0,heap->GetGPUDescriptorHandleForHeapStart());
+    auto output=heap->GetGPUDescriptorHandleForHeapStart();output.ptr+=3*stride;cmd->SetComputeRootDescriptorTable(1,output);
+    cmd->SetComputeRootUnorderedAccessView(2,scratch->GetGPUVirtualAddress());
+    cmd->SetComputeRootConstantBufferView(4,constants->GetGPUVirtualAddress()+12*256);
+    cmd->SetPipelineState(pipeline.Get());cmd->EndQuery(query.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0);
+    for(unsigned stage=0;stage<12;++stage) {
+      const auto& record=plan.stages[stage];
+      cmd->SetComputeRootConstantBufferView(3,constants->GetGPUVirtualAddress()+stage*256);
+      cmd->Dispatch((record.target_width+7)/8,(record.target_height+7)/8,1);uav_barrier();
     }
+    cmd->EndQuery(query.Get(),D3D12_QUERY_TYPE_TIMESTAMP,1);cmd->ResolveQueryData(query.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0,2,times.Get(),0);submit();
+    UINT64* stamps;Check(times->Map(0,nullptr,reinterpret_cast<void**>(&stamps)));
+    if(run>=4) elapsed.push_back(double(stamps[1]-stamps[0])*1000/frequency);times->Unmap(0,nullptr);
   }
-  Check(cmd->Close()); CloseHandle(event);
-} catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; } }
+  D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;UINT64 output_bytes;
+  auto rd=textures[2]->GetDesc();dev->GetCopyableFootprints(&rd,0,1,0,&footprint,nullptr,nullptr,&output_bytes);
+  auto readback=buffer(output_bytes,D3D12_HEAP_TYPE_READBACK,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_FLAG_NONE);
+  transition(textures[2].Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_SOURCE);
+  D3D12_TEXTURE_COPY_LOCATION dest{readback.Get(),D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};dest.PlacedFootprint=footprint;
+  D3D12_TEXTURE_COPY_LOCATION source{textures[2].Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+  cmd->CopyTextureRegion(&dest,0,0,0,&source,nullptr);submit();
+  Check(readback->Map(0,nullptr,&mapped));double sum=0;
+  for(unsigned y=0;y<H;++y)for(unsigned x=0;x<W;++x) {
+    const auto* pixel=reinterpret_cast<const HALF*>(static_cast<const char*>(mapped)+y*footprint.Footprint.RowPitch)+4*x;
+    for(unsigned c=0;c<4;++c) {float v=XMConvertHalfToFloat(pixel[c]);if(!std::isfinite(v))throw std::runtime_error("nonfinite output");sum+=v;}
+    if(XMConvertHalfToFloat(pixel[3])!=1.f)throw std::runtime_error("alpha changed");
+  }
+  readback->Unmap(0,nullptr);if(sum<1)throw std::runtime_error("empty output");
+  std::sort(elapsed.begin(),elapsed.end());
+  std::cout<<"PASS production SM6 DX12 filter: 24 frames, 4K finite output/alpha; median "<<elapsed[elapsed.size()/2]<<" ms; scratch "<<plan.bytes/1048576.<<" MiB\n";
+  Check(cmd->Close());CloseHandle(event);
+} catch(const std::exception& e) {std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

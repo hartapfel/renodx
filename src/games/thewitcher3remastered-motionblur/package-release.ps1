@@ -40,6 +40,7 @@ $files = [ordered]@{
   'bin/x64_dx12/renodx-thewitcher3remastered-motionblur.addon64' = $addonPath
   'README-Motion-Blur.txt' = Join-Path $PSScriptRoot 'packaging/README.txt'
   'LICENSE.txt' = Join-Path $repoRoot 'LICENSE'
+  'LICENSE-optics.txt' = Join-Path $PSScriptRoot 'effects/LICENSE.optics'
 }
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem

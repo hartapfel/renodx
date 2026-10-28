@@ -3,7 +3,7 @@
   "id": "thewitcher3remastered-motionblur",
   "title": "Motion Blur - Remastered",
   "variant": "Motion Blur",
-  "summary": "Standalone full-resolution depth-aware motion blur with shutter intensity and sample controls for DX12.",
+  "summary": "Standalone Classic optical motion blur with frame-rate-compensated exposure and fence-retired GPU scratch for DX12.",
   "status": "experimental",
   "maintainers": [
     "Hartapfel"
