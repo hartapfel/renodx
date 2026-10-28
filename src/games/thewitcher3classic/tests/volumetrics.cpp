@@ -82,6 +82,7 @@ int main(int argc,char**) {
   a.f[17]={1,0,0,0}; a.f[18]={0,1,0,0}; a.f[20]={0,0,1,1};
   a.f[21]={0,0,1,1}; a.f[22][2]=.2f; a.f[40]={2,4,8,0};
   a.f[42][1]=-10000; a.f[43]={.002f,.02f,.02f,0};
+  a.f[42][3]=1.f; a.f[48]={1,-1,1,0}; // Identity authored opacity curve.
   a.l[0]={0,0,1,0}; a.l[1]={10,10,10,0}; a.l[7]={0,0,.5f,1};
   a.l[10]={1,2,3,4}; a.l[11]={.5f,.5f,.5f,0}; a.l[15][2]=4;
   a.l[16][1]=.125f; a.l[17]={.05f,.05f,.05f,.05f};
@@ -204,7 +205,71 @@ int main(int argc,char**) {
   assert(std::abs(far_interior[3]-std::exp(-local_extinction*(a.f[42][2]-.2-1.-3002.)))<.001);
   a.interiors.Reset();a.l[34][2]=0;
   std::cout<<"PASS weather-distance haze, near-field preservation, published sampling range and distant interior exclusion\n";
+  // Two live weather captures exercise opposite sides of exponent 1: the
+  // former lost fog; the latter added too much. Horizontal rays provide an
+  // independent homogeneous solution at EVERY boundary and fade transition.
+  for(const auto& weather:std::array<std::array<float,8>,2>{{
+      {48.2502822876f,-39.4299964905f,.000422194716521f,.507544338703f,7.15733957291f,.00529972510412f,.02335376665f,.023230597377f},
+      {2.00425338745f,-39.4300003052f,.000992203480564f,1.2030134201f,1.f,.0151364393532f,.0233537703753f,.0232305992395f}}}) {
+    a.f[0]={0,0,weather[0],0};a.f[20]={1,0,weather[0],1};
+    a.f[42]={1,weather[1],16707.900390625f,weather[3]};
+    a.f[43]={weather[2],weather[6],weather[7],0};
+    a.f[48]={1,weather[4],weather[5],0};
+    a.p.medium={1,0,0,.5f};
+    auto velen=a.Run();
+    const double velen_sigma=double(a.f[43][0])/(1.+std::max(0.,double(a.f[0][2])+a.f[42][1])*.5*(double(a.f[43][1])+a.f[43][2]));
+    const size_t velen_center=(size_t(a.p.grid[1])/2*size_t(a.p.grid[0])+size_t(a.p.grid[0])/2)*4;
+    float last_opacity=0;
+    for(size_t z=0;z<=size_t(a.p.grid[2]);++z) {
+      const double distance=double(a.p.options[1])*std::pow(double(a.f[42][2])/a.p.options[1],double(z)/a.p.grid[2]);
+      const double length=std::max(0.,distance-a.f[22][2]);
+      // Integral of the two-metre smoothstep start ramp, then constant density.
+      const double t=std::clamp(length/2.,0.,1.);
+      const double optical_length=std::max(0.,length-2.)+2.*t*t*t*(1.-.5*t);
+      const double expected_opacity=std::pow(-std::expm1(-velen_sigma*optical_length),double(a.f[42][3]))
+          *std::clamp((length-a.f[48][1])*a.f[48][2],0.,1.);
+      const size_t offset=z*stride+velen_center;
+      const float opacity=1.f-velen[offset+3];
+      if(std::abs(opacity-expected_opacity)>=.002)
+        std::cerr<<"Weather exponent="<<weather[3]<<" boundary="<<z<<" distance="<<distance<<" opacity="<<opacity<<" expected="<<expected_opacity<<'\n';
+      assert(std::abs(opacity-expected_opacity)<.002);
+      assert(opacity>=last_opacity);last_opacity=opacity;
+      for(int c=0;c<3;++c)assert(std::abs(velen[offset+c]-expected_opacity*a.f[40][c])<.02);
+    }
+    a.p.medium[2]=1;
+    auto velen_lit=a.Run(false,true),velen_shadow=a.Run(true,true);
+    const auto velen_ambient=a.CenterEnd(velen);
+    for(int c=0;c<3;++c) {
+      assert(std::abs(velen_shadow[c]-velen_ambient[c])<.002);
+      assert(velen_lit[c]>velen_shadow[c]);
+    }
+    assert(velen_lit[3]==velen_shadow[3] && velen_lit[3]==velen_ambient[3]);
+    a.p.medium[2]=0;
+    a.p.medium[0]=0;
+    auto velen_vacuum=a.Run();
+    for(size_t i=0;i<velen_vacuum.size();i+=4)
+      assert(velen_vacuum[i]==0 && velen_vacuum[i+1]==0 && velen_vacuum[i+2]==0 && velen_vacuum[i+3]==1);
+    // Advancing the weather fade through an actual interior must not create
+    // extinction or scattering in that empty segment of the volume.
+    a.p.medium[0]=1;a.l[34][2]=128.f;
+    std::array<std::array<uint16_t,2>,64> velen_interiors;
+    velen_interiors.fill({renodx::utils::float16::Encode(20.f/128.f),renodx::utils::float16::Encode(100.f/128.f)});
+    a.context->UpdateSubresource(interior_texture.Get(),0,nullptr,velen_interiors.data(),8*4,0);
+    assert(SUCCEEDED(a.device->CreateShaderResourceView(interior_texture.Get(),nullptr,&a.interiors)));
+    auto velen_interior=a.Run();size_t empty_segments=0;
+    for(size_t z=1;z<=size_t(a.p.grid[2]);++z) {
+      const double begin=double(a.p.options[1])*std::pow(double(a.f[42][2])/a.p.options[1],double(z-1)/a.p.grid[2]);
+      const double end=double(a.p.options[1])*std::pow(double(a.f[42][2])/a.p.options[1],double(z)/a.p.grid[2]);
+      if(begin>=20 && end<=100) {
+        ++empty_segments;
+        for(int c=0;c<4;++c)assert(velen_interior[z*stride+velen_center+c]==velen_interior[(z-1)*stride+velen_center+c]);
+      }
+    }
+    assert(empty_segments>2);a.interiors.Reset();a.l[34][2]=0;
+  }
+  std::cout<<"PASS both captured weather opacity exponents/distance fades, all integration boundaries, radiance consistency and exact vacuum\n";
   a.f=saved_frame;a.p.options[0]=0;
+  a.p.medium={1,0,0,.5f};
   // Exercise actual quality allocations and up/down resize, reading only the
   // last center cell so Ultra does not allocate a second full CPU/GPU volume.
   for(float quality:{1.f,4.f,2.f,3.f,1.f}) {

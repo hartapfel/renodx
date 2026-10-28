@@ -718,3 +718,35 @@ recapture later UI, and restores alpha on the next frame. The presenter
 `--toggle` run removes/restores UIAlpha for 30 frames per mode and checks
 actual generation plus conditional UI recomposition. Hardware passed
 60/90 displayed frames for 30 alpha-less frames at 2x/3x, respectively.
+
+
+Velen weather opacity: volumetrics.cpp checks captured exponent 0.50754434 and
+7.15734 m start / 0.005299725 per-metre fade at every integration boundary,
+with an independent homogeneous optical-depth integral. Radiance, monotone
+opacity, sun/shadow consistency, exact vacuum and empty interior segments are
+checked on WARP and hardware alongside the existing Toussaint cases.
+
+fog_composite.cpp supports an additional --weather mode. Provide a capture
+directory with cb3.bin, cb12.bin, cb13.bin and original native-fog.cso. White
+fog source on black background isolates the original DXBC's opacity while
+retaining the captured camera/weather. The real production volume and opaque
+composite must agree within 0.025 over 8-1000 m, allowing the native 16-step
+opacity product versus analytic Beer-Lambert integration and volume filtering.
+The captured Velen and identity-exponent cases pass on WARP/NVIDIA with max
+error below 0.0114; the prior integration fails (max 0.2484).
+
+Build with /Ibuild/thewitcher3classic.include after regenerating the Release
+shader embeds; link d3dcompiler.lib d3d11.lib dxgi.lib user32.lib. Run the
+executable with CAPTURE_DIR --weather, then CAPTURE_DIR --weather --hardware.
+Without --weather the existing native fallback, AO, forward and particle
+regressions still run. Captures and standalone build scripts are scratch data,
+not shipped binaries. In-game fog appearance remains a separate acceptance.
+
+
+The second live weather capture (exponent 1.20301342, 1 m start, fade slope
+0.015136439/m) is included in the same analytic volume test. Original DXBC
+replay also passes for that captured camera/profile and identity exponent:
+max under 0.0158, mean under 0.0025. Prior integration fails with max 0.0811.
+This specifically tests the opposite regression: too much fog when exponent
+exceeds one, versus too little in the first Velen capture below one. It
+compares opacity, not complete authored color or additional sun scattering.

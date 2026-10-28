@@ -14,6 +14,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include "../volumetrics/pipeline.hpp"
 using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 fs::path root;
@@ -113,6 +114,57 @@ int main(int argc, char** argv) {
     texture(0,W,H,depth);texture(1,W,H,scene);texture(2,W,H,mask);
     const auto original=Read(root/"native-fog.cso");
     const auto code=Compiled("0xC8C78997.ps_5_0.hlsl");
+    if(std::find(argv+2,argv+argc,std::string("--weather"))!=argv+argc) {
+      // Recover authored fog opacity directly from the original game's DXBC:
+      // black background + white fog source makes its output equal opacity.
+      // Keep captured camera/weather, isolate AO and authored color overrides.
+      for(UINT index:{39u,40u,41u,188u,190u})
+        for(int c=0;c<3;++c)frame[index*4+c]=1.f;
+      frame[188*4+3]=frame[190*4+3]=1.f;
+      controls[4]=1.f;
+      buffer(3,controls);
+      std::fill(scene.begin(),scene.end(),0.f);texture(1,W,H,scene);
+      buffer(13,Constants("cb13.bin"));
+      ComPtr<ID3D11Buffer> lighting;ctx->PSGetConstantBuffers(13,1,&lighting);
+      ComPtr<ID3D11DeviceContext1> context;Check(ctx.As(&context));
+      const float shadow_depth=1.f;
+      const std::array<D3D11_SUBRESOURCE_DATA,4> shadow_data{{{&shadow_depth,4,0},{&shadow_depth,4,0},{&shadow_depth,4,0},{&shadow_depth,4,0}}};
+      const D3D11_TEXTURE2D_DESC shadow_desc{1,1,1,4,DXGI_FORMAT_R32_FLOAT,{1,0},D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE};
+      ComPtr<ID3D11Texture2D> shadow;ComPtr<ID3D11ShaderResourceView> shadow_view;
+      Check(dev->CreateTexture2D(&shadow_desc,shadow_data.data(),&shadow));
+      Check(dev->CreateShaderResourceView(shadow.Get(),nullptr,&shadow_view));
+      witcher3classic::volumetrics::Pipeline pipeline;
+      const witcher3classic::volumetrics::Parameters parameters{
+          {64,64,256,1000},{1,0,0,.5f},{1,.1f,0,0},{1.f/W,1.f/H,1,0}};
+      uint64_t frame_id=0;
+      for(float exponent:{frame[42*4+3],1.f}) {
+        frame[42*4+3]=exponent;buffer(12,frame);
+        ComPtr<ID3D11Buffer> constants;ctx->PSGetConstantBuffers(12,1,&constants);
+        auto native=render(original.data(),original.size());
+        if(!pipeline.Generate(context.Get(),constants.Get(),lighting.Get(),shadow_view.Get(),nullptr,nullptr,parameters,++frame_id)
+            ||!pipeline.Bind(context.Get(),false,frame_id))throw std::runtime_error("Weather volume generation failed");
+        auto custom=render(code->GetBufferPointer(),code->GetBufferSize());
+        pipeline.Restore(context.Get());
+        double error=0,mean=0;size_t count=0;
+        for(UINT y=0;y<H;++y)for(UINT x=0;x<W;++x) {
+          const size_t i=(y*W+x)*4;
+          double h[4];for(int c=0;c<4;++c)h[c]=double(x)*frame[210*4+c]+double(y)*frame[211*4+c]+depth[i]*frame[212*4+c]+frame[213*4+c];
+          double distance=0;for(int c=0;c<3;++c)distance+=std::pow(h[c]/h[3]-frame[c],2);distance=std::sqrt(distance);
+          if(distance<8 ||distance>1000 ||depth[i]*frame[22*4]+frame[22*4+1]>=1.f)continue;
+          // The native shader uses 16 end-point opacity products; production
+          // uses analytic Beer-Lambert segments. Compare their scene-range
+          // coverage, allowing this integration difference and 3D filtering.
+          for(int c=0;c<3;++c) {
+            if(!std::isfinite(native[i+c])||!std::isfinite(custom[i+c]))throw std::runtime_error("Nonfinite weather opacity");
+            double delta=std::abs(double(custom[i+c])-native[i+c]);error=std::max(error,delta);mean+=delta;++count;
+          }
+        }
+        std::cout<<"Original DXBC weather coverage: exponent="<<exponent<<", samples="<<count<<", max="<<error<<", mean="<<mean/std::max(size_t(1),count)<<'\n';
+        if(count<100 ||error>.025)throw std::runtime_error("Weather opacity differs from original DXBC");
+      }
+      std::cout<<"PASS captured weather opacity/fade against original game bytecode through the production fog volume\n";
+      return 0;
+    }
     auto expected=render(original.data(),original.size());
     auto actual=render(code->GetBufferPointer(),code->GetBufferSize());
     float difference=Difference(expected,actual);

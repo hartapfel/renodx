@@ -1541,3 +1541,73 @@ Release embeds/object and WARP/NVIDIA regression tests pass. The Release DLL was
 appearance on 2026-10-28. Broader animation/performance validation remains open.
 Large shadow size alone is not evidence of an error. See [LIGHTING.md](LIGHTING.md)
 for the algorithm, rejected scene experiments, validation and remaining limits.
+
+
+### Velen weather opacity preservation (2026-10-28)
+
+Live Velen capture showed the custom volume discarded native C8C78997's
+weather opacity exponent frame[42].w and distance fade frame[48].yz. The
+captured exponent is 0.50754434, start 7.15734 m and fade slope 0.005299725/m.
+The native shader applies these to 1-T, not to density. At one captured
+368 m terrain point, native opacity is about 0.365 versus 0.136 from the
+unshaped custom integral. The t24 outdoor entry/exit values are equal, so
+interior exclusion is not responsible for that loss.
+
+The integration shader now accumulates weather-density optical depth tau and
+evaluates authored opacity A=(1-exp(-tau))^exponent * distance_fade at each
+radial boundary. It integrates source radiance using the increase in A and
+stores T=1-A. This preserves L/T consistency and the existing additive,
+shadowed sun/moon lighting. It does not restore the rejected shadow-budget
+experiment. Empty interior segments keep their previous L/T; advancing the
+distance fade alone cannot create medium there. Zero density is exact vacuum.
+The near-distance/user start is subtracted before the authored fade, matching
+native weather distance when the user start is zero. Native color overrides,
+desaturation and the small directional difference in height falloff remain
+outside this change; it does not claim complete native-fog image equivalence.
+
+The standard transport framework remains the existing Beer-Lambert density
+integral and shadowed source injection. The nonlinear opacity/fade is an
+authored Classic control, proven by original shader bytecode, rather than a
+claim of physically measured atmospheric coefficients. The effective segment
+opacity gain weights local scattering, so no final-screen color adjustment or
+inverse tonemap is involved. There are no new passes, textures, allocations,
+shadow taps, CPU readbacks or settings. Integration adds a per-boundary power.
+
+Validation: Release shaders compile. WARP/NVIDIA volume fixtures pass captured
+Velen opacity/fade at every radial boundary, analytic radiance consistency,
+lit/shadowed sources with identical extinction, exact vacuum, interior gaps,
+existing Toussaint distance/height cases and all quality levels. The original
+DXBC replay on the captured Velen camera/weather uses white fog on black to
+isolate opacity and compares 6,366 channel values over 8-1000 m. Corrected max
+error is about 0.0114, mean about 0.0015; the previous integration fails with
+max 0.2484 and mean 0.0943. Differences include native 16-step end-point opacity
+products versus analytic Beer-Lambert segments and volume filtering. Native
+fallback, AO composite, transparent radial lookup and additive particles pass.
+The optional D3D debug layer was unavailable. These tests do not establish
+complete in-game appearance or total GPU cost.
+
+Evidence stays under tmp/witcher3classic-investigation/velen-fog-20261028:
+captured b3/b12/b13, preserved depth/interior inputs, original native-fog.cso,
+inspect.py, test-weather.cmd and negative-control.py. Build thewitcher3classic
+with clang-x64-release; inspect embed/0xF3C30002.h. After relaunch, compare
+Native/Custom fog in this Velen view with Fog Density/Height Falloff both 1,
+then check nearby terrain, distant hills, interiors and sun/cloud shafts.
+Live visual acceptance remains pending.
+
+
+Second scene: a later live capture has exponent 1.20301342, start 1 m and
+fade slope 0.015136439/m. Ignoring these reduces fog in the first capture but
+increases it in this one. At a 156 m point, native opacity is about 0.097 versus
+0.144 unshaped; at roughly 9-11 m, the missing fade makes the difference much
+larger. Original-DXBC replay passes on WARP/NVIDIA: max error under 0.0158 and
+mean under 0.0025 across 6,366 channel values, including an identity-exponent
+control. The previous integration fails with max 0.0811 and mean 0.0369.
+The analytic volume fixture includes both weather captures and exact interior
+vacuum checks. Evidence: tmp/witcher3classic-investigation/fog-scene2-20261028.
+These comparisons isolate fog opacity. Custom sunlight scattering remains
+additive and can still make fog brighter than native when facing the light;
+this patch does not claim matching native in-scattered color or sun glare.
+
+Deployment: corrected Release addon linked after shutdown; installed symlink
+hash verified. The 2026.10.28 package was rebuilt and its addon bytes checked.
+Both captured scenes still need visual acceptance after restarting.

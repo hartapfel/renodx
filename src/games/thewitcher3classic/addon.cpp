@@ -542,7 +542,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "GfxFogDensity",
         .binding = &witcher3classic::volumetrics::density,
-        .default_value = 0.4f,
+        .default_value = 1.0f,
         .label = "Fog Density",
         .section = "Volumetric Sunlight and Fog",
         .tooltip = "Scales the amount of fog supplied by the current weather. 0 removes the custom fog; 1 uses the weather density. Increasing density both obscures the background and scatters more light.",
@@ -578,7 +578,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "GfxFogAnisotropy",
         .binding = &witcher3classic::volumetrics::anisotropy,
-        .default_value = 0.6f,
+        .default_value = 0.5f,
         .label = "Scattering Directionality",
         .section = "Volumetric Sunlight and Fog",
         .tooltip = "0 scatters light equally in all directions. Higher values concentrate it toward the light, making shafts brightest when looking toward the sun or moon.",
@@ -590,7 +590,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "GfxFogHeight",
         .binding = &witcher3classic::volumetrics::height_falloff,
-        .default_value = 2.0f,
+        .default_value = 1.0f,
         .label = "Height Falloff",
         .section = "Volumetric Sunlight and Fog",
         .tooltip = "Controls how quickly fog thins above the weather-defined ground layer. 1 follows the weather gradient; 0 keeps density uniform with height. Higher values concentrate fog closer to the ground.",
