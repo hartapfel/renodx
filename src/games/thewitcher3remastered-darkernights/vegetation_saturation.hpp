@@ -6,6 +6,8 @@
 #include <atomic>
 #include <bit>
 #include <cstring>
+#include <cstdio>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <span>
@@ -14,11 +16,15 @@
 #include <utility>
 #include <vector>
 #include "../../utils/data.hpp"
+#include "../../utils/d3d12_resource_pool.hpp"
 #include "../../utils/hash.hpp"
 #include "../../utils/swapchain.hpp"
 
 namespace witcher::night::vegetation {
 using namespace reshade::api;
+using renodx::utils::d3d12_resource_pool::Allocation;
+using renodx::utils::d3d12_resource_pool::Queue;
+using ResourcePool = renodx::utils::d3d12_resource_pool::ResourcePool<384ull << 20>;
 // Publish saturation delta and tint amount together, already night-faded.
 inline std::atomic<uint64_t> adjustments = 0;
 static_assert(std::atomic<uint64_t>::is_always_lock_free);
@@ -116,6 +122,9 @@ struct __declspec(uuid("de38e5a3-7d83-4d7f-ae39-5db33a287076")) DeviceData {
   bool attempted = false;
   std::shared_mutex grading_mutex;
   std::unordered_map<uint64_t, bool> grading_pipelines;
+  ResourcePool pool;
+  std::unordered_map<command_queue*, std::shared_ptr<Queue>> queues;
+  uint64_t processed = 0, skipped = 0;
 };
 struct RootBinding {
   descriptor_table table = {};
@@ -129,7 +138,9 @@ struct __declspec(uuid("1ae8a882-2869-4b54-8154-86ddfe49c32d")) CommandData {
   resource pending = {};
   resource scratch = {};
   uint64_t scratch_size = 0;
-  std::vector<resource> buffers;
+  std::vector<std::shared_ptr<Allocation>> recording;
+  std::vector<std::shared_ptr<Queue>> queues;
+  bool untracked_queue = false;
   pipeline current_pipeline = {};
   bool grading_pipeline = false;
   bool current_signed_transport = false, pending_signed_transport = false;
@@ -147,7 +158,9 @@ struct __declspec(uuid("1ae8a882-2869-4b54-8154-86ddfe49c32d")) CommandData {
   }
 };
 
-inline void OnInitDevice(device* d) { renodx::utils::data::Create<DeviceData>(d); }
+inline void OnInitDevice(device* d) {
+  if (d->get_api() == device_api::d3d12) renodx::utils::data::Create<DeviceData>(d);
+}
 inline void OnDestroyDevice(device* d) {
   auto* state = renodx::utils::data::Get<DeviceData>(d);
   if (!state) return;
@@ -155,20 +168,65 @@ inline void OnDestroyDevice(device* d) {
   if (state->layout.handle) d->destroy_pipeline_layout(state->layout);
   renodx::utils::data::Delete<DeviceData>(d);
 }
-inline void OnInitCommand(command_list* c) { renodx::utils::data::Create<CommandData>(c); }
-inline void OnDestroyCommand(command_list* c) {
-  auto* state = renodx::utils::data::Get<CommandData>(c);
-  if (!state) return;
-  for (auto buffer : state->buffers) c->get_device()->destroy_resource(buffer);
-  renodx::utils::data::Delete<CommandData>(c);
+inline void OnInitCommand(command_list* c) {
+  if (c->get_device()->get_api() == device_api::d3d12) renodx::utils::data::Create<CommandData>(c);
 }
 inline void OnResetCommand(command_list* c) {
   auto* state = renodx::utils::data::Get<CommandData>(c);
   if (!state) return;
-  state->pending = {};
-  state->current_pipeline = {};
-  state->grading_pipeline = false;
-  state->ClearComputeRoots();
+  if (auto* data = renodx::utils::data::Get<DeviceData>(c->get_device())) {
+    std::lock_guard lock(data->mutex);
+    data->pool.Retire(&state->recording, &state->queues, state->untracked_queue);
+  }
+  *state = CommandData{};
+}
+inline void OnDestroyCommand(command_list* c) {
+  OnResetCommand(c);
+  renodx::utils::data::Delete<CommandData>(c);
+}
+inline void OnInitQueue(command_queue* queue) {
+  auto* data = renodx::utils::data::Get<DeviceData>(queue->get_device());
+  if (!data) return;
+  auto q = std::make_shared<Queue>();
+  q->native = reinterpret_cast<ID3D12CommandQueue*>(queue->get_native());
+  if (FAILED(reinterpret_cast<ID3D12Device*>(queue->get_device()->get_native())->CreateFence(
+          0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&q->fence)))) return;
+  std::lock_guard lock(data->mutex);
+  data->queues[queue] = std::move(q);
+}
+inline void OnExecute(command_queue* queue, command_list* c) {
+  auto* state = renodx::utils::data::Get<CommandData>(c);
+  auto* data = renodx::utils::data::Get<DeviceData>(c->get_device());
+  if (!state || !data || state->recording.empty()) return;
+  std::lock_guard lock(data->mutex);
+  if (auto it = data->queues.find(queue); it != data->queues.end()) {
+    if (std::find(state->queues.begin(), state->queues.end(), it->second) == state->queues.end()) state->queues.push_back(it->second);
+  } else state->untracked_queue = true;
+}
+inline void OnDestroyQueue(command_queue* queue) {
+  auto* data = renodx::utils::data::Get<DeviceData>(queue->get_device());
+  if (!data) return;
+  std::lock_guard lock(data->mutex);
+  if (auto it = data->queues.find(queue); it != data->queues.end()) {
+    auto& q = *it->second;
+    if (FAILED(q.native->Signal(q.fence.Get(), ++q.serial))) q.serial = UINT64_MAX;
+    q.native = nullptr;
+    data->queues.erase(it);
+  }
+}
+inline void OnPresent(command_queue* queue, swapchain*, const rect*, const rect*, uint32_t, const rect*) {
+  auto* data = renodx::utils::data::Get<DeviceData>(queue->get_device());
+  if (!data) return;
+  std::lock_guard lock(data->mutex);
+  ++data->pool.frame;
+  data->pool.Collect();
+  if (data->pool.frame % 300 == 0) {
+    char message[224];
+    std::snprintf(message, sizeof(message), "Darker Nights: scratch %.2f MiB, peak %.2f MiB, %zu allocations, %llu colour passes, %llu skipped.",
+        data->pool.bytes / 1048576., data->pool.peak_bytes / 1048576., data->pool.allocations.size(),
+        static_cast<unsigned long long>(data->processed), static_cast<unsigned long long>(data->skipped));
+    reshade::log::message(reshade::log::level::info, message);
+  }
 }
 inline void OnBindPipeline(command_list* c, pipeline_stage stages, pipeline p) {
   if (auto* state = renodx::utils::data::Get<CommandData>(c)) {
@@ -307,13 +365,19 @@ inline void OnBarrier(command_list* c, uint32_t count, const resource* resources
     const uint32_t pitch = (desc.texture.width * 8u + 255u) & ~255u;
     const uint64_t bytes = uint64_t(pitch) * desc.texture.height;
     if (state->scratch_size < bytes) {
-      resource buffer = {};
-      if (!d->create_resource(resource_desc(bytes, memory_heap::gpu_only,
-          resource_usage::unordered_access | resource_usage::copy_source | resource_usage::copy_dest),
-          nullptr, resource_usage::unordered_access, &buffer)) return;
-      state->scratch = buffer;
-      state->scratch_size = bytes;
-      state->buffers.push_back(buffer);
+      std::lock_guard lock(device_state->mutex);
+      auto allocation = device_state->pool.Acquire(reinterpret_cast<ID3D12Device*>(d->get_native()), bytes);
+      if (!allocation) { ++device_state->skipped; return; }
+      // Keep native PSO/root references alive until the recording's fences finish.
+      allocation->objects.emplace_back(reinterpret_cast<ID3D12PipelineState*>(device_state->shader.handle));
+      allocation->objects.emplace_back(reinterpret_cast<ID3D12RootSignature*>(device_state->layout.handle));
+      state->scratch = {reinterpret_cast<uint64_t>(allocation->scratch.Get())};
+      state->scratch_size = allocation->bytes;
+      state->recording.push_back(std::move(allocation));
+    }
+    {
+      std::lock_guard lock(device_state->mutex);
+      ++device_state->processed;
     }
     const resource objects[] = {target, state->scratch};
     const resource_usage original[] = {new_states[final_transition], resource_usage::unordered_access};
@@ -363,6 +427,10 @@ inline void Use(DWORD reason) {
   WITCHER_VEGETATION_EVENT(init_command_list, OnInitCommand);
   WITCHER_VEGETATION_EVENT(destroy_command_list, OnDestroyCommand);
   WITCHER_VEGETATION_EVENT(reset_command_list, OnResetCommand);
+  WITCHER_VEGETATION_EVENT(init_command_queue, OnInitQueue);
+  WITCHER_VEGETATION_EVENT(destroy_command_queue, OnDestroyQueue);
+  WITCHER_VEGETATION_EVENT(execute_command_list, OnExecute);
+  WITCHER_VEGETATION_EVENT(present, OnPresent);
   WITCHER_VEGETATION_EVENT(init_pipeline, OnInitPipeline);
   WITCHER_VEGETATION_EVENT(destroy_pipeline, OnDestroyPipeline);
   WITCHER_VEGETATION_EVENT(bind_pipeline, OnBindPipeline);

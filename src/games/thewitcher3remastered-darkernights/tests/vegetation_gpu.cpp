@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "../../../utils/d3d12_resource_pool.hpp"
 using Microsoft::WRL::ComPtr;
 using namespace DirectX::PackedVector;
 void Check(HRESULT h) { if (FAILED(h)) throw std::runtime_error("D3D12 failure " + std::to_string(h)); }
@@ -39,6 +40,10 @@ int main(int argc, char** argv) { try {
   ComPtr<IDXGIAdapter> adapter; Check(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)));
   ComPtr<ID3D12Device> d; Check(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d)));
   ComPtr<ID3D12CommandQueue> queue; D3D12_COMMAND_QUEUE_DESC qd = {}; Check(d->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue)));
+  renodx::utils::d3d12_resource_pool::ResourcePool<384ull << 20> pool;
+  auto retirement_queue = std::make_shared<renodx::utils::d3d12_resource_pool::Queue>();
+  retirement_queue->native = queue.Get();
+  Check(d->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&retirement_queue->fence)));
   ComPtr<ID3D12CommandAllocator> allocator; Check(d->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)));
   ComPtr<ID3D12GraphicsCommandList> cmd; Check(d->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&cmd))); Check(cmd->Close());
   ComPtr<ID3D12Fence> fence; Check(d->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)));
@@ -75,12 +80,13 @@ int main(int argc, char** argv) { try {
     D3D12_HEAP_PROPERTIES gpu = {}; gpu.Type = D3D12_HEAP_TYPE_DEFAULT;
     D3D12_HEAP_PROPERTIES cpu = {}; cpu.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_HEAP_PROPERTIES read = {}; read.Type = D3D12_HEAP_TYPE_READBACK;
-    ComPtr<ID3D12Resource> texture, scratch, upload, readback;
+    ComPtr<ID3D12Resource> texture, upload, readback;
     Check(d->CreateCommittedResource(&gpu, D3D12_HEAP_FLAG_NONE, &texture_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&texture)));
     Check(d->CreateCommittedResource(&cpu, D3D12_HEAP_FLAG_NONE, &buffer_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload)));
     Check(d->CreateCommittedResource(&read, D3D12_HEAP_FLAG_NONE, &buffer_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback)));
-    buffer_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-    Check(d->CreateCommittedResource(&gpu, D3D12_HEAP_FLAG_NONE, &buffer_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&scratch)));
+    auto allocation = pool.Acquire(d.Get(), bytes);
+    Require(allocation != nullptr, "Scratch acquisition failed");
+    const auto& scratch = allocation->scratch;
     std::vector<uint16_t> data(bytes / 2, 0xCDCD);
     const std::array<std::array<float, 3>, 8> chips = {{{.5f,0,0},{.5f,.15f,0},{.5f,0,.25f},{.5f,.5f,.5f},{0,.5f,0},{0,.5f,.5f},{.5f,.5f,0},{0,0,.5f}}};
     for (unsigned y = 0; y < height; ++y) for (unsigned x = 0; x < width; ++x) {
@@ -100,6 +106,7 @@ int main(int argc, char** argv) { try {
     }
     void* memory; Check(upload->Map(0, nullptr, &memory)); std::memcpy(memory, data.data(), bytes); upload->Unmap(0, nullptr);
     Check(allocator->Reset()); Check(cmd->Reset(allocator.Get(), nullptr));
+    Barrier(cmd.Get(), scratch.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
     D3D12_TEXTURE_COPY_LOCATION t = {}; t.pResource = texture.Get(); t.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     D3D12_TEXTURE_COPY_LOCATION u = {}; u.pResource = upload.Get(); u.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
     u.PlacedFootprint.Footprint = {DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1, pitch};
@@ -114,9 +121,13 @@ int main(int argc, char** argv) { try {
     Barrier(cmd.Get(), scratch.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
     Barrier(cmd.Get(), texture.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     cmd->CopyTextureRegion(&t, 0, 0, 0, &s, nullptr);
+    Barrier(cmd.Get(), scratch.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Barrier(cmd.Get(), texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
     D3D12_TEXTURE_COPY_LOCATION r = u; r.pResource = readback.Get(); cmd->CopyTextureRegion(&r, 0, 0, 0, &t, nullptr);
     Check(cmd->Close()); ID3D12CommandList* lists[] = {cmd.Get()}; queue->ExecuteCommandLists(1, lists);
+    std::vector recording{allocation};
+    std::vector queues{retirement_queue};
+    pool.Retire(&recording, &queues);
     Check(queue->Signal(fence.Get(), ++cases)); Check(fence->SetEventOnCompletion(cases, event));
     Require(WaitForSingleObject(event, 10000) == WAIT_OBJECT_0, "GPU fence timed out");
     Check(readback->Map(0, nullptr, &memory)); const auto* result = static_cast<const uint16_t*>(memory);
@@ -158,6 +169,9 @@ int main(int argc, char** argv) { try {
     readback->Unmap(0, nullptr);
     }
   }
+  pool.frame += 120;
+  pool.Collect();
+  Require(pool.bytes == 0, "Idle scratch survived cleanup");
   CloseHandle(event);
   std::cout << "PASS " << cases << " D3D12 texture-copy/compute cases; row padding, alpha bits, neutral/warm/pink isolation, signed HDR, luminance, tint hue/relative chroma, and optional preceding-CSO parity; worst Y error=" << worst_y << '\n';
 } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; } }

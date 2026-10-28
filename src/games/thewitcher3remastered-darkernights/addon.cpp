@@ -61,9 +61,20 @@ renodx::utils::settings::Settings settings = {
         .key = "FogAmount",
         .binding = &witcher::night::fog_amount,
         .default_value = 100.f,
-        .label = "Global Fog Intensity",
+        .label = "Daytime Fog Intensity",
         .section = "Fog",
-        .tooltip = "Atmospheric fog everywhere, at all hours. 0% = off, 100% = native. Cloud and smoke effects stay separate.",
+        .tooltip = "Daytime atmospheric fog density. 0% = off, 100% = native. Blends into nighttime intensity using Night Schedule.",
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return witcher::night::Supported() && witcher::night::fog_density_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "FogAmountNight",
+        .binding = &witcher::night::night_fog_amount,
+        .default_value = 100.f,
+        .label = "Nighttime Fog Intensity",
+        .section = "Fog",
+        .tooltip = "Atmospheric fog density during Night Schedule's full-darkness hours. 0% = off, 100% = native. Independent of Enable Night Lighting.",
         .max = 200.f,
         .format = "%.0f%%",
         .is_enabled = []() { return witcher::night::Supported() && witcher::night::fog_density_supported; },
@@ -71,7 +82,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "FogStartDistance",
         .binding = &witcher::night::fog_start_distance,
-        .default_value = 10.f,
+        .default_value = 7.f,
         .label = "Outdoor Fog Start Distance",
         .section = "Fog",
         .tooltip = "Fog fade-in distance outdoors and in caves, at all hours. 0 m = native.",
@@ -146,7 +157,7 @@ renodx::utils::settings::Settings settings = {
               {"NightDarkeningEnd", 6.f},
               {"NightSkyStrength", 15.f},
               {"NightDirectStrength", 15.f},
-              {"NightFogStrength", 15.f},
+              {"NightFogStrength", 5.f},
               {"NightHazeStrength", 15.f},
               {"NightVisibleSkyStrength", 15.f},
               {"NightMoonStrength", 35.f},
@@ -307,7 +318,7 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "NightFogStrength",
         .binding = &witcher::night::fog_strength,
-        .default_value = 15.f,
+        .default_value = 5.f,
         .label = "Directional Fog",
         .section = "Night Atmosphere",
         .tooltip = "Brightness of directional and custom fog colors. Preserves fog density.",
@@ -608,6 +619,7 @@ void OnPresetOff() {
       {"MoonSize", 100.f},
       {"SunSize", 100.f},
       {"FogAmount", 100.f},
+      {"FogAmountNight", 100.f},
       {"FogStartDistance", 0.f},
       {"IndoorFogStartDistance", 0.f},
       {"NightSaturation", 100.f},
@@ -647,7 +659,7 @@ void OnPresent(reshade::api::command_queue*, reshade::api::swapchain*, const res
                            witcher::night::fog_distance_supported ? "[RenoDX Witcher Lighting] Native fog distance control available."
                                                                   : "[RenoDX Witcher Lighting] Fog distance control unavailable; native fade preserved.");
       reshade::log::message(witcher::night::fog_density_supported ? reshade::log::level::info : reshade::log::level::warning,
-                           witcher::night::fog_density_supported ? "[RenoDX Witcher Lighting] All-day outdoor fog density control available."
+                           witcher::night::fog_density_supported ? "[RenoDX Witcher Lighting] Day/night atmospheric fog density controls available."
                                                                 : "[RenoDX Witcher Lighting] Fog density control unavailable; native fog preserved.");
       reshade::log::message(witcher::night::normalization::supported ? reshade::log::level::info : reshade::log::level::warning,
                            witcher::night::normalization::supported ? "[RenoDX Witcher Lighting] Regional night normalization available."
@@ -686,6 +698,17 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID) {
     case DLL_PROCESS_ATTACH:
       if (!reshade::register_addon(h_module)) return FALSE;
       renodx::utils::settings::global_name = "renodx-darkernights-remastered";
+      // Keep the old global amount as daytime and seed the new night endpoint
+      // only for profiles that have not saved a separate nighttime value yet.
+      for (unsigned preset = 1; preset <= 3; ++preset) {
+        const auto section = renodx::utils::settings::global_name + "-preset" + std::to_string(preset);
+        float daytime, nighttime;
+        if (!reshade::get_config_value(nullptr, section.c_str(), "FogAmountNight", nighttime)
+            && reshade::get_config_value(nullptr, section.c_str(), "FogAmount", daytime)
+            && std::isfinite(daytime)) {
+          reshade::set_config_value(nullptr, section.c_str(), "FogAmountNight", daytime);
+        }
+      }
       // Helper compute code is an independent pass, never a game replacement.
       custom_shaders.erase(0xF3B20000);
       renodx::mods::shader::force_pipeline_cloning = true;

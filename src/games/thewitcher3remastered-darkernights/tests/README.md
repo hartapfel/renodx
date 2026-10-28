@@ -1,9 +1,10 @@
 # Native lighting validation
 
-## Global fog and state-dependent distance
+## Day/night fog and state-dependent distance
 
-Global Fog Intensity changes fresh geometry/sky density. Outdoor and Indoor Fog
-Start Distance default to 10/40 m, with caves following outdoors. Zero preserves
+Daytime and Nighttime Fog Intensity change fresh geometry/sky density, blended
+by the existing Night Schedule independently of the night master. Outdoor and Indoor Fog
+Start Distance default to 7/40 m, with caves following outdoors. Zero preserves
 the native fade for that state. `interior_fog.cpp` restores committed detector
 regressions (balcony, upstairs, quest rooms, weather, caves, profile priority,
 world changes), adds the regional swamp case, and checks smooth response,
@@ -15,15 +16,22 @@ the native cave flag, partial higher-priority cave/unknown atmosphere protection
 and an inactive fallback layer. The exposed Kaer Trolde balcony fixture retains
 its distinct Skellige weather profile and visibility-based guard.
 
-`night_lighting.cpp` checks default values, combined intensity/distance settings,
-invalid/support guards, all-day operation, repeated fresh uploads and whole-buffer
+`night_lighting.cpp` checks 4608 day/night endpoint/fade/master/support combinations,
+invalid schedules, combined intensity/distance settings,
+invalid-input guards, repeated fresh uploads and whole-buffer
 isolation. Native-zero endpoints are checked in both directions for continuity.
 `executable_detection.cpp` rejects altered native fade or detector instructions
 without disabling unrelated controls. Presets save both distances and restore
 native values with Off; old FogStartDistance values remain outdoor settings.
+The preset host checks old global amounts migrate to both day/night endpoints
+in all three slots, independently saved endpoints remain unchanged, missing
+values default to 100%, and both night buttons leave fog intensities alone.
 
 After rebuilding, cross a doorway both ways and reverse direction partway.
 Compare outdoor/indoor 10/40 m, 0/40 m and 40/0 m, then equal values and Off.
+Set daytime/nighttime intensity to 100/0 and advance through both schedule fades;
+then compare equal intensities and both at 0. Confirm master Off retains the
+fog controls and top-level Preset Off restores native density.
 Check the swamp building and a cave (outdoor setting), as well as HDR coexistence
 and raster/RT/PT. The native distance control was verified live at 20 m in the
 preceding build; the new state-dependent Release still needs a restarted live
@@ -254,7 +262,7 @@ clang-cl @testOptions src/games/thewitcher3remastered-darkernights/tests/vegetat
 ./tmp/vegetation-routing.exe --interfaces path/to/native-shader-corpus
 ./tmp/vegetation-routing.exe --interfaces path/to/extracted-hdr-fixtures
 clang-cl @testOptions src/games/thewitcher3remastered-darkernights/tests/preset_persistence.cpp /Fe:tmp/preset-persistence.exe /Fo:tmp/preset-persistence.obj /link external/Detours/lib.X64/detours.lib shell32.lib
-foreach ($selection in @('0', '1', '2', '3', 'missing', 'defaults', 'legacy', '-1', '4', 'invalid', '999999999999999999999999')) { ./tmp/preset-persistence.exe $selection; if ($LASTEXITCODE -ne 0) { throw "Failed selection: $selection" } }
+foreach ($selection in @('0', '1', '2', '3', 'missing', 'defaults', 'legacy', 'fog-defaults', '-1', '4', 'invalid', '999999999999999999999999')) { ./tmp/preset-persistence.exe $selection; if ($LASTEXITCODE -ne 0) { throw "Failed selection: $selection" } }
 ```
 
 Runtime: select Preset #2, change a slider, restart, and verify both the selected
@@ -362,3 +370,23 @@ Sun Size, Preset Off's native size and independence from the night buttons.
 The rebuilt Release addon passes both CPU coexistence load orders, and the user
 confirmed the disk and glow now scale correctly with HDR and Darker Nights
 loaded together at 1%.
+
+
+## Scratch retirement (2026-10-28)
+
+The vegetation pass shares `utils/d3d12_resource_pool.hpp` with Motion Blur,
+using a 384 MiB budget and no upload pages. Reset/destruction retires each
+recording after its submitted work; present collects completed idle buffers.
+
+The Motion Blur `tests/resource_lifetime.cpp` now exercises both configurations:
+3,000 lifecycles each, a blocked GPU fence, safe reuse after completion, allocation
+budget failure and zero idle bytes. `vegetation_gpu.cpp` uses this same pool for
+all 160 production-DXIL colour/copy cases, restores UAV state for reuse, and
+requires zero bytes after idle expiry. Both tests passed. Build commands remain
+above and in the Motion Blur test README.
+
+The rebuilt Release DLL also passed all seven native/official-HDR grading routes
+in both load orders. The complete DevKit/Darker Nights/Motion Blur/official HDR
+set passed two lifecycle/reload cycles under CDB's debug heap. The official HDR
+file was not replaced. Live menu memory/FPS confirmation is a separate check;
+look for the new `Darker Nights: scratch` lines in ReShade.log.

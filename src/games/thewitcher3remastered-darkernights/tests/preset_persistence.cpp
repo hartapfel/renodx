@@ -22,7 +22,10 @@ int main(int argc, char** argv) {
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightMoonStrength"}] = std::to_string(i * 15);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "MoonSize"}] = std::to_string(i * 30);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "SunSize"}] = std::to_string(i * 50);
-    configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "FogAmount"}] = std::to_string(i * 25);
+    if (std::strcmp(argv[1], "fog-defaults")) {
+      configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "FogAmount"}] = std::to_string(i * 25);
+      if (std::strcmp(argv[1], "legacy")) configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "FogAmountNight"}] = std::to_string(i * 40);
+    }
     if (std::strcmp(argv[1], "defaults")) configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "FogStartDistance"}] = std::to_string(i * 20);
     if (std::strcmp(argv[1], "defaults") && std::strcmp(argv[1], "legacy")) configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "IndoorFogStartDistance"}] = std::to_string(i * 30);
     configuration[{"renodx-darkernights-remastered-preset" + std::to_string(i), "NightAutoExposureEnabled"}] = i == 2 ? "0" : "1";
@@ -40,12 +43,17 @@ int main(int argc, char** argv) {
   else if (!std::strcmp(argv[1], "2")) expected = 2;
   else if (!std::strcmp(argv[1], "3")) expected = 3;
   if (renodx::utils::settings::preset_index != expected) return 3;
+  if (std::strcmp(argv[1], "fog-defaults")) for (unsigned i = 1; i <= 3; ++i) {
+    float saved_night;
+    if (!reshade::get_config_value(nullptr, ("renodx-darkernights-remastered-preset" + std::to_string(i)).c_str(), "FogAmountNight", saved_night)
+        || saved_night != i * (!std::strcmp(argv[1], "legacy") ? 25.f : 40.f)) return 28;
+  }
   if (expected == 0) {
     if (witcher::night::lighting_enabled != 0.f || witcher::night::camera_strength != 50.f
         || witcher::night::cutscene_strength != 50.f
         || witcher::night::moon_size != 100.f
         || witcher::night::sun_size != 100.f
-        || witcher::night::fog_amount != 100.f
+        || witcher::night::fog_amount != 100.f || witcher::night::night_fog_amount != 100.f
         || witcher::night::fog_start_distance != 0.f || witcher::night::indoor_fog_start_distance != 0.f
         || witcher::night::grading::saturation_strength != 100.f || witcher::night::grading::vegetation_tint != 0.f) return 4;
   } else if (witcher::night::grading::saturation_strength != expected * 25.f
@@ -55,8 +63,9 @@ int main(int argc, char** argv) {
              || witcher::night::cutscene_strength != expected * 20.f
              || witcher::night::moon_size != expected * 30.f
              || witcher::night::sun_size != expected * 50.f
-             || witcher::night::fog_amount != expected * 25.f
-             || witcher::night::fog_start_distance != (!std::strcmp(argv[1], "defaults") ? 10.f : expected * 20.f)
+             || witcher::night::fog_amount != (!std::strcmp(argv[1], "fog-defaults") ? 100.f : expected * 25.f)
+             || witcher::night::night_fog_amount != (!std::strcmp(argv[1], "fog-defaults") ? 100.f : expected * (!std::strcmp(argv[1], "legacy") ? 25.f : 40.f))
+             || witcher::night::fog_start_distance != (!std::strcmp(argv[1], "defaults") ? renodx::utils::settings::FindSetting("FogStartDistance")->default_value : expected * 20.f)
              || witcher::night::indoor_fog_start_distance != (!std::strcmp(argv[1], "defaults") || !std::strcmp(argv[1], "legacy") ? 40.f : expected * 30.f)) return 5;
   if (expected != 0 && (witcher::night::exposure::enabled != (expected == 2 ? 0.f : 1.f)
       || witcher::night::exposure::all_day != (expected == 2 ? 1.f : 0.f)
@@ -94,7 +103,7 @@ int main(int argc, char** argv) {
   }
   renodx::utils::settings::UpdateSettings({{"GameplayCameraLightStrength", 13.f},
                                         {"CutsceneCameraLightStrength", 23.f}, {"MoonSize", 250.f}, {"SunSize", 150.f},
-                                        {"FogAmount", 35.f}, {"FogStartDistance", 45.f}, {"IndoorFogStartDistance", 65.f}});
+                                        {"FogAmount", 35.f}, {"FogAmountNight", 65.f}, {"FogStartDistance", 45.f}, {"IndoorFogStartDistance", 65.f}});
   for (const std::string label : {"Dark Nights", "Soft Nights", "Dark Nights", "Soft Nights"}) {
     const auto& recipe = label == "Soft Nights" ? soft_expected : dark_expected;
     for (const auto* setting : settings) {
@@ -114,7 +123,7 @@ int main(int argc, char** argv) {
       }
     }
     if (witcher::night::camera_strength != 13.f || witcher::night::cutscene_strength != 23.f
-        || witcher::night::sun_size != 150.f || witcher::night::fog_amount != 35.f
+        || witcher::night::sun_size != 150.f || witcher::night::fog_amount != 35.f || witcher::night::night_fog_amount != 65.f
         || witcher::night::fog_start_distance != 45.f || witcher::night::indoor_fog_start_distance != 65.f) return 9;
     if (renodx::utils::settings::preset_index != 3) return 25;
     const auto before_save = configuration;
@@ -126,6 +135,7 @@ int main(int argc, char** argv) {
       if (recipe.contains(setting->key)) renodx::utils::settings::UpdateSetting(setting->key, setting->default_value);
     }
     renodx::utils::settings::LoadSettings(renodx::utils::settings::GetCurrentPresetName());
+    if (witcher::night::fog_amount != 35.f || witcher::night::night_fog_amount != 65.f) return 29;
     for (const auto* setting : settings) {
       if (recipe.contains(setting->key) && std::abs(setting->GetValue() - recipe.at(setting->key)) > 1e-6f) return 27;
     }
@@ -134,7 +144,7 @@ int main(int argc, char** argv) {
     if (soft_expected.contains(setting->key)) setting->default_value = soft_expected.at(setting->key);
   }
   OnPresetOff();
-  if (witcher::night::fog_amount != 100.f || witcher::night::fog_start_distance != 0.f || witcher::night::indoor_fog_start_distance != 0.f) return 16;
+  if (witcher::night::fog_amount != 100.f || witcher::night::night_fog_amount != 100.f || witcher::night::fog_start_distance != 0.f || witcher::night::indoor_fog_start_distance != 0.f) return 16;
   // Publish both colour controls coherently through the actual Present path.
   // Native builders are not executed in this host; supply their night weight.
   witcher::night::checked = witcher::night::supported = witcher::night::installed = true;

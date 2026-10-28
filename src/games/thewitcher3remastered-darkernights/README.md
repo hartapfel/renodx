@@ -161,8 +161,9 @@ moon controls use the ranges described below:
 | Cutscene Camera Light | Artificial scene and dialogue camera fill, independent of the night schedule. |
 | Moon Size | Visible moon diameter from 1% to 500%; 100% is native, 50% halves it. |
 | Sun Size | Visible sun diameter from 1% to 500%; 100% is native. Active at every hour. |
-| Global Fog Intensity | Atmospheric density everywhere, at every hour: 0% off, 100% native, 200% double. |
-| Outdoor Fog Start Distance | Fog fade-in distance outside buildings and in caves; default 10 m. |
+| Daytime Fog Intensity | Daytime atmospheric density everywhere: 0% off, 100% native, 200% double. |
+| Nighttime Fog Intensity | Atmospheric density during full-darkness hours; smoothly blends with daytime density using Night Schedule. |
+| Outdoor Fog Start Distance | Fog fade-in distance outside buildings and in caves; default 7 m. |
 | Indoor Fog Start Distance | Fog fade-in distance in buildings; default 40 m. |
 | Apply Exposure Overrides All Day | On (default) applies exposure settings at every hour. Off follows the night schedule. Requires Enable Night Lighting. |
 | Auto Exposure | Enabled uses adaptation; Off uses a fixed luminance reference during the selected exposure period. Enabled is the default. |
@@ -172,9 +173,14 @@ moon controls use the ranges described below:
 | Maximum Darkening | Custom only; 0-100% of native darkening beyond the 0.18 metering reference, default 100%. 0 prevents further darkening beyond that reference; 100 retains the native range. |
 | Fixed Luminance | Off only; 0.001-10, default 0.18. Lower values brighten the image; higher values darken it. |
 
-**Global Fog Intensity**, **Outdoor Fog Start Distance** and **Indoor Fog
-Start Distance** work at every hour independently of Enable Night Lighting.
-Intensity defaults to 100% native. The distance defaults are 10 m outdoors and
+**Daytime Fog Intensity**, **Nighttime Fog Intensity**, **Outdoor Fog Start Distance**
+and **Indoor Fog Start Distance** work independently of Enable Night Lighting.
+Both intensities default to 100% native and affect buildings, outdoors and caves.
+Night Schedule blends between the two intensities during its evening and morning
+fades; full-darkness hours use nighttime intensity, and other hours use daytime
+intensity. Invalid schedules use daytime intensity. Equal values retain the old
+global behavior; setting both to 0 disables native atmospheric fog at all hours.
+Clouds, smoke and particles remain separate. The distance defaults are 7 m outdoors and
 40 m inside buildings, each adjustable from 0 to 500 m. Caves, crypts and other
 recognized underground profiles use the outdoor distance. A distance of 0
 preserves the native fade for that state.
@@ -212,14 +218,17 @@ A nonzero distance is a minimum: later authored starts and wider native fades
 are preserved. The fade spans at least the selected distance (minimum 10 m).
 For example, 40 m normally fades in from 40 to 80 m. This controls fog for the
 whole camera view, including the view through windows, without a spatial cutout.
-Preset Off restores intensity to 100% and both distances to 0 m. Soft/Dark Nights
-leave these independent controls alone. Saved FogAmount and FogStartDistance
-values are retained (the latter now selects outdoors); the new indoor setting
-defaults to 40 m. Obsolete indoor/cave intensity values are ignored.
+Preset Off restores both intensities to 100% and both distances to 0 m. Soft/Dark Nights
+leave these independent controls alone. Saved FogAmount values remain daytime
+settings and seed FogAmountNight when it has no saved value, preserving each
+profile's previous global intensity. An existing nighttime value is retained.
+FogStartDistance remains outdoors; IndoorFogStartDistance defaults to 40 m.
+Obsolete indoor/cave intensity values are ignored.
 
 The existing common-constants hook modifies density (b12 c43.x/c44.x) and the
-native start/reciprocal width (c48.yz). Renderer workers read a single atomic
-publication; game/profile reads and transition updates stay on Present. The
+native start/reciprocal width (c48.yz). Renderer workers read coherent atomic
+endpoint pairs and blend intensity with each view's current game clock;
+game/profile reads and building-transition updates stay on Present. The
 native fog shader remains unchanged, with no added GPU pass, mask filtering,
 root binding, descriptor tracking or resource. Cloud, smoke, particles and other
 effects with their own fog logic remain separate.
@@ -381,7 +390,7 @@ black-boundary limit, leaving highlight mapping to the downstream tonemapper.
 The pass never replaces another addon's grading/output shader, changes its
 root signature or switches descriptor heaps. It captures compute root values
 for restoration, without descriptor heap update/copy tracking, GPU readbacks
-or CPU waits. Scratch buffers are reused per command list. This pass adds a
+or CPU waits. Scratch is recycled across completed command recordings (see GPU scratch lifetime). This pass adds a
 small GPU cost when active; live frame-time validation remains necessary.
 
 ## Build and verification
@@ -526,6 +535,22 @@ capture confirmed the RGBA16F scene output precedes separate UI composition;
 its shader retains gamma-2.2 BT.709 transport and source alpha. The actual
 foreign-DLL routing test reproduced the missed callback before the fix and
 passes all seven routes standalone-only and in both HDR load orders afterwards.
+
+## GPU scratch lifetime
+
+The vegetation-colour pass uses the same fence-retired allocator as Motion Blur.
+Each command recording owns its scratch buffers until reset/destruction, then
+retires them behind fences on every queue that submitted that recording. The
+pre-submission execute event only records queue identity. Completed buffers are
+reused; at most two remain cached and expire after 120 presents without reuse.
+Old resolution-sized buffers no longer accumulate until command-list destruction.
+
+The scratch budget is 384 MiB. If it is exhausted, the optional vegetation pass
+leaves the scene unchanged rather than allocating more or waiting for the GPU.
+Failed queue tracking/signalling retains affected buffers within that budget.
+Other lighting and grading controls are unaffected. ReShade logs current/peak
+scratch MiB, allocation count, processed passes and skipped passes every 300
+presents. No vegetation shader math or saved settings changed in this fix.
 
 ## Separation from the HDR addon
 

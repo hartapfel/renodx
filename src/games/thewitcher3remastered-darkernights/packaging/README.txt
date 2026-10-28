@@ -33,6 +33,9 @@ Night Schedule: select the fade-in, full darkness, fade-out and end times.
 Night Illumination: adjust skylight, direct light and water lighting.
 Night Atmosphere: adjust fog, haze, sky, clouds and rain brightness.
 Night Colour Grading: adjust brightness/contrast, tint/saturation and vegetation tones.
+Fog: set daytime/nighttime intensity and outdoor/indoor fog start distances.
+Fog intensity blends using Night Schedule, independently of Enable Night Lighting.
+Both intensities at 0 disable native atmospheric fog at all hours.
 Camera Lighting: control gameplay and cutscene camera fill independently.
 Sky Appearance: set Moon Size (1-500%; 100% is the original size).
 

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -34,8 +35,10 @@ inline std::atomic<uint64_t> night_schedule = uint64_t{1080} | (uint64_t{120} <<
 inline float sky_strength = 50.f;
 inline float direct_strength = 50.f;
 inline float fog_strength = 50.f;
-inline float fog_amount = 100.f;
-inline std::atomic<float> fog_density_multiplier = 1.f;
+inline float fog_amount = 100.f, night_fog_amount = 100.f;
+// Publish both endpoints together; each view blends using its own game clock.
+inline std::atomic<uint64_t> fog_density_multipliers = uint64_t(std::bit_cast<uint32_t>(1.f))
+    | (uint64_t(std::bit_cast<uint32_t>(1.f)) << 32);
 inline bool fog_density_supported = false;
 inline float fog_start_distance = 10.f;
 inline float indoor_fog_start_distance = 40.f;
@@ -223,7 +226,9 @@ inline void CommonConstantsHook(const void* context, void* output) {
   night_weight.store(weight, std::memory_order_relaxed);
   auto* constants = static_cast<unsigned char*>(output);
   // Native AllowFog still gates the fresh geometry/sky density.
-  const float fog_density = fog_density_multiplier.load(std::memory_order_relaxed);
+  const uint64_t fog_densities = fog_density_multipliers.load(std::memory_order_relaxed);
+  const float fog_density = std::lerp(std::bit_cast<float>(uint32_t(fog_densities)),
+                                    std::bit_cast<float>(uint32_t(fog_densities >> 32)), weight);
   if (fog_density_supported && fog_density != 1.f) {
     for (unsigned offset : {0x2b0u, 0x2c0u}) {
       float value;
@@ -740,6 +745,7 @@ inline void Update(bool enabled) {
       && (!enabled || moon_size == 100.f)
       && (!enabled || sun_size == 100.f)
       && (!enabled || !std::isfinite(fog_amount) || fog_amount == 100.f)
+      && (!enabled || !std::isfinite(night_fog_amount) || night_fog_amount == 100.f)
       && (!enabled || !std::isfinite(fog_start_distance) || fog_start_distance <= 0.f)
       && (!enabled || !std::isfinite(indoor_fog_start_distance) || indoor_fog_start_distance <= 0.f)
       && (exposure::fixed_reference.load(std::memory_order_relaxed) == 0.f
@@ -751,9 +757,13 @@ inline void Update(bool enabled) {
                             && grading::chroma.load(std::memory_order_relaxed) == 1.f
                             && grading::saturation_strength == 100.f && grading::vegetation_tint == 0.f))) return;
   if (!Install()) return;
-  fog_density_multiplier.store(enabled && fog_density_supported && std::isfinite(fog_amount)
-                                   ? std::clamp(fog_amount / 100.f, 0.f, 2.f) : 1.f,
-                               std::memory_order_relaxed);
+  fog_density_multipliers.store(uint64_t(std::bit_cast<uint32_t>(
+      enabled && fog_density_supported && std::isfinite(fog_amount)
+          ? std::clamp(fog_amount / 100.f, 0.f, 2.f) : 1.f))
+      | (uint64_t(std::bit_cast<uint32_t>(
+          enabled && fog_density_supported && std::isfinite(night_fog_amount)
+              ? std::clamp(night_fog_amount / 100.f, 0.f, 2.f) : 1.f)) << 32),
+      std::memory_order_relaxed);
   const float outdoor_distance = enabled && fog_distance_supported && std::isfinite(fog_start_distance)
                                      ? std::clamp(fog_start_distance, 0.f, 500.f) : 0.f;
   const float indoor_distance = enabled && fog_distance_supported && std::isfinite(indoor_fog_start_distance)

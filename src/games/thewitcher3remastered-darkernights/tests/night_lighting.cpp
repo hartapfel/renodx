@@ -854,6 +854,11 @@ int main() {
   assert(witcher::night::attempted && !witcher::night::installed);
   witcher::night::fog_amount = 100.f;
   witcher::night::attempted = false;
+  witcher::night::night_fog_amount = 0.f;
+  witcher::night::Update(true);
+  assert(witcher::night::attempted && !witcher::night::installed);
+  witcher::night::night_fog_amount = 100.f;
+  witcher::night::attempted = false;
   witcher::night::fog_start_distance = 20.f;
   witcher::night::Update(true);
   assert(witcher::night::attempted && !witcher::night::installed);
@@ -1006,42 +1011,78 @@ int main() {
     norm::area_name = nullptr;
     std::printf("Region/weather normalization: %u weather/fade/slider/PT-raster cases; native byte restoration, world transitions and aliases passed.\n", cases);
   }
-  // All-day fog changes density, not fog RGB or a screen-space brightness.
+  // Day/night fog changes density, not fog RGB or screen-space brightness.
   // Full-buffer comparisons also cover projection, local lights and padding.
   witcher::night::installed = witcher::night::attempted = true;
   witcher::night::lighting_enabled = 0.f;
   witcher::night::camera_strength = witcher::night::cutscene_strength = 50.f;
   witcher::night::moon_size = witcher::night::sun_size = 100.f;
+  witcher::night::sky_strength = witcher::night::direct_strength = witcher::night::fog_strength = 50.f;
+  witcher::night::haze_strength = witcher::night::visible_sky_strength = witcher::night::moon_strength = 50.f;
+  witcher::night::cloud_strength = witcher::night::rain_strength = witcher::night::water_strength = 50.f;
+  witcher::night::normalization::enabled = witcher::night::normalization::weather_enabled = 0.f;
   witcher::night::fog_density_supported = true;
-  for (float time : {0.f, 0.25f, 0.5f, 0.9f}) {
-    std::memcpy(environment.data() + 0xdc4, &time, sizeof(time));
-    for (float amount : {0.f, 25.f, 50.f, 100.f, 150.f, 200.f, -1.f, 300.f,
-                         std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
-      witcher::night::fog_amount = amount;
-      for (bool supported : {false, true}) for (bool enabled : {false, true}) {
-        witcher::night::fog_density_supported = supported;
-        witcher::night::Update(enabled);
-        NativeCommonBuilder(nullptr, nullptr);
-        auto expected = common_output;
-        const float multiplier = enabled && supported && std::isfinite(amount)
-                                     ? std::clamp(amount / 100.f, 0.f, 2.f) : 1.f;
-        for (unsigned offset : {0x2b0u, 0x2c0u}) {
-          float value;
-          std::memcpy(&value, expected.data() + offset, sizeof(value));
-          value *= multiplier;
-          std::memcpy(expected.data() + offset, &value, sizeof(value));
+  witcher::night::darkening_start = 18.f;
+  witcher::night::full_darkness_start = 23.f;
+  witcher::night::fade_out_start = 3.5f;
+  witcher::night::darkening_end = 6.f;
+  unsigned fog_cases = 0;
+  for (const auto& [hour, weight] : {std::pair{0.f, 1.f}, {3.5f, 1.f}, {4.75f, .5f},
+                                   {6.f, 0.f}, {12.f, 0.f}, {18.f, 0.f},
+                                   {20.5f, .5f}, {23.f, 1.f}, {24.f, 1.f}}) {
+    const float time = hour / 24.f;
+    std::memcpy(environment.data() + 0x15c0, &time, sizeof(time));
+    for (float amount : {0.f, 25.f, 100.f, 200.f, -1.f, 300.f,
+                         std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()})
+      for (float nighttime : {0.f, 50.f, 100.f, 200.f, -1.f, 300.f,
+                              std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
+        witcher::night::fog_amount = amount;
+        witcher::night::night_fog_amount = nighttime;
+        for (float master : {0.f, 1.f}) for (bool supported : {false, true}) for (bool enabled : {false, true}) {
+          witcher::night::lighting_enabled = master;
+          witcher::night::fog_density_supported = supported;
+          witcher::night::Update(enabled);
+          NativeCommonBuilder(nullptr, nullptr);
+          auto expected = common_output;
+          const float multiplier = std::lerp(enabled && supported && std::isfinite(amount)
+                                                ? std::clamp(amount / 100.f, 0.f, 2.f) : 1.f,
+                                            enabled && supported && std::isfinite(nighttime)
+                                                ? std::clamp(nighttime / 100.f, 0.f, 2.f) : 1.f, weight);
+          for (unsigned offset : {0x2b0u, 0x2c0u}) {
+            float value;
+            std::memcpy(&value, expected.data() + offset, sizeof(value));
+            value *= multiplier;
+            std::memcpy(expected.data() + offset, &value, sizeof(value));
+          }
+          witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+          assert(expected == common_output);
+          // Fresh native uploads prevent accumulation across frames.
+          witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+          assert(expected == common_output);
+          ++fog_cases;
         }
-        witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
-        assert(expected == common_output);
-        // Fresh native uploads prevent accumulation across frames.
-        witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
-        assert(expected == common_output);
       }
-    }
   }
-  witcher::night::fog_amount = 100.f;
+  // An invalid schedule selects daytime density, and must not retain a night
+  // weight from the last view. Off still restores both native endpoints.
+  witcher::night::lighting_enabled = 0.f;
+  witcher::night::fog_amount = 25.f;
+  witcher::night::night_fog_amount = 0.f;
+  witcher::night::darkening_end = witcher::night::darkening_start;
+  witcher::night::fog_density_supported = true;
+  witcher::night::Update(true);
+  witcher::night::night_weight = 1.f;
+  NativeCommonBuilder(nullptr, nullptr);
+  float native_schedule_density;
+  std::memcpy(&native_schedule_density, common_output.data() + 0x2b0, sizeof(native_schedule_density));
+  witcher::night::CommonConstantsHook(common_context.data(), common_output.data());
+  float invalid_schedule_density;
+  std::memcpy(&invalid_schedule_density, common_output.data() + 0x2b0, sizeof(invalid_schedule_density));
+  assert(invalid_schedule_density == 0.25f * native_schedule_density);
+  witcher::night::darkening_end = 6.f;
+  witcher::night::fog_amount = witcher::night::night_fog_amount = 100.f;
   witcher::night::Update(false);
-  std::puts("All-day fog: density-only edits, clock/master independence, native/Off restoration, support guards and fresh uploads passed.");
+  std::printf("Day/night fog: %u endpoint/fade/master/support cases; invalid schedules, density isolation and fresh uploads passed.\n", fog_cases);
   {
     unsigned cases = 0;
     const float invalid = std::numeric_limits<float>::quiet_NaN();
@@ -1054,6 +1095,7 @@ int main() {
           for (bool enabled : {false, true}) for (bool supported : {false, true}) {
             witcher::night::fog_start_distance = distance;
             witcher::night::fog_amount = intensity;
+            witcher::night::night_fog_amount = intensity;
             witcher::night::fog_density_supported = true;
             witcher::night::fog_distance_supported = supported;
             witcher::night::Update(enabled);
@@ -1086,7 +1128,7 @@ int main() {
     }
     native_fog_fade = {0.f, 0.05f};
     witcher::night::fog_start_distance = 0.f;
-    witcher::night::fog_amount = 100.f;
+    witcher::night::fog_amount = witcher::night::night_fog_amount = 100.f;
     witcher::night::Update(false);
     std::printf("Fog distance: %u intensity/fade combinations, native/Off, invalid/support guards and isolated fresh uploads passed.\n", cases);
   }
