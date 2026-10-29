@@ -1611,3 +1611,57 @@ this patch does not claim matching native in-scattered color or sun glare.
 Deployment: corrected Release addon linked after shutdown; installed symlink
 hash verified. The 2026.10.28 package was rebuilt and its addon bytes checked.
 Both captured scenes still need visual acceptance after restarting.
+
+## Storm material routing and HDR preservation (2026-10-29)
+
+The Skellige/bog storm corruption originated in native weather material pass
+0x5D7114F1 (VS 0xA723997B), which writes two RGBA8 UNORM scratch targets and
+copies them to the normal/specular G-buffers. The broad Classic scene-color
+upgrade also matched this scratch pool. Mixing upgraded floating-point scratch
+with native UNORM material copies corrupted the later lighting inputs. FG,
+chromatic aberration, motion-vector settings and reconstruction were excluded
+by live comparisons. Realistic Weather activates the native storm path; the
+repair changes addon resource routing, not weather assets or merged scripts.
+
+weather_materials.hpp temporarily saves and disables the scratch resource/view
+HDR routes for this specific shader. Its two observed material copies execute
+through the command-list API with native resources. After both copies, exact
+prior routing is restored immediately, so subsequent uses of the same pool can
+carry HDR color. A later draw/dispatch, present or device teardown also clears
+an incomplete sequence. The three main material targets remain native UNORM.
+There are no additional GPU passes, textures or copies. Routing bookkeeping is
+limited to the matching weather draw/copies; inactive boundaries check a null
+device pointer.
+
+Do not permanently exclude the two-target scratch pool: an initial broad
+exclusion removed the corruption but clamped HDR because the engine reuses
+those allocations for color. The final scoped repair supersedes that attempt.
+Microsoft's D3D11 CopyResource specification requires identical or compatible
+format families; RGBA8 UNORM and RGBA16F are not a converting copy pair:
+https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-copyresource
+
+Acceptance: the user confirmed both no blue/white storm corruption and normal
+HDR highlight range after restart. The log confirms both native material
+copies completed and HDR pool routing was restored. The preserved pre-fog
+RGBA16F scene has RGB maxima 35.5/32.875/29.828125, 909801 pixels above 1,
+and no NaN/Inf pixels. DevKit's before-draw capture can precede the corrective
+bind; that capture alone does not establish the final weather RTV format.
+
+Fog strength was checked again using this clean storm camera/weather against
+original C8C78997 bytecode, isolating opacity with white fog over black. On
+NVIDIA, exponent 1.18319178 gives maximum absolute opacity error 0.0212807
+and mean 0.00427048 across 6330 channel samples over 8-1000 m. WARP gives
+0.0212082 maximum and 0.00426984 mean; an identity-exponent control also passes.
+The user accepted this strength tolerance. This is opacity coverage, not exact
+fog-color equivalence: additive sunlight scattering, native color overrides,
+desaturation and sky-profile differences retain the previously documented
+limitations. No additional fog-art changes were made in the storm repair.
+
+Release volume, native fallback, signed HDR/AO composition, interior, transparent
+radial sampling and particle checks pass on WARP and NVIDIA. Native fallback
+matches original bytecode exactly in the fixture. The optional D3D debug layer
+was unavailable. Evidence: tmp/witcher3classic-investigation/skellige-20261029
+and storm-clean-20261029. The Release package is
+build/Release/packages/renodx-witcher3-classic-2026.10.29.zip; it contains the
+corrected addon, production NVIDIA runtimes and licenses, without a loader or
+installation instructions. Its addon hash matches the deployed build.

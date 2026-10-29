@@ -17,6 +17,7 @@
 #include "../../utils/settings.hpp"
 #include "../../utils/swapchain.hpp"
 #include "./shared.h"
+#include "./weather_materials.hpp"
 #include "./temporal/runtime.hpp"
 #include "./volumetrics/runtime.hpp"
 #include "./lighting/runtime.hpp"
@@ -69,7 +70,57 @@ ShaderInjectData shader_injection = {
 struct __declspec(uuid("de5bfd39-2532-4eb9-ac11-94d4df036e87")) BloomRouting {
   std::atomic<bool> blitz_drawn = false;
   std::array<std::atomic<uint64_t>, 3> native_material_views{};
+  witcher3classic::WeatherMaterials weather_materials;
+  std::atomic<uint32_t> material_width = 0, material_height = 0;
 };
+std::atomic<reshade::api::device*> pending_weather_device = nullptr;
+
+// Fallback cleanup if a weather draw is skipped or its copy sequence changes.
+// The ordinary path restores immediately after the two native material copies.
+// When inactive the command boundary costs just one null atomic load.
+inline constexpr auto OnWeatherMaterialBoundary = []<typename Context>(Context& context)
+    -> renodx::utils::command_action::CallbackResult<Context> {
+  auto* device = pending_weather_device.load(std::memory_order_relaxed);
+  if (!device || device != context.cmd_list->get_device()) return {};
+  if (auto* data = renodx::utils::data::Get<BloomRouting>(device))
+    data->weather_materials.Restore(context.cmd_list);
+  pending_weather_device.store(nullptr, std::memory_order_relaxed);
+  return {};
+};
+inline constexpr auto OnWeatherMaterials = []<typename Context>(Context& context)
+    -> renodx::utils::command_action::CallbackResult<Context> {
+  auto* device = context.cmd_list->get_device();
+  if (device->get_api() != reshade::api::device_api::d3d11) return {};
+  if (auto* data = renodx::utils::data::Get<BloomRouting>(device)) {
+    if (data->weather_materials.Begin(context.cmd_list,
+            data->material_width.load(std::memory_order_relaxed),
+            data->material_height.load(std::memory_order_relaxed),
+            {renodx::utils::resource::GetResourceFromView(device, {data->native_material_views[2].load(std::memory_order_relaxed)}),
+             renodx::utils::resource::GetResourceFromView(device, {data->native_material_views[1].load(std::memory_order_relaxed)})}))
+      pending_weather_device.store(device, std::memory_order_relaxed);
+  }
+  return {};
+};
+bool OnWeatherCopy(reshade::api::command_list* cmd, reshade::api::resource source, reshade::api::resource dest) {
+  auto* device = pending_weather_device.load(std::memory_order_relaxed);
+  if (!device || device != cmd->get_device()) return false;
+  auto* data = renodx::utils::data::Get<BloomRouting>(device);
+  if (!data || !data->weather_materials.CopyMaterial(cmd, source, dest, [&] { cmd->copy_resource(source, dest); })) return false;
+  if (!data->weather_materials.Pending()) pending_weather_device.store(nullptr, std::memory_order_relaxed);
+  return true;
+}
+bool OnWeatherCopyRegion(reshade::api::command_list* cmd, reshade::api::resource source, uint32_t source_subresource,
+                         const reshade::api::subresource_box* source_box, reshade::api::resource dest, uint32_t dest_subresource,
+                         const reshade::api::subresource_box* dest_box, reshade::api::filter_mode filter) {
+  auto* device = pending_weather_device.load(std::memory_order_relaxed);
+  if (!device || device != cmd->get_device()) return false;
+  auto* data = renodx::utils::data::Get<BloomRouting>(device);
+  if (!data || !data->weather_materials.CopyMaterial(cmd, source, dest, [&] {
+        cmd->copy_texture_region(source, source_subresource, source_box, dest, dest_subresource, dest_box, filter);
+      })) return false;
+  if (!data->weather_materials.Pending()) pending_weather_device.store(nullptr, std::memory_order_relaxed);
+  return true;
+}
 
 // Detect the executed composite, not merely an installed DLL or compiled PSO.
 // The captured BlitzFX composite precedes the native post-filmic effects.
@@ -77,6 +128,9 @@ void OnBloomInitDevice(reshade::api::device* device) {
   renodx::utils::data::Create<BloomRouting>(device);
 }
 void OnBloomDestroyDevice(reshade::api::device* device) {
+  if (auto* data = renodx::utils::data::Get<BloomRouting>(device)) data->weather_materials.Restore();
+  if (pending_weather_device.load(std::memory_order_relaxed) == device)
+    pending_weather_device.store(nullptr, std::memory_order_relaxed);
   renodx::utils::data::Delete<BloomRouting>(device);
 }
 
@@ -143,6 +197,8 @@ void OnMaterialTargets(reshade::api::command_list* cmd, uint32_t count,
         lighting->contact.albedo_resource=albedo;
     }
   }
+  data->material_width.store(depth.texture.width, std::memory_order_relaxed);
+  data->material_height.store(depth.texture.height, std::memory_order_relaxed);
   // A shared cloning callback may already have rebound the FP16 targets.
   // Rebind the application's native views once, independent of callback order.
   cmd->bind_render_targets_and_depth_stencil(count, rtvs, dsv);
@@ -157,10 +213,14 @@ void OnMaterialViewDestroyed(reshade::api::device* device, reshade::api::resourc
     }
   }
 }
-void OnBloomPresent(reshade::api::command_queue*, reshade::api::swapchain* swapchain,
+void OnBloomPresent(reshade::api::command_queue* queue, reshade::api::swapchain* swapchain,
                     const reshade::api::rect*, const reshade::api::rect*, uint32_t, const reshade::api::rect*) {
   witcher3classic::optics::custom = shader_injection.tone_map_type == CLASSIC_TONE_MAP_PSYCHOV31;
   if (auto* data = renodx::utils::data::Get<BloomRouting>(swapchain->get_device())) {
+    if (pending_weather_device.load(std::memory_order_relaxed) == swapchain->get_device()) {
+      data->weather_materials.Restore(queue->get_immediate_command_list());
+      pending_weather_device.store(nullptr, std::memory_order_relaxed);
+    }
     data->blitz_drawn.store(false, std::memory_order_relaxed);
   }
 }
@@ -1625,6 +1685,12 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     reshade::register_event<reshade::addon_event::destroy_resource_view>(&OnMaterialViewDestroyed);
     reshade::register_event<reshade::addon_event::destroy_device>(&OnBloomDestroyDevice);
     reshade::register_event<reshade::addon_event::present>(&OnBloomPresent);
+    reshade::register_event<reshade::addon_event::copy_resource>(&OnWeatherCopy);
+    reshade::register_event<reshade::addon_event::copy_texture_region>(&OnWeatherCopyRegion);
+    renodx::utils::command_action::Register(OnWeatherMaterialBoundary, {});
+    renodx::utils::command_action::Register(OnWeatherMaterials, {
+        .shader_hash = 0x5D7114F1u,
+        .command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
 
     // Migrate legacy per-preset DLSS preferences without constructing settings.
     for (auto* setting : settings) {
@@ -1799,6 +1865,10 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     reshade::unregister_event<reshade::addon_event::destroy_resource_view>(&OnMaterialViewDestroyed);
     reshade::unregister_event<reshade::addon_event::destroy_device>(&OnBloomDestroyDevice);
     reshade::unregister_event<reshade::addon_event::present>(&OnBloomPresent);
+    reshade::unregister_event<reshade::addon_event::copy_resource>(&OnWeatherCopy);
+    reshade::unregister_event<reshade::addon_event::copy_texture_region>(&OnWeatherCopyRegion);
+    renodx::utils::command_action::Unregister(OnWeatherMaterialBoundary);
+    renodx::utils::command_action::Unregister(OnWeatherMaterials);
     reshade::unregister_addon(module);
   }
   if (reason == DLL_PROCESS_DETACH)

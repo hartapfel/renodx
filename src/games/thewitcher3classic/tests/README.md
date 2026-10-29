@@ -750,3 +750,27 @@ max under 0.0158, mean under 0.0025. Prior integration fails with max 0.0811.
 This specifically tests the opposite regression: too much fog when exponent
 exceeds one, versus too little in the first Velen capture below one. It
 compares opacity, not complete authored color or additional sun scattering.
+
+### Clean storm regression and live acceptance (2026-10-29)
+
+storm-clean-20261029 contains the post-repair C8C78997 input capture and
+cb3/cb12/cb13 binaries. Run fog_composite with this folder and --weather on
+WARP and --hardware. Captured exponent 1.18319178: 6330 compared channels,
+maximum/mean absolute opacity error 0.0212807/0.00427048 on NVIDIA and
+0.0212082/0.00426984 on WARP. Both the authored and identity exponents pass
+the existing 0.025 bound. The user accepted the fog-strength tolerance.
+This isolates opacity; it does not measure full native/custom fog RGB parity.
+
+The weather-material fix has live acceptance for corruption-free storms and
+preserved HDR range. ReShade.log reports both material copies completed and
+HDR pool routing restored. source-analysis.json reads the owned pre-fog input:
+RGBA16F, RGB maxima 35.5/32.875/29.828125, 909801 pixels above 1, zero NaN/Inf.
+Before-draw DevKit RTV metadata can precede the addon corrective bind and must
+not be mistaken for evidence of its final binding. The initial permanent
+two-MRT exclusion clamped HDR and was replaced by scoped save/restore routing.
+
+Existing test-volumetrics and fog_composite (normal mode) pass on WARP/NVIDIA:
+native bytecode fallback max error 0, HDR/AO composition max 1.90735e-6,
+volume/interior cases, perspective-W lookup, and particle color/depth cases.
+No optional D3D debug layer was available. Release build and package byte
+verification passed. No new GPU workload or synthetic benchmark claim is made.
