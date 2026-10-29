@@ -36,6 +36,13 @@ void main(
   uint4 bitmask, uiDest;
   float4 fDest;
 
+  float sky_density = 1.f;
+  if (ClassicFogReady()) {
+    uint count,stride;
+    ClassicFogParameters.GetDimensions(count,stride);
+    if (count == 21 || count == 22) sky_density = ClassicFogParameters[17].y;
+  }
+
   r0.xyz = -cb12[0].xyz + v1.xyz;
   r0.w = dot(r0.xyz, r0.xyz);
   r1.x = sqrt(r0.w);
@@ -53,7 +60,7 @@ void main(
     r0.y = r1.z * cb12[22].z + cb12[0].z;
     r1.z = cb12[42].z * r1.z;
     r1.z = 0.0625 * r1.z;
-    r2.x = cb12[44].x * cb12[42].z;
+    r2.x = cb12[44].x * cb12[42].z * sky_density;
     r2.x = 0.0625 * r2.x;
     r0.x = cb12[42].x + r0.x;
     r2.y = 1 + cb12[42].x;
@@ -303,10 +310,12 @@ void main(
   r1.xyz = r3.xyz + -r0.xyz;
   o0.xyz = r3.www * r1.xyz + r0.xyz;
   if (ClassicFogReady()) {
-    // Sky is drawn after the opaque fog pass. Replace its separate analytic
-    // fog term with the far boundary of the shared volume, keeping sky radiance.
-    float4 fog = SampleClassicFog(v2.xy*ClassicFogParameters[3].xy,ClassicFogParameters[0].w);
-    o0.xyz = r0.xyz*fog.a + fog.rgb;
+    // Sky uses its own native density profile (cb12[44], not opaque [43]).
+    // Keep that native fog and add only the volume's direct-light radiance.
+    float4 fog = SampleClassicFogRaw(v2.xy*ClassicFogParameters[3].xy,ClassicFogParameters[0].w);
+    uint count,stride;
+    ClassicFogParameters.GetDimensions(count,stride);
+    if (count == 21 || count == 22) o0.xyz += ClassicFogDirect(fog);
   }
   o0.w = 1;
   return;

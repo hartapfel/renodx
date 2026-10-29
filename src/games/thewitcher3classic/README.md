@@ -1665,3 +1665,264 @@ and storm-clean-20261029. The Release package is
 build/Release/packages/renodx-witcher3-classic-2026.10.29.zip; it contains the
 corrected addon, production NVIDIA runtimes and licenses, without a loader or
 installation instructions. Its addon hash matches the deployed build.
+
+## Volumetric local lights (2026-10-29)
+
+Custom atmospheric fog now scatters scene point and spot lights in the existing
+HDR volume, alongside ambient weather and sun/moon illumination. Graphics has
+a Volumetric Lighting and Fog section, with separate Sun and Moon Scattering
+(existing GfxFogLight key) and Local Light Scattering (GfxFogLocalLight, default
+1, range 0-4). Zero disables only that source contribution. The existing phase
+directionality applies to both. Settings use the usual persistent mod settings.
+
+The implementation follows Wronski's unified compute volume: accumulate the
+light sources at each participating-medium sample, then integrate once for all
+opaque/forward consumers. Reuse tiled light culling and existing shadow maps
+rather than ray marching every light over the full screen. Primary reference:
+https://bartwronski.com/wp-content/uploads/2014/08/bwronski_volumetric_fog_siggraph2014.pdf
+(lighting/storage, slide 37; tiled/clustered optimization, slide 63).
+The game-specific attenuation/shadow data contract is proven by the original
+DA094A1D, 3946E96C, 0AB3A292 and forward 12B76681 bytecode/decompilation.
+
+At C8C78997, reuse native PS t20 raw forward-light indices, b13[57].x integer
+live count (bounded to 256), and nine-float4 records starting at b13[58]. The
+native list has 256 uint entries per 16x16 tile, with sentinel 256 and column
+stride frame[24].x. DA094A1D tests the tile side planes, camera plane and furthest
+opaque depth; it does not use the opaque minimum depth, so the list retains
+lights affecting the visible air before a surface. Address it with the active
+viewport under DLSS, not the allocation extent. Reject out-of-range list reads,
+stale indices beyond the live count and camera/player fill tag 0x80001800.
+The scene captured for this change contains 24 active local lights.
+
+Preserve native finite-radius attenuation, spot cones, linear HDR radiance,
+shadow strength, packed point/spot atlas faces and optional cube-array ESM.
+Local shadows use ordinary sampling of the engine's R16 exponential-depth data
+(PS t9/t10, sampler s10), not the sun's depth-comparison sampler. The shared
+packed-atlas decoder keeps integer fields intact. Missing required shadow views
+suppress that shadowed contribution instead of illuminating through blockers.
+Lights authored without shadows retain the engine's unshadowed behavior; this
+does not generate new geometry shadow maps for those lights.
+
+Apply the existing normalized HG phase and analytic medium transmittance along
+the finite lamp-to-sample path. Keep light units artist-authored, rather than
+claiming calibrated lumens. Local lights change RGB source only: weather opacity,
+extinction, density, interior exclusion, start fade and integration are unchanged.
+No medium is invented indoors where the existing interior mask excludes fog.
+Existing water/transparent consumers receive the same integrated lighting;
+additive emission still uses transmittance only. No new temporal history is
+introduced, avoiding a separate light-history ghosting path for FG.
+
+There are no added GPU passes, allocations, copies, CPU readbacks, per-light
+dispatches or geometry replays. The scatter pass binds three existing SRVs and
+one sampler inside its isolated context state; the native bindings are restored.
+Native fog and a zero Local Light Scattering setting bypass local lighting.
+Runtime validates the native full light buffer and raw-list view before enabling
+the feature; unavailable contracts retain the existing directional/ambient fog.
+
+Validation: Release shader/object compilation and WARP/NVIDIA numerical tests
+pass. New tests cover HDR/scalar transport, unchanged transmittance, strength,
+live count/sentinel guards, fill exclusion, exact vacuum, spot cones, all six
+point-atlas faces, spot/cube ESM and missing-shadow rejection. Existing interior,
+volume quality, native-bytecode fog fallback, signed HDR/AO, particle and weather
+opacity tests pass. The clean storm opacity bound is unchanged (max 0.0212807).
+The optional D3D debug layer was unavailable. The user confirmed the live
+local-light 0/1 comparison looks correct after restart, including HDR/shadows.
+
+GPU timestamp microbenchmark, complete production scatter+integration with
+synthetic shadows and all lights overlapping every tile: Low 0/4/24 lights
+0.0296/0.0417/0.1075 ms; Ultra 0.3164/0.4630/1.1807 ms. These are bounded
+synthetic measurements on this NVIDIA device, not an in-game FPS guarantee;
+shadow complexity, weather and actual tile occupancy change cost. Evidence:
+tmp/witcher3classic-investigation/local-volumetrics-20261029. Build the established
+Release target and repackage with package-release.ps1. After restart, compare
+Local Light Scattering 0/1 near a lantern or torch in fog, move around a blocker,
+then check spot cone boundaries, indoor exclusion and FG/HDR highlights.
+
+Deployment: Release addon linked and package-release.ps1 rebuilt/verified
+renodx-witcher3-classic-2026.10.29.zip (15 addon/runtime/license entries).
+Addon SHA256: 8b8f1fb6bcf9762f4edfca10134e6aedf3f406d41966c7694b8f235af8253ea3.
+The live log confirms the new volumetric path loaded and the storm material
+copy routing still restores HDR. New CS input slots 4-6 restoration also passes
+on WARP/NVIDIA. The user accepted the live lamp/fog and shadow/HDR result.
+
+## Native weather fog baseline and separate sky haze (2026-10-29)
+
+The fog-parity-20261029 capture exposed a color mismatch hidden by the earlier
+white-fog opacity tests. Native frame[188..191] applies a near-black fog-color
+override here; constant frame[40] ambient in the custom volume ignored it.
+At sampled 25.7-41.1 m scene points, that old ambient term was 5.1-16.4 times
+the native fog-source luminance. This is a source-term comparison, not a claim
+that the entire final frame was that much brighter.
+
+The shared fog sampler now retains native directional weather colors, both
+local color/opacity overrides and their blend, and background desaturation.
+The latter is recovered from the volume opacity and native opacity/fade curves;
+opaque fog retains native AO influence and forward materials retain their
+native desaturation tint. The weather ambient reference is removed from the
+integral before applying native color, preserving the extra shadowed direct
+sun/moon/local-light contribution. Native directional height falloff also
+replaces the previous average of its two coefficients. This supersedes the
+older notes that local fog color/desaturation remain outside custom fog.
+
+Sky retains its distinct native frame[44] analytic profile and color controls,
+instead of using the opaque frame[43] volume as a replacement. A new persistent
+GfxFogSkyDensity / Sky Haze Density slider scales only that native sky density:
+0 removes it, 1 is native, up to 4 increases it. It is independent of Fog Density
+and the existing sun/moon/local-light scattering controls. Direct scattering
+can still appear against the sky when sky haze is zero; it belongs to the
+scene medium and has its own controls. Native atmospheric mode remains native.
+
+The GPU-published fog parameter buffer grows from 4 to 21 float4s, carrying
+weather colors/curves, overrides, sky density and a camera-relative ray basis.
+No image resources, render passes or CPU readbacks are added. Old four-element
+live-shader buffers keep their prior behavior. The same L/T sampler supplies
+water, transparents and additive transmittance. The direct-light residual is
+limited by the existing half-float volume precision; do not claim exact final
+native image identity or calibrated physical weather units.
+
+Validation: Release build/package and WARP/NVIDIA volume/local-light, native
+fallback, HDR/AO, particle, weather RGB and sky checks pass. Original C8C78997
+bytecode comparison for this weather: fog-source RGB max error 0.01012; signed
+HDR scene mean error 0.01464 over 6366 channels (sun/local scattering isolated
+off). Earlier Velen, second-scene and clean-storm captures also pass RGB/HDR
+checks. Sky matches original BC930752 with independently scaled native density
+at 0/.5/1/2, for actual and unsaturated density cases, max error below 0.00025.
+The optional D3D debug layer was unavailable. Volume integration/filtering still
+differs from the native 16-step end-point product; these are bounded tests.
+
+Synthetic 2560x1440 RGBA32F GPU composite benchmark: corrected 0.06660 ms,
+previous 0.06535 ms, native 0.06211 ms in the final run. The previous custom
+shader is a negative control (max native RGB error 0.89803, corrected 0.15892
+over the full signed-HDR chart). This is not gameplay FPS or a total-mod timing.
+Evidence and commands: tmp/witcher3classic-investigation/fog-parity-20261029.
+Release addon/package rebuilt; the user confirmed the same-scene fog strength
+and independent sky-haze control both look correct after restart. Compare Native/Custom with both density sliders at 1, then vary
+Sky Haze Density while retaining scene density and direct-light settings.
+
+Additional validation: a two-override blend with different colors and alpha
+strengths passes original-bytecode RGB/HDR comparisons on WARP and NVIDIA.
+Deployed/package addon SHA256:
+05ec2184db1420e7db674d8d38d556e4dce122a8ea419e66b3f8ce1a5ee3ff39.
+
+## Full-cell sunlight shadow filtering (2026-10-29)
+
+Visible moving shaft steps at Ultra exposed an undersampled direction: the
+previous planar PCF kernel covered screen width but not radial cell depth.
+Captured weather range is 16707.9 m; even 256 logarithmic slices make cells
+about 4.81 m deep at 100 m and 12.02 m at 250 m. Inner cascade boundaries also
+switched without the native visibility blend.
+
+Sun/moon shadow filtering now projects the complete cell into light space,
+including radial extent and receiver depth. Mirrored low-discrepancy samples
+span that volume before scattering/integration; depth samples are stratified
+across the physical cell interval. Lighting Shadow Quality 1-4 uses 8/16/24/32
+comparisons. Native cascade transition widths blend adjacent visibility, with
+the existing final-cascade fade to lit. Fully lit/shadowed energy is retained.
+The grid, weather density/color/sky controls, local lights and HDR composition
+are unchanged. There are no new passes, allocations, temporal history or
+frame-varying sample noise. This supersedes the earlier planar 4/9/16/25 taps.
+
+Primary rationale: Wronski SIGGRAPH 2014, source shadow prefiltering and spatial
+jitter/filtering (slides 29-32 and 58):
+https://bartwronski.com/wp-content/uploads/2014/08/bwronski_volumetric_fog_siggraph2014.pdf
+The exact footprint sampler is this mod's implementation, validated against a
+closed-form moving shadow-edge integral; it is not a claim to use that talk's
+prefiltered ESM representation. High-frequency shadows still have finite sample
+limits; no geometry or new shadow maps are generated.
+
+WARP/NVIDIA pass: moving radial edge reference error 0.0004972 and largest
+quarter-metre camera step 0.0005667, normalized by incident source. The previous
+shader fails at 0.0103149/0.0056673 (about 21x error/10x step reduction). Native
+cascade blend error is 0.0006377 versus the previous hard-switch 0.8211 in the
+deliberately disagreeing-layer test. Weather, HDR/sky, interior, local-light,
+binding and quality-allocation checks pass. Optional debug layer unavailable.
+
+Idle-device synthetic Ultra scatter+integration GPU times, old/new with 0/4/24
+overlapping lights: 0.3419/0.4023, 0.4723/0.5714, 1.1781/1.1610 ms. Last case is
+within timing variation. These are synthetic shadow-map timings, not gameplay
+FPS. Evidence: tmp/witcher3classic-investigation/fog-quality-20261029. Release
+addon and package rebuilt; live moving-shaft acceptance pending.
+
+
+## Per-pixel volumetric lighting (2026-10-29)
+
+Live feedback after the full-cell shadow filter was "some improvement, steps
+remain". Direct-only FP16 storage and Smooth cubic reconstruction then improved
+edges but did not remove the local-light bands. FG was off and the user also
+reproduced this with DLAA. Those changes do not establish a complete live fix.
+
+Fog Rendering (GfxFogRenderer) now defaults to Per-pixel. It evaluates lighting
+along each fragment's camera ray instead of reconstructing an integrated 3D
+lighting grid. Volume remains available as the faster alternative. Sampling
+Quality retains GfxFogResolutionQuality and selects 1..4 ray-sampling levels
+in Per-pixel mode; Volume retains the existing grid sizes. Lighting Shadow
+Quality and Lighting Reconstruction apply only to Volume and are disabled in
+Per-pixel mode. Settings use the existing persistence/preset infrastructure.
+
+The transport follows shadow-map ray integration, as described by Toth and
+Umenhoffer, Eurographics 2009, Real-time Volumetric Lighting in Participating
+Media: https://cg.iit.bme.hu/~szirmay/lightshaft.pdf . Our spatial stratification
+is an adaptation, not their periodic block reconstruction algorithm. Near sun
+shadow integration uses 8*quality samples to 96 m plus eight logarithmic far
+samples. Native tiled light candidates are intersected analytically with the
+view ray and clipped to the fragment depth. A light receives 2*(quality+1)
+unshadowed or 4*(quality+1) shadowed samples only within that interval. Static
+per-pixel phases decorrelate sample planes; no new animated noise or persistent
+fog history is introduced. Existing game reconstruction still processes fog.
+
+The final opacity follows the native 16 end-point density products and weather
+exponent/fade. Native directional colors, both local color/alpha overrides,
+desaturation, AO, independent Sky Haze Density, and interval-based interior
+exclusion remain. Scattering uses FP32 shader arithmetic and the existing HDR
+output path. Source evaluation shares the Volume path's native CSM/cascade,
+terrain, cloud, local packed atlas and cube ESM decoders. Pixel CSM visibility
+uses four depth comparisons and bilinear visibility filtering; cloud wrapping
+is reconstructed explicitly to avoid borrowing native material sampler slots.
+The common sampler also supplies forward materials, water and particles at
+actual fragment depth; additive emission still receives transmittance only.
+
+Two native constant buffers are snapshotted GPU-to-GPU into structured SRVs;
+there is no CPU readback or per-fragment allocation. Native texture SRVs are
+retained for the frame, not copied. Private pixel SRV slots 99..107 are saved
+and restored on each participating draw. Per-pixel mode dispatches a 1x1x1
+parameter-only volume and skips the full lighting grid. Unsupported/short
+snapshot inputs retain the complete Volume fallback instead of publishing an
+unusable per-pixel flag. Volume direct light remains separate from weather
+ambient so weak lamps are not lost when FP16 stores a bright ambient term.
+
+Validation: exact Release FXC shader embeds and Clang Release addon object
+compile. Volume regressions pass on WARP/NVIDIA. Pixel point-light transport
+matches a 4096-step scalar reference: max/mean red error 0.00007131/0.00000249;
+with an ESM shadow transition, 0.0016683/0.00003053 on NVIDIA. Front-surface
+clipping, native light-buffer reuse, all nine private bindings and short-buffer
+fallback pass. Captured native-bytecode RGB/HDR comparisons cover this archway,
+Velen, the second weather scene, clean storm and two authored overrides. Native
+pixel-coordinate matrices are rescaled about pixel centers in the fixture.
+The per-pixel normalized HDR bound is 0.001 (Volume retains 0.05); archway
+NVIDIA/WARP maxima are 0.0001692/0.0002377. Native sky comparisons at density
+multipliers 0/.5/1/2 are exact in the tested profiles. Native fallback, signed
+HDR/AO, clip W, sparks, Igni and particle-depth regressions also pass.
+
+Idle RTX 5090 synthetic 2560x1440 RGBA32F composite timings at Ultra: native
+0.0390 ms, per-pixel sunlight 0.986/1.047 ms. A separate local-only fixture with
+one unshadowed/shadowed light costs 0.225/0.406 ms with a surface beyond the
+light, or 0.132/0.145 ms when that surface is in front. These are separate
+fixtures, not additive measurements or gameplay FPS; cloud/terrain complexity,
+resolution, transparent overdraw and the number of visible lamps affect cost.
+Evidence: tmp/witcher3classic-investigation/fog-reconstruction-20261029.
+
+Build target: thewitcher3classic, clang-x64-release; inspect generated embeds
+0xF3C30001, 0xF3C30002, 0xC8C78997, 0xBC930752 and participating forward shaders.
+Live acceptance: after restarting at the archway with Per-pixel and Ultra,
+the user reported "Absolutely perfect, banding is gone completely and fog looks
+much cleaner." This confirms the reported archway banding is resolved. It is
+not a claim that every other scene, weather or performance case was checked.
+For broader verification, compare stationary/moving sunlight, blockers,
+doorways, transparent particles/water and GPU cost against Volume while keeping
+weather and light-strength controls fixed.
+
+Release addon SHA256:
+FC8479F94CA2E3F46071AD4F133384B3F0BABD9C9A00782CC67002E9283128F2.
+The existing game-folder symlink resolves to that Release addon. Rebuilt
+renodx-witcher3-classic-2026.10.29.zip is 38,395,183 bytes with 15 verified
+entries: addon, production NVIDIA runtimes and licenses, no loader/instructions.

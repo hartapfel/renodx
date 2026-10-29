@@ -774,3 +774,122 @@ native bytecode fallback max error 0, HDR/AO composition max 1.90735e-6,
 volume/interior cases, perspective-W lookup, and particle color/depth cases.
 No optional D3D debug layer was available. Release build and package byte
 verification passed. No new GPU workload or synthetic benchmark claim is made.
+
+### Volumetric local lights (2026-10-29)
+
+tests/volumetrics.cpp exercises the production scatter/integration shaders with
+native-format raw forward tile lists and synthetic point/spot records. It checks
+an independent scalar transport integral, colored values above SDR white, exact
+unchanged volume alpha, strength scaling, live count/sentinel guards, artificial
+fill exclusion, exact vacuum and outside-spot-cone rejection. Distinct lit/dark
+atlas layers verify all six native point faces and spot atlas selection. A
+two-cube array checks cube ESM; absent required maps reject shadowed light.
+Existing weather/interior tests remain active. WARP and NVIDIA both pass.
+
+The --hardware --benchmark path also timestamps complete production volume
+generation at Low/Ultra with 0, 4 and 24 synthetic overlapping point lights.
+Measured total GPU times are 0.0296/0.0417/0.1075 ms Low and
+0.3164/0.4630/1.1807 ms Ultra. This is not total gameplay GPU time and does not
+bound all shadow/scene costs. The optional D3D debug layer is unavailable.
+Native fallback remains exact against original C8C78997 bytecode; HDR/AO error
+is 1.90735e-6; captured Velen and clean-storm opacity fixtures still pass.
+
+Evidence in local-volumetrics-20261029 includes the original tile-cull shaders,
+native fog/lamp bindings/constants, build/test logs, timestamp results and the
+Release package log. Use test.cmd for WARP/NVIDIA. Live verification: compare
+Local Light Scattering 0/1 near real lights, test blockers and cone boundaries,
+verify fog strength/interior behavior is unchanged, then enable FG and check HDR.
+
+Live acceptance: user confirmed the local-light 0/1 comparison looks correct
+after the Release restart. Package bytes match the linked addon. New compute
+SRV slots 4-6 restoration passes on WARP/NVIDIA. Storm routing remains active.
+
+### Native fog color and independent sky density (2026-10-29)
+
+fog_composite supports --weather-color (captured directional/local source color
+over black) and --weather-scene (captured weather/desaturation over signed HDR).
+Both compare original C8C78997 bytecode with the production volume/sampler.
+--weather-color includes an identity opacity-exponent control; --weather-scene
+uses the captured exponent. The normalized error bound is 0.05 using
+abs(delta)/(1+abs(native)); the existing white opacity bound remains 0.025.
+The current, Velen, second-scene and clean-storm RGB/HDR cases pass on NVIDIA;
+the current RGB/HDR and existing volume/fallback cases also pass on WARP.
+
+--sky requires native-sky.cso and sky-cb0/sky-cb1.bin alongside the usual capture
+constants. It compares original BC930752 against the custom sky with direct
+scattering off, at density multipliers 0/.5/1/2 for actual and reduced-density
+profiles. WARP/NVIDIA maximum error is below 0.00025 (bound 0.002). This detects
+accidental substitution of the opaque density profile for the native sky.
+
+--weather-scene --hardware --benchmark tests 2560x1440 GPU composite timing and
+requires old-opaque.cso for a previous-custom negative control. Final run:
+native/previous/corrected 0.06211/0.06535/0.06660 ms; old/corrected maximum RGB
+errors 0.89803/0.15892. Measurements are synthetic RGBA32F, not gameplay FPS.
+Fixtures/logs stay in tmp/witcher3classic-investigation/fog-parity-20261029.
+The volume fixture validates the expanded 21-float4 GPU parameter output and
+uses the native directional-height blend (symmetric fixture has bias 1).
+
+Live acceptance: user confirmed the corrected same-scene fog strength and
+independent Sky Haze Density control. A synthetic two-override blend (second
+color .3/.7/1.1, alpha .35, environment blend .37) also passes RGB/HDR tests
+against original bytecode on WARP/NVIDIA. Package bytes match the deployed DLL.
+
+### Moving sunlight shaft continuity (2026-10-29)
+
+volumetrics.cpp tests a 150 m shadow edge projected entirely along cell depth,
+at 65 quarter-metre camera positions. Compare the production integrated HDR
+source with an independent closed-form illuminated-medium integral; alpha must
+remain unchanged. Bounds: normalized reference error <0.0015, largest motion
+step <0.002. WARP/NVIDIA produce 0.0004972/0.0005667. A disagreeing cascade pair
+must follow native blend widths (error 0.0006377, bound 0.001). These replace
+the old planar-grid PCF tap-count-specific edge expectation.
+
+The saved previous scatter header is a negative control: error 0.0103149 and
+motion step 0.0056673 fail the new assertions; cascade error is 0.8211. The
+scratch old-report build bypasses only those expected failures to time the old
+kernel, not to certify it. All ordinary regressions run with assertions active.
+Idle-device Ultra old/new GPU times for 0/4/24 lights are 0.3419/0.4023,
+0.4723/0.5714 and 1.1781/1.1610 ms; not an in-game cost guarantee. Logs/fixtures:
+tmp/witcher3classic-investigation/fog-quality-20261029. Debug layer unavailable.
+
+
+### Direct-light precision, cubic reconstruction and per-pixel fog (2026-10-29)
+
+volumetrics.cpp now proves dim lamp precision independently of bright weather
+ambient: integrated red 0.000858307 versus scalar 0.000859315. The volume stores
+direct light rather than mixing ambient into FP16 and subtracting it later.
+fog_composite's cubic impulse test checks a continuous CPU B-spline response,
+constant/HDR bounds, nonnegative reconstruction and bit-identical linear alpha.
+The GPU's finite texture-filter weights explain the 0.0202/0.0253 WARP/NVIDIA
+error on a 16-unit impulse; bound is one 1/256 weight step (16/256). Both changes
+passed but the user reported remaining bands in gameplay.
+
+--pixel enables the production per-pixel path in --weather, --weather-color,
+--weather-scene and --sky cases. The resized native integer-pixel reconstruction
+matrix must preserve pixel-center offsets as well as rescale its two basis
+vectors. Pixel weather comparisons have a 0.001 absolute opacity or normalized
+RGB/HDR error bound; existing Volume bounds remain 0.025/0.05. Archway, Velen,
+second weather, clean storm and two-override captured bytecodes pass NVIDIA
+HDR replay; current archway and point cases also pass WARP. Sky is exact at
+0/.5/1/2 density for both tested native profiles with direct lighting disabled.
+
+--pixel-local compares the production ray integrator against independent
+4096-step scalar transport, both unshadowed and with native exponential cube
+shadow attenuation. It checks a surface behind the lamp and a surface in front
+(no in-scattering), then reuses/clears the native b13 buffer after capture to
+prove snapshot independence. All PS slots 99..107 must restore, and an
+unsupported short light buffer must allocate the full fallback grid instead of
+a tiny parameter-only volume. Max point/shadowed red error is
+0.00007131/0.0016683 on NVIDIA, versus bounds 0.004 max/0.0005 mean.
+
+--pixel --weather-scene --hardware --benchmark times sunlight fog; --pixel-local
+--hardware --benchmark times the separate single-lamp cases and skips the CPU
+reference at 2560x1440. Both print adapter identity. Idle RTX 5090 Ultra results:
+native 0.0390 ms, sunlight pixel 0.986/1.047 ms; local-only unshadowed/shadowed
+0.225/0.406 ms (surface behind light), 0.132/0.145 ms (surface in front). These
+are RGBA32F synthetic draw timings, not real-scene or combined GPU timings.
+Logs/captures: tmp/witcher3classic-investigation/fog-reconstruction-20261029.
+Full Clang Release shader/addon build and package verification pass. After
+restarting, the user confirmed the archway banding was completely gone and the
+fog looked cleaner. This is live acceptance of the reported local-light issue;
+it does not replace broader scene/performance checks.

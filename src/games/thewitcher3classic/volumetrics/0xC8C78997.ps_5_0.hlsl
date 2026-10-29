@@ -56,10 +56,12 @@ void main(
     r0.x = -1 + r0.x;
     r0.x = r1.y * r0.x + 1;
     if (ClassicFogReady()) {
-      float4 fog = SampleClassicFog(v0.xy * cb12[23].zw, r1.x);
+      float4 desaturation;
+      float4 fog = SampleClassicFog(v0.xy * cb12[23].zw, r1.x, desaturation);
       // Preserve Classic's distance-dependent AO influence on atmospheric fog.
       // Interior exclusion is applied to density before volume integration.
-      o0 = float4(r2.xyz * lerp(1.f, fog.a, r0.x) + fog.rgb * r0.x, 1.f);
+      float3 scene = lerp(r2.xyz,dot(r2.xyz,float3(.333f,.555f,.222f))*desaturation.rgb,desaturation.w*r0.x);
+      o0 = float4(scene * lerp(1.f, fog.a, r0.x) + fog.rgb * r0.x, 1.f);
       return;
     }
     r0.yzw = r0.yzw / r1.xxx;

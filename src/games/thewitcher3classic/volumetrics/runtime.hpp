@@ -94,17 +94,35 @@ inline bool OnFog(reshade::api::command_list* cmd) {
     interiors->GetDesc(&desc);
     if (desc.ViewDimension!=D3D11_SRV_DIMENSION_TEXTURE2D || desc.Format!=DXGI_FORMAT_R16G16_FLOAT) interiors.Reset();
   }
+  ComPtr<ID3D11ShaderResourceView> local_tiles,local_atlas,local_cubes;
+  ComPtr<ID3D11SamplerState> local_sampler;
+  if (local_light_strength > 0.f && light_desc.ByteWidth >= 2362*16) {
+    context->PSGetShaderResources(20,1,&local_tiles);
+    context->PSGetShaderResources(9,1,&local_atlas);
+    context->PSGetShaderResources(10,1,&local_cubes);
+    context->PSGetSamplers(10,1,&local_sampler);
+    if (local_tiles) {
+      local_tiles->GetDesc(&desc);
+      if (desc.ViewDimension != D3D11_SRV_DIMENSION_BUFFEREX
+          || desc.Format != DXGI_FORMAT_R32_TYPELESS
+          || (desc.BufferEx.Flags & D3D11_BUFFEREX_SRV_FLAG_RAW) == 0) local_tiles.Reset();
+    }
+    if (local_atlas) { local_atlas->GetDesc(&desc); if (desc.ViewDimension!=D3D11_SRV_DIMENSION_TEXTURE2DARRAY) local_atlas.Reset(); }
+    if (local_cubes) { local_cubes->GetDesc(&desc); if (desc.ViewDimension!=D3D11_SRV_DIMENSION_TEXTURECUBEARRAY) local_cubes.Reset(); }
+  }
   const Parameters parameters{
       VolumeGrid(resolution_quality,viewport.Height/viewport.Width),
       {std::clamp(density,0.f,4.f),std::clamp(start_distance,0.f,200.f),std::clamp(light_strength,0.f,4.f),std::clamp(anisotropy,0.f,.8f)},
       {std::clamp(height_falloff,0.f,4.f),.1f,cloud?1.f:0.f,terrain?1.f:0.f},
-      {1.f/viewport.Width,1.f/viewport.Height,std::clamp(shadow_quality,1.f,4.f),0.f}};
+      {1.f/viewport.Width,1.f/viewport.Height,std::clamp(shadow_quality,1.f,4.f),local_tiles?std::clamp(local_light_strength,0.f,4.f):0.f},
+      {std::clamp(sky_density,0.f,4.f),reconstruction!=0.f?1.f:0.f,renderer!=0.f?1.f:0.f,std::clamp(resolution_quality,1.f,4.f)}};
   if (data->pipeline.generated_frame!=data->frame
-      && !data->pipeline.Generate(context,frame.Get(),lighting.Get(),shadow.Get(),cloud.Get(),terrain.Get(),parameters,data->frame,shadow_sampler.Get(),interiors.Get())) return false;
+      && !data->pipeline.Generate(context,frame.Get(),lighting.Get(),shadow.Get(),cloud.Get(),terrain.Get(),parameters,data->frame,shadow_sampler.Get(),interiors.Get(),
+          {local_tiles.Get(),local_atlas.Get(),local_cubes.Get(),local_sampler.Get()})) return false;
   data->pipeline.Bind(context,false,data->frame);
   if (!data->logged) {
     data->logged=true;
-    reshade::log::message(reshade::log::level::info,"Witcher Classic: custom volumetric sunlight/fog active at the native atmospheric pass.");
+    reshade::log::message(reshade::log::level::info,"Witcher Classic: custom volumetric fog active with sun/moon and native tiled local-light inputs.");
   }
   return false;
 }

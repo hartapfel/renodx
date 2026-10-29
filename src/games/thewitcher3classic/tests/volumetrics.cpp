@@ -6,6 +6,7 @@
 #include <chrono>
 #include <thread>
 #include <vector>
+#include <bit>
 #include "../../../utils/float16.hpp"
 #include "../volumetrics/pipeline.hpp"
 using namespace witcher3classic;
@@ -15,6 +16,7 @@ struct Fixture {
   ComPtr<ID3D11DeviceContext1> context;
   ComPtr<ID3D11Buffer> frame,lighting;
   ComPtr<ID3D11ShaderResourceView> lit,shadowed,interiors;
+  ComPtr<ID3D11ShaderResourceView> local_tiles,local_atlas,local_cubes;
   std::array<std::array<float,4>,269> f{};
   std::array<std::array<float,4>,3323> l{};
   volumetrics::Pipeline pipeline;
@@ -39,9 +41,16 @@ struct Fixture {
     context->UpdateSubresource(lighting.Get(),0,nullptr,l.data(),0,0);
     context->CSSetConstantBuffers(4,1,frame.GetAddressOf());
     context->CSSetShaderResources(3,1,lit.GetAddressOf());
-    assert(pipeline.Generate(context.Get(),frame.Get(),lighting.Get(),occluded?shadowed.Get():lit.Get(),nullptr,nullptr,p,++id,nullptr,interiors.Get()));
+    ID3D11ShaderResourceView* preserved_inputs[]={lit.Get(),lit.Get(),lit.Get()};
+    context->CSSetShaderResources(4,3,preserved_inputs);
+    assert(pipeline.Generate(context.Get(),frame.Get(),lighting.Get(),occluded?shadowed.Get():lit.Get(),nullptr,nullptr,p,++id,nullptr,interiors.Get(),
+        {local_tiles.Get(),local_atlas.Get(),local_cubes.Get()}));
     ComPtr<ID3D11ShaderResourceView> restored_interior;
     context->CSGetShaderResources(3,1,&restored_interior); assert(restored_interior.Get()==lit.Get());
+    for(UINT slot=4;slot<7;++slot) {
+      ComPtr<ID3D11ShaderResourceView> restored_local;
+      context->CSGetShaderResources(slot,1,&restored_local);assert(restored_local.Get()==lit.Get());
+    }
     ComPtr<ID3D11Buffer> restored;
     context->CSGetConstantBuffers(4,1,&restored); assert(restored.Get()==frame.Get());
     ComPtr<ID3D11Resource> resource; ComPtr<ID3D11Texture3D> texture,readback;
@@ -81,7 +90,7 @@ int main(int argc,char**) {
   assert(SUCCEEDED(base.As(&a.context)));
   a.f[17]={1,0,0,0}; a.f[18]={0,1,0,0}; a.f[20]={0,0,1,1};
   a.f[21]={0,0,1,1}; a.f[22][2]=.2f; a.f[40]={2,4,8,0};
-  a.f[42][1]=-10000; a.f[43]={.002f,.02f,.02f,0};
+  a.f[42][0]=1.f; a.f[42][1]=-10000; a.f[43]={.002f,.02f,.02f,0};
   a.f[42][3]=1.f; a.f[48]={1,-1,1,0}; // Identity authored opacity curve.
   a.l[0]={0,0,1,0}; a.l[1]={10,10,10,0}; a.l[7]={0,0,.5f,1};
   a.l[10]={1,2,3,4}; a.l[11]={.5f,.5f,.5f,0}; a.l[15][2]=4;
@@ -93,7 +102,7 @@ int main(int argc,char**) {
   // start fade (its integral is exactly one metre).
   const double expected=std::exp(-.002*(1000.-.2-1.));
   assert(std::abs(result[3]-expected)<.001);
-  for (int c=0;c<3;++c) assert(std::abs(result[c]-(1.-expected)*a.f[40][c])<.01);
+  for (int c=0;c<3;++c) assert(result[c]==0.f); // Native ambient is composed after volume sampling.
   // Actual half-float native interval input, in the top-left quarter of a
   // pooled texture. The stale remainder deliberately describes open air.
   // Expected optical lengths are analytic integrals of two-metre cubic ramps.
@@ -166,7 +175,7 @@ int main(int argc,char**) {
   const double toussaint_transmission=std::exp(-.000253701*(1000.-.2-1.)/
       (1.+(2185.518554688+3.009872675)*.5*(.00018396393+.00429215003)));
   assert(std::abs(toussaint[3]-toussaint_transmission)<.001);
-  for(int c=0;c<3;++c)assert(std::abs(toussaint[c]-(1.-toussaint_transmission)*a.f[40][c])<.002);
+  for(int c=0;c<3;++c)assert(toussaint[c]==0.f);
   std::cout<<"PASS captured Toussaint height profile and reference scattering/transmittance\n";
   // The same sparse weather must keep accumulating past the old 1 km limit.
   // Read the published range too: forward sampling must use the same mapping
@@ -178,7 +187,7 @@ int main(int argc,char**) {
   const double distant_transmission=std::exp(-local_extinction*(a.f[42][2]-.2-1.));
   auto far_value=a.CenterEnd(distant);
   assert(std::abs(far_value[3]-distant_transmission)<.001);
-  for(int c=0;c<3;++c)assert(std::abs(far_value[c]-(1.-distant_transmission)*a.f[40][c])<.005);
+  for(int c=0;c<3;++c)assert(far_value[c]==0.f);
   const double near_slice=std::log(100./a.p.options[1])/std::log(a.f[42][2]/a.p.options[1])*a.p.grid[2];
   const size_t lower=size_t(near_slice),center=4*(size_t(a.p.grid[1])/2*size_t(a.p.grid[0])+size_t(a.p.grid[0])/2);
   const size_t stride=size_t(a.p.grid[0]*a.p.grid[1])*4;
@@ -187,7 +196,12 @@ int main(int argc,char**) {
   assert(std::abs(near_transmission-std::exp(-local_extinction*(100.-.2-1.)))<.001);
   ComPtr<ID3D11Resource> parameter_resource;
   a.pipeline.ParametersView()->GetResource(&parameter_resource);
-  const D3D11_BUFFER_DESC parameter_desc{sizeof(a.p),D3D11_USAGE_STAGING,0,D3D11_CPU_ACCESS_READ};
+  ComPtr<ID3D11Buffer> parameter_buffer;
+  assert(SUCCEEDED(parameter_resource.As(&parameter_buffer)));
+  D3D11_BUFFER_DESC parameter_desc{};parameter_buffer->GetDesc(&parameter_desc);
+  assert(parameter_desc.ByteWidth==22*16);
+  parameter_desc.Usage=D3D11_USAGE_STAGING;parameter_desc.BindFlags=0;
+  parameter_desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;parameter_desc.MiscFlags=0;parameter_desc.StructureByteStride=0;
   ComPtr<ID3D11Buffer> parameter_readback;
   assert(SUCCEEDED(a.device->CreateBuffer(&parameter_desc,nullptr,&parameter_readback)));
   a.context->CopyResource(parameter_readback.Get(),parameter_resource.Get());
@@ -234,7 +248,7 @@ int main(int argc,char**) {
         std::cerr<<"Weather exponent="<<weather[3]<<" boundary="<<z<<" distance="<<distance<<" opacity="<<opacity<<" expected="<<expected_opacity<<'\n';
       assert(std::abs(opacity-expected_opacity)<.002);
       assert(opacity>=last_opacity);last_opacity=opacity;
-      for(int c=0;c<3;++c)assert(std::abs(velen[offset+c]-expected_opacity*a.f[40][c])<.02);
+      for(int c=0;c<3;++c)assert(velen[offset+c]==0.f);
     }
     a.p.medium[2]=1;
     auto velen_lit=a.Run(false,true),velen_shadow=a.Run(true,true);
@@ -276,7 +290,7 @@ int main(int argc,char**) {
     a.p.grid=volumetrics::VolumeGrid(quality,9.f/16.f);
     auto value=a.Run(false,true);
     assert(std::abs(value[3]-expected)<.001);
-    for(int c=0;c<3;++c)assert(std::abs(value[c]-(1.-expected)*a.f[40][c])<.01);
+    for(int c=0;c<3;++c)assert(value[c]==0.f);
   }
   assert(volumetrics::VolumeGrid(0,9.f/16.f)==volumetrics::VolumeGrid(1,9.f/16.f));
   assert(volumetrics::VolumeGrid(5,9.f/16.f)==volumetrics::VolumeGrid(4,9.f/16.f));
@@ -288,23 +302,212 @@ int main(int argc,char**) {
     assert(light[3]==dark[3]);
     for(int c=0;c<3;++c)assert(std::abs(light[c]-dark[c]-expected_sun)<.02);
   }
-  a.l[11][0]=.525f; // The .025-capped filter starts at the texture's .5 edge.
-  std::array<float,4096> edge{};
-  for(UINT y=0;y<64;++y)for(UINT x=32;x<64;++x)edge[y*64+x]=1.f;
-  std::array<D3D11_SUBRESOURCE_DATA,4> edge_data;
-  for(auto& data:edge_data)data={edge.data(),256,0};
-  const D3D11_TEXTURE2D_DESC edge_desc{64,64,1,4,DXGI_FORMAT_R32_FLOAT,{1,0},D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE};
-  ComPtr<ID3D11Texture2D> edge_texture;
-  assert(SUCCEEDED(a.device->CreateTexture2D(&edge_desc,edge_data.data(),&edge_texture)));
-  a.lit.Reset();assert(SUCCEEDED(a.device->CreateShaderResourceView(edge_texture.Get(),nullptr,&a.lit)));
-  for(int quality=1;quality<=4;++quality) {
-    a.p.sampling[2]=float(quality);
-    auto light=a.Run(false,true),dark=a.Run(true,true);
-    // The first column lies halfway across the PCF edge; all later columns
-    // are lit. The exact integral of each 2/3/4/5-column rule is 1-.5/side.
-    for(int c=0;c<3;++c)assert(std::abs(light[c]-dark[c]-expected_sun*(1.-.5/(quality+1)))<.02);
-  }
   std::cout<<"PASS: all fog quality allocations, up/down resize, aspect/quality bounds, and shadow-sample energy preservation\n";
+  {
+    const auto previous_f=a.f;const auto previous_l=a.l;const auto previous_p=a.p;
+    const auto previous_shadow=a.lit;
+    a.f={};a.l={};
+    a.f[17]={1,0,0,0};a.f[18]={0,1,0,0};a.f[20]={0,0,1,1};
+    a.f[21]={0,0,1,1};a.f[22][2]=.2f;a.f[42]={1,-10000,0,1};
+    a.f[43]={.002f,0,0,0};a.f[48]={1,-1,1,0};
+    a.l[0]={0,0,1,0};a.l[1]={10,10,10,0};
+    // A directional shadow edge perpendicular to the viewing ray. Its
+    // projected footprint is entirely along froxel depth, which planar PCF
+    // ignored. The analytic visible medium starts at world Z=150 metres.
+    a.l[6]={.001f,0,0,0};a.l[7]={-.15f,0,.5f,1};a.l[10]={2,3,4,5};
+    a.l[11]={.5f,.5f,1,0};a.l[15][2]=1;
+    a.p={{17,9,96,1000},{1,0,1,0},{0,.1f,0,0},{1.f/64,1.f/64,4,0}};
+    std::array<float,1024*4> pixels{};
+    for(UINT y=0;y<4;++y)for(UINT x=512;x<1024;++x)pixels[y*1024+x]=1.f;
+    std::array<D3D11_SUBRESOURCE_DATA,4> data;
+    for(auto& layer:data)layer={pixels.data(),1024*4,0};
+    D3D11_TEXTURE2D_DESC desc{1024,4,1,4,DXGI_FORMAT_R32_FLOAT,{1,0},D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE};
+    ComPtr<ID3D11Texture2D> texture;
+    assert(SUCCEEDED(a.device->CreateTexture2D(&desc,data.data(),&texture)));
+    a.lit.Reset();assert(SUCCEEDED(a.device->CreateShaderResourceView(texture.Get(),nullptr,&a.lit)));
+    const double source=10./(4.*3.141592653589793)*std::exp(-2.);
+    double error=0,jump=0,previous=0;
+    for(int pose=0;pose<=64;++pose) {
+      const float camera_z=-8.f+pose*.25f;
+      a.f[0][2]=camera_z;a.f[20][2]=camera_z+1;
+      auto actual=a.Run(false,true);
+      const double reference=source*(std::exp(-.002*(150.-camera_z-1.2))-std::exp(-.002*(1000.-1.2)));
+      error=std::max(error,std::abs(actual[0]-reference)/source);
+      if(pose)jump=std::max(jump,std::abs(actual[0]-previous)/source);
+      previous=actual[0];
+      assert(std::abs(actual[3]-std::exp(-.002*(1000.-1.2)))<.001);
+    }
+    std::cout<<"Moving radial shadow edge: normalized reference error="<<error<<", maximum quarter-metre step="<<jump<<std::endl;
+    assert(error<.0015 && jump<.002);
+    // Cross an intentionally disagreeing pair of cascades. Native transition
+    // widths must blend visibility continuously rather than pop at the border.
+    std::array<float,1024*4> black{},white;white.fill(1);
+    data[0]={black.data(),1024*4,0};data[1]=data[2]=data[3]={white.data(),1024*4,0};
+    texture.Reset();assert(SUCCEEDED(a.device->CreateTexture2D(&desc,data.data(),&texture)));
+    a.lit.Reset();assert(SUCCEEDED(a.device->CreateShaderResourceView(texture.Get(),nullptr,&a.lit)));
+    a.l[4]={1,0,0,0};a.l[6]={};a.l[7]={0,0,.5f,1};
+    a.l[10]={1,2,3,4};a.l[11]=a.l[12]={.5f,.5f,.1f,0};a.l[15][2]=2;a.l[17]={.1f,.1f,.1f,.1f};
+    a.f[0][2]=0;a.f[20][2]=1;
+    double cascade_error=0;
+    for(int pose=0;pose<=26;++pose) {
+      float camera_x=.89f+pose*.005f;a.f[0][0]=camera_x;a.f[20][0]=camera_x;
+      auto actual=a.Run(false,true);
+      double visibility=std::clamp((double(camera_x)-.9)/.1,0.,1.);
+      double reference=source*(1.-std::exp(-.002*(1000.-1.2)))*visibility;
+      cascade_error=std::max(cascade_error,std::abs(actual[0]-reference)/source);
+    }
+    std::cout<<"Continuous cascade transition: normalized reference error="<<cascade_error<<std::endl;
+    assert(cascade_error<.001);
+    a.f=previous_f;a.l=previous_l;a.p=previous_p;a.lit=previous_shadow;
+  }
+  {
+    const auto previous_f=a.f;
+    const auto previous_l=a.l;
+    const auto previous_p=a.p;
+    a.f={};a.l={};a.interiors.Reset();
+    a.f[17]={1,0,0,0};a.f[18]={0,1,0,0};a.f[20]={0,0,1,1};
+    a.f[21]={0,0,1,1};a.f[22][2]=.2f;
+    a.f[24][0]=4;a.f[42]={1,-10000,0,1};a.f[43]={.002f,0,0,0};a.f[48]={1,-1,1,0};
+    a.l[57][0]=std::bit_cast<float>(1u);
+    a.l[58]={0,0,10,20};a.l[61]={2000,400,200,0};a.l[63][0]=.25f;
+    a.p={{17,9,96,1000},{1,0,0,0},{0,.1f,0,0},{1.f/64,1.f/64,1,0}};
+    std::array<UINT,16*256> indices;indices.fill(256);
+    for(size_t tile=0;tile<16;++tile)indices[tile*256]=0;
+    D3D11_BUFFER_DESC list_desc{sizeof(indices),D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE,0,D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS};
+    D3D11_SUBRESOURCE_DATA list_data{indices.data()};ComPtr<ID3D11Buffer> list;
+    assert(SUCCEEDED(a.device->CreateBuffer(&list_desc,&list_data,&list)));
+    D3D11_SHADER_RESOURCE_VIEW_DESC list_view{};
+    list_view.Format=DXGI_FORMAT_R32_TYPELESS;list_view.ViewDimension=D3D11_SRV_DIMENSION_BUFFEREX;
+    list_view.BufferEx.NumElements=UINT(indices.size());list_view.BufferEx.Flags=D3D11_BUFFEREX_SRV_FLAG_RAW;
+    assert(SUCCEEDED(a.device->CreateShaderResourceView(list.Get(),&list_view,&a.local_tiles)));
+    auto off=a.Run();a.p.sampling[3]=1;
+    auto point=a.Run();auto center=a.CenterEnd(point);
+    assert(center[0]>1.f && center[1]>center[2] && center[2]>0.f);
+    for(size_t i=0;i<point.size();i+=4)assert(point[i+3]==off[i+3]);
+    // Independent scalar transport along the center ray, including engine
+    // range attenuation and medium transmittance on the lamp-to-froxel ray.
+    double tau=0,previous_opacity=0,reference=0,begin=.1;
+    for(int z=0;z<96;++z) {
+      double end=.1*std::pow(10000.,double(z+1)/96.);
+      double midpoint=.1*std::pow(10000.,double(z+.5)/96.);
+      double fade=std::clamp((midpoint-.2)/2.,0.,1.);fade=fade*fade*(3.-2.*fade);
+      tau+=.002*fade*(end-begin);
+      double opacity=1.-std::exp(-tau),distance=std::abs(midpoint-10.);
+      double attenuation=distance<20?std::pow(1.-std::pow(distance/20.,4),2)/(1.+.25*distance*distance):0.;
+      reference+=2000.*attenuation*std::exp(-.002*distance)/(4.*3.141592653589793)*(opacity-previous_opacity);
+      previous_opacity=opacity;begin=end;
+    }
+    assert(std::abs(center[0]-reference)<.015);
+    // A dim lamp must retain its precision even with a much brighter weather
+    // ambient reference. The previous mixed FP16 integral lost this signal.
+    a.l[61]={1,.4f,.2f,0};a.f[40]={32,64,128,0};
+    auto dim=a.CenterEnd(a.Run());
+    std::cout<<"Dim lamp under bright ambient: "<<dim[0]<<", reference="<<reference/2000.<<std::endl;
+    assert(std::abs(dim[0]-reference/2000.)<2.e-6);
+    a.l[61]={2000,400,200,0};a.f[40]={};
+    a.p.sampling[3]=2;auto doubled=a.CenterEnd(a.Run());
+    assert(std::abs(doubled[0]-2*center[0])<.01 && doubled[3]==center[3]);
+    a.p.sampling[3]=1;
+    // Live count and sentinel prevent stale pooled light records/list tails.
+    a.l[57][0]=0;assert(a.CenterEnd(a.Run())[0]==0);a.l[57][0]=std::bit_cast<float>(1u);
+    indices.fill(256);a.context->UpdateSubresource(list.Get(),0,nullptr,indices.data(),0,0);
+    assert(a.CenterEnd(a.Run())[0]==0);
+    for(size_t tile=0;tile<16;++tile)indices[tile*256]=0;
+    a.context->UpdateSubresource(list.Get(),0,nullptr,indices.data(),0,0);
+    a.l[61][3]=std::bit_cast<float>(0x80001800u);assert(a.CenterEnd(a.Run())[0]==0);
+    a.l[61][3]=0;
+    a.p.medium[0]=0;auto vacuum=a.Run();
+    for(size_t i=0;i<vacuum.size();i+=4)assert(vacuum[i]==0 && vacuum[i+1]==0 && vacuum[i+2]==0 && vacuum[i+3]==1);
+    a.p.medium[0]=1;
+    // The cone points toward the camera, then away. Outside-cone medium must
+    // not receive light, and neither orientation may change extinction.
+    a.l[61][3]=std::bit_cast<float>(1u);a.l[60]={0,0,-1,0};a.l[62]={0,2,-1,2};
+    auto toward=a.CenterEnd(a.Run());a.l[60]={1,0,0,0};auto outside=a.CenterEnd(a.Run());
+    assert(toward[0]>.1f && outside[0]==0 && toward[3]==outside[3]);
+    // Atlas ESM: six point faces must select their native face tile, not a
+    // single directional shadow texture. Layer 0 is lit, layer 1 is blocked.
+    std::array<float,64> white,black;white.fill(1);black.fill(0);
+    const std::array<D3D11_SUBRESOURCE_DATA,2> atlas_data{{{white.data(),32,0},{black.data(),32,0}}};
+    D3D11_TEXTURE2D_DESC atlas_desc{8,8,1,2,DXGI_FORMAT_R32_FLOAT,{1,0},D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE};
+    ComPtr<ID3D11Texture2D> atlas;
+    assert(SUCCEEDED(a.device->CreateTexture2D(&atlas_desc,atlas_data.data(),&atlas)));
+    assert(SUCCEEDED(a.device->CreateShaderResourceView(atlas.Get(),nullptr,&a.local_atlas)));
+    a.p.grid[3]=5;a.l[61][3]=0;a.l[60]={0,0,0,1};a.l[63]={.25f,1,1,0};
+    for(int face=0;face<6;++face) {
+      a.l[58]={0,0,0,100};a.l[58][face/2]=(face%2==0?30.f:-30.f);
+      a.l[63][2]=0;auto no_shadow=a.CenterEnd(a.Run());a.l[63][2]=1;
+      a.l[65].fill(std::bit_cast<float>((1u<<30)|512u));
+      a.l[66].fill(std::bit_cast<float>((1u<<30)|512u));
+      a.l[65+face/4][face%4]=std::bit_cast<float>(512u);
+      auto selected=a.CenterEnd(a.Run());
+      assert(no_shadow[0]>.001f && std::abs(selected[0]-no_shadow[0])<.001f && selected[3]==no_shadow[3]);
+      a.l[65+face/4][face%4]=std::bit_cast<float>((1u<<30)|512u);
+      auto blocked=a.CenterEnd(a.Run());assert(blocked[0]<1.e-7f && blocked[3]==selected[3]);
+    }
+    // Spot atlas projection and shadow strength use the same native ESM data.
+    a.l[58]={0,0,30,100};a.l[60]={0,0,-1,1};a.l[61][3]=std::bit_cast<float>(1u);
+    a.l[65]={std::bit_cast<float>(512u),0,1,0};
+    auto spot_lit=a.CenterEnd(a.Run());
+    a.l[65][0]=std::bit_cast<float>((1u<<30)|512u);auto spot_dark=a.CenterEnd(a.Run());
+    assert(spot_lit[0]>.001f && spot_dark[0]<1.e-7f && spot_lit[3]==spot_dark[3]);
+    // Missing shadow inputs suppress shadowed light rather than leaking it.
+    a.local_atlas.Reset();assert(a.CenterEnd(a.Run())[0]==0);
+    // Native cube-array ESM path, with independently lit/blocked cube layers.
+    atlas_desc.ArraySize=12;atlas_desc.MiscFlags=D3D11_RESOURCE_MISC_TEXTURECUBE;
+    std::array<D3D11_SUBRESOURCE_DATA,12> cube_data;
+    for(int face=0;face<12;++face)cube_data[face]={face<6?white.data():black.data(),32,0};
+    ComPtr<ID3D11Texture2D> cubes;
+    assert(SUCCEEDED(a.device->CreateTexture2D(&atlas_desc,cube_data.data(),&cubes)));
+    assert(SUCCEEDED(a.device->CreateShaderResourceView(cubes.Get(),nullptr,&a.local_cubes)));
+    a.l[63][2]=0;a.l[64]={1,0,0,0};
+    auto cube_lit=a.CenterEnd(a.Run());a.l[64][1]=1;auto cube_dark=a.CenterEnd(a.Run());
+    assert(cube_lit[0]>.001f && cube_dark[0]<1.e-7f && cube_lit[3]==cube_dark[3]);
+    a.local_cubes.Reset();assert(a.CenterEnd(a.Run())[0]==0);
+    if(argc>2) {
+      // Timestamp the complete production scatter+integration pipeline. This
+      // is a bounded synthetic many-light case, not an in-game FPS claim.
+      ComPtr<ID3D11Query> disjoint,first,last;
+      D3D11_QUERY_DESC query{D3D11_QUERY_TIMESTAMP_DISJOINT,0};
+      assert(SUCCEEDED(a.device->CreateQuery(&query,&disjoint)));
+      query.Query=D3D11_QUERY_TIMESTAMP;
+      assert(SUCCEEDED(a.device->CreateQuery(&query,&first)));
+      assert(SUCCEEDED(a.device->CreateQuery(&query,&last)));
+      a.l={};a.l[0]={0,0,1,0};a.l[1]={10,10,10,0};
+      a.l[7]={0,0,.5f,1};a.l[10]={1,2,3,4};a.l[11]={.5f,.5f,.5f,0};a.l[15][2]=4;
+      a.l[16][1]=.125f;a.l[17]={.05f,.05f,.05f,.05f};
+      a.p.medium={1,0,1,.5f};
+      for(float quality:{1.f,4.f})for(UINT lights:{0u,4u,24u}) {
+        a.p.grid=volumetrics::VolumeGrid(quality,9.f/16.f);
+        a.l[57][0]=std::bit_cast<float>(lights);
+        indices.fill(256);
+        for(size_t tile=0;tile<16;++tile)for(UINT i=0;i<lights;++i)indices[tile*256+i]=i;
+        for(UINT i=0;i<lights;++i) {
+          a.l[58+i*9]={float(i%4)*4-6,float(i/4)*2-6,10,40};
+          a.l[61+i*9]={100,80,50,0};a.l[63+i*9][0]=.25f;
+        }
+        a.context->UpdateSubresource(list.Get(),0,nullptr,indices.data(),0,0);
+        a.Run(false,true);
+        a.context->Begin(disjoint.Get());a.context->End(first.Get());
+        constexpr int iterations=12;
+        for(int iteration=0;iteration<iterations;++iteration)
+          assert(a.pipeline.Generate(a.context.Get(),a.frame.Get(),a.lighting.Get(),a.lit.Get(),nullptr,nullptr,a.p,++a.id,nullptr,nullptr,
+              {a.local_tiles.Get()}));
+        a.context->End(last.Get());a.context->End(disjoint.Get());a.context->Flush();
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT timing{};
+        for(int attempt=0;a.context->GetData(disjoint.Get(),&timing,sizeof(timing),D3D11_ASYNC_GETDATA_DONOTFLUSH)==S_FALSE;++attempt) {
+          assert(attempt<10000);std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        UINT64 start=0,end=0;
+        assert(a.context->GetData(first.Get(),&start,sizeof(start),0)==S_OK);
+        assert(a.context->GetData(last.Get(),&end,sizeof(end),0)==S_OK);
+        assert(!timing.Disjoint && timing.Frequency);
+        std::cout<<"Local-light synthetic GPU timing: quality="<<quality<<", lights="<<lights<<", "
+                 <<double(end-start)*1000./timing.Frequency/iterations<<" ms\n";
+      }
+    }
+    a.local_tiles.Reset();a.f=previous_f;a.l=previous_l;a.p=previous_p;
+    std::cout<<"PASS local-light HDR/scalar transport, unchanged opacity, strength, tile/count guards, fill exclusion, vacuum, spot cone, six atlas faces, spot/cube ESM and missing-shadow rejection\n";
+  }
   // Private bindings are restored and stale-frame use is rejected.
   a.context->PSSetShaderResources(116,1,a.lit.GetAddressOf());
   assert(!a.pipeline.Bind(a.context.Get(),false,a.id+1));

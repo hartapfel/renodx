@@ -6,8 +6,12 @@
 namespace witcher3classic::volumetrics {
 inline float mode = 1.f;
 inline float density = 1.f;
+inline float sky_density = 1.f;
+inline float reconstruction = 1.f;
+inline float renderer = 1.f;
 inline float start_distance = 0.f;
 inline float light_strength = 1.f;
+inline float local_light_strength = 1.f;
 inline float anisotropy = .6f;
 inline float height_falloff = 1.f;
 inline float resolution_quality = 2.f;
