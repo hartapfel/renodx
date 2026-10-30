@@ -891,7 +891,7 @@ void main(
     if (r14.w != 0) {
       r12.w = rsqrt(r12.w);
       r15.xyz = r15.xyz * r12.www;
-      r16.xyz = (cb13[r11.w+61].xyz * PlayerFillScale(asuint(cb13[r11.w+61].w),1.f,cb12[71].x)) * r13.www;
+      r16.xyz = cb13[r11.w+61].xyz * r13.www;
       r11.w = dot(r7.xyz, r15.xyz);
       r11.w = max(-1, r11.w);
       r11.w = min(1, r11.w);

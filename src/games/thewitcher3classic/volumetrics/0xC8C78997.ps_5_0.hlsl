@@ -1,3 +1,4 @@
+#define CLASSIC_FOG_OPAQUE_CACHE
 #include "sample.hlsli"
 // ---- Created with 3Dmigoto v1.3.16 on Tue Oct 27 18:16:23 2026
 Texture2D<float4> t2 : register(t2);

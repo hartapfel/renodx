@@ -12,7 +12,7 @@
 
 int main() {
   using namespace witcher3classic::night::exposure;
-  assert(brightening_speed==35.f && darkening_speed==5.f && maximum_brightening==5.f && maximum_darkening==100.f);
+  assert(brightening_speed==35.f && darkening_speed==5.f && maximum_brightening==20.f && maximum_darkening==100.f);
   all_day = 0.f;
   supported = true;
   rate_caller = 0x1c147a9;
@@ -151,11 +151,11 @@ int main() {
   enabled = 1.f;
   adaptation = 1.f;
   Update(true);
-  assert(brightening_range == .05f); // Smoothed uses the approved 5% cap.
+  assert(brightening_range == .2f); // Smoothed uses the approved 20% cap.
   adaptation = 2.f;
   // Independently bound both sides, including native zero/negative floors
   // and authored ranges lying wholly above or below the reference.
-  for (float maximum_up : {0.f, 10.f, 50.f, 100.f}) for (float maximum_down : {0.f, 10.f, 100.f}) {
+  for (float maximum_up : {0.f, 10.f, 20.f, 50.f, 100.f}) for (float maximum_down : {0.f, 10.f, 100.f}) {
     maximum_brightening = maximum_up;
     maximum_darkening = maximum_down;
     Update(true);
@@ -192,7 +192,7 @@ int main() {
     enabled = auto_enabled;
     adaptation = mode;
     Update(active);
-    assert(brightening_range == (active && auto_enabled == 1.f ? (mode == 2.f ? .1f : mode == 1.f ? .05f : 1.f) : 1.f));
+    assert(brightening_range == (active && auto_enabled == 1.f ? (mode == 2.f ? .1f : mode == 1.f ? .2f : 1.f) : 1.f));
     ++cases;
   }
   enabled = 1.f;

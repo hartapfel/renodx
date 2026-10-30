@@ -1260,7 +1260,6 @@ int main(int argc, char** argv) {
     cb = view_buffer.Get(); context->VSSetConstantBuffers(1, 1, &cb);
     srv = bone_srv.Get(); context->VSSetShaderResources(0, 1, &srv);
     srv = texture_view.Get(); context->VSSetShaderResources(1, 1, &srv);
-    const D3D11_SO_DECLARATION_ENTRY position[] = {{0, "SV_POSITION", 0, 0, 4, 0}};
     std::array<Vertex, 3> probe_vertices;
     std::copy_n(vertices, 3, probe_vertices.begin());
     for (auto& vertex : probe_vertices) {
@@ -1274,6 +1273,22 @@ int main(int argc, char** argv) {
       if (shader.foliage || shader.deformed || shader.forward) continue;
       const auto native = Read(originals / std::format("0x{:08X}.cso", shader.hash));
       const auto replacement = Read(shaders / std::format("0x{:08X}.cso", shader.hash));
+      ComPtr<ID3D11ShaderReflection> reflection;
+      assert(SUCCEEDED(reflect_shader(native.data(), native.size(), __uuidof(ID3D11ShaderReflection), &reflection)));
+      D3D11_SHADER_DESC description;
+      assert(SUCCEEDED(reflection->GetDesc(&description)));
+      std::vector<D3D11_SO_DECLARATION_ENTRY> outputs;
+      UINT native_stride = 0, position_offset = UINT_MAX;
+      for (UINT i = 0; i < description.OutputParameters; ++i) {
+        D3D11_SIGNATURE_PARAMETER_DESC parameter;
+        assert(SUCCEEDED(reflection->GetOutputParameterDesc(i, &parameter)));
+        const BYTE count = BYTE(std::popcount(parameter.Mask));
+        assert(parameter.Mask == (1u << count) - 1);
+        if (parameter.SystemValueType == D3D_NAME_POSITION) position_offset = native_stride;
+        outputs.push_back({0, parameter.SemanticName, parameter.SemanticIndex, 0, count, 0});
+        native_stride += count;
+      }
+      assert(position_offset != UINT_MAX);
       ComPtr<ID3D11InputLayout> input;
       assert(SUCCEEDED(device->CreateInputLayout(layout, UINT(std::size(layout)), native.data(), native.size(), &input)));
       context->IASetInputLayout(input.Get());
@@ -1289,9 +1304,17 @@ int main(int argc, char** argv) {
         context->UpdateSubresource(instances.Get(), 0, nullptr, instance, 0, 0);
         vb = instances.Get(); stride = shader.rigid ? 64 : 80;
         context->IASetVertexBuffers(7, 1, &vb, &stride, &offset);
-        const auto a = VertexOutputs(device.Get(), context.Get(), native, position);
-        const auto b = VertexOutputs(device.Get(), context.Get(), replacement, position);
-        for (size_t i = 0; i < a.size(); ++i) unequal += std::bit_cast<uint32_t>(a[i]) != std::bit_cast<uint32_t>(b[i]);
+        const auto a = VertexOutputs(device.Get(), context.Get(), native, outputs);
+        const auto b = VertexOutputs(device.Get(), context.Get(), replacement, outputs);
+        for (size_t i = 0; i < a.size(); ++i) {
+          const UINT component = UINT(i % native_stride);
+          if (component >= position_offset && component < position_offset + 4)
+            unequal += std::bit_cast<uint32_t>(a[i]) != std::bit_cast<uint32_t>(b[i]);
+          if (!SameColor(a[i], b[i])) {
+            std::cerr << std::format("Native varying mismatch 0x{:08X}, sample {}, component {}: native={} replacement={}\n", shader.hash, sample, component, a[i], b[i]);
+            assert(false);
+          }
+        }
       }
       std::cout << std::format("Native clip invariance 0x{:08X}: {} / 288 components differ\n", shader.hash, unequal);
       assert(unequal == 0);

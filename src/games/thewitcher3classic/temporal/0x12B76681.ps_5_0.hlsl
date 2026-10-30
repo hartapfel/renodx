@@ -364,7 +364,7 @@ void main(
   r7.w = cb4[22].x + -0.200000003;
   r8.x = cmp(cb2[16].x < 0);
   r8.x = r8.x ? 1 : cb12[71].x;
-    float recipient_fill = r8.x;
+
   r8.w = cb4[21].x + 1;
   r9.w = 1 / r8.w;
   r10.w = 1 + -r2.w;
@@ -543,7 +543,7 @@ void main(
       r17.w = r20.x * r17.w;
       r17.w = r17.w * r9.w;
       r17.w = 0.318309873 * r17.w;
-      r20.xyz = (cb13[r16.w+61].xyz * PlayerFillScale(asuint(cb13[r16.w+61].w),recipient_fill,cb12[71].x)) * r17.www;
+      r20.xyz = cb13[r16.w+61].xyz * r17.www;
       r16.xyz = r18.www * r20.xyz + r16.xyz;
       r17.w = dot(r18.xyz, r2.xyz);
       r18.x = cmp(0 < r17.w);
@@ -566,7 +566,7 @@ void main(
       } else {
         r18.xyz = float3(0,0,0);
       }
-      r18.xyz = (cb13[r16.w+61].xyz * PlayerFillScale(asuint(cb13[r16.w+61].w),recipient_fill,cb12[71].x)) * r18.xyz;
+      r18.xyz = cb13[r16.w+61].xyz * r18.xyz;
       r17.xyz = r18.www * r18.xyz + r17.xyz;
     }
     r15.w = (int)r15.w + 1;

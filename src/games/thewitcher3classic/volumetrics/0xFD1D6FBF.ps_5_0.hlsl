@@ -1240,7 +1240,7 @@ void main(
     r0.x = cmp(r9.y == 1.000000);
     r0.y = cmp(cb2[16].x < 0);
     r0.y = r0.y ? 1 : cb12[71].x;
-    float recipient_fill = r0.y;
+
     r4.w = 1 + cb4[12].x;
     r2.x = 1 + -r2.x;
     r9.yzw = float3(1,1,1) + -r2.yzw;
@@ -1444,7 +1444,7 @@ void main(
         r15.xzw = r13.zzz * r0.www + r15.xzw;
         r15.xzw = r2.xxx ? r15.xzw : r16.xyz;
         r15.xzw = r15.xzw * r12.www;
-        r15.xyz = (cb13[r15.y+0].xyz * PlayerFillScale(asuint(cb13[r15.y+0].w),recipient_fill,cb12[71].x)) * r15.xzw;
+        r15.xyz = cb13[r15.y+0].xyz * r15.xzw;
         r14.xyz = r11.www * r15.xyz + r14.xyz;
       }
       r10.w = (int)r10.w + 1;

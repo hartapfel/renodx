@@ -8,12 +8,12 @@
 #include "../../../utils/data.hpp"
 #include "../../../utils/directx.hpp"
 #include "contact.hpp"
+#include "player_fill.hpp"
 #include "../temporal/runtime.hpp"
 namespace witcher3classic::lighting {
 using Microsoft::WRL::ComPtr;
 inline float shading=1.f, ambient_ao=1.f, soft_shadows=1.f, contact_shadows=1.f;
 inline float contact_length=.3f, sun_diameter=.15f;
-inline float player_control=1.f, player_strength=.2f, player_unify=1.f;
 struct __declspec(uuid("89301c2f-993e-4bd4-bafe-33b6c0650305")) DeviceData {
   ComPtr<ID3D11Buffer> parameters;
   ComPtr<ID3D11ShaderResourceView> view, previous;
@@ -72,7 +72,7 @@ inline bool Bind(reshade::api::command_list* cmd,bool compute) {
   D3D11_VIEWPORT viewport{};UINT count=1;native->RSGetViewports(&count,&viewport);
   const std::array<float,12> parameters{
       shading,ambient_ao,soft_shadows,contact_shadows!=0.f?contact_length:0.f,
-      player_strength,player_control,player_unify,
+      0.f,0.f,0.f, // Fill light is adjusted once in the native light table.
       0.f, // Reserved; retain the lighting buffer layout.
       sun_diameter,0.f,viewport.Width,viewport.Height};
   if(!data->parameters) {
@@ -102,7 +102,7 @@ inline bool OnLighting(reshade::api::command_list* cmd) {
   return (shading!=0.f||ambient_ao!=0.f)&&Bind(cmd,true);
 }
 inline bool OnLocalLight(reshade::api::command_list* cmd) {
-  return (shading!=0.f||ambient_ao!=0.f||player_control!=0.f)&&Bind(cmd,false);
+  return (shading!=0.f||ambient_ao!=0.f)&&Bind(cmd,false);
 }
 inline bool OnShadow(reshade::api::command_list* cmd) {
   if((soft_shadows==0.f&&contact_shadows==0.f)||!Bind(cmd,false))return false;
@@ -120,7 +120,7 @@ inline bool OnShadow(reshade::api::command_list* cmd) {
   return true;
 }
 inline bool OnHair(reshade::api::command_list* cmd) {
-  return (soft_shadows!=0.f||player_control!=0.f||ambient_ao!=0.f)&&Bind(cmd,false);
+  return (soft_shadows!=0.f||ambient_ao!=0.f)&&Bind(cmd,false);
 }
 inline void BindColorOnly(reshade::api::command_list* cmd,UINT index,std::span<const uint8_t> code) {
   if(!Bind(cmd,false))return;

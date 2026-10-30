@@ -13,6 +13,20 @@ int main() {
     ui::settings=&settings;
     ui::preset_index=0; // no config writes or game hooks in this executable
     check(night::enabled==1.f && night::moonlight==35.f && night::full_darkness_start==21.5f,"Runtime night defaults differ from Darker");
+    check(witcher3classic::volumetrics::resolution_quality==2.f
+        &&preset::Default(preset::graphics,"GfxFogResolutionQuality")==2.f,"Fog sampling default is incorrect");
+    check(!ui::FindSetting("GfxFogLightingResolution") && !ui::FindSetting("GfxFogLocalDistance")
+        && !ui::FindSetting("GfxFogPixelLighting"),"Removed fog controls are still exposed");
+    check(night::exposure::adaptation==1.f &&night::exposure::all_day==1.f &&night::exposure::enabled==1.f
+        &&night::exposure::smoothed_brightening_speed==35.f &&night::exposure::smoothed_darkening_speed==5.f
+        &&night::exposure::smoothed_maximum_brightening==20.f &&night::exposure::smoothed_maximum_darkening==100.f,
+        "Smoothed exposure defaults differ from approved values");
+    for(float method:{0.f,1.f}) {
+      witcher3classic::volumetrics::renderer=method;
+      check(ui::FindSetting("GfxFogReconstruction")->is_visible()==(method==0.f)
+          &&ui::FindSetting("GfxFogShadowQuality")->is_visible()==(method==0.f),"Fog method shows unrelated controls");
+    }
+    witcher3classic::volumetrics::renderer=0.f;
     auto verify=[&](const auto& values,bool custom) {
       for(const auto& value:values) {
         auto* setting=ui::FindSetting(std::string(value.key));

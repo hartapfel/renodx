@@ -13,6 +13,11 @@ TextureCubeArray<float> PixelFogCubes : register(t104);
 Texture2DArray<float> PixelFogClouds : register(t105);
 Texture2DArray<float> PixelFogTerrain : register(t106);
 Texture2D<float2> PixelFogInteriors : register(t107);
+#ifdef CLASSIC_FOG_COMPUTE
+SamplerComparisonState PixelFogShadowSampler : register(s0);
+SamplerState PixelFogWrapSampler : register(s1);
+SamplerState PixelFogLocalSampler : register(s3);
+#endif
 #define CLASSIC_FOG_PER_PIXEL
 #define CLASSIC_LOCAL_EXTERNAL_RESOURCES
 #define frame PixelFogFrame
@@ -23,7 +28,11 @@ Texture2D<float2> PixelFogInteriors : register(t107);
 #define local_tiles PixelFogTiles
 #define local_atlas PixelFogAtlas
 #define local_cubes PixelFogCubes
+#ifdef CLASSIC_FOG_COMPUTE
+#define local_sampler PixelFogLocalSampler
+#else
 #define local_sampler ClassicFogSampler
+#endif
 #define shadows PixelFogShadows
 #define clouds PixelFogClouds
 #define terrain PixelFogTerrain
@@ -79,17 +88,17 @@ float PixelFogOpacity(float distance,float3 ray,float falloff,float2 interior,bo
   }
   return pow(saturate(1.f-transmittance),max(frame[42].w,.0001f))*fade;
 }
-float3 PixelFogSun(float3 world,float3 ray,float falloff) {
-  float norm=dot(light[0].xyz,light[0].xyz);
-  if(norm<1.e-10f ||medium.z<=0.f)return 0.f;
-  float3 direction=light[0].xyz*rsqrt(norm);
-  float visibility=CascadeShadow(world,0.f,0.f,0.f)*TerrainShadow(world)*CloudShadow(world,length(world-frame[0].xyz));
-  return max(light[1].rgb,0.f)*(PhaseHG(dot(ray,direction),medium.w)*medium.z*visibility
+float3 PixelFogSun(float3 world,float distance,float3 direction,float3 source,float falloff) {
+  float visibility=CascadeShadow(world,0.f,0.f,0.f)*TerrainShadow(world)*CloudShadow(world,distance);
+  return source*(visibility
       *FogLightTransmittance(world.z+frame[42].y,direction.z,max(frame[43].x,0.f)*medium.x,falloff,1000.f));
 }
-float4 SampleClassicPixelFog(float2 uv,float distance) {
+float3 PixelFogRay(float2 uv) {
   float2 ndc=uv*float2(2,-2)+float2(-1,1);
-  float3 ray=normalize(ndc.x*ClassicFogParameters[18].xyz+ndc.y*ClassicFogParameters[19].xyz+ClassicFogParameters[20].xyz);
+  return normalize(ndc.x*ClassicFogParameters[18].xyz+ndc.y*ClassicFogParameters[19].xyz+ClassicFogParameters[20].xyz);
+}
+float4 SampleClassicPixelFog(float2 uv,float distance) {
+  float3 ray=PixelFogRay(uv);
   float2 interior=PixelFogInterior(uv);
   float falloff=PixelFogFalloff(ray);
   float opacity=PixelFogOpacity(distance,ray,falloff,interior,true);
@@ -99,7 +108,10 @@ float4 SampleClassicPixelFog(float2 uv,float distance) {
   float jitter=renodx::random::Hash33(float3(pixel,0)).x;
   float start=max(medium.y,frame[22].z),end=min(distance,max(frame[42].z,1000.f));
   float3 result=0.f;
-  if(medium.z>0.f) {
+  float norm=dot(light[0].xyz,light[0].xyz);
+  if(medium.z>0.f && norm>=1.e-10f && any(light[1].rgb>0.f)) {
+    float3 direction=light[0].xyz*rsqrt(norm);
+    float3 source=max(light[1].rgb,0.f)*(PhaseHG(dot(ray,direction),medium.w)*medium.z);
     // Near-field shadow detail gets a separate interval from distant weather.
     // Stratified per-pixel phases replace coherent slice contours with samples
     // that the game's existing reconstruction can resolve.
@@ -110,14 +122,19 @@ float4 SampleClassicPixelFog(float2 uv,float distance) {
       float a=lerp(start,pivot,float(i)/steps),b=lerp(start,pivot,float(i+1u)/steps);
       float next=PixelFogOpacity(b,ray,falloff,interior,false);
       float t=lerp(a,b,jitter);
-      result+=PixelFogSun(frame[0].xyz+ray*t,ray,falloff)*max(0.f,next-previous);previous=next;
+      float weight=max(0.f,next-previous);
+      if(weight>0.f)result+=PixelFogSun(frame[0].xyz+ray*t,t,direction,source,falloff)*weight;
+      previous=next;
     }
     if(end>pivot) {
-      float ratio=max(end/max(pivot,.0001f),1.f);
+      float factor=pow(max(end/max(pivot,.0001f),1.f),1.f/8.f);
+      float a=pivot;
       [loop]for(uint i=0;i<8;++i) {
-        float a=pivot*pow(ratio,i/8.f),b=pivot*pow(ratio,(i+1u)/8.f);
+        float b=i==7u?end:a*factor;
         float next=PixelFogOpacity(b,ray,falloff,interior,false);
-        result+=PixelFogSun(frame[0].xyz+ray*lerp(a,b,jitter),ray,falloff)*max(0.f,next-previous);previous=next;
+        float weight=max(0.f,next-previous),t=lerp(a,b,jitter);
+        if(weight>0.f)result+=PixelFogSun(frame[0].xyz+ray*t,t,direction,source,falloff)*weight;
+        previous=next;a=b;
       }
     }
   }
@@ -125,14 +142,14 @@ float4 SampleClassicPixelFog(float2 uv,float distance) {
   uint columns=(uint)frame[24].x;
   uint2 tile=uint2(pixel)>>4;
   uint offset=(tile.y*columns+tile.x)*1024u;
-  if(sampling.w>0.f &&columns>0 &&bytes>=1024 &&offset<=bytes-1024u) {
+  if(sampling.w>0.f &&end>start &&columns>0 &&bytes>=1024 &&offset<=bytes-1024u) {
     uint count=min(asuint(light[57].x),256u);
     [loop]for(uint entry=0;entry<256u;++entry) {
       uint index=local_tiles.Load(offset+entry*4u);
       if(index>=256u)break;
       if(index>=count)continue;
       uint base=58u+index*9u;
-      if(asuint(light[base+3].w)==0x80001800u ||light[base].w<=0.f)continue;
+      if(asuint(light[base+3].w)==0x80001800u ||light[base].w<=0.f || !any(light[base+3].rgb>0.f))continue;
       float3 delta=light[base].xyz-frame[0].xyz;
       float projected=dot(delta,ray);
       float3 perpendicular=delta-ray*projected;
@@ -148,7 +165,10 @@ float4 SampleClassicPixelFog(float2 uv,float distance) {
       [loop]for(uint i=0;i<steps;++i) {
         float a=lerp(lo,hi,float(i)/steps),b=lerp(lo,hi,float(i+1u)/steps);
         float next=PixelFogOpacity(b,ray,falloff,interior,false);
-        result+=LocalRadiance(base,frame[0].xyz+ray*lerp(a,b,phase),ray,falloff)*max(0.f,next-previous);previous=next;
+        float weight=max(0.f,next-previous);
+        float t=lerp(a,b,phase);
+        if(weight>0.f)result+=LocalRadiance(base,frame[0].xyz+ray*t,ray,falloff)*weight;
+        previous=next;
       }
     }
   }

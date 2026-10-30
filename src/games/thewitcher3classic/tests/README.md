@@ -1064,3 +1064,18 @@ Toussaint sky coverage: night_sky.cpp replays C6178ADC/F4B551EC cloud shaders an
 Night water: darker_nights.cpp checks isolated gain transport and time fades; water.cpp/water_test.hlsl check 0/50/100/200% ambient scattering and foam with independent direct lighting/refraction, unchanged reflection weight and fog-once composition on WARP/NVIDIA. night_bindings.cpp verifies activation with native water and fog.
 
 presets.cpp includes the real addon settings and applies all four explicit preset tables after poisoning reset defaults. It checks complete setting coverage, slider bounds, Darker startup/reset values, tab isolation, Vanilla/Off exposure bypass and Presets-section placement after the profile slider.
+
+
+## Opaque per-pixel fog cache
+
+Build fog_composite.cpp with /Ibuild/thewitcher3classic.include after the Classic Release shader/object target. Run with the existing native-fog fixture directory and --cache, then --cache --hardware. The production 0xF3C30003 compute shader and 0xC8C78997 composite cover full-resolution HDR, odd active dimensions in pooled depth, thin/lit foreground, sky, missing/stale fallback, forward isolation and private-state restoration. Half-resolution fixtures and dispatch tests were removed with that implementation. Run --pixel-local and --weather --pixel / --weather-color --pixel separately for scalar transport and captured weather comparisons.
+
+Exposure tests cover Smoothed defaults35/5/20/100 and native/custom/logarithmic limits, including20% maximum brightening. Preset coverage verifies default Fog Detail2/4, removed fog controls, method-specific visibility and exposure preset isolation. Gameplay validation remains necessary.
+
+## Shared player-fill producer
+
+player_fill.cpp checks live-count bounds and stale records, every-byte RGB-only changes, high-bit shape/shadow variants, world-light identity, HDR gains, receiver normalization including zero weather gain, repeated fresh native builds, all ten ABI arguments and daytime CommonUpload. Compile with assertions enabled, /Iexternal/Detours/include and user32.lib. An optional Classic witcher3.exe argument validates the actual PE/code anchors and rejection of modified instructions.
+
+player_fill_gpu.cpp intentionally runs original uncovered F1FB6FB1.ps_5_0.cso without a replacement. Pass the captured native skin-constant directory (skin-b1/b2/b3/b4/b12/b13.bin) and original game dump directory, then repeat with --hardware. The fixture uses a valid reoriented detail normal, tiled raw indices and HDR incident light, and checks native identity, 20%/50%/100% scaling, world-light/alpha preservation, matching across native receiver branches and additional spot flags. It fails if the native skin result stays unscaled or loses HDR. Scratch capture used: object-lighting-20261026. No runtime readbacks or fixtures ship in the package.
+
+lighting.cpp applies the same CPU producer to its captured constants before GPU replay. It also compares reordered light indices 1/7/31/255 against native bytecode. object_motion.cpp's G-buffer sweep now checks all reflected native varyings as well as bit-identical clip positions under changing camera, bone and instance transforms.

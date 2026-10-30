@@ -384,15 +384,9 @@ renodx::mods::shader::CustomShaders custom_shaders = {
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0xFAB74FB3, {.crc32 = 0xFAB74FB3, .code = __0xFAB74FB3,
-        .on_replace = [](auto*) { return witcher3classic::lighting::player_control != 0.f || witcher3classic::volumetrics::mode != 0.f; },
-        .on_inject = [](auto* cmd) {
-          if (witcher3classic::lighting::player_control != 0.f) witcher3classic::lighting::Bind(cmd,false);
-          return witcher3classic::volumetrics::OnForward(cmd);
-        },
-        .on_drawn = [](auto* cmd) {
-          witcher3classic::lighting::OnDrawn(cmd);
-          witcher3classic::volumetrics::OnDrawn(cmd);
-        }}},
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_inject = &witcher3classic::volumetrics::OnForward,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x02A34C28, {.crc32 = 0x02A34C28, .code = __0x02A34C28,
         .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnParticle,
@@ -768,10 +762,10 @@ renodx::utils::settings::Settings settings = {
         .binding = &witcher3classic::volumetrics::renderer,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogRenderer"),
-        .label = "Fog Rendering",
+        .label = "Fog Lighting Method",
         .section = "Fog Quality",
-        .tooltip = "Per-pixel gives cleaner light shafts with less banding. Volume is faster but may show visible steps in the fog.",
-        .labels = {"Volume", "Per-pixel"},
+        .tooltip = "Volume grid shares lighting across the fog and can show visible layers. Per-pixel gives smoother light shafts at a higher GPU cost.",
+        .labels = {"Volume grid", "Per-pixel"},
         .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f; },
     },
     new renodx::utils::settings::Setting{
@@ -779,9 +773,9 @@ renodx::utils::settings::Settings settings = {
         .binding = &witcher3classic::volumetrics::resolution_quality,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogResolutionQuality"),
-        .label = "Sampling Quality",
+        .label = "Fog Detail",
         .section = "Fog Quality",
-        .tooltip = "Raises fog detail and reduces visible steps. Higher quality uses more GPU power.",
+        .tooltip = "Higher values use more samples to reduce steps and noise in fog and light shafts. Higher detail costs more GPU time; 2 is the default.",
         .min = 1.f,
         .max = 4.f,
         .format = "%d / 4",
@@ -792,24 +786,26 @@ renodx::utils::settings::Settings settings = {
         .binding = &witcher3classic::volumetrics::reconstruction,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogReconstruction"),
-        .label = "Lighting Reconstruction",
+        .label = "Volume Smoothing",
         .section = "Fog Quality",
-        .tooltip = "Smooth softens bands and edges in illuminated fog. Linear is faster but can make those steps more visible.",
-        .labels = {"Linear", "Smooth"},
-        .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f && witcher3classic::volumetrics::renderer == 0.f; },
+        .tooltip = "Softens visible layers and lighting edges in volume fog. Enabling it adds a small performance cost.",
+        .labels = {"Off", "On"},
+        .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f; },
+        .is_visible = [] { return witcher3classic::volumetrics::renderer == 0.f; },
     },
     new renodx::utils::settings::Setting{
         .key = "GfxFogShadowQuality",
         .binding = &witcher3classic::volumetrics::shadow_quality,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogShadowQuality"),
-        .label = "Lighting Shadow Quality",
+        .label = "Volume Shadow Detail",
         .section = "Fog Quality",
-        .tooltip = "Smooths shadow edges inside the fog, reducing stepping as you move. Higher settings cost more performance.",
+        .tooltip = "Higher values smooth sunlight and moonlight shadow edges in volume fog, reducing steps as you move at a higher GPU cost.",
         .min = 1.f,
         .max = 4.f,
         .format = "%d / 4",
-        .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f && witcher3classic::volumetrics::renderer == 0.f; },
+        .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f; },
+        .is_visible = [] { return witcher3classic::volumetrics::renderer == 0.f; },
     },
     new renodx::utils::settings::Setting{
         .key = "GfxWater",
@@ -1069,7 +1065,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightExposureAdaptation"),
         .label = "Adaptation",
         .section = "Night Exposure",
-        .tooltip = "Smoothed uses 35% brightening speed, 5% darkening speed and a 5% brightening limit. Custom lets you adjust these values and the darkening limit.",
+        .tooltip = "Smoothed uses 35% brightening speed, 5% darkening speed, 20% maximum brightening and 100% maximum darkening. Custom lets you adjust each value.",
         .labels = {"Native", "Smoothed", "Custom"},
         .max = 2.f,
         .is_enabled = []() { return witcher3classic::night::enabled == 1.f && witcher3classic::night::exposure::supported; },
@@ -1974,6 +1970,12 @@ void OnPresetOff() {
 void OnNightPresent(reshade::api::command_queue*, reshade::api::swapchain*,
                     const reshade::api::rect*, const reshade::api::rect*, uint32_t, const reshade::api::rect*) {
   witcher3classic::night::Update(renodx::utils::settings::preset_index != 0);
+  static bool logged_player_fill=false;
+  if(!logged_player_fill && witcher3classic::lighting::player_fill::GetControls().enabled) {
+    logged_player_fill=true;
+    reshade::log::message(reshade::log::level::info,
+        "Witcher Classic: native shared player-fill controls active for all material/LOD shader paths.");
+  }
 }
 
 void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
@@ -2338,13 +2340,13 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
       auto previous_drawn=shader.on_drawn;
       shader.on_replace=[previous_replace,i,code](auto* cmd) {
         bool replace=previous_replace ? previous_replace(cmd) : true;
-        if(!replace && (witcher3classic::lighting::player_control != 0.f || witcher3classic::lighting::ambient_ao!=0.f))
+        if(!replace && witcher3classic::lighting::ambient_ao!=0.f)
           witcher3classic::lighting::BindColorOnly(cmd,i,code);
         return replace;
       };
       shader.on_inject=[previous_inject](auto* cmd) {
         bool inject=previous_inject ? previous_inject(cmd) : true;
-        if(witcher3classic::lighting::player_control != 0.f || witcher3classic::lighting::ambient_ao!=0.f)
+        if(witcher3classic::lighting::ambient_ao!=0.f)
           witcher3classic::lighting::Bind(cmd,false);
         return inject;
       };
@@ -2359,11 +2361,11 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
       auto previous_inject=shader.on_inject;
       auto previous_drawn=shader.on_drawn;
       shader.on_replace=[previous_replace](auto* cmd) {
-        return (previous_replace && previous_replace(cmd)) || witcher3classic::lighting::player_control != 0.f || witcher3classic::lighting::ambient_ao!=0.f;
+        return (previous_replace && previous_replace(cmd)) || witcher3classic::lighting::ambient_ao!=0.f;
       };
       shader.on_inject=[previous_inject](auto* cmd) {
         bool inject=previous_inject ? previous_inject(cmd) : true;
-        if(witcher3classic::lighting::player_control != 0.f || witcher3classic::lighting::ambient_ao!=0.f)
+        if(witcher3classic::lighting::ambient_ao!=0.f)
           witcher3classic::lighting::Bind(cmd,false);
         return inject;
       };

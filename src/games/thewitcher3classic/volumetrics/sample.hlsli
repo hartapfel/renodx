@@ -5,6 +5,9 @@ Texture3D<float4> ClassicFogVolume : register(t116);
 StructuredBuffer<float4> ClassicFogParameters : register(t117);
 SamplerState ClassicFogSampler : register(s11);
 #include "per_pixel.hlsli"
+#ifdef CLASSIC_FOG_OPAQUE_CACHE
+#include "opaque_cache.hlsli"
+#endif
 bool ClassicFogReady() {
   uint count, stride;
   ClassicFogParameters.GetDimensions(count,stride);
@@ -13,6 +16,13 @@ bool ClassicFogReady() {
 }
 float4 SampleClassicFogRaw(float2 uv, float distance) {
   if (ClassicPixelFogReady()) {
+#ifdef CLASSIC_FOG_OPAQUE_CACHE
+    float3 scattering;
+    if(SampleClassicOpaqueScattering(uv,distance,scattering)) {
+      float3 ray=PixelFogRay(uv);
+      return float4(scattering,1.f-PixelFogOpacity(distance,ray,PixelFogFalloff(ray),PixelFogInterior(uv),true));
+    }
+#endif
     return SampleClassicPixelFog(uv,distance);
   } else {
     float4 grid = ClassicFogParameters[0];

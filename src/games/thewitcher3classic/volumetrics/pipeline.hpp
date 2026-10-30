@@ -2,6 +2,7 @@
 #pragma once
 #include <embed/0xF3C30001.h>
 #include <embed/0xF3C30002.h>
+#include <embed/0xF3C30003.h>
 #include <array>
 #include <algorithm>
 #include "../temporal/context.hpp"
@@ -28,7 +29,8 @@ class Pipeline {
                 ID3D11ShaderResourceView* shadow, ID3D11ShaderResourceView* cloud,
                 ID3D11ShaderResourceView* terrain, const Parameters& parameters, uint64_t frame_id,
                 ID3D11SamplerState* native_shadow_sampler = nullptr, ID3D11ShaderResourceView* interiors = nullptr,
-                const LocalLightInputs& local_lights = {}) {
+                const LocalLightInputs& local_lights = {}, ID3D11ShaderResourceView* depth = nullptr) {
+    cache_ready_=false;
     if (!frame || !lighting || !shadow || parameters.grid[0]<1 || parameters.grid[1]<1
         || parameters.grid[2]<1 || parameters.grid[3]<=parameters.options[1]) return false;
     if (!Initialize(context)) return false;
@@ -71,12 +73,46 @@ class Pipeline {
     context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
     context->CSSetShader(integrate_.Get(),nullptr,0);
     context->Dispatch((width+7)/8,(height+7)/8,1);
+    if(ray_ready_ && depth
+        && parameters.sampling[0]>=1.f/8192 && parameters.sampling[0]<=1.f
+        && parameters.sampling[1]>=1.f/8192 && parameters.sampling[1]<=1.f) {
+      D3D11_SHADER_RESOURCE_VIEW_DESC depth_view{};depth->GetDesc(&depth_view);
+      ComPtr<ID3D11Resource> resource;depth->GetResource(&resource);
+      ComPtr<ID3D11Texture2D> texture;
+      const UINT render_width=UINT(std::lround(1.f/parameters.sampling[0]));
+      const UINT render_height=UINT(std::lround(1.f/parameters.sampling[1]));
+      D3D11_TEXTURE2D_DESC depth_desc{};
+      if(SUCCEEDED(resource.As(&texture)))texture->GetDesc(&depth_desc);
+      if(depth_view.ViewDimension==D3D11_SRV_DIMENSION_TEXTURE2D && depth_view.Texture2D.MostDetailedMip==0 && depth_desc.SampleDesc.Count==1
+          && render_width>0 && render_height>0 && render_width<=depth_desc.Width && render_height<=depth_desc.Height
+          && render_width<=8192 && render_height<=8192
+          && scattering_.Ensure(device_.Get(),render_width,render_height,DXGI_FORMAT_R16G16B16A16_FLOAT)
+          && endpoint_.Ensure(device_.Get(),scattering_.width,scattering_.height,DXGI_FORMAT_R32_FLOAT)) {
+        // Integration's UAV must be detached before its parameter buffer is read.
+        ID3D11UnorderedAccessView* clear_outputs[2]={};context->CSSetUnorderedAccessViews(0,2,clear_outputs,nullptr);
+        ID3D11ShaderResourceView* clear_inputs[7]={};context->CSSetShaderResources(0,7,clear_inputs);
+        context->CSSetShaderResources(0,1,&depth);
+        std::array<ID3D11ShaderResourceView*,9> sources{};
+        for(size_t i=0;i<sources.size();++i)sources[i]=ray_sources_[i].Get();
+        context->CSSetShaderResources(99,UINT(sources.size()),sources.data());
+        context->CSSetShaderResources(117,1,parameter_view_.GetAddressOf());
+        // The per-pixel reference uses LESS_EQUAL, independently of the native
+        // volume sampler. Own samplers are safe in this isolated compute state.
+        context->CSSetSamplers(0,1,shadow_sampler_.GetAddressOf());
+        context->CSSetSamplers(11,1,linear_sampler_.GetAddressOf());
+        ID3D11UnorderedAccessView* outputs[]={scattering_.output.Get(),endpoint_.output.Get()};
+        context->CSSetUnorderedAccessViews(0,2,outputs,nullptr);
+        context->CSSetShader(pixel_.Get(),nullptr,0);
+        context->Dispatch((render_width+7)/8,(render_height+7)/8,1);
+        cache_ready_=true;
+      }
+    }
     generated_frame=frame_id;
     return true;
   }
   ID3D11ShaderResourceView* View() const { return volume_.view.Get(); }
   ID3D11ShaderResourceView* ParametersView() const { return parameter_view_.Get(); }
-  bool Bind(ID3D11DeviceContext1* context, bool vertex, uint64_t frame_id) {
+  bool Bind(ID3D11DeviceContext1* context, bool vertex, uint64_t frame_id, bool opaque = false) {
     if (bound_ || generated_frame!=frame_id || !volume_.view) return false;
     vertex_=vertex;
     if (vertex) {
@@ -98,12 +134,22 @@ class Pipeline {
       for(size_t i=0;i<previous.size();++i) { saved_ray_[i].Attach(previous[i]);sources[i]=ray_sources_[i].Get(); }
       context->PSSetShaderResources(99,UINT(sources.size()),sources.data());
       ray_bound_=true;
+      if(opaque) {
+        context->PSGetShaderResources(108,2,saved_cache_.data());
+        ID3D11ShaderResourceView* cached[]={cache_ready_?scattering_.view.Get():nullptr,cache_ready_?endpoint_.view.Get():nullptr};
+        context->PSSetShaderResources(108,2,cached);cache_bound_=true;
+      }
     }
     bound_=true;
     return true;
   }
   void Restore(ID3D11DeviceContext1* context) {
     if (!bound_) return;
+    if(cache_bound_) {
+      context->PSSetShaderResources(108,2,saved_cache_.data());
+      for(auto*& view:saved_cache_) {if(view)view->Release();view=nullptr;}
+      cache_bound_=false;
+    }
     if(ray_bound_) {
       std::array<ID3D11ShaderResourceView*,9> previous{};
       for(size_t i=0;i<previous.size();++i) {previous[i]=saved_ray_[i].Get();}
@@ -117,6 +163,25 @@ class Pipeline {
     saved_[0].Reset(); saved_[1].Reset(); saved_sampler_.Reset(); bound_=false;
   }
  private:
+  // Reused screen resources, separate FP32 endpoint avoids FP16 depth rounding
+  // admitting light across distant geometry boundaries.
+  struct Screen {
+    UINT width=0,height=0;
+    ComPtr<ID3D11Texture2D> texture;
+    ComPtr<ID3D11ShaderResourceView> view;
+    ComPtr<ID3D11UnorderedAccessView> output;
+    bool Ensure(ID3D11Device* device,UINT w,UINT h,DXGI_FORMAT format) {
+      if(texture &&width==w &&height==h)return true;
+      texture.Reset();view.Reset();output.Reset();
+      D3D11_TEXTURE2D_DESC desc{w,h,1,1,format,{1,0},D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS};
+      if(FAILED(device->CreateTexture2D(&desc,nullptr,&texture))
+          ||FAILED(device->CreateShaderResourceView(texture.Get(),nullptr,&view))
+          ||FAILED(device->CreateUnorderedAccessView(texture.Get(),nullptr,&output))) {texture.Reset();return false;}
+      width=w;height=h;return true;
+    }
+  } scattering_,endpoint_;
+  bool cache_ready_=false,cache_bound_=false;
+  std::array<ID3D11ShaderResourceView*,2> saved_cache_{};
   struct Snapshot {
     ComPtr<ID3D11Buffer> buffer;
     ComPtr<ID3D11ShaderResourceView> view;
@@ -156,7 +221,8 @@ class Pipeline {
     if (state_) return true;
     context->GetDevice(&device_);
     if (FAILED(error=device_->CreateComputeShader(__0xF3C30001.data(),__0xF3C30001.size(),nullptr,&scatter_))
-        || FAILED(error=device_->CreateComputeShader(__0xF3C30002.data(),__0xF3C30002.size(),nullptr,&integrate_))) return false;
+        || FAILED(error=device_->CreateComputeShader(__0xF3C30002.data(),__0xF3C30002.size(),nullptr,&integrate_))
+        || FAILED(error=device_->CreateComputeShader(__0xF3C30003.data(),__0xF3C30003.size(),nullptr,&pixel_))) return false;
     D3D11_BUFFER_DESC desc{sizeof(Parameters),D3D11_USAGE_DEFAULT,D3D11_BIND_CONSTANT_BUFFER};
     if (FAILED(error=device_->CreateBuffer(&desc,nullptr,&constants_))) return false;
     desc.ByteWidth=22*16;
@@ -179,7 +245,7 @@ class Pipeline {
   bool bound_=false,vertex_=false;
   ComPtr<ID3D11Device> device_;
   ComPtr<ID3DDeviceContextState> state_;
-  ComPtr<ID3D11ComputeShader> scatter_,integrate_;
+  ComPtr<ID3D11ComputeShader> scatter_,integrate_,pixel_;
   ComPtr<ID3D11Buffer> constants_,parameters_;
   ComPtr<ID3D11ShaderResourceView> parameter_view_,saved_[2];
   ComPtr<ID3D11UnorderedAccessView> parameter_output_;

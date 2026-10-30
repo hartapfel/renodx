@@ -40,7 +40,6 @@ void main(
   uint4 bitmask, uiDest;
   float4 fDest;
 
-  float recipient_fill = 1.f;
   r0.xy = (int2)v0.xy;
   r0.zw = float2(0,0);
   r1.x = t0.Load(r0.xyw).x;
@@ -140,7 +139,7 @@ void main(
         r2.yzw = r2.yyy * r7.xyz + r8.xyz;
         r8.xyz = r2.xxx * r4.www + r2.yzw;
       }
-      r2.xyz = (cb13[r1.w+61].xyz * PlayerFillScale(asuint(cb13[r1.w+61].w), recipient_fill, cb12[71].x)) * r8.xyz;
+      r2.xyz = cb13[r1.w+61].xyz * r8.xyz;
       r2.xyz = r6.xxx * r2.xyz;
       r0.w = cmp(0 < r0.w);
       if (r0.w != 0) {
@@ -176,7 +175,7 @@ void main(
       } else {
         r0.xyz = float3(0,0,0);
       }
-      r0.xyz = (cb13[r1.w+61].xyz * PlayerFillScale(asuint(cb13[r1.w+61].w), recipient_fill, cb12[71].x)) * r0.xyz;
+      r0.xyz = cb13[r1.w+61].xyz * r0.xyz;
       r0.xyz = r6.yyy * r0.xyz;
       r0.xyz = r4.xyz * r2.xyz + r0.xyz;
       r1.xyz = saturate(r3.yyy * cb12[186].xyz + cb12[187].xyz);

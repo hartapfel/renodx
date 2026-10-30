@@ -304,7 +304,7 @@ void main(
   r5.z = r5.z ? -r7.z : -0.58431375;
   r7.z = cmp(cb2[16].x < 0);
   r7.z = r7.z ? 1 : cb12[71].x;
-    float recipient_fill = r7.z;
+
   r7.w = 1 + r1.w;
   r8.w = cb4[23].x + -cb4[22].x;
   r14.xyz = r0.xyz * r2.www + -r9.xyz;
@@ -548,7 +548,7 @@ void main(
         r26.xyz = float3(0,0,0);
       }
       r23.xyz = r23.xyz * float3(0.318309873,0.318309873,0.318309873) + r26.xyz;
-      r23.xyz = (cb13[r19.w+61].xyz * PlayerFillScale(asuint(cb13[r19.w+61].w),recipient_fill,cb12[71].x)) * r23.xyz;
+      r23.xyz = cb13[r19.w+61].xyz * r23.xyz;
       r20.xyz = r21.www * r23.xyz + r20.xyz;
       r20.w = dot(r22.xyz, r8.xyz);
       r22.x = cmp(0 < r20.w);
@@ -571,7 +571,7 @@ void main(
       } else {
         r22.xyz = float3(0,0,0);
       }
-      r22.xyz = (cb13[r19.w+61].xyz * PlayerFillScale(asuint(cb13[r19.w+61].w),recipient_fill,cb12[71].x)) * r22.xyz;
+      r22.xyz = cb13[r19.w+61].xyz * r22.xyz;
       r21.xyz = r21.www * r22.xyz + r21.xyz;
     }
     r19.z = (int)r19.z + 1;

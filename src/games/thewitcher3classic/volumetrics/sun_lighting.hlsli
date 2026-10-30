@@ -8,6 +8,9 @@ float FilterFogCascade(float3 p, float3 dx, float3 dy, float3 dz, uint cascade) 
   float2 uv = p.xy*light[11+cascade].z*float2(1,-1)+light[11+cascade].xy;
   uint width,height,layers;shadows.GetDimensions(width,height,layers);
   if(width==0 ||height==0 ||cascade>=layers)return 1.f;
+#ifdef CLASSIC_FOG_COMPUTE
+  return shadows.SampleCmpLevelZero(PixelFogShadowSampler,float3(uv,cascade),p.z);
+#else
   float2 texel=saturate(uv)*float2(width,height)-.5f;
   int2 cell=int2(floor(texel));float2 blend=frac(texel);
   int2 limit=int2(width,height)-1;
@@ -18,6 +21,7 @@ float FilterFogCascade(float3 p, float3 dx, float3 dy, float3 dz, uint cascade) 
   // Bilinear visibility, never interpolation of raw shadow depths. Loads
   // avoid borrowing a material sampler slot in forward/BlitzFX permutations.
   return lerp(lerp(a,b,blend.x),lerp(c,d,blend.x),blend.y);
+#endif
 #else
   // Mirrored Hammersley samples: stratify the full radial cell interval and
   // distribute the other two coordinates without a regular planar PCF grid.
@@ -100,6 +104,9 @@ float WrappedFogCloud(float2 uv, float layer) {
   clouds.GetDimensions(0,width,height,layers,levels);
   if(width==0 ||height==0 ||layer<0.f ||layer>=float(layers))return 0.f;
   uint mip=min(1u,levels-1u);
+#ifdef CLASSIC_FOG_COMPUTE
+  return clouds.SampleLevel(PixelFogWrapSampler,float3(uv,layer),mip);
+#else
   width=max(1u,width>>mip);height=max(1u,height>>mip);
   float2 texel=frac(uv)*float2(width,height)-.5f;
   int2 cell=int2(floor(texel)),size=int2(width,height);
@@ -107,6 +114,7 @@ float WrappedFogCloud(float2 uv, float layer) {
   uint2 a=uint2(cell+size)%uint2(size),b=uint2(cell+1+size)%uint2(size);
   return lerp(lerp(clouds.Load(int4(a,layer,mip)),clouds.Load(int4(b.x,a.y,layer,mip)),blend.x),
       lerp(clouds.Load(int4(a.x,b.y,layer,mip)),clouds.Load(int4(b,layer,mip)),blend.x),blend.y);
+#endif
 }
 #endif
 float CloudShadow(float3 world, float distance) {

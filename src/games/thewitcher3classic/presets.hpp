@@ -34,7 +34,7 @@ inline constexpr Value night[] = {
     {"NightExposureAdaptation", 0.f, 1.f},
     {"NightExposureBrighteningSpeed", 100.f, 35.f},
     {"NightExposureDarkeningSpeed", 100.f, 5.f},
-    {"NightExposureMaximumBrightening", 100.f, 5.f},
+    {"NightExposureMaximumBrightening", 100.f, 20.f},
     {"NightExposureMaximumDarkening", 100.f, 100.f},
     {"NightExposureFixedLuminance", .18f, .18f},
     {"NightDarkeningStart", 18.f, 18.f},
@@ -52,7 +52,8 @@ inline constexpr Value graphics[] = {
     {"GfxFogStart", 0.f, 0.f}, {"GfxFogLight", 1.f, 1.f},
     {"GfxFogLocalLight", 2.f, 2.f}, {"GfxFogAnisotropy", .5f, .5f},
     {"GfxFogHeight", 1.f, 1.f}, {"GfxFogRenderer", 0.f, 0.f},
-    {"GfxFogResolutionQuality", 4.f, 4.f}, {"GfxFogReconstruction", 0.f, 1.f},
+    {"GfxFogResolutionQuality", 2.f, 2.f},
+    {"GfxFogReconstruction", 0.f, 1.f},
     {"GfxFogShadowQuality", 4.f, 4.f}, {"GfxWater", 0.f, 1.f},
     {"GfxWaterClarity", .5f, .5f}, {"GfxRefractiveRain", 0.f, 1.f},
 };

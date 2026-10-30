@@ -15,6 +15,7 @@
 #include <cstring>
 #include <algorithm>
 #include "../lighting/contact.hpp"
+#include "../lighting/player_fill.hpp"
 using Microsoft::WRL::ComPtr;
 using Pixel=std::array<float,4>;
 std::vector<char> Read(const std::string& path) {
@@ -45,6 +46,17 @@ int main(int argc,char**) {
   };
   frame_cb=buffer(frame.data(),sizeof(frame),D3D11_BIND_CONSTANT_BUFFER,0);
   light_cb=buffer(lighting.data(),sizeof(lighting),D3D11_BIND_CONSTANT_BUFFER,0);
+  // Exercise the actual shared producer policy, rather than shader-local
+  // controls that left uncovered native skin LODs at full strength.
+  auto upload_fill=[&](const witcher3classic::lighting::player_fill::Controls& controls) {
+    auto common=frame;auto lights=lighting;
+    std::array<float,0x4050/4> environment{};environment[0x404c/4]=frame[71][0];
+    const UINT count=256;std::memcpy(&lights[57][0],&count,sizeof(count));
+    witcher3classic::lighting::player_fill::ApplyCommon(common.data(),controls);
+    witcher3classic::lighting::player_fill::ApplyLights(lights.data(),environment.data(),controls);
+    ctx->UpdateSubresource(frame_cb.Get(),0,nullptr,common.data(),0,0);
+    ctx->UpdateSubresource(light_cb.Get(),0,nullptr,lights.data(),0,0);
+  };
   Pixel draw{};draw_cb=buffer(draw.data(),sizeof(draw),D3D11_BIND_CONSTANT_BUFFER,0);
   std::array<Pixel,3> params{};param_buffer=buffer(params.data(),sizeof(params),D3D11_BIND_SHADER_RESOURCE,16);
   assert(SUCCEEDED(device->CreateShaderResourceView(param_buffer.Get(),nullptr,&param_view)));
@@ -106,16 +118,31 @@ int main(int argc,char**) {
   for(const char* hash:{"0x95991F6F","0xD3573BB9","0x72225972","0x3FFDA0D9","0x3946E96C","0x0AB3A292","0x3CED9DA6","0xED6CEFE4"}) {
     params={};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);
     auto a=ps(scratch+"originals/"+hash+".ps_5_0.cso"),b=ps(std::string("build/thewitcher3classic.include/embed/")+hash+".cso");compare(a,b,hash);
+    // Light ordering changes with visibility. Slot zero alone cannot detect
+    // decompiler errors in relative CB indexing or stale per-draw selection.
+    for (UINT index : {1u,7u,31u,255u}) {
+      std::copy_n(lighting.begin()+58,9,lighting.begin()+58+9*index);
+      lighting[61+9*index][0] *= .75f;
+      draw[0]=float(index);
+      ctx->UpdateSubresource(draw_cb.Get(),0,nullptr,draw.data(),0,0);
+      ctx->UpdateSubresource(light_cb.Get(),0,nullptr,lighting.data(),0,0);
+      auto indexed_native=ps(scratch+"originals/"+hash+".ps_5_0.cso");
+      auto indexed_custom=ps(std::string("build/thewitcher3classic.include/embed/")+hash+".cso");
+      compare(indexed_native,indexed_custom,"Reordered local-light native equivalence");
+    }
+    draw[0]=0;
+    ctx->UpdateSubresource(draw_cb.Get(),0,nullptr,draw.data(),0,0);
     params[0]={1,1,0,0};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);auto c=ps(std::string("build/thewitcher3classic.include/embed/")+hash+".cso");changed=0;for(size_t i=0;i<c.size();++i){assert(std::isfinite(c[i]));if(std::abs(c[i]-b[i])>.001f)++changed;}assert(changed>100);
     // Only engine-tagged camera lights respond to the player controls.
-    params={};params[1]={0,1,1,0};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);
+    params={};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);
+    upload_fill({true,true,0.f});
     auto ordinary=ps(std::string("build/thewitcher3classic.include/embed/")+hash+".cso");compare(b,ordinary,"World light unaffected by player control");
     const UINT fill_flags=0x80001800u;memcpy(&lighting[61][3],&fill_flags,4);frame[71][0]=.25f;
     ctx->UpdateSubresource(light_cb.Get(),0,nullptr,lighting.data(),0,0);ctx->UpdateSubresource(frame_cb.Get(),0,nullptr,frame.data(),0,0);
     params={};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);auto fill_native=ps(std::string("build/thewitcher3classic.include/embed/")+hash+".cso");
-    params[1]={.5f,1,0,0};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);auto half=ps(std::string("build/thewitcher3classic.include/embed/")+hash+".cso");
+    upload_fill({true,false,.5f});auto half=ps(std::string("build/thewitcher3classic.include/embed/")+hash+".cso");
     for(size_t k=0;k<half.size();++k)if(k%4<3)assert(std::abs(half[k]-.5f*fill_native[k])<.002f);
-    params[1]={1,1,1,0};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);auto unified=ps(std::string("build/thewitcher3classic.include/embed/")+hash+".cso");
+    upload_fill({true,true,1.f});auto unified=ps(std::string("build/thewitcher3classic.include/embed/")+hash+".cso");
     bool native_recipient=std::string(hash)=="0x72225972"||std::string(hash)=="0x3FFDA0D9"||std::string(hash)=="0x0AB3A292"||std::string(hash)=="0x3CED9DA6";
     for(size_t k=0;k<unified.size();++k)if(k%4<3){float expected_scale=native_recipient&&((k/4)%W)%2==0?1.f:.25f;assert(std::abs(unified[k]-expected_scale*fill_native[k])<.002f);}
     const UINT world_flags=0x1800u;memcpy(&lighting[61][3],&world_flags,4);ctx->UpdateSubresource(light_cb.Get(),0,nullptr,lighting.data(),0,0);
@@ -470,10 +497,10 @@ int main(int argc,char**) {
     memcpy(&lighting[61][3],&flags,4);ctx->UpdateSubresource(light_cb.Get(),0,nullptr,lighting.data(),0,0);
     memcpy(fringe_material.data()+16*16,&recipient,4);ctx->UpdateSubresource(fringe_cb[1].Get(),0,nullptr,fringe_material.data(),0,0);
     params={};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);
-    auto original=ps(fringe_original),replacement=ps(fringe_replacement);compare(original,replacement,"Transparent hair native RGBA");
-    params[1]={0,1,0,0};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);auto off=ps(fringe_replacement);
-    params[1]={.5f,1,0,0};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);auto half=ps(fringe_replacement);
-    params[1]={1,1,1,0};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);auto unified=ps(fringe_replacement);
+    upload_fill({false,false,1.f});auto original=ps(fringe_original),replacement=ps(fringe_replacement);compare(original,replacement,"Transparent hair native RGBA");
+    upload_fill({true,false,0.f});auto off=ps(fringe_replacement);
+    upload_fill({true,false,.5f});auto half=ps(fringe_replacement);
+    upload_fill({true,true,1.f});auto unified=ps(fringe_replacement);
     size_t affected=0;
     for(size_t i=0;i<original.size();++i) {
       if(i%4==3){assert(original[i]==off[i]&&off[i]==half[i]&&half[i]==unified[i]);continue;}
@@ -485,6 +512,7 @@ int main(int argc,char**) {
     }
     if(flags==0x80001800u)assert(affected>100);
   }
+  upload_fill({false,false,1.f});
   std::cout<<"PASS transparent hair: native RGBA, nonzero tagged-fill removal/scaling, character/world unification, unchanged world lights and alpha\n";
   // Camera direction and nonzero packed shadow tiles must be exercised together:
   // a numeric cast of the packed float can silently disable local shadows.

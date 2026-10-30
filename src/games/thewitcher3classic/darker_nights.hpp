@@ -18,6 +18,7 @@
 #include <intrin.h>
 
 #include "./night_exposure.hpp"
+#include "./lighting/player_fill.hpp"
 #include "./night_normalization.hpp"
 
 namespace witcher3classic::night {
@@ -168,6 +169,8 @@ inline bool Supported() {
     checked = true;
     supported = ValidateImage(reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr)));
     common_supported = supported && ValidateCommonImage(reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr)));
+    lighting::player_fill::supported = common_supported
+        && lighting::player_fill::Validate(reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr)));
     if (supported) {
       const auto* image = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
       exposure::Validate(image, 0x3673000);
@@ -268,6 +271,7 @@ struct CommonUpload {
   CommonUpload* previous = active;
   Controls controls;
   float time;
+  lighting::player_fill::Controls player_controls = lighting::player_fill::GetControls();
   void* mapped = nullptr;
   uint64_t resource = 0;
   const void* native_handle = nullptr;
@@ -282,6 +286,7 @@ struct CommonUpload {
   void Publish() {
     if (!mapped) return;
     ApplyCommon(shadow.data(), controls, time);
+    lighting::player_fill::ApplyCommon(shadow.data(),player_controls);
     std::memcpy(mapped, shadow.data(), shadow.size());
     mapped = nullptr;
     resource = 0;
@@ -294,12 +299,13 @@ inline void* MapBufferHook(const void* handle, uint32_t flags, uint32_t offset, 
   if (!target || !upload || handle != upload->native_handle || flags != 4 || offset != 0 || size != 4304) return target;
   state->common_uploads.fetch_add(1, std::memory_order_relaxed);
   const auto& controls = upload->controls;
-  if (ClockMultiplier(upload->time, controls.schedule, 0.f) == 1.f
+  if (!(upload->player_controls.enabled && upload->player_controls.unify)
+      && (ClockMultiplier(upload->time, controls.schedule, 0.f) == 1.f
       || (controls.ambient_light == 1.f && controls.ambient_shadow == 1.f
           && controls.reflection_light == 1.f && controls.reflection_shadow == 1.f
           && controls.fog == 1.f && controls.haze == 1.f && controls.sky == 1.f && controls.sky_haze == 1.f
           && controls.moon_brightness == 1.f && controls.moon_size == 1.f
-          && controls.clouds == 1.f && controls.stars == 1.f && controls.water == 1.f)) return target;
+          && controls.clouds == 1.f && controls.stars == 1.f && controls.water == 1.f))) return target;
   // Capture the native helper's final pointer, after all API interception.
   // Publish to that exact destination before its native Unmap helper runs.
   return upload->Redirect(target, reinterpret_cast<uintptr_t>(handle));
@@ -317,7 +323,8 @@ inline void CommonConstantsHook(void* renderer, const void* environment, uint64_
     std::shared_lock lock(state->mutex);
     controls = state->controls;
   }
-  if (controls.schedule == 0 || !environment) {
+  const auto player_controls=lighting::player_fill::GetControls();
+  if ((controls.schedule == 0 && !(player_controls.enabled && player_controls.unify)) || !environment) {
     build_common_constants(renderer, environment, width, height, index, flags);
     return;
   }
@@ -383,6 +390,12 @@ inline bool Install() {
           && DetourAttach(reinterpret_cast<void**>(&map_buffer), reinterpret_cast<void*>(&MapBufferHook)) == NO_ERROR
           && DetourAttach(reinterpret_cast<void**>(&unmap_buffer), reinterpret_cast<void*>(&UnmapBufferHook)) == NO_ERROR;
     }
+    if(valid && lighting::player_fill::supported) {
+      lighting::player_fill::build_local_constants = reinterpret_cast<lighting::player_fill::BuildLocalConstants>(
+          reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))+0xc39be0);
+      valid=DetourAttach(reinterpret_cast<void**>(&lighting::player_fill::build_local_constants),
+          reinterpret_cast<void*>(&lighting::player_fill::LocalConstantsHook))==NO_ERROR;
+    }
     if (valid && exposure::supported) {
       constants_image_base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
       set_pixel_constants = reinterpret_cast<SetPixelConstants>(constants_image_base + 0x19f00);
@@ -396,6 +409,8 @@ inline bool Install() {
 }
 
 inline void Update(bool preset_enabled) {
+  if(preset_enabled && lighting::player_control!=0.f && Supported())Install();
+  lighting::player_fill::Update(preset_enabled && installed && lighting::player_fill::supported);
   Controls controls;
   const bool active = preset_enabled && enabled == 1.f && Supported();
   normalization::Update(active);

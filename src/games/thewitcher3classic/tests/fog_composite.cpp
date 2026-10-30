@@ -3,6 +3,7 @@
 #define NOMINMAX
 #endif
 #include <d3d11.h>
+#include <d3d11sdklayers.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -55,17 +56,21 @@ int main(int argc, char** argv) {
   try {
     if (argc < 2) return 2;
     root = argv[1];
+    const bool cache_test=std::find(argv+2,argv+argc,std::string("--cache"))!=argv+argc;
     ComPtr<ID3D11Device> dev;
     ComPtr<ID3D11DeviceContext> ctx;
-    Check(D3D11CreateDevice(nullptr, std::find(argv + 2, argv + argc, std::string("--hardware")) != argv + argc
-        ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &dev, nullptr, &ctx));
+    const auto driver=std::find(argv + 2, argv + argc, std::string("--hardware")) != argv + argc
+        ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP;
+    auto created=D3D11CreateDevice(nullptr,driver,nullptr,cache_test?D3D11_CREATE_DEVICE_DEBUG:0,nullptr,0,D3D11_SDK_VERSION,&dev,nullptr,&ctx);
+    if(created==DXGI_ERROR_SDK_COMPONENT_MISSING)created=D3D11CreateDevice(nullptr,driver,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&dev,nullptr,&ctx);
+    Check(created);
     const bool benchmark=std::find(argv+2,argv+argc,std::string("--benchmark"))!=argv+argc;
     const bool per_pixel=std::find(argv+2,argv+argc,std::string("--pixel"))!=argv+argc;
     if(benchmark) {
       ComPtr<IDXGIDevice> dxgi;Check(dev.As(&dxgi));ComPtr<IDXGIAdapter> adapter;Check(dxgi->GetAdapter(&adapter));DXGI_ADAPTER_DESC description{};Check(adapter->GetDesc(&description));
       std::wcout<<L"GPU timing adapter: "<<description.Description<<L'\n';
     }
-    const UINT W = benchmark?2560:64, H = benchmark?1440:64;
+    const UINT W = benchmark?2560:cache_test?65:64, H = benchmark?1440:cache_test?33:64;
     const char* vsText = "struct V {float4 p:SV_Position;float2 uv:TEXCOORD0;float2 vignette:TEXCOORD2;}; V main(uint id:SV_VertexID){V v;v.uv=float2((id<<1)&2,id&2);v.p=float4(v.uv*float2(2,-2)+float2(-1,1),0,1);v.vignette=v.uv;return v;}";
     ComPtr<ID3DBlob> vsBlob;
     Check(D3DCompile(vsText, strlen(vsText), nullptr, nullptr, nullptr, "main", "vs_5_0", 0, 0, &vsBlob, nullptr));
@@ -145,7 +150,7 @@ int main(int argc, char** argv) {
     texture(0,W,H,depth);texture(1,W,H,scene);texture(2,W,H,mask);
     const auto original=Read(root/"native-fog.cso");
     const auto code=Compiled("0xC8C78997.ps_5_0.hlsl");
-    if(std::find(argv+2,argv+argc,std::string("--pixel-local"))!=argv+argc) {
+    if(cache_test || std::find(argv+2,argv+argc,std::string("--pixel-local"))!=argv+argc) {
       frame.assign(269*4,0);controls.assign(8,0);
       frame[17*4]=1;frame[18*4+1]=1;frame[20*4+2]=frame[20*4+3]=1;
       frame[22*4]=-1;frame[22*4+1]=1;frame[22*4+2]=.2f;
@@ -158,6 +163,7 @@ int main(int argc, char** argv) {
       std::vector<float> lights(3323*4);
       UINT count=1;std::memcpy(&lights[57*4],&count,4);
       lights[58*4+2]=10;lights[58*4+3]=6;lights[61*4]=100;lights[61*4+1]=40;lights[61*4+2]=10;lights[63*4]=.25f;
+      if(cache_test)for(UINT c=0;c<3;++c)lights[61*4+c]*=100.f;
       buffer(13,lights);ComPtr<ID3D11Buffer> lighting;ctx->PSGetConstantBuffers(13,1,&lighting);
       std::vector<UINT> indices(((W+15)/16)*((H+15)/16)*256,256);
       for(size_t i=0;i<indices.size();i+=256)indices[i]=0;
@@ -180,22 +186,73 @@ int main(int argc, char** argv) {
       D3D11_SHADER_RESOURCE_VIEW_DESC cube_srv{};cube_srv.Format=DXGI_FORMAT_R32_FLOAT;cube_srv.ViewDimension=D3D11_SRV_DIMENSION_TEXTURECUBEARRAY;cube_srv.TextureCubeArray.NumCubes=1;cube_srv.TextureCubeArray.MipLevels=1;
       Check(dev->CreateShaderResourceView(cube.Get(),&cube_srv,&cube_view));
       ComPtr<ID3D11DeviceContext1> context;Check(ctx.As(&context));witcher3classic::volumetrics::Pipeline pipeline;
-      const witcher3classic::volumetrics::Parameters parameters{{64,64,256,1000},{1,0,0,0},{0,.1f,0,0},{1.f/W,1.f/H,4,1},{1,1,1,4}};
+      witcher3classic::volumetrics::Parameters parameters{{64,64,256,1000},{1,0,0,0},{0,.1f,0,0},{1.f/W,1.f/H,4,1},{1,1,1,4}};
       uint64_t id=0;
-      for(bool shadowed:{false,true})for(float plane:{40.f,2.f}) {
+      for(bool shadowed:{false,true})for(float plane:cache_test?std::vector<float>{40.f,2.f,-1.f,-2.f,-3.f,-4.f}:std::vector<float>{40.f,2.f}) {
         lights[60*4+3]=shadowed?1.f:0.f;lights[64*4]=shadowed?1.f:0.f;
         ctx->UpdateSubresource(lighting.Get(),0,nullptr,lights.data(),0,0);
         frame[210*4]=2*plane/W;frame[211*4+1]=-2*plane/H;
         frame[213*4]=-plane+plane/W;frame[213*4+1]=plane-plane/H;frame[213*4+2]=plane;frame[213*4+3]=1;
+        if(plane<0) {
+          frame[210*4]=2.f/W;frame[211*4+1]=-2.f/H;
+          frame[212*4+3]=1;frame[213*4]=-1.f+1.f/W;frame[213*4+1]=1.f-1.f/H;
+          frame[213*4+2]=1;frame[213*4+3]=0;
+        } else frame[212*4+3]=0;
+        if(cache_test) {
+          // Active viewport in a larger pooled depth allocation. Stale padding
+          // and one-pixel foreground bars must not admit background light.
+          std::vector<float> pooled((W+31)*(H+17)*4,0.f);
+          for(UINT y=0;y<H;++y)for(UINT x=0;x<W;++x)
+            pooled[(y*(W+31)+x)*4]=plane==-3?0.f:plane==-2?.005f+.4f*(y+.5f)/H:plane==-1?(x%2==0?.5f:.025f):plane==-4?(x%2==0?.125f:.025f):.5f;
+          texture(0,W+31,H+17,pooled);
+        }
         buffer(12,frame);ComPtr<ID3D11Buffer> constants;ctx->PSGetConstantBuffers(12,1,&constants);
         std::array<ID3D11ShaderResourceView*,9> previous;previous.fill(shadow_view.Get());
         ctx->PSSetShaderResources(99,UINT(previous.size()),previous.data());
         if(!pipeline.Generate(context.Get(),constants.Get(),lighting.Get(),shadow_view.Get(),nullptr,nullptr,parameters,++id,nullptr,nullptr,{list_view.Get(),nullptr,cube_view.Get()})
-            ||!pipeline.Bind(context.Get(),false,id))throw std::runtime_error("Per-pixel local setup failed");
+            ||!pipeline.Bind(context.Get(),false,id,cache_test))throw std::runtime_error("Per-pixel local setup failed");
         // Native constant buffers can be reused by subsequent material draws.
         // The fog must keep the captured light list instead of aliasing b13.
         std::vector<float> cleared(lights.size());ctx->UpdateSubresource(lighting.Get(),0,nullptr,cleared.data(),0,0);
         auto actual=render(code->GetBufferPointer(),code->GetBufferSize());pipeline.Restore(context.Get());
+        if(cache_test) {
+          ComPtr<ID3D11ShaderResourceView> depth_view;ctx->PSGetShaderResources(0,1,&depth_view);
+          ctx->UpdateSubresource(lighting.Get(),0,nullptr,lights.data(),0,0);
+          ID3D11ShaderResourceView* sentinels[]={shadow_view.Get(),shadow_view.Get()};ctx->PSSetShaderResources(108,2,sentinels);
+          if(!pipeline.Generate(context.Get(),constants.Get(),lighting.Get(),shadow_view.Get(),nullptr,nullptr,parameters,++id,nullptr,nullptr,
+              {list_view.Get(),nullptr,cube_view.Get()},depth_view.Get())||!pipeline.Bind(context.Get(),false,id,true))
+            throw std::runtime_error("Opaque full-resolution cache failed");
+          ComPtr<ID3D11ShaderResourceView> cached_view;ctx->PSGetShaderResources(108,1,&cached_view);
+          if(!cached_view)throw std::runtime_error("Opaque cache was not bound");
+          ComPtr<ID3D11Resource> cached_resource;cached_view->GetResource(&cached_resource);
+          ComPtr<ID3D11Texture2D> cached_texture;Check(cached_resource.As(&cached_texture));D3D11_TEXTURE2D_DESC cached_desc{};cached_texture->GetDesc(&cached_desc);
+          if(cached_desc.Width!=W ||cached_desc.Height!=H ||cached_desc.Format!=DXGI_FORMAT_R16G16B16A16_FLOAT)
+            throw std::runtime_error("Opaque cache dimensions/precision mismatch");
+          ComPtr<ID3D11ShaderResourceView> endpoint;ctx->PSGetShaderResources(109,1,&endpoint);
+          endpoint->GetResource(&cached_resource);Check(cached_resource.As(&cached_texture));cached_texture->GetDesc(&cached_desc);
+          if(cached_desc.Format!=DXGI_FORMAT_R32_FLOAT)throw std::runtime_error("Fog endpoint precision/format mismatch");
+          auto cached=render(code->GetBufferPointer(),code->GetBufferSize());pipeline.Restore(context.Get());
+          std::array<ID3D11ShaderResourceView*,2> restored_cache{};ctx->PSGetShaderResources(108,2,restored_cache.data());
+          for(auto* view:restored_cache) {bool match=view==shadow_view.Get();if(view)view->Release();if(!match)throw std::runtime_error("Opaque cache binding was not restored");}
+          double maximum=0,peak=0;
+          for(UINT y=0;y<H;++y)for(UINT x=0;x<W;++x)for(UINT c=0;c<3;++c) {
+            size_t i=(y*W+x)*4+c;
+            if(!std::isfinite(cached[i]))throw std::runtime_error("Nonfinite cached fog");
+            if(plane==-1 &&x%2==0 &&cached[i]!=actual[i])throw std::runtime_error("Cached fog leaked across a thin foreground bar");
+            maximum=std::max(maximum,double(std::abs(cached[i]-actual[i])/(1.+std::abs(actual[i]))));
+            peak=std::max(peak,double(cached[i]));
+          }
+          std::cout<<"Full-resolution fog: shadow="<<shadowed<<", plane="<<plane<<", normalized max="<<maximum<<", HDR peak="<<peak<<'\n';
+          if(maximum>.002 ||(plane==40 &&!shadowed &&peak<1))throw std::runtime_error("Full-resolution fog transport/HDR mismatch");
+          if(!pipeline.Bind(context.Get(),false,id))throw std::runtime_error("Forward binding failed");
+          ComPtr<ID3D11ShaderResourceView> forward;ctx->PSGetShaderResources(108,1,&forward);
+          if(forward.Get()!=shadow_view.Get())throw std::runtime_error("Opaque cache affected forward bindings");pipeline.Restore(context.Get());
+          if(!pipeline.Generate(context.Get(),constants.Get(),lighting.Get(),shadow_view.Get(),nullptr,nullptr,parameters,++id)
+              ||!pipeline.Bind(context.Get(),false,id,true))throw std::runtime_error("Missing-depth cache fallback failed");
+          ComPtr<ID3D11ShaderResourceView> missing;ctx->PSGetShaderResources(108,1,&missing);
+          if(missing)throw std::runtime_error("Missing depth reused a stale cache");pipeline.Restore(context.Get());
+          continue;
+        }
         if(benchmark) {
           if(!pipeline.Bind(context.Get(),false,id))throw std::runtime_error("Per-pixel timing bind failed");
           std::cout<<"Per-pixel local light 2560x1440 RGBA32F, "<<(shadowed?"shadowed":"unshadowed")<<", surface "<<plane<<" m: "<<time_draws()<<" ms\n";
@@ -224,7 +281,7 @@ int main(int argc, char** argv) {
           if(maximum>.004 ||mean/compared>.0005)throw std::runtime_error("Per-pixel local integration error");
         }
       }
-      if(!benchmark) {
+      if(!benchmark && !cache_test) {
         // Unsupported/short native lighting buffers must keep the full volume
         // fallback, rather than publishing a per-pixel flag with a 1x1 grid.
         buffer(13,std::vector<float>(44*4));ctx->PSGetConstantBuffers(13,1,&lighting);
@@ -236,7 +293,16 @@ int main(int argc, char** argv) {
         if(fallback_desc.Width!=64 ||fallback_desc.Height!=64 ||fallback_desc.Depth!=257)
           throw std::runtime_error("Unsupported per-pixel inputs retained the tiny parameter-only volume");
       }
-      std::cout<<"PASS per-pixel point transport, fragment-depth bounds, cached-input restoration and unsupported-input fallback\n";return 0;
+      if(cache_test) {
+        ComPtr<ID3D11InfoQueue> queue;dev.As(&queue);
+        for(UINT64 i=0;queue &&i<queue->GetNumStoredMessages();++i) {
+          SIZE_T size=0;queue->GetMessage(i,nullptr,&size);std::vector<char> message(size);
+          auto* entry=reinterpret_cast<D3D11_MESSAGE*>(message.data());queue->GetMessage(i,entry,&size);
+          if(entry->Severity<=D3D11_MESSAGE_SEVERITY_WARNING)throw std::runtime_error(entry->pDescription);
+        }
+        std::cout<<"PASS full-resolution opaque fog, HDR, odd/pooled viewport, thin foreground, forward isolation, stale/missing depth and private-state restoration\n";
+      } else std::cout<<"PASS per-pixel point transport, fragment-depth bounds, cached-input restoration and unsupported-input fallback\n";
+      return 0;
     }
     const bool weather_color=std::find(argv+2,argv+argc,std::string("--weather-color"))!=argv+argc;
     const bool weather_scene=std::find(argv+2,argv+argc,std::string("--weather-scene"))!=argv+argc;

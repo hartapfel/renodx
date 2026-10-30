@@ -116,10 +116,12 @@ inline bool OnFog(reshade::api::command_list* cmd) {
       {std::clamp(height_falloff,0.f,4.f),.1f,cloud?1.f:0.f,terrain?1.f:0.f},
       {1.f/viewport.Width,1.f/viewport.Height,std::clamp(shadow_quality,1.f,4.f),local_tiles?std::clamp(local_light_strength,0.f,4.f):0.f},
       {std::clamp(sky_density,0.f,4.f),reconstruction!=0.f?1.f:0.f,renderer!=0.f?1.f:0.f,std::clamp(resolution_quality,1.f,4.f)}};
+  ComPtr<ID3D11ShaderResourceView> depth;
+  if(renderer!=0.f)context->PSGetShaderResources(0,1,&depth);
   if (data->pipeline.generated_frame!=data->frame
       && !data->pipeline.Generate(context,frame.Get(),lighting.Get(),shadow.Get(),cloud.Get(),terrain.Get(),parameters,data->frame,shadow_sampler.Get(),interiors.Get(),
-          {local_tiles.Get(),local_atlas.Get(),local_cubes.Get(),local_sampler.Get()})) return false;
-  data->pipeline.Bind(context,false,data->frame);
+          {local_tiles.Get(),local_atlas.Get(),local_cubes.Get(),local_sampler.Get()},depth.Get())) return false;
+  data->pipeline.Bind(context,false,data->frame,true);
   if (!data->logged) {
     data->logged=true;
     reshade::log::message(reshade::log::level::info,"Witcher Classic: custom volumetric fog active with sun/moon and native tiled local-light inputs.");
