@@ -869,7 +869,7 @@ void main(
   r3.x = min(1, r11.x);
   r0.z = r3.x * r0.z;
   r3.x = r2.y * r0.z;
-  r8.xzw = r2.yyy * r0.zzz + cb0[11].xyz;
+  r8.xzw = r2.yyy * r0.zzz + cb0[11].xyz * ClassicWaterAmbient(asuint(cb12[38].w));
   r3.xzw = r7.xzw * r3.zzz + r3.xxx;
   r4.xyz = r4.xyz * r0.www + r8.xzw;
   r0.z = r1.x * r1.y;
@@ -918,7 +918,7 @@ void main(
   r1.w = 1 + -r2.x;
   r1.w = r8.y * r1.w;
   r1.w = min(1, r1.w);
-  r3.xzw = r0.xxx * cb0[13].yzw + -r1.xyz;
+  r3.xzw = r0.xxx * cb0[13].yzw * ClassicWaterAmbient(asuint(cb12[38].w)) + -r1.xyz;
   r1.xyz = r1.www * r3.xzw + r1.xyz;
   r0.x = r0.z * r5.y;
   r0.z = abs(r4.w) + abs(r4.w);

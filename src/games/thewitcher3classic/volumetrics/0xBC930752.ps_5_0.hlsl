@@ -1,3 +1,4 @@
+#include "../night_sky.hlsli"
 #include "sample.hlsli"
 // ---- Created with 3Dmigoto v1.3.16 on Tue Oct 27 18:43:57 2026
 TextureCube<float4> t0 : register(t0);
@@ -306,6 +307,7 @@ void main(
   r0.w = 1 + -cb0[9].w;
   r1.xyz = r1.xyz * r0.www;
   r1.xyz = float3(10,10,10) * r1.xyz;
+  r1.xyz *= ClassicStarBrightness(asuint(cb12[184].w));
   r0.xyz = r0.xyz * cb12[202].yyy + r1.xyz;
   r1.xyz = r3.xyz + -r0.xyz;
   o0.xyz = r3.www * r1.xyz + r0.xyz;

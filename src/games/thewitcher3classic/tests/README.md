@@ -893,3 +893,174 @@ Full Clang Release shader/addon build and package verification pass. After
 restarting, the user confirmed the archway banding was completely gone and the
 fog looked cleaner. This is live acceptance of the reported local-light issue;
 it does not replace broader scene/performance checks.
+
+
+### Darker Nights clock and native directional RGB (2026-10-29)
+
+darker_nights.cpp exercises the actual game-local schedule and upload callback.
+Compile with Clang C++20, /EHsc /O2 /DNOMINMAX, /Iexternal/Detours/src, and link
+external/Detours/lib.X64/detours.lib. An optional executable path replays the
+PE/instruction validation against a mapped image; no game process is modified.
+
+The default 18:00/23:00/03:30/06:00 schedule is checked at all 1440 minutes.
+Daytime and 100% must be exactly neutral; dawn/dusk half-fades have the expected
+smoothstep value. Out-of-order, nonfinite and out-of-range hours are inactive;
+equal adjacent endpoints support immediate transitions without division by
+zero. Nonfinite/out-of-range native clock values must be neutral.
+
+The fake original builder writes a full 53168-byte b13 buffer before the real
+post-builder callback runs. Only c1/c51/c52 RGB may differ, with HDR values
+above 1 and signed channels retained. Alpha, NaN payloads, directions and every
+other byte (including local lights) are compared exactly. Repeating the native
+build verifies that intensity does not compound. Disabling the controls must
+restore the complete original buffer. The installed Classic executable passes
+all six ABI guards; changing each guarded code region must reject it.
+
+Full Clang Release link and verified packaging pass. After restart, the user
+confirmed moonlight responds correctly and the displayed game time matches
+native game time, following the requested surface/fog-versus-torch comparison.
+Live dawn/dusk, master Off and preset persistence remain broader manual checks.
+Fixtures, native RTTI/disassembly/decompilation and build logs are under
+ tmp/witcher3classic-investigation/darker-nights-20261029.
+
+
+### Night ambient/common upload and moon geometry (2026-10-29)
+
+The extended darker_nights.cpp checks c183.xy/c184.xy probe gains, fog/haze/
+sky RGB and moon tags at midnight, both half-fades and noon. Every unrelated
+float, alpha, direct-light enable and density stays unchanged. Neutral controls
+are byte-identical. Nested upload scopes must restore the parent; aligned CPU
+shadow writes must leave the target untouched until Publish and publish once.
+The actual CommonConstantsHook -> MapBufferHook -> fake original writer ->
+UnmapBufferHook sequence checks all forwarded arguments and complete adjusted
+bytes before original Unmap; neutral and unrelated mappings must pass through.
+Six optional common/map/unmap instruction guards reject mutations without
+invalidating the independently supported directional-light hook.
+
+night_moon.cpp uses D3D11 WARP or hardware and the exact Release shader embeds.
+Pass the native CSO dump directory as its first argument; a second argument
+selects hardware. Compile with /Iexternal/Detours/src and link d3d11.lib,
+dxgi.lib, external/Detours/lib.X64/detours.lib. The test also performs a real
+WRITE_DISCARD upload, publishes its CPU shadow, copies to staging and compares
+all HDR/alpha/tag bytes. Both moon VS/PS pairs replay native versus production:
+neutral error 0, peaks4.83898/4.6188, brightness0/100/200 and 50% diameter's
+quarter area pass on WARP/NVIDIA. Existing volume regressions still pass.
+
+Startup review must include explicit Classic custom_shaders table entries,
+not only successful embeds: the missing three new entries caused a launch
+exception despite shader tests passing. Both moon pairs are now registered.
+The API-event upload attempt passed standalone tests but blacked out the live
+view, so publication now surrounds the native helper's final pointer instead.
+The user confirmed the corrected engine route and all new controls work correctly. No new
+player-fill control was retained; the existing Graphics implementation matches
+the preceding accepted source.
+
+
+### Cloud/star brightness GPU regression (2026-10-29)
+
+`night_sky.cpp <capture-directory> <original-cso-directory> [--hardware]`
+replays the production 22D1E925, 6F0FF708, BC930752 and F12E637D shaders against
+native DXBC. Capture-directory fixtures are cloud1/cloud2/stars-cbN.bin from
+DevKit. The harness keeps captured weather/material constants, sets explicit
+HDR cloud colors and uses deterministic textures and matching VS signatures.
+Checks cover neutral equivalence, independent 0/100/200% gains, unchanged alpha
+and linear brightness relative to the retained atmospheric baseline. WARP and
+NVIDIA pass, with maximum neutral error 4.77e-7 and cloud peak 35.07.
+`darker_nights.cpp` additionally tests independent gains and night fades in the
+common upload, byte preservation outside c184.w and rejection of a modified
+native zero-store instruction.
+
+Manual: with Darker Nights enabled at night, compare each slider at 0/100/200%,
+leaving the other at 100%. Check cloud coverage, stars, the moon and native sky
+brightness independently; verify Off restores the original scene.
+
+
+### Cloud/sky registration and downstream lighting (2026-10-29)
+
+night_bindings.cpp includes the production addon.cpp registration table.
+Build with the Classic Release include/library paths, D3DCompiler and the
+normal addon libraries. Run without arguments for WARP, or --hardware.
+For both 6F0FF708 and F12E637D, test master Off/On and gains 0/50/100/200%.
+Apply the shader module's default/explicit injection decision, then execute
+a GPU draw consuming native b13 in both vertex and pixel stages. Check the
+original buffer identities and exact HDR RGB=(2,4,8), alpha=1. Both devices
+pass. Missing on_inject callbacks would take the default all-graphics
+injection path and fail native binding preservation.
+
+The live failure capture showed F872850A vertex b13 bound to the 160-byte
+RenoDX settings payload although its original DXBC requires 3323 float4s.
+This is separate from cloud brightness arithmetic and cannot be detected
+by replaying only the cloud pixel shader. The two new entries now explicitly
+return false from on_inject, matching their native-b12-only shader inputs.
+
+
+### Native sky haze control (2026-10-29)
+
+darker_nights.cpp tests RGB-only c194 scaling, native alpha/profile preservation,
+night transitions and native Map/Unmap routing when sky haze is the only active
+adjustment. night_sky.cpp also uses a live haze-cb12.bin weather capture: the
+remaining c194 contribution is present after the other sky/fog RGB colors were
+zeroed. Replay BC930752 and F12E637D at 0/100/200% and compare production
+output with original DXBC consuming the same adjusted native constants.
+Check unchanged alpha and linear gain relative to untouched sky contributions;
+repeat with 4096x source haze RGB to exercise HDR. WARP and NVIDIA pass.
+
+Manual: at night, lower Sky Haze Brightness independently of Sky Brightness,
+Distance Haze Brightness, Cloud Brightness and Star Brightness. Check the
+remaining height/horizon glow, unchanged density/coverage and master Off.
+
+
+### Standalone refractive rain (2026-10-29)
+
+rain.cpp <fixture-directory> [--hardware] uses the current captured cb0/cb1/cb2/
+cb4/cb12/cb13.bin constants, native PS105478E1 from the game dump and archived
+BlitzFX 1F3A90A1 DXBC. It executes the production embedded shader and real
+rain::Pipeline on D3D11. Checks cover native Off RGB/alpha, equivalence to
+native-pass then BlitzFX-pass premultiplied composition, five active/pool
+sizes with poisoned unused edges, zero/partial/full coverage, signed HDR,
+non-rain rejection, sampler/SRV restoration and untouched VS/PS b13. WARP
+and NVIDIA pass. Signature tests use synthetic CRC-patched buffers to exercise
+both recorded rain atlas signatures, padded rows and rejection of another
+particle upload, without redistributing game textures.
+
+Manual: restart in the captured rainy scene; toggle Graphics / Rain /
+Refractive Rain Off/On under DLAA and a reduced DLSS mode. Check falling rain
+and nearby splashes against bright/dark HDR background, depth/fog fades and
+unchanged other particles. Repeat after resize. The first accepted draw logs
+that native HDR scene reuse is active, with no extra draw/copy.
+
+
+Manual preset-button check (2026-10-29): with an active RenoDX profile, change
+several Darker Nights sliders and schedule times, then click Darker. Verify
+moonlight 5%, moon brightness/size 50%, the four ambient and five atmosphere
+brightness controls 35%, stars 100%, master On, schedule 18/23/3.5/6. Click
+Vanilla and verify master Off, native 100% sliders and default schedule.
+Other tabs must retain their values. Restart and confirm the selected profile
+retains the applied values. Buttons are disabled with the overall preset Off.
+Validation for this UI-only change: the Classic Release addon object builds.
+
+
+### Regional normalization / standalone exposure (2026-10-29)
+
+night_exposure.cpp independently integrates native continuous-time adaptation
+at 30/60/120/240 FPS, validates separate stop-space brightening/darkening limits,
+fixed and blended metering, native identity, endpoints and rejected inputs:
+4682 cases. night_normalization.cpp uses simulated Classic game/system/map
+objects to check all six regions, Velen alias, special worlds, disabled states,
+wrong system type and torn-down objects; 810 weather/HDR ratio cases. No weather
+state enters regional gain selection. darker_nights.cpp also loads the real
+Steam executable image and rejects mutations of the optional exposure/region
+ABI fingerprints independently of the core moonlight ABI.
+
+night_sky.cpp additionally checks 3/4/8x normalized cloud gains against the
+native fog baseline and linear HDR result, preserving alpha. night_bindings.cpp
+covers normalization Off/On at neutral and changed cloud/star sliders using the
+real registration callbacks; native VS/PS b13 and downstream HDR stay intact.
+Both GPU tests pass on WARP and NVIDIA. Build the Classic Release target and
+repeat the manual checks listed in the regional normalization README section.
+
+Toussaint sky coverage: night_sky.cpp replays C6178ADC/F4B551EC cloud shaders and the F12E637D background glow against original DXBC, including zero/native/2x gains, normalized cloud gains to 8x, HDR, alpha and an all-zero sky test. Use separate height-haze-cb12.bin and Toussaint haze-cb12.bin fixtures. night_bindings.cpp checks all four native-b13 sky/cloud registrations.
+
+Night water: darker_nights.cpp checks isolated gain transport and time fades; water.cpp/water_test.hlsl check 0/50/100/200% ambient scattering and foam with independent direct lighting/refraction, unchanged reflection weight and fog-once composition on WARP/NVIDIA. night_bindings.cpp verifies activation with native water and fog.
+
+presets.cpp includes the real addon settings and applies all four explicit preset tables after poisoning reset defaults. It checks complete setting coverage, slider bounds, Darker startup/reset values, tab isolation, Vanilla/Off exposure bypass and Presets-section placement after the profile slider.

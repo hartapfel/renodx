@@ -1,4 +1,6 @@
 #include "sample.hlsli"
+#include "../moon.hlsli"
+cbuffer NightCommon : register(b12) {float4 NightCommon[38];}
 // ---- Created with 3Dmigoto v1.3.16 on Tue Oct 27 18:39:40 2026
 Texture2D<float4> t0 : register(t0);
 
@@ -93,7 +95,7 @@ void main(
   r0.xyz = cb2[2].xyz * r0.xyz;
   r0.w = saturate(1 + -v1.w);
   r0.w = cb2[2].w * r0.w;
-  o0.xyz = r0.xyz * r0.www;
+  o0.xyz = r0.xyz * r0.www * ClassicMoonBrightness(asuint(NightCommon[37].w));
   o0.w = 0;
   return;
 }

@@ -21,6 +21,8 @@
 #include "./temporal/runtime.hpp"
 #include "./volumetrics/runtime.hpp"
 #include "./lighting/runtime.hpp"
+#include "./darker_nights_runtime.hpp"
+#include "./rain/runtime.hpp"
 #include "./frame_generation/runtime.hpp"
 #include "./frame_generation/factory.hpp"
 
@@ -29,6 +31,7 @@ float settings_mode = 0.f;
 float video_auto_hdr = 1.f;
 bool draw_effects = false;
 bool draw_graphics = false;
+bool draw_nights = false;
 // FG preferences are independent of SR quality and HDR presets.
 auto& fg_mode = witcher3classic::frame_generation::mode;
 auto& fg_multiplier = witcher3classic::frame_generation::multiplier;
@@ -303,6 +306,9 @@ void OnOpticsDrawn(reshade::api::command_list* cmd) {
 }
 
 renodx::mods::shader::CustomShaders custom_shaders = {
+    {0x910C4B43, {.crc32 = 0x910C4B43, .code = __0x910C4B43}},
+    {0x3939C615, {.crc32 = 0x3939C615, .code = __0x3939C615}},
+    {0x89760976, {.crc32 = 0x89760976, .code = __0x89760976}},
     {0x05FE9FA8, {.crc32 = 0x05FE9FA8, .code = __0x05FE9FA8,
         .on_replace = &witcher3classic::lighting::OnShadow,
         .on_inject = [](auto*) { return false; },
@@ -368,7 +374,9 @@ renodx::mods::shader::CustomShaders custom_shaders = {
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x28D7BDFE, {.crc32 = 0x28D7BDFE, .code = __0x28D7BDFE,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f
+            || (witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
+                && witcher3classic::night::common_supported && witcher3classic::night::water_ambient != 100.f); },
         .on_inject = &witcher3classic::volumetrics::OnWater,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0xFD1D6FBF, {.crc32 = 0xFD1D6FBF, .code = __0xFD1D6FBF,
@@ -402,19 +410,51 @@ renodx::mods::shader::CustomShaders custom_shaders = {
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x105478E1, {.crc32 = 0x105478E1, .code = __0x105478E1,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
-        .on_inject = &witcher3classic::volumetrics::OnParticle,
-        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f || (!witcher3classic::blitzfx::runtime_aa && witcher3classic::rain::enabled == 1.f); },
+        .on_inject = [](auto* cmd) {
+          witcher3classic::volumetrics::OnParticle(cmd);
+          if (!witcher3classic::blitzfx::runtime_aa) witcher3classic::rain::OnDraw(cmd);
+          return false;
+        },
+        .on_drawn = [](auto* cmd) { witcher3classic::rain::OnDrawn(cmd); witcher3classic::volumetrics::OnDrawn(cmd); }}},
     {0x22FD7485, {.crc32 = 0x22FD7485, .code = __0x22FD7485,
         .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    // These read gains from native b12. Default RenoDX injection would replace
+    // b13 for every graphics stage, including the paired native VS constants.
+    {0xF12E637D, {.crc32 = 0xF12E637D, .code = __0xF12E637D,
+        .on_replace = [](auto*) { return witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
+            && witcher3classic::night::common_supported
+            && (witcher3classic::night::star_brightness != 100.f || witcher3classic::night::sky_haze_brightness != 100.f
+                || witcher3classic::night::normalization::current.load(std::memory_order_relaxed) != 0); },
+        .on_inject = [](auto*) { return false; }}},
+    {0x6F0FF708, {.crc32 = 0x6F0FF708, .code = __0x6F0FF708,
+        .on_replace = [](auto*) { return witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
+            && witcher3classic::night::common_supported
+                && (witcher3classic::night::cloud_brightness != 100.f || witcher3classic::night::normalization::current.load(std::memory_order_relaxed) != 0); },
+        .on_inject = [](auto*) { return false; }}},
+    {0xC6178ADC, {.crc32 = 0xC6178ADC, .code = __0xC6178ADC,
+        .on_replace = [](auto*) { return witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
+            && witcher3classic::night::common_supported
+                && (witcher3classic::night::cloud_brightness != 100.f || witcher3classic::night::normalization::current.load(std::memory_order_relaxed) != 0); },
+        .on_inject = [](auto*) { return false; }}},
+    {0xF4B551EC, {.crc32 = 0xF4B551EC, .code = __0xF4B551EC,
+        .on_replace = [](auto*) { return witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
+            && witcher3classic::night::common_supported
+                && (witcher3classic::night::cloud_brightness != 100.f || witcher3classic::night::normalization::current.load(std::memory_order_relaxed) != 0); },
+        .on_inject = [](auto*) { return false; }}},
     {0xBC930752, {.crc32 = 0xBC930752, .code = __0xBC930752,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f
+            || (witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
+                && witcher3classic::night::common_supported && witcher3classic::night::star_brightness != 100.f); },
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x22D1E925, {.crc32 = 0x22D1E925, .code = __0x22D1E925,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f
+            || (witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
+                && witcher3classic::night::common_supported
+                && (witcher3classic::night::cloud_brightness != 100.f || witcher3classic::night::normalization::current.load(std::memory_order_relaxed) != 0)); },
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     CustomShaderEntry(0x043049C7),  // SDR video with vertex fade.
@@ -482,6 +522,7 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0xFBF141A1),  // BlitzFX: avoid sharpening twice in RCAS mode.
 };
 
+
 bool IsCustom() { return shader_injection.tone_map_type == CLASSIC_TONE_MAP_PSYCHOV31; }
 
 float DepthControlMode() {
@@ -490,44 +531,82 @@ float DepthControlMode() {
 
 // HDR settings appear in this order. Move a complete Setting block to reorder.
 // DLSS preferences at the end are global; DrawAddon renders their dropdown UI.
+template <std::size_t N>
+void ApplyTabPreset(const witcher3classic::presets::Value (&preset)[N], bool custom) {
+  std::vector<std::pair<std::string, float>> values;
+  for (const auto& value : preset) values.emplace_back(value.key, custom ? value.custom : value.vanilla);
+  renodx::utils::settings::UpdateSettings(values);
+  witcher3classic::night::Update(renodx::utils::settings::preset_index != 0);
+  if (renodx::utils::settings::preset_index != 0) renodx::utils::settings::SaveSettings();
+}
+void ShowHint(const char* text);
+
 renodx::utils::settings::Settings settings = {
+    new renodx::utils::settings::Setting{
+        .key = "GfxPresetButtons",
+        .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
+        .can_reset = false,
+        .section = "Presets",
+        .on_draw = [] {
+          if (ImGui::Button("Vanilla Graphics")) ApplyTabPreset(witcher3classic::presets::graphics, false);
+          ShowHint("Applies the original graphics modes. Other tabs and the game's settings stay as they are.");
+          ImGui::SameLine();
+          if (ImGui::Button("Improved Graphics")) ApplyTabPreset(witcher3classic::presets::graphics, true);
+          ShowHint("Applies the recommended graphics settings and saves them to the selected profile.");
+          return false;
+        },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightPresetButtons",
+        .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
+        .can_reset = false,
+        .section = "Presets",
+        .on_draw = [] {
+          if (ImGui::Button("Vanilla")) ApplyTabPreset(witcher3classic::presets::night, false);
+          ShowHint("Restores original night lighting and native auto exposure, with regional normalization and exposure overrides off. Saves to the selected profile.");
+          ImGui::SameLine();
+          if (ImGui::Button("Darker")) ApplyTabPreset(witcher3classic::presets::night, true);
+          ShowHint("Applies the darker-night values, regional normalization and smoothed exposure, reaching full darkness at 21.5 h. Saves to the selected profile.");
+          return false;
+        },
+    },
     new renodx::utils::settings::Setting{
         .key = "GfxLighting",
         .binding = &witcher3classic::lighting::shading,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.0f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxLighting"),
         .label = "Surface Lighting",
         .section = "Lighting",
-        .tooltip = "Native preserves the original materials. Custom uses GGX with height-correlated visibility for deferred sun, moon and local lights. Keeps weather, reflection probes and skin transmission. Intended for use without BlitzFX PBR lighting.",
+        .tooltip = "Custom improves how surfaces respond to sunlight, moonlight and nearby lights. Native uses the game's original lighting.",
         .labels = {"Native", "Custom PBR"},
     },
     new renodx::utils::settings::Setting{
         .key = "GfxAmbientAO",
         .binding = &witcher3classic::lighting::ambient_ao,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.0f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxAmbientAO"),
         .label = "Ambient Occlusion Influence",
         .section = "Lighting",
-        .tooltip = "Ambient Only confines deferred ambient occlusion to indirect lighting. Direct lights retain their own shadows instead of receiving a second AO darkening.",
+        .tooltip = "Ambient Only keeps directly lit areas brighter while preserving dark creases and contact shading.",
         .labels = {"Native", "Ambient Only"},
     },
     new renodx::utils::settings::Setting{
         .key = "GfxSoftShadows",
         .binding = &witcher3classic::lighting::soft_shadows,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.0f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxSoftShadows"),
         .label = "Directional Shadows",
         .section = "Shadows",
-        .tooltip = "Custom uses blocker-dependent soft shadows with filtered cascade transitions. Only the existing sun/moon shadow mask changes; cloud and terrain shadows are retained.",
+        .tooltip = "Custom makes sun and moon shadows soften with distance from the object casting them. Native keeps the original shadows.",
         .labels = {"Native", "Custom Soft Shadows"},
     },
     new renodx::utils::settings::Setting{
         .key = "GfxSunDiameter",
         .binding = &witcher3classic::lighting::sun_diameter,
-        .default_value = 0.15f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxSunDiameter"),
         .label = "Light Angular Diameter",
         .section = "Shadows",
-        .tooltip = "Apparent diameter of the sun or moon, in degrees. 0.535 approximates the real sun. Larger values broaden penumbras with blocker distance. Does not change the visible sun disk.",
+        .tooltip = "Larger values make sun and moon shadows softer. This changes shadow softness, not the visible size of the sun or moon.",
         .min = 0.05f,
         .max = 2.0f,
         .format = "%.3f degrees",
@@ -537,19 +616,19 @@ renodx::utils::settings::Settings settings = {
         .key = "GfxContactShadows",
         .binding = &witcher3classic::lighting::contact_shadows,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.0f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxContactShadows"),
         .label = "Contact Shadows",
         .section = "Shadows",
-        .tooltip = "Adds short sun/moon shadows from visible depth detail. Complements shadow maps; cannot see offscreen or transparent blockers. A short reach reduces screen-space artifacts.",
+        .tooltip = "Adds small shadows where visible objects meet, helping feet, grass and surface details look more grounded.",
         .labels = {"Off", "On"},
     },
     new renodx::utils::settings::Setting{
         .key = "GfxContactLength",
         .binding = &witcher3classic::lighting::contact_length,
-        .default_value = 1.0f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxContactLength"),
         .label = "Contact Shadow Reach",
         .section = "Shadows",
-        .tooltip = "Maximum distance searched toward the light, in metres. Default is 0.3 m. Limits the search toward the light. Sampling also has a fixed screen-space range, so close-ups can reach that limit first. Increasing reach does not spread the samples farther apart.",
+        .tooltip = "How far contact shadows can extend, in metres. Larger values reach farther but may reveal artifacts near screen edges.",
         .min = 0.05f,
         .max = 1.0f,
         .format = "%.2f m",
@@ -559,19 +638,19 @@ renodx::utils::settings::Settings settings = {
         .key = "GfxPlayerFill",
         .binding = &witcher3classic::lighting::player_control,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.0f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxPlayerFill"),
         .label = "Player Fill Light",
         .section = "Player Lighting",
-        .tooltip = "Controls the artificial camera-following fill lights identified by the engine. Torches, spells and other world lights retain their intensity. This is an artistic control, not a physical light source.",
+        .tooltip = "Lets you adjust the extra light that follows the camera and brightens characters and nearby surfaces. World lights keep their normal strength.",
         .labels = {"Native", "Custom"},
     },
     new renodx::utils::settings::Setting{
         .key = "GfxPlayerStrength",
         .binding = &witcher3classic::lighting::player_strength,
-        .default_value = 0.2f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxPlayerStrength"),
         .label = "Fill Light Strength",
         .section = "Player Lighting",
-        .tooltip = "Scales the artificial player fill lights. 1 retains native intensity; 0 removes them. Does not change scene exposure.",
+        .tooltip = "Brightness of the camera-following fill light. 0 removes it; 1 keeps the game's original strength.",
         .min = 0.0f,
         .max = 1.0f,
         .format = "%.2f",
@@ -581,10 +660,10 @@ renodx::utils::settings::Settings settings = {
         .key = "GfxPlayerUnify",
         .binding = &witcher3classic::lighting::player_unify,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.0f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxPlayerUnify"),
         .label = "Match Character and World Fill",
         .section = "Player Lighting",
-        .tooltip = "Uses the world fill-light scale on characters too, reducing the camera-light brightness boost on characters. Keeps disabled scene lights disabled.",
+        .tooltip = "Uses the same fill-light strength for characters and their surroundings, reducing the extra brightness on characters.",
         .labels = {"Off", "On"},
         .is_enabled = [] { return witcher3classic::lighting::player_control != 0.f; },
     },
@@ -593,19 +672,19 @@ renodx::utils::settings::Settings settings = {
         .key = "GfxVolumetrics",
         .binding = &witcher3classic::volumetrics::mode,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxVolumetrics"),
         .label = "Atmospheric Fog",
         .section = "Volumetric Lighting and Fog",
-        .tooltip = "Native keeps the game's atmospheric fog. Custom uses a three-dimensional fog volume lit by the sun, moon and scene point/spot lights, with available scene and cloud shadows. Follows the current weather and interior exclusion.",
+        .tooltip = "Custom lets sunlight, moonlight and nearby lights illuminate the fog and form visible shafts. It follows the current weather.",
         .labels = {"Native", "Custom"},
     },
     new renodx::utils::settings::Setting{
         .key = "GfxFogDensity",
         .binding = &witcher3classic::volumetrics::density,
-        .default_value = 1.0f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogDensity"),
         .label = "Fog Density",
         .section = "Volumetric Lighting and Fog",
-        .tooltip = "Scales scene fog supplied by the current weather. 0 removes the scene medium; 1 uses the weather density. Increasing density both obscures the background and scatters more light. Sky haze has its own density control.",
+        .tooltip = "Amount of fog in the scene. 1 follows the weather; 0 removes it. Higher values make distant objects harder to see.",
         .min = 0.f,
         .max = 4.0f,
         .format = "%.2f",
@@ -614,10 +693,10 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "GfxFogSkyDensity",
         .binding = &witcher3classic::volumetrics::sky_density,
-        .default_value = 1.0f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogSkyDensity"),
         .label = "Sky Haze Density",
         .section = "Volumetric Lighting and Fog",
-        .tooltip = "Scales the sky's native weather haze. 1 preserves native strength; 0 removes sky haze. Retains native sky colors and weather blending. Independent of scene fog density and light scattering.",
+        .tooltip = "Amount of haze covering the sky. 1 keeps the game's weather strength; 0 removes it. Separate from ground-level fog.",
         .min = 0.f,
         .max = 4.0f,
         .format = "%.2f",
@@ -626,10 +705,10 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "GfxFogStart",
         .binding = &witcher3classic::volumetrics::start_distance,
-        .default_value = 0.0f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogStart"),
         .label = "Fog Start Distance",
         .section = "Volumetric Lighting and Fog",
-        .tooltip = "Distance from the camera in metres before custom fog begins. A short fade prevents a hard boundary. This does not move lights or their shadows.",
+        .tooltip = "Distance from the camera before fog begins, in metres. Increase this to keep nearby objects clearer.",
         .min = 0.f,
         .max = 200.0f,
         .format = "%.0f m",
@@ -638,10 +717,10 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "GfxFogLight",
         .binding = &witcher3classic::volumetrics::light_strength,
-        .default_value = 1.0f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogLight"),
         .label = "Sun and Moon Scattering",
         .section = "Volumetric Lighting and Fog",
-        .tooltip = "Scales sunlight and moonlight scattered by the fog. 0 removes their contribution while retaining ambient fog and its density. Higher values make illuminated shafts more prominent.",
+        .tooltip = "Brightness of sunlight and moonlight in the fog. Higher values make light shafts stronger; 0 removes them.",
         .min = 0.f,
         .max = 4.0f,
         .format = "%.2f",
@@ -650,10 +729,10 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "GfxFogLocalLight",
         .binding = &witcher3classic::volumetrics::local_light_strength,
-        .default_value = 2.5f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogLocalLight"),
         .label = "Local Light Scattering",
         .section = "Volumetric Lighting and Fog",
-        .tooltip = "Scatters scene point and spot lights through the existing fog, using their native range, color and available shadows. 0 disables local light scattering. Does not add fog indoors or alter surface lighting.",
+        .tooltip = "How strongly torches, lamps and other nearby lights illuminate the fog. 0 disables this glow without dimming the lights themselves.",
         .min = 0.f,
         .max = 4.0f,
         .format = "%.2f",
@@ -662,10 +741,10 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "GfxFogAnisotropy",
         .binding = &witcher3classic::volumetrics::anisotropy,
-        .default_value = 0.5f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogAnisotropy"),
         .label = "Scattering Directionality",
         .section = "Volumetric Lighting and Fog",
-        .tooltip = "0 scatters light equally in all directions. Higher values concentrate it toward the light, making shafts brightest when looking toward a light source.",
+        .tooltip = "How strongly fog glows when looking toward a light. Higher values make that glow more focused; 0 spreads it evenly in all directions.",
         .min = 0.f,
         .max = 0.8f,
         .format = "%.2f",
@@ -674,10 +753,10 @@ renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "GfxFogHeight",
         .binding = &witcher3classic::volumetrics::height_falloff,
-        .default_value = 1.0f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogHeight"),
         .label = "Height Falloff",
         .section = "Volumetric Lighting and Fog",
-        .tooltip = "Controls how quickly fog thins above the weather-defined ground layer. 1 follows the weather gradient; 0 keeps density uniform with height. Higher values concentrate fog closer to the ground.",
+        .tooltip = "How quickly fog thins with height. Higher values keep it closer to the ground; 1 follows the weather and 0 gives an even layer.",
         .min = 0.f,
         .max = 4.0f,
         .format = "%.2f",
@@ -688,10 +767,10 @@ renodx::utils::settings::Settings settings = {
         .key = "GfxFogRenderer",
         .binding = &witcher3classic::volumetrics::renderer,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 0.f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogRenderer"),
         .label = "Fog Rendering",
         .section = "Fog Quality",
-        .tooltip = "Per-pixel integrates lighting along each visible fragment's view ray, avoiding visible volume cells. Volume uses the faster shared three-dimensional lighting grid. Both follow native weather, HDR and scene shadows.",
+        .tooltip = "Per-pixel gives cleaner light shafts with less banding. Volume is faster but may show visible steps in the fog.",
         .labels = {"Volume", "Per-pixel"},
         .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f; },
     },
@@ -699,10 +778,10 @@ renodx::utils::settings::Settings settings = {
         .key = "GfxFogResolutionQuality",
         .binding = &witcher3classic::volumetrics::resolution_quality,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 4.f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogResolutionQuality"),
         .label = "Sampling Quality",
         .section = "Fog Quality",
-        .tooltip = "1: Low, 2: Medium, 3: High, 4: Ultra. Per-pixel mode increases light-ray samples; Volume mode increases the lighting grid resolution. Higher levels reduce sampling artifacts at a GPU cost. Changes apply immediately.",
+        .tooltip = "Raises fog detail and reduces visible steps. Higher quality uses more GPU power.",
         .min = 1.f,
         .max = 4.f,
         .format = "%d / 4",
@@ -712,10 +791,10 @@ renodx::utils::settings::Settings settings = {
         .key = "GfxFogReconstruction",
         .binding = &witcher3classic::volumetrics::reconstruction,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogReconstruction"),
         .label = "Lighting Reconstruction",
         .section = "Fog Quality",
-        .tooltip = "Smooth reduces visible bands and cell edges in sunlight shafts and local-light haze. Linear is faster. Fog opacity and native weather colors are unchanged; neither mode uses lighting history.",
+        .tooltip = "Smooth softens bands and edges in illuminated fog. Linear is faster but can make those steps more visible.",
         .labels = {"Linear", "Smooth"},
         .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f && witcher3classic::volumetrics::renderer == 0.f; },
     },
@@ -723,10 +802,10 @@ renodx::utils::settings::Settings settings = {
         .key = "GfxFogShadowQuality",
         .binding = &witcher3classic::volumetrics::shadow_quality,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 4.f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogShadowQuality"),
         .label = "Lighting Shadow Quality",
         .section = "Fog Quality",
-        .tooltip = "1: 8 samples, 2: 16, 3: 24, 4: 32. Filters sun/moon shadows across the full three-dimensional fog cell, including its depth, to reduce stepping during movement. Increases GPU time without increasing volume memory. Does not change fog density or light strength.",
+        .tooltip = "Smooths shadow edges inside the fog, reducing stepping as you move. Higher settings cost more performance.",
         .min = 1.f,
         .max = 4.f,
         .format = "%d / 4",
@@ -736,19 +815,19 @@ renodx::utils::settings::Settings settings = {
         .key = "GfxWater",
         .binding = &witcher3classic::water::mode,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxWater"),
         .label = "Water Shading",
         .section = "Water",
-        .tooltip = "Native keeps the active water material. Custom replaces above-water absorption, scattering and surface lighting, using the existing waves and reflections. Works with Native or Custom atmospheric fog. Experimental; underwater rendering remains native.",
+        .tooltip = "Custom improves water color, clarity and surface lighting. Native keeps the original appearance. Underwater views keep the game's normal rendering.",
         .labels = {"Native", "Custom"},
     },
     new renodx::utils::settings::Setting{
         .key = "GfxWaterClarity",
         .binding = &witcher3classic::water::clarity,
-        .default_value = 0.5f,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxWaterClarity"),
         .label = "Water Clarity",
         .section = "Water",
-        .tooltip = "Controls suspended-particle scattering in Custom water. 1 uses a 2-metre scattering distance; higher values reveal more of the river bed, while lower values make the water murkier. Surface reflections still follow the viewing angle and current lighting.",
+        .tooltip = "How clearly you can see through water. Higher values reveal more of the river bed; lower values make the water murkier.",
         .min = .25f,
         .max = 4.f,
         .format = "%.2f",
@@ -756,13 +835,369 @@ renodx::utils::settings::Settings settings = {
     },
 
     new renodx::utils::settings::Setting{
+        .key = "GfxRefractiveRain",
+        .binding = &witcher3classic::rain::enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxRefractiveRain"),
+        .label = "Refractive Rain",
+        .section = "Rain",
+        .tooltip = "Makes raindrops bend the view of the scene behind them while keeping their lighting and fade into fog.",
+        .is_enabled = [] { return !witcher3classic::blitzfx::runtime_aa; },
+    },
+
+    new renodx::utils::settings::Setting{
+        .key = "NightLightingEnabled",
+        .binding = &witcher3classic::night::enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightLightingEnabled"),
+        .label = "Enable Darker Nights",
+        .section = "Darker Nights",
+        .tooltip = "Applies this tab's controls during your night schedule. Off restores the original night lighting while keeping your chosen values.",
+        .labels = {"Off", "On"},
+        .is_enabled = [] { return witcher3classic::night::Supported(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightRegionalNormalization",
+        .binding = &witcher3classic::night::normalization::enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightRegionalNormalization"),
+        .label = "Normalize Regional Lighting",
+        .section = "Normalization",
+        .tooltip = "Reduces differences in night brightness between regions while keeping their colors.",
+        .labels = {"Off", "On"},
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::normalization::supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightMoonlightIntensity",
+        .binding = &witcher3classic::night::moonlight,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightMoonlightIntensity"),
+        .label = "Moonlight Intensity",
+        .section = "Moon",
+        .tooltip = "Strength of moonlight on the world and in fog. 0% removes it; 100% is original strength. The visible moon has its own control.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightMoonBrightness",
+        .binding = &witcher3classic::night::moon_brightness,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightMoonBrightness"),
+        .label = "Moon Brightness",
+        .section = "Moon",
+        .tooltip = "Brightness of the visible moon. 100% keeps its original brightness. This does not change the light it casts on the world.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightMoonSize",
+        .binding = &witcher3classic::night::moon_size,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightMoonSize"),
+        .label = "Moon Size",
+        .section = "Moon",
+        .tooltip = "Size of the visible moon. 100% is original size; 200% doubles its diameter.",
+        .min = 1.f,
+        .max = 500.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightAmbientLight",
+        .binding = &witcher3classic::night::ambient_light,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightAmbientLight"),
+        .label = "Ambient Light",
+        .section = "Ambient Illumination",
+        .tooltip = "Soft background light on lit surfaces. Lower values make nights darker; 100% keeps the original lighting.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightAmbientShadow",
+        .binding = &witcher3classic::night::ambient_shadow,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightAmbientShadow"),
+        .label = "Ambient Light in Shadows",
+        .section = "Ambient Illumination",
+        .tooltip = "Soft background light in shaded areas. Lower this if objects stay too bright after reducing moonlight.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightReflectionLight",
+        .binding = &witcher3classic::night::reflection_light,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightReflectionLight"),
+        .label = "Ambient Reflections",
+        .section = "Ambient Illumination",
+        .tooltip = "Brightness of reflections from the surroundings on lit surfaces. 100% keeps the original strength.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightReflectionShadow",
+        .binding = &witcher3classic::night::reflection_shadow,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightReflectionShadow"),
+        .label = "Ambient Reflections in Shadows",
+        .section = "Ambient Illumination",
+        .tooltip = "Brightness of reflections from the surroundings in shaded areas. Lower values darken reflective surfaces in shadow.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightWaterAmbient",
+        .binding = &witcher3classic::night::water_ambient,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightWaterAmbient"),
+        .label = "Water Ambient Light",
+        .section = "Ambient Illumination",
+        .tooltip = "Brightness of the water's own background glow at night. Keeps waves, transparency, refraction and direct lighting unchanged.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightFogBrightness",
+        .binding = &witcher3classic::night::fog_brightness,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightFogBrightness"),
+        .label = "Fog Brightness",
+        .section = "Atmosphere",
+        .tooltip = "Brightness of the fog's background color. Lower values make it darker without changing how much fog covers the scene.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightHazeBrightness",
+        .binding = &witcher3classic::night::haze_brightness,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightHazeBrightness"),
+        .label = "Distance Haze Brightness",
+        .section = "Atmosphere",
+        .tooltip = "Brightness of the haze over distant objects. Lower values darken that haze without changing how far it reaches.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightSkyBrightness",
+        .binding = &witcher3classic::night::sky_brightness,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightSkyBrightness"),
+        .label = "Sky Brightness",
+        .section = "Atmosphere",
+        .tooltip = "Brightness of the sky's main colors. Clouds, stars, the moon and sky haze have separate controls.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightSkyHazeBrightness",
+        .binding = &witcher3classic::night::sky_haze_brightness,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightSkyHazeBrightness"),
+        .label = "Sky Haze Brightness",
+        .section = "Atmosphere",
+        .tooltip = "Brightness of sky haze and the background glow near the horizon. Lower values darken both without changing haze density.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightCloudBrightness",
+        .binding = &witcher3classic::night::cloud_brightness,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightCloudBrightness"),
+        .label = "Cloud Brightness",
+        .section = "Atmosphere",
+        .tooltip = "Brightness of clouds at night. Lower values darken them while keeping their shape and coverage.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightStarBrightness",
+        .binding = &witcher3classic::night::star_brightness,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightStarBrightness"),
+        .label = "Star Brightness",
+        .section = "Atmosphere",
+        .tooltip = "Brightness of the stars. 0% hides them; 100% keeps their original brightness.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported() && witcher3classic::night::common_supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureAllDay",
+        .binding = &witcher3classic::night::exposure::all_day,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightExposureAllDay"),
+        .label = "Apply Exposure Overrides All Day",
+        .section = "Night Exposure",
+        .tooltip = "Applies exposure settings at all hours. Off follows the night schedule. Requires Darker Nights.",
+        .labels = {"Off", "On"},
+        .is_enabled = []() { return witcher3classic::night::enabled == 1.f && witcher3classic::night::exposure::supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightAutoExposureEnabled",
+        .binding = &witcher3classic::night::exposure::enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightAutoExposureEnabled"),
+        .label = "Auto Exposure",
+        .section = "Night Exposure",
+        .tooltip = "Enabled adapts to scene brightness. Off uses Fixed Luminance.",
+        .labels = {"Off", "Enabled"},
+        .is_enabled = []() { return witcher3classic::night::enabled == 1.f && witcher3classic::night::exposure::supported; },
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::TEXT,
+        .label = "Exposure follows the night schedule unless All Day is enabled. Native keeps the game's response; Smoothed slows changes and limits brightening; Custom unlocks the controls.",
+        .section = "Night Exposure",
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureAdaptation",
+        .binding = &witcher3classic::night::exposure::adaptation,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightExposureAdaptation"),
+        .label = "Adaptation",
+        .section = "Night Exposure",
+        .tooltip = "Smoothed uses 35% brightening speed, 5% darkening speed and a 5% brightening limit. Custom lets you adjust these values and the darkening limit.",
+        .labels = {"Native", "Smoothed", "Custom"},
+        .max = 2.f,
+        .is_enabled = []() { return witcher3classic::night::enabled == 1.f && witcher3classic::night::exposure::supported; },
+        .is_visible = []() { return witcher3classic::night::exposure::enabled == 1.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureBrighteningSpeed",
+        .binding = &witcher3classic::night::exposure::brightening_speed,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightExposureBrighteningSpeed"),
+        .label = "Brightening Speed",
+        .section = "Night Exposure",
+        .tooltip = "How quickly exposure lifts darker scenes. 100% = native; lower = slower.",
+        .min = 1.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return witcher3classic::night::enabled == 1.f && witcher3classic::night::exposure::supported; },
+        .is_visible = []() { return witcher3classic::night::exposure::enabled == 1.f && witcher3classic::night::exposure::adaptation == 2.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureDarkeningSpeed",
+        .binding = &witcher3classic::night::exposure::darkening_speed,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightExposureDarkeningSpeed"),
+        .label = "Darkening Speed",
+        .section = "Night Exposure",
+        .tooltip = "How quickly exposure lowers brighter scenes. 100% = native; lower = slower.",
+        .min = 1.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return witcher3classic::night::enabled == 1.f && witcher3classic::night::exposure::supported; },
+        .is_visible = []() { return witcher3classic::night::exposure::enabled == 1.f && witcher3classic::night::exposure::adaptation == 2.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureMaximumBrightening",
+        .binding = &witcher3classic::night::exposure::maximum_brightening,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightExposureMaximumBrightening"),
+        .label = "Maximum Brightening",
+        .section = "Night Exposure",
+        .tooltip = "Limits how much dark scenes can brighten. 0% prevents the boost; 100% keeps the game's full range.",
+        .max = 100.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return witcher3classic::night::enabled == 1.f && witcher3classic::night::exposure::supported; },
+        .is_visible = []() { return witcher3classic::night::exposure::enabled == 1.f && witcher3classic::night::exposure::adaptation == 2.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureMaximumDarkening",
+        .binding = &witcher3classic::night::exposure::maximum_darkening,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightExposureMaximumDarkening"),
+        .label = "Maximum Darkening",
+        .section = "Night Exposure",
+        .tooltip = "Limits how much bright scenes can darken. 0% prevents the reduction; 100% keeps the game's full range.",
+        .max = 100.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return witcher3classic::night::enabled == 1.f && witcher3classic::night::exposure::supported; },
+        .is_visible = []() { return witcher3classic::night::exposure::enabled == 1.f && witcher3classic::night::exposure::adaptation == 2.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightExposureFixedLuminance",
+        .binding = &witcher3classic::night::exposure::fixed_luminance,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightExposureFixedLuminance"),
+        .label = "Fixed Luminance",
+        .section = "Night Exposure",
+        .tooltip = "Sets a constant exposure when Auto Exposure is off. Lower values brighten the image; higher values darken it.",
+        .min = 0.001f,
+        .max = 10.f,
+        .format = "%.3f",
+        .is_enabled = []() { return witcher3classic::night::enabled == 1.f && witcher3classic::night::exposure::supported; },
+        .is_visible = []() { return witcher3classic::night::exposure::enabled == 0.f; },
+        .is_logarithmic = true,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightDarkeningStart",
+        .binding = &witcher3classic::night::darkening_start,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightDarkeningStart"),
+        .label = "Darkening Start",
+        .section = "Night Schedule",
+        .tooltip = "Game time when lighting starts to fade from its original brightness toward your night settings.",
+        .max = 24.f,
+        .format = "%.1f h",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightFullDarknessStart",
+        .binding = &witcher3classic::night::full_darkness_start,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightFullDarknessStart"),
+        .label = "Full Darkness Start",
+        .section = "Night Schedule",
+        .tooltip = "Game time when your night settings reach full strength.",
+        .max = 24.f,
+        .format = "%.1f h",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightFadeOutStart",
+        .binding = &witcher3classic::night::fade_out_start,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightFadeOutStart"),
+        .label = "Fade-out Start",
+        .section = "Night Schedule",
+        .tooltip = "Game time when lighting starts to fade from your night settings back to its original brightness.",
+        .max = 24.f,
+        .format = "%.1f h",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightDarkeningEnd",
+        .binding = &witcher3classic::night::darkening_end,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightDarkeningEnd"),
+        .label = "Darkening End",
+        .section = "Night Schedule",
+        .tooltip = "Game time when the original lighting is fully restored.",
+        .max = 24.f,
+        .format = "%.1f h",
+        .is_enabled = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::Supported(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "NightScheduleStatus",
+        .value_type = renodx::utils::settings::SettingValueType::TEXT,
+        .label = "These times are out of order. Set Start, Full Darkness, Fade-out and End in order, allowing for midnight. Original lighting stays active until the schedule is valid.",
+        .section = "Night Schedule",
+        .is_visible = [] { return witcher3classic::night::enabled == 1.f && witcher3classic::night::NightSchedule() == 0; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "SettingsMode",
         .binding = &settings_mode,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 0.f,
         .can_reset = false,
         .label = "Settings Mode",
-        .tooltip = "Advanced shows color grading and PsychoV-31 controls.",
+        .tooltip = "Simple shows the essential controls. Advanced adds more color-grading and tone-mapping options.",
         .labels = {"Simple", "Advanced"},
         .is_global = true,
     },
@@ -773,6 +1208,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = CLASSIC_TONE_MAP_PSYCHOV31,
         .label = "Tone Mapper",
         .section = "Tone Mapping",
+        .tooltip = "Vanilla keeps the game's tone mapping. Custom preserves more HDR highlight detail and enables the extra color controls.",
         .labels = {"Vanilla", "PsychoV-31 (Custom)"},
     },
     new renodx::utils::settings::Setting{
@@ -781,7 +1217,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1000.f,
         .label = "Peak Brightness",
         .section = "Tone Mapping",
-        .tooltip = "Sets the HDR highlight limit in nits. Match this to the peak brightness your monitor or TV can display. Usually detected automatically at startup; adjust if the detected value does not match your display's capabilities. Manual adjustments are preserved; Reset restores the detected peak. Defaults to 1000 nits if detection is unavailable.",
+        .tooltip = "Maximum brightness your display can show, in nits. Usually detected automatically; adjust it to match your monitor or TV.",
         .min = 203.f,
         .max = 10000.f,
         .is_enabled = &IsCustom,
@@ -792,7 +1228,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 203.f,
         .label = "Game Brightness",
         .section = "Tone Mapping",
-        .tooltip = "Scene reference white in nits. Vanilla uses 203 nits.",
+        .tooltip = "Brightness of the game world, in nits. Increase this to make the scene brighter.",
         .min = 48.f,
         .max = 500.f,
         .is_enabled = &IsCustom,
@@ -803,7 +1239,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 203.f,
         .label = "UI Brightness",
         .section = "Tone Mapping",
-        .tooltip = "HUD and menu reference white in nits.",
+        .tooltip = "Brightness of the HUD and menus, in nits. Adjust this separately from the game world.",
         .min = 48.f,
         .max = 500.f,
     },
@@ -813,7 +1249,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 100.f,
         .label = "LUT Grading Strength",
         .section = "Scene Color Grading",
-        .tooltip = "Contribution of the native color grading LUTs, including their environment blend and gain. 0 bypasses the LUT grade; 100 uses its full contribution.",
+        .tooltip = "Strength of the game's color filters, which shape the weather and cinematic look. 0 removes them; 100 keeps their full effect.",
         .max = 100.f,
         .is_enabled = &IsCustom,
         .parse = [](float value) { return value * 0.01f; },
@@ -825,7 +1261,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 100.f,
         .label = "LUT Scaling",
         .section = "Scene Color Grading",
-        .tooltip = "Restores the LUT's black and white range using black, midgray and white samples. 0 preserves native LUT levels; 100 applies full restoration. Can alter intentional weather and cinematic grading. HDR range and wide-gamut preservation remain active at 0.",
+        .tooltip = "Restores deeper blacks and brighter whites in the game's color filters. Higher values can change the intended weather or cinematic look.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -838,7 +1274,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 100.f,
         .label = "Color Grading Strength",
         .section = "Scene Color Grading",
-        .tooltip = "Contribution of the native color grade after LUTs. 0 bypasses the grade; 100 uses its full contribution. Vignette strength remains independent.",
+        .tooltip = "Strength of the game's final color adjustments. 0 removes them; 100 keeps their full effect.",
         .max = 100.f,
         .is_enabled = &IsCustom,
         .parse = [](float value) { return value * 0.01f; },
@@ -850,6 +1286,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Exposure",
         .section = "Color Grading",
+        .tooltip = "Overall scene brightness before tone mapping. 50 keeps the reference exposure; higher values brighten the image.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -862,6 +1299,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Highlights",
         .section = "Color Grading",
+        .tooltip = "Brightness of bright areas. 50 keeps the reference look.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -874,6 +1312,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Highlight Contrast",
         .section = "Color Grading",
+        .tooltip = "Contrast within bright areas, affecting highlight detail and separation. 50 keeps the reference look.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -886,6 +1325,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Contrast",
         .section = "Color Grading",
+        .tooltip = "Difference between bright and dark tones. Higher values give a stronger contrast; 50 keeps the reference look.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -898,6 +1338,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Shadow Contrast",
         .section = "Color Grading",
+        .tooltip = "Contrast within dark areas, affecting shadow depth and detail. 50 keeps the reference look.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -910,6 +1351,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Shadows",
         .section = "Color Grading",
+        .tooltip = "Brightness of dark areas. Increase this to reveal more shadow detail. 50 keeps the reference look.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -922,6 +1364,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Saturation",
         .section = "Color Grading",
+        .tooltip = "Overall color intensity. 0 gives a black-and-white image; 50 keeps the reference colors.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -934,6 +1377,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Highlight Saturation",
         .section = "Color Grading",
+        .tooltip = "Color intensity in bright areas. Lower values make highlights less colorful; 50 keeps the reference look.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -946,6 +1390,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .label = "Blowout",
         .section = "Color Grading",
+        .tooltip = "Reduces color intensity for a washed-out look. Higher values move colors closer to grey.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -958,6 +1403,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .label = "Flare",
         .section = "Color Grading",
+        .tooltip = "Deepens the darkest tones near black. 0 leaves them unchanged.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -970,6 +1416,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.18f,
         .label = "Adaptation Anchor",
         .section = "PsychoV-31 (Custom)",
+        .tooltip = "Scene brightness treated as the custom tone mapper's reference. 0.18 is the default starting point.",
         .min = 0.01f,
         .max = 0.5f,
         .format = "%.4f",
@@ -983,6 +1430,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.18f,
         .label = "Background Anchor",
         .section = "PsychoV-31 (Custom)",
+        .tooltip = "How bright that reference appears in the final image. 0.18 keeps the default brightness balance.",
         .min = 0.01f,
         .max = 0.5f,
         .format = "%.4f",
@@ -996,6 +1444,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 100.f,
         .label = "Highlight Hue Response",
         .section = "PsychoV-31 (Custom)",
+        .tooltip = "Higher values keep more of the original color in very bright highlights.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -1008,6 +1457,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Gamut Compression",
         .section = "PsychoV-31 (Custom)",
+        .tooltip = "Softens colors that exceed the selected color range, helping avoid harsh clipping. 1 applies the full correction; 0 disables it.",
         .min = 0.f,
         .max = 1.f,
         .format = "%.2f",
@@ -1021,6 +1471,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .label = "Compression (0 = Auto)",
         .section = "PsychoV-31 (Custom)",
+        .tooltip = "Controls how strongly bright areas are compressed to fit your display. 0 chooses the amount automatically.",
         .min = 0.f,
         .max = 5.f,
         .format = "%.2f",
@@ -1034,6 +1485,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Gamma",
         .section = "PsychoV-31 (Custom)",
+        .tooltip = "Adjusts the brightness balance of middle and dark tones. 1 keeps the reference look.",
         .min = 0.5f,
         .max = 2.f,
         .format = "%.2f",
@@ -1048,6 +1500,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 2.f,
         .label = "HDR Gamut Target",
         .section = "PsychoV-31 (Custom)",
+        .tooltip = "Color range used to keep bright, saturated colors under control. BT.709 is narrower; Display P3 and BT.2020 allow richer colors.",
         .labels = {"BT.709", "BT.2020", "Display P3"},
         .is_enabled = &IsCustom,
         .parse = [](float value) { return value == 2.f ? 3.f : value; },
@@ -1060,7 +1513,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Motion Blur",
         .section = "Motion Blur",
-        .tooltip = "Replaces native motion blur. Object Only follows visible object movement while excluding camera-only motion. Camera-followed subjects stay sharp. Requires Object Motion enabled in DLSS Tab. Keep native Anti-aliasing enabled.",
+        .tooltip = "Adds blur to movement. Object Only keeps camera movement sharp while blurring moving objects. Requires Object Motion and the game's Anti-aliasing option.",
         .labels = {"Camera + Object", "Object Only", "Off"},
         .is_enabled = &IsCustom,
     },
@@ -1070,7 +1523,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.0f,
         .label = "Motion Blur Strength",
         .section = "Motion Blur",
-        .tooltip = "Exposure duration: 0 disables blur, 50 uses 1/60 second, 100 uses 1/30 second. Frame-rate compensated using the vector history interval. Invalid/new history stays sharp.",
+        .tooltip = "Amount of motion blur. 0 removes it; higher values create longer trails. Blur strength stays consistent as frame rate changes.",
         .min = 0.0f,
         .max = 100.0f,
         .is_enabled = [] { return IsCustom() && witcher3classic::optics::motion_mode != 2.f; },
@@ -1083,7 +1536,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .label = "Depth of Field",
         .section = "Depth of Field",
-        .tooltip = "Custom replaces native depth blur and BlitzFX bokeh with separate foreground/background disk filters after reconstruction. Focus is set by the lens controls below. Native shows the native depth-blur control; Custom shows the lens controls. Off disables depth blur and retains the last controls, grayed out.",
+        .tooltip = "Blurs objects outside the focus distance. Native follows the game's blur; Custom uses the lens controls below. Off disables depth blur.",
         .labels = {"Native", "Custom", "Off"},
         .is_enabled = &IsCustom,
         .on_change_value = [](float previous, float current) {
@@ -1099,7 +1552,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Native Depth Blur",
         .section = "Depth of Field",
-        .tooltip = "Depth-blur radius: 0 removes it, 50 is native, 100 doubles it. Requires native Blur. Does not control Motion Blur or Witcher Senses.",
+        .tooltip = "Strength of the game's depth blur. 0 removes it, 50 is original strength, and 100 doubles it. Requires the game's Blur option.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = [] { return IsCustom() && witcher3classic::optics::dof_mode == 0.f; },
@@ -1112,7 +1565,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.0f,
         .label = "Depth of Field Strength",
         .section = "Depth of Field",
-        .tooltip = "Scales the circle of confusion. 0 keeps the scene sharp; 50 uses the specified lens; 100 doubles its defocus.",
+        .tooltip = "Overall strength of Custom depth of field. 0 keeps the scene sharp; 50 uses the selected lens settings.",
         .min = 0.0f,
         .max = 100.0f,
         .is_enabled = [] { return IsCustom() && witcher3classic::optics::dof_mode == 1.f; },
@@ -1125,7 +1578,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 20.0f,
         .label = "Focus Distance (m)",
         .section = "Depth of Field",
-        .tooltip = "Distance from the camera where objects remain in focus. Background and foreground blur are calculated separately.",
+        .tooltip = "Distance from the camera that stays sharp, in metres. Objects nearer or farther away can blur.",
         .min = 0.1f,
         .max = 200.0f,
         .format = "%.2f",
@@ -1138,7 +1591,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 32.5f,
         .label = "Focal Length (mm)",
         .section = "Depth of Field",
-        .tooltip = "Optical focal length for depth of field only; does not change the game camera FOV. Longer lenses produce stronger defocus.",
+        .tooltip = "Longer values create stronger background blur. This affects depth of field without zooming the camera.",
         .min = 10.0f,
         .max = 200.0f,
         .format = "%.2f",
@@ -1151,7 +1604,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 2.8f,
         .label = "Aperture (f-number)",
         .section = "Depth of Field",
-        .tooltip = "Lower f-numbers give a shallower depth of field. Higher values keep more of the scene sharp.",
+        .tooltip = "Lower values blur the background more. Higher values keep more of the scene in focus.",
         .min = 0.7f,
         .max = 22.0f,
         .format = "%.2f",
@@ -1164,7 +1617,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.0f,
         .label = "Foreground Blur",
         .section = "Depth of Field",
-        .tooltip = "Controls foreground coverage independently from background defocus. 0 removes foreground spread; 50 uses Custom coverage.",
+        .tooltip = "Amount of blur on objects in front of the focus distance. 0 removes it; 50 uses the reference strength.",
         .min = 0.0f,
         .max = 50.0f,
         .is_enabled = [] { return IsCustom() && witcher3classic::optics::dof_mode == 1.f; },
@@ -1178,7 +1631,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Bloom Implementation",
         .section = "Bloom",
-        .tooltip = "Custom replaces native uniform bloom and BlitzFX Bloom Scattering with its own HDR filter. Native restores their original settings; the Custom strength slider does not alter BlitzFX configuration.",
+        .tooltip = "Adds a soft glow around bright areas. Native follows the game; Custom uses the controls below.",
         .labels = {"Native", "Custom"},
         .is_enabled = &IsCustom,
     },
@@ -1188,7 +1641,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 2.0f,
         .label = "Bloom Size",
         .section = "Bloom",
-        .tooltip = "Custom enhanced multi-scale Gaussian spread. Larger values use more blur passes and increase GPU cost.",
+        .tooltip = "How far the glow spreads around bright areas. Larger values create a wider glow and cost more performance.",
         .min = 0.1f,
         .max = 3.0f,
         .format = "%.2f",
@@ -1200,7 +1653,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 3.0f,
         .label = "Bloom Highlight Selection",
         .section = "Bloom",
-        .tooltip = "Custom brightness polynomial: 1 includes more low-intensity light; 4 concentrates bloom around highlights. Extended HDR energy is preserved.",
+        .tooltip = "Which lights contribute to bloom. Lower values include dimmer areas; higher values concentrate the glow on bright highlights.",
         .min = 1.0f,
         .max = 4.0f,
         .format = "%.2f",
@@ -1212,7 +1665,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 5.f,
         .label = "Bloom Strength",
         .section = "Bloom",
-        .tooltip = "Custom bloom strength: 0 removes the replacement glow, 50 is reference, 100 doubles it.",
+        .tooltip = "Brightness of the glow around highlights. 0 removes it; 50 is reference strength and 100 doubles it.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = [] { return IsCustom() && witcher3classic::optics::bloom_mode == 1.f; },
@@ -1224,7 +1677,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Sunshafts Strength",
         .section = "Sunshafts",
-        .tooltip = "Scales masked sky input to light shafts. 0 removes it, 50 is reference strength, 100 doubles the input. Requires native Light Shafts. Lens dirt and the replacement bloom are independent.",
+        .tooltip = "Brightness of rays from the sun. 0 removes them; 50 is reference strength. Requires the game's Light Shafts option.",
         .min = 0.f,
         .max = 100.f,
         .parse = [](float value) { return value * 0.02f; },
@@ -1235,7 +1688,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Lens Dirt",
         .section = "Lens Dirt",
-        .tooltip = "Scales the dirt texture in the bloom composite. 0 removes dirt, 50 is reference strength, 100 doubles it. Requires native Camera Lens Effects.",
+        .tooltip = "Visibility of dirt on the camera lens around bright lights. 0 removes it; 50 is reference strength. Requires Camera Lens Effects.",
         .min = 0.f,
         .max = 100.f,
         .parse = [](float value) { return value * 0.02f; },
@@ -1247,7 +1700,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Vignette Black Floor",
         .section = "Vignette",
-        .tooltip = "Perfect Black darkens without adding a colored black floor. Above strength 50, it darkens progressively while retaining detail under partial vignette masks. Native retains the game's vignette color.",
+        .tooltip = "Perfect Black darkens the screen edges without a colored tint. Native keeps the game's vignette color.",
         .labels = {"Native", "Perfect Black"},
         .is_enabled = &IsCustom,
     },
@@ -1257,7 +1710,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 50.f,
         .label = "Vignette Strength",
         .section = "Vignette",
-        .tooltip = "Scales the game's radial and texture-based vignettes. 0 removes them; 50 uses native strength; 100 doubles the strength. Requires the game's Vignetting option.",
+        .tooltip = "Darkening around the screen edges. 0 removes it; 50 is original strength. Requires the game's Vignetting option.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -1270,7 +1723,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Replace Native Sharpening",
         .section = "Sharpening",
-        .tooltip = "Replaces the game's sharpening with Lilium RCAS after DLSS or native TAA. Works with native Sharpening off. Requires the PsychoV tone mapper.",
+        .tooltip = "Adds sharpening after anti-aliasing for clearer detail. Works with the game's Sharpening option off; requires the Custom tone mapper.",
         .is_enabled = &IsCustom,
         .is_global = true,
     },
@@ -1280,7 +1733,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .label = "Lilium RCAS Strength",
         .section = "Sharpening",
-        .tooltip = "0 disables sharpening while replacement remains active. Higher values enhance detail with noise attenuation. HUD and menu graphics are unaffected.",
+        .tooltip = "Amount of added sharpening. Higher values bring out detail but may emphasize noise. HUD and menu text stay unchanged.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = [] { return IsCustom() && shader_injection.sharpening_mode != 0.f; },
@@ -1294,7 +1747,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .label = "Chromatic Aberration",
         .section = "Chromatic Aberration",
-        .tooltip = "Native follows the game setting. Custom uses its authored radial lens curve and bounded linear-light filtering after reconstruction; works with native CA disabled.",
+        .tooltip = "Adds colored fringes near screen edges. Native follows the game; Custom uses the intensity control below.",
         .labels = {"Native", "Custom"},
         .is_enabled = &IsCustom,
     },
@@ -1304,7 +1757,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.5f,
         .label = "CA Intensity",
         .section = "Chromatic Aberration",
-        .tooltip = "0 disables lens distortion and dispersion. 1 uses the reference lens curve. Higher values exaggerate the curve.",
+        .tooltip = "Strength of colored fringes and lens distortion. 0 removes them; 1 uses the reference lens effect.",
         .min = 0.f,
         .max = 5.f,
         .format = "%.2f",
@@ -1316,7 +1769,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 0.f,
         .label = "Perceptual Film Grain",
         .section = "Film Grain",
-        .tooltip = "Luminance-adaptive grain after reconstruction, sharpening, CA and tone mapping. 0 disables it. HUD and menu graphics are unaffected.",
+        .tooltip = "Adds fine film-like texture to the image. 0 removes it; higher values make it more visible. HUD and menus stay clear.",
         .min = 0.f,
         .max = 100.f,
         .is_enabled = &IsCustom,
@@ -1329,7 +1782,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Video AutoHDR",
         .section = "Video",
-        .tooltip = "Expands prerendered SDR video to HDR using BT.2446 Method A. Uses Game Brightness and Peak Brightness; Off or Vanilla preserves the original video colors. Fades and subtitles are preserved.",
+        .tooltip = "Expands the brightness range of prerendered videos for HDR. Off keeps their original appearance. Uses Game Brightness and Peak Brightness.",
         .labels = {"Off", "BT2446A"},
         .is_enabled = &IsCustom,
     },
@@ -1338,6 +1791,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Reset All",
         .section = "Options",
         .group = "button-line-1",
+        .tooltip = "Restores all settings in the selected profile to their defaults.",
         .on_change = []() { renodx::utils::settings::ResetSettings(); },
     },
     new renodx::utils::settings::Setting{
@@ -1350,6 +1804,7 @@ renodx::utils::settings::Settings settings = {
         .label = "RenoDX Discord",
         .section = "Links",
         .group = "button-line-2",
+        .tooltip = "Opens the RenoDX community for help, discussion and updates.",
         .tint = 0x5865F2,
         .on_change = []() { renodx::utils::platform::LaunchURL("https://discord.gg/", "Ce9bQHQrSV"); },
     },
@@ -1358,6 +1813,7 @@ renodx::utils::settings::Settings settings = {
         .label = "HDR Den Discord",
         .section = "Links",
         .group = "button-line-2",
+        .tooltip = "Opens the HDR Den community for HDR help and discussion.",
         .tint = 0x5865F2,
         .on_change = []() { renodx::utils::platform::LaunchURL("https://discord.gg/", "5WZXDpmbpP"); },
     },
@@ -1366,6 +1822,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Github",
         .section = "Links",
         .group = "button-line-2",
+        .tooltip = "Opens the RenoDX project page, including source code and issue reports.",
         .tint = 0x2B3137,
         .on_change = []() { renodx::utils::platform::LaunchURL("https://github.com/clshortfuse/renodx"); },
     },
@@ -1374,6 +1831,7 @@ renodx::utils::settings::Settings settings = {
         .label = "Hartapfel's Ko-Fi",
         .section = "Links",
         .group = "button-line-3",
+        .tooltip = "Opens the support page for the creator of this game mod.",
         .tint = 0xFF5A16,
         .on_change = []() { renodx::utils::platform::LaunchURL("https://ko-fi.com/hartapfel"); },
     },
@@ -1382,6 +1840,7 @@ renodx::utils::settings::Settings settings = {
         .label = "ShortFuse's Ko-Fi",
         .section = "Links",
         .group = "button-line-3",
+        .tooltip = "Opens the support page for the creator of the RenoDX framework.",
         .tint = 0xFF5A16,
         .on_change = []() { renodx::utils::platform::LaunchURL("https://ko-fi.com/shortfuse"); },
     },
@@ -1508,6 +1967,13 @@ void OnPresetOff() {
   renodx::utils::settings::ResetSettings();
   renodx::utils::settings::UpdateSetting("ToneMapper", CLASSIC_TONE_MAP_VANILLA);
   renodx::utils::settings::UpdateSetting("FxVideoAutoHDR", 0.f);
+  renodx::utils::settings::UpdateSetting("GfxRefractiveRain", 0.f);
+  ApplyTabPreset(witcher3classic::presets::night, false);
+}
+
+void OnNightPresent(reshade::api::command_queue*, reshade::api::swapchain*,
+                    const reshade::api::rect*, const reshade::api::rect*, uint32_t, const reshade::api::rect*) {
+  witcher3classic::night::Update(renodx::utils::settings::preset_index != 0);
 }
 
 void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
@@ -1534,48 +2000,47 @@ void ShowHint(const char* text) {
   ImGui::EndTooltip();
 }
 
-void ApplyGraphicsPreset(bool improved) {
-  std::vector<std::pair<std::string, float>> values;
-  for (const auto* setting : settings) {
-    if (!setting->key.starts_with("Gfx")) continue;
-    // Graphics mode selectors use zero for Native/Off. Custom-only sliders
-    // retain the approved defaults while inactive in the vanilla preset.
-    values.emplace_back(setting->key,
-                        !improved && setting->value_type == renodx::utils::settings::SettingValueType::INTEGER && !setting->labels.empty()
-                            ? 0.f
-                            : setting->default_value);
-  }
-  renodx::utils::settings::UpdateSettings(values);
-  if (renodx::utils::settings::preset_index != 0)
-    renodx::utils::settings::SaveSettings();
-}
 
 void DrawAddon(reshade::api::effect_runtime* runtime) {
   if (!ImGui::BeginTabBar("ClassicTabs")) return;
   if (ImGui::BeginTabItem("HDR")) {
+    draw_nights = false;
     draw_effects = false;
     draw_graphics = false;
     renodx::utils::settings::OnRegisterOverlay(runtime);
     ImGui::EndTabItem();
   }
   if (ImGui::BeginTabItem("Effects")) {
+    draw_nights = false;
     draw_effects = true;
     draw_graphics = false;
     renodx::utils::settings::OnRegisterOverlay(runtime);
     ImGui::EndTabItem();
   }
   if (ImGui::BeginTabItem("Graphics")) {
+    draw_nights = false;
     draw_effects = false;
     draw_graphics = true;
-    ImGui::BeginDisabled(renodx::utils::settings::preset_index == 0);
-    if (ImGui::Button("Vanilla Graphics")) ApplyGraphicsPreset(false);
-    ShowHint("Restores native lighting, shadows, player fill, atmospheric fog and water by disabling this tab's overrides. HDR, Effects, DLSS and the game's graphics options are unchanged. Saved to the selected preset; select Preset #1, #2 or #3 to use.");
-    ImGui::SameLine();
-    if (ImGui::Button("Improved Graphics")) ApplyGraphicsPreset(true);
-    ShowHint("Restores the recommended defaults for every setting in this tab, including custom lighting, soft and contact shadows, player fill, fog and water. HDR, Effects and DLSS are unchanged. Saved to the selected preset; select Preset #1, #2 or #3 to use.");
-    ImGui::EndDisabled();
-    ImGui::Separator();
     renodx::utils::settings::OnRegisterOverlay(runtime);
+    ImGui::EndTabItem();
+  }
+  if (ImGui::BeginTabItem("Darker Nights")) {
+    draw_effects = false;
+    draw_graphics = false;
+    draw_nights = true;
+    renodx::utils::settings::OnRegisterOverlay(runtime);
+    if (!witcher3classic::night::Supported()) {
+      ImGui::TextDisabled("Darker Nights is not available for this game version.");
+    } else if (witcher3classic::night::attempted && !witcher3classic::night::installed) {
+      ImGui::TextDisabled("Darker Nights could not start. The original lighting is active.");
+    } else if (witcher3classic::night::enabled == 1.f) {
+      if (witcher3classic::night::common_supported && witcher3classic::night::installed
+          && witcher3classic::night::state->common_uploads.load(std::memory_order_relaxed) == 0) {
+        ImGui::TextDisabled("Waiting for the game scene...");
+      }
+      const float hour = witcher3classic::night::state->hour.load(std::memory_order_relaxed);
+      if (hour >= 0.f) ImGui::TextDisabled("Game time: %.1f h", hour);
+    }
     ImGui::EndTabItem();
   }
   if (ImGui::BeginTabItem("DLSS")) {
@@ -1584,19 +2049,19 @@ void DrawAddon(reshade::api::effect_runtime* runtime) {
     bool enabled = mode != 0.f;
     if (ImGui::Checkbox("Enable DLSS", &enabled))
       changed |= renodx::utils::settings::UpdateSetting("AADevelopment", enabled ? 1.f : 0.f);
-    ShowHint("Keep Anti-aliasing enabled in the game. DLSS replaces native AA and automatically bypasses BlitzFX TAA when present. Custom optical effects require the native AA boundary; with them active, Off uses native TAA instead of BlitzFX TAA.");
+    ShowHint("Uses DLSS or DLAA to improve image stability and reduce jagged edges. Keep Anti-aliasing enabled in the game's settings.");
     ImGui::SeparatorText("Image Quality");
     ImGui::BeginDisabled(!enabled);
     int selected_quality = std::clamp(static_cast<int>(quality), 0, 4);
     const char* qualities[] = {"DLAA", "Quality", "Balanced", "Performance", "Ultra Performance"};
     if (ImGui::Combo("Quality", &selected_quality, qualities, 5))
       changed |= renodx::utils::settings::UpdateSetting("DLSSQuality", static_cast<float>(selected_quality));
-    ShowHint("DLAA renders at native resolution. Other modes trade rendering resolution for performance.");
+    ShowHint("DLAA gives the clearest image at your display resolution. Quality through Ultra Performance trade some detail for higher frame rates.");
     int selected_model = std::clamp(static_cast<int>(model), 0, 4);
     const char* models[] = {"K", "J", "L", "M", "C"};
     if (ImGui::Combo("Upscaling Model", &selected_model, models, 5))
       changed |= renodx::utils::settings::UpdateSetting("DLSSModel", static_cast<float>(selected_model));
-    ShowHint("Requests the selected NVIDIA model. Unsupported models fall back to the DLL default. Driver overrides may take precedence.");
+    ShowHint("Selects the NVIDIA image-reconstruction model. Different models may change clarity or ghosting; unsupported choices use the available default.");
     ImGui::EndDisabled();
 
     ImGui::SeparatorText("Frame Generation");
@@ -1605,6 +2070,7 @@ void DrawAddon(reshade::api::effect_runtime* runtime) {
     const char* fg_modes[] = {"Off", "Fixed", "Auto", "Dynamic"};
     if (ImGui::Combo("Frame Generation Mode", &selected_fg_mode, fg_modes, 4))
       changed |= renodx::utils::settings::UpdateSetting("DLSSFGMode", static_cast<float>(selected_fg_mode));
+    ShowHint("Fixed keeps your chosen multiplier. Auto pauses generation when it would hurt performance; Dynamic adjusts the multiplier toward your target frame rate.");
     if (selected_fg_mode && !witcher3classic::frame_generation::transport_active)
       ImGui::TextWrapped("Frame Generation is unavailable in this session. Check the status above; HDR10 and windowed or borderless display mode are required.");
     if (witcher3classic::frame_generation::transport_active)
@@ -1614,58 +2080,57 @@ void DrawAddon(reshade::api::effect_runtime* runtime) {
     if (selected_fg_mode == 3 && witcher3classic::frame_generation::transport_active && !witcher3classic::frame_generation::dynamic_supported)
       ImGui::TextWrapped("Dynamic MFG is unavailable on the active NVIDIA runtime. Select Fixed or Auto.");
     ImGui::BeginDisabled(selected_fg_mode == 0);
-    ShowHint("Fixed uses a selected multiplier. Auto can suspend generation when it would reduce performance. Dynamic adjusts the multiplier toward the display refresh rate or your target. Available modes depend on NVIDIA runtime support. Reflex is required while generating frames.");
     if (selected_fg_mode == 3) {
       float target_fps = std::clamp(fg_target_fps, 0.f, 1000.f);
       if (ImGui::SliderFloat("Target Frame Rate", &target_fps, 0.f, 1000.f, target_fps == 0.f ? "Display refresh rate" : "%.0f FPS"))
         changed |= renodx::utils::settings::UpdateSetting("DLSSFGTargetFPS", target_fps);
-      ShowHint("Zero follows the display. With VSync active, NVIDIA uses the display refresh rate instead of a custom target.");
+      ShowHint("Frame rate Dynamic generation aims to reach. 0 follows your display's refresh rate; VSync also uses that refresh rate.");
     } else {
       int selected_multiplier = static_cast<int>(std::clamp(fg_multiplier, 2.f, 6.f)) - 2;
       const char* multipliers[] = {"2x", "3x", "4x", "5x", "6x"};
       if (ImGui::Combo("Frame Multiplier", &selected_multiplier, multipliers,
                         static_cast<int>(std::clamp(witcher3classic::frame_generation::max_multiplier.load(), 2u, 6u)) - 1))
         changed |= renodx::utils::settings::UpdateSetting("DLSSFGMultiplier", static_cast<float>(selected_multiplier + 2));
-      ShowHint("Includes the rendered frame: 2x adds one generated frame; 6x adds five. The active runtime must support the selected multiplier. Generated frames do not increase simulation or input-update frequency.");
+      ShowHint("Total displayed frames per game-rendered frame. 2x adds one generated frame; 6x adds five. Higher values can improve smoothness but cost more GPU power.");
     }
     int selected_hud_quality = static_cast<int>(std::clamp(fg_hud_quality, 0.f, 1.f));
     const char* hud_qualities[] = {"Standard", "Enhanced HUD"};
     if (ImGui::Combo("HUD Quality", &selected_hud_quality, hud_qualities, 2))
       changed |= renodx::utils::settings::UpdateSetting("DLSSFGHUDQuality", static_cast<float>(selected_hud_quality));
-    ShowHint("Enhanced HUD separately interpolates and recomposes the scene and interface. It costs additional GPU time and memory. Additive HUD effects temporarily use standard UI handling. NVIDIA driver overrides may take precedence. FG model presets are managed by NVIDIA; this is separate from the upscaling model above.");
+    ShowHint("Enhanced HUD processes the interface separately for clearer generated frames. It costs more performance than Standard.");
     ImGui::EndDisabled();
-    ImGui::TextWrapped("Reflex is automatic. Generation pauses for the ReShade overlay, active ReShade effects, or incomplete scene inputs.");
+    ImGui::TextWrapped("Reflex reduces input delay automatically. Frame generation pauses while this menu is open or incompatible visual effects are active.");
 
     ImGui::BeginDisabled(!enabled);
     ImGui::SeparatorText("Performance");
     bool exclude_foliage = exclude_vegetation != 0.f;
     if (ImGui::Checkbox("Exclude Vegetation from Object Motion (high performance impact)", &exclude_foliage))
       changed |= renodx::utils::settings::UpdateSetting("ExcludeVegetationMotion", exclude_foliage ? 1.f : 0.f);
-    ShowHint("Off includes wind and contact bending in motion vectors. On improves performance by using camera motion for vegetation, which can increase ghosting. Other moving objects retain their vectors.");
+    ShowHint("Skips tracking wind-blown grass and trees to improve performance. This can leave trails around moving foliage.");
     ImGui::SeparatorText("Diagnostics");
     int view = std::clamp(static_cast<int>(show_object_vectors), 0, 5);
     const char* views[] = {"Off", "Object Motion / Coverage", "DLSS Motion Vectors", "Depth (Reverse Z)", "History Rejection Mask", "DLSS Input Color"};
     if (ImGui::Combo("Debug View", &view, views, 6))
       changed |= renodx::utils::settings::UpdateSetting("AAObjectVectors", static_cast<float>(view));
     const char* help[] = {
-        "Normal output. Keep Off when comparing image quality or performance.",
-        "Raw object vectors before depth validation: gray = stationary, color = motion, amber = missing history, dark = no object coverage.",
-        "Final camera and object vectors supplied to DLSS: hue = direction, brightness = magnitude, black = stationary. Full brightness at 32 pixels per frame.",
-        "Hardware depth supplied to DLSS: bright = near, dark = far. Reverse Z is nonlinear.",
-        "Our bias-current-color mask: white = reject history, black = usable history. This is not NVIDIA's internal confidence view.",
-        "Scene color supplied to DLSS before reconstruction. Later game effects still affect this display."};
+        "Shows the normal game image. Use Off for normal gameplay.",
+        "Shows tracked object movement: grey is still, color is moving, amber is missing history, and dark areas are untracked.",
+        "Shows movement used by DLSS. Colors show direction; brighter areas show faster motion.",
+        "Shows distance from the camera: bright areas are near and dark areas are far away.",
+        "Shows where older frames are rejected: white uses the new image, while black can reuse previous detail.",
+        "Shows the scene before DLSS improves it. Useful for checking the image entering DLSS."};
     ShowHint(help[view]);
     if (ImGui::TreeNode("Advanced Diagnostics")) {
       if (ImGui::Button("Capture Frame Generation Inputs")) {
         witcher3classic::frame_generation::diagnostics::status = "Close this overlay to capture two generated gameplay frames";
         witcher3classic::frame_generation::diagnostics::remaining = 2;
       }
+      ShowHint("Saves diagnostic images and data for troubleshooting frame generation. Briefly pauses rendering.");
       ImGui::TextWrapped("%s", witcher3classic::frame_generation::diagnostics::status.load());
-      ShowHint("Saves exact color, HUDless, UI alpha, depth, motion and camera inputs in renodx-frame-generation-logs. Causes a brief diagnostic stall; use only for troubleshooting.");
       bool objects = object_motion != 0.f;
       if (ImGui::Checkbox("Object Motion", &objects))
         changed |= renodx::utils::settings::UpdateSetting("AAObjectMotion", objects ? 1.f : 0.f);
-      ShowHint("Keep enabled for moving characters and objects. Disable only to compare camera-only vectors.");
+      ShowHint("Tracks moving characters and objects to reduce ghosting. Leave On for normal gameplay.");
       if (!resolution_status.empty()) ImGui::TextWrapped("%s", resolution_status.c_str());
       {
         std::lock_guard lock(upscale_engine::state->mutex);
@@ -1709,8 +2174,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     for (auto* setting : settings) {
       const bool effect = setting->key.starts_with("Fx") && setting->key != "FxVideoAutoHDR";
       const bool graphics = setting->key.starts_with("Gfx");
-      setting->is_visible = [effect, graphics, visible = std::move(setting->is_visible)] {
-        return effect == draw_effects && graphics == draw_graphics && (!visible || visible());
+      const bool night = setting->key.starts_with("Night");
+      setting->is_visible = [effect, graphics, night, visible = std::move(setting->is_visible)] {
+        return effect == draw_effects && graphics == draw_graphics && night == draw_nights && (!visible || visible());
       };
     }
     // Gate replacement itself so Off uses native bytecode, without extending
@@ -1720,6 +2186,14 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
       custom_shaders.at(hash).on_replace = [](auto*) { return IsCustom() && video_auto_hdr == 1.f; };
     }
     reshade::register_event<reshade::addon_event::init_swapchain>(&OnInitSwapchain);
+    reshade::register_event<reshade::addon_event::present>(&OnNightPresent);
+    reshade::register_event<reshade::addon_event::init_device>(&witcher3classic::rain::OnInit);
+    reshade::register_event<reshade::addon_event::destroy_device>(&witcher3classic::rain::OnDestroy);
+    reshade::register_event<reshade::addon_event::init_resource>(&witcher3classic::rain::OnInitResource);
+    reshade::register_event<reshade::addon_event::update_texture_region>(&witcher3classic::rain::OnUpdateTexture);
+    reshade::register_event<reshade::addon_event::destroy_resource>(&witcher3classic::rain::OnDestroyResource);
+    reshade::register_event<reshade::addon_event::init_device>(&witcher3classic::night::OnInit);
+    reshade::register_event<reshade::addon_event::destroy_device>(&witcher3classic::night::OnDestroy);
     reshade::register_event<reshade::addon_event::init_device>(&witcher3classic::volumetrics::OnInit);
     reshade::register_event<reshade::addon_event::init_device>(&witcher3classic::lighting::OnInit);
     reshade::register_event<reshade::addon_event::destroy_device>(&witcher3classic::volumetrics::OnDestroy);
@@ -1818,6 +2292,35 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     };
     custom_shaders.at(0x249DA2F1).on_inject = &OnBlitzComputeInject;
     custom_shaders.at(0x249DA2F1).on_drawn = &OnBlitzComputeDrawn;
+    // Restrict shared mesh permutations to their audited moon pixel partners.
+    for (const auto& [vertex, pixel] : {std::pair{0x910C4B43u, 0x8C9C55ECu}, std::pair{0x3939C615u, 0x89760976u}}) {
+      auto& moon_vertex = custom_shaders.at(vertex);
+      moon_vertex.on_replace = [pixel](auto* cmd) {
+        return witcher3classic::night::installed && witcher3classic::night::common_supported
+            && witcher3classic::night::enabled == 1.f && witcher3classic::night::moon_size != 100.f
+            && renodx::utils::shader::GetCurrentPixelShaderHash(renodx::utils::shader::GetCurrentState(cmd)) == pixel;
+      };
+      moon_vertex.on_inject = [](auto*) { return false; };
+      auto& moon_pixel = custom_shaders.at(pixel);
+      auto previous_replace = moon_pixel.on_replace;
+      auto previous_inject = moon_pixel.on_inject;
+      auto previous_drawn = moon_pixel.on_drawn;
+      moon_pixel.on_replace = [vertex, previous_replace](auto* cmd) {
+        return (previous_replace && previous_replace(cmd))
+            || (witcher3classic::night::installed && witcher3classic::night::common_supported
+                && witcher3classic::night::enabled == 1.f && witcher3classic::night::moon_brightness != 100.f
+                && renodx::utils::shader::GetCurrentVertexShaderHash(renodx::utils::shader::GetCurrentState(cmd)) == vertex);
+      };
+      moon_pixel.on_inject = [pixel, previous_inject](auto* cmd) {
+        bool inject = previous_inject ? previous_inject(cmd) : false;
+        if (pixel == 0x8C9C55ECu) witcher3classic::night::OnMoonPixel(cmd);
+        return inject;
+      };
+      moon_pixel.on_drawn = [previous_drawn](auto* cmd) {
+        witcher3classic::night::OnMoonDrawn(cmd);
+        if (previous_drawn) previous_drawn(cmd);
+      };
+    }
     // Lighting must work without the motion-extended VS signature as well.
     const std::array<std::pair<uint32_t,std::span<const uint8_t>>,6> forward_lighting{{
       {0x12B76681u,__0xF3C40010},
@@ -1835,13 +2338,13 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
       auto previous_drawn=shader.on_drawn;
       shader.on_replace=[previous_replace,i,code](auto* cmd) {
         bool replace=previous_replace ? previous_replace(cmd) : true;
-        if(!replace && (witcher3classic::lighting::player_control!=0.f || witcher3classic::lighting::ambient_ao!=0.f))
+        if(!replace && (witcher3classic::lighting::player_control != 0.f || witcher3classic::lighting::ambient_ao!=0.f))
           witcher3classic::lighting::BindColorOnly(cmd,i,code);
         return replace;
       };
       shader.on_inject=[previous_inject](auto* cmd) {
         bool inject=previous_inject ? previous_inject(cmd) : true;
-        if(witcher3classic::lighting::player_control!=0.f || witcher3classic::lighting::ambient_ao!=0.f)
+        if(witcher3classic::lighting::player_control != 0.f || witcher3classic::lighting::ambient_ao!=0.f)
           witcher3classic::lighting::Bind(cmd,false);
         return inject;
       };
@@ -1856,11 +2359,11 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
       auto previous_inject=shader.on_inject;
       auto previous_drawn=shader.on_drawn;
       shader.on_replace=[previous_replace](auto* cmd) {
-        return (previous_replace && previous_replace(cmd)) || witcher3classic::lighting::player_control!=0.f || witcher3classic::lighting::ambient_ao!=0.f;
+        return (previous_replace && previous_replace(cmd)) || witcher3classic::lighting::player_control != 0.f || witcher3classic::lighting::ambient_ao!=0.f;
       };
       shader.on_inject=[previous_inject](auto* cmd) {
         bool inject=previous_inject ? previous_inject(cmd) : true;
-        if(witcher3classic::lighting::player_control!=0.f || witcher3classic::lighting::ambient_ao!=0.f)
+        if(witcher3classic::lighting::player_control != 0.f || witcher3classic::lighting::ambient_ao!=0.f)
           witcher3classic::lighting::Bind(cmd,false);
         return inject;
       };
@@ -1895,6 +2398,15 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         .name = "Classic scene color",
     });
   } else if (reason == DLL_PROCESS_DETACH) {
+    witcher3classic::night::Update(false);
+    reshade::unregister_event<reshade::addon_event::present>(&OnNightPresent);
+    reshade::unregister_event<reshade::addon_event::init_device>(&witcher3classic::rain::OnInit);
+    reshade::unregister_event<reshade::addon_event::destroy_device>(&witcher3classic::rain::OnDestroy);
+    reshade::unregister_event<reshade::addon_event::init_resource>(&witcher3classic::rain::OnInitResource);
+    reshade::unregister_event<reshade::addon_event::update_texture_region>(&witcher3classic::rain::OnUpdateTexture);
+    reshade::unregister_event<reshade::addon_event::destroy_resource>(&witcher3classic::rain::OnDestroyResource);
+    reshade::unregister_event<reshade::addon_event::init_device>(&witcher3classic::night::OnInit);
+    reshade::unregister_event<reshade::addon_event::destroy_device>(&witcher3classic::night::OnDestroy);
 #if __has_include("../../../bin/streamline-2.14.16/include/sl.h")
     reshade::unregister_event<reshade::addon_event::init_device>(&witcher3classic::frame_generation::factory::OnInitDevice);
     reshade::unregister_event<reshade::addon_event::destroy_device>(&witcher3classic::frame_generation::factory::OnDestroyDevice);

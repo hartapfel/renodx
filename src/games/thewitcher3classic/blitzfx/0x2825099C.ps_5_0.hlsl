@@ -1483,7 +1483,7 @@ void main(
     r2.x = r8.z * r2.x;
     r3.y = cb6[48].w * r3.x;
     r9.xyz = r9.xyz * r0.xxx;
-    r11.xyz = t7.Load(float4(0,0,0,0)).xyz;
+    r11.xyz = t7.Load(float4(0,0,0,0)).xyz * ClassicWaterAmbient(asuint(cb2[38].w));
     r11.xyz = cb6[47].xyz * r11.xyz;
     r11.xyz = r11.xyz * r0.zzz;
     r0.z = rcp(abs(cb6[46].z));
@@ -1517,7 +1517,7 @@ void main(
       r17.xyz = r17.xyz * r11.xyz;
       r17.xyz = float3(0.5,0.5,0.5) * r17.xyz;
       r16.xyz = r9.xyz * r16.xyz + r17.xyz;
-      r16.xyz = cb6[47].xyz * float3(0.100000001,0.100000001,0.100000001) + r16.xyz;
+      r16.xyz = cb6[47].xyz * (0.1f * ClassicWaterAmbient(asuint(cb2[38].w))) + r16.xyz;
       r17.xyz = -r8.xyw * r3.zzz;
       r17.xyz = float3(1.44269502,1.44269502,1.44269502) * r17.xyz;
       r17.xyz = exp2(r17.xyz);

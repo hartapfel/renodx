@@ -13,6 +13,14 @@ float4 trace(float4 position:SV_Position):SV_Target {
   return WaterRefraction(Depth,position,float3(0,0,0),normalize(ClassicWaterFrame[50].xyz),float3(.5,.5,.5));
 }
 
+float4 night_lighting(float4 position:SV_Position):SV_Target {
+  uint row=(uint)position.y;
+  float3 sun=(row==1 || row==3) ? float3(4,8,16) : 0.f;
+  float3 ambient=(row==0 || row==3) ? float3(.25,.5,.75) : 0.f;
+  return ShadeClassicWater(Depth,position,float3(0,0,0),float3(0,0,1),float3(0,0,1),
+      sun,1.f,ambient,row==3 ? 1.f : 0.f,float4(1,2,3,.25));
+}
+
 float4 atmosphere(float4 position:SV_Position):SV_Target {
   float height=lerp(-50.f,100.f,floor(position.x)/63.f);
   float falloff=.0233f;

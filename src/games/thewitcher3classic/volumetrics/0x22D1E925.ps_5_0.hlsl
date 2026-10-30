@@ -1,3 +1,4 @@
+#include "../night_sky.hlsli"
 #include "sample.hlsli"
 // ---- Created with 3Dmigoto v1.3.16 on Tue Oct 27 18:43:58 2026
 Texture2D<float4> t15 : register(t15);
@@ -122,6 +123,7 @@ void main(
   r3.xyz = r3.xyz * r2.xyz + -r2.xyz;
   r1.yzw = r1.yyy * r3.xyz + r2.xyz;
   r1.yzw = r1.yzw * r0.yyy;
+  r1.yzw *= ClassicCloudBrightness(asuint(cb12[184].w));
   r2.xyz = -cb12[237].xyz * r1.yzw + v0.xyz;
   r1.yzw = cb12[237].xyz * r1.yzw;
   r2.xyz = v0.www * r2.xyz;

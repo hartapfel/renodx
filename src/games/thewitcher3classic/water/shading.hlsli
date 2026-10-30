@@ -2,6 +2,7 @@
 #ifndef CLASSIC_WATER_SHADING
 #define CLASSIC_WATER_SHADING
 #include "math.hlsli"
+#include "../night_sky.hlsli"
 #include "../volumetrics/sample.hlsli"
 #include "../volumetrics/math.hlsli"
 StructuredBuffer<float4> ClassicWaterFrame : register(t113);
@@ -134,7 +135,7 @@ float4 ShadeClassicWater(Texture2D<float4> depth_texture, float4 position,
   }
   // Use the WATER lighting input, not the atmospheric fog source color. The
   // latter is a bright in-scattering source and is not surface illumination.
-  float3 ambient=max(ambient_radiance,0.f);
+  float3 ambient=max(ambient_radiance,0.f)*ClassicWaterAmbient(asuint(ClassicWaterFrame[38].w));
   float3 light_in_water=refract(-light,float3(0,0,1),1.f/1.333f);
   float g=.5f;
   float phase=(1.f-g*g)/(12.56637061f*pow(max(.01f,1.f+g*g-2.f*g*dot(-ray,light_in_water)),1.5f));

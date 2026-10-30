@@ -1926,3 +1926,335 @@ FC8479F94CA2E3F46071AD4F133384B3F0BABD9C9A00782CC67002E9283128F2.
 The existing game-folder symlink resolves to that Release addon. Rebuilt
 renodx-witcher3-classic-2026.10.29.zip is 38,395,183 bytes with 15 verified
 entries: addon, production NVIDIA runtimes and licenses, no loader/instructions.
+
+
+## Darker Nights: moonlight and game-clock transitions (2026-10-29)
+
+A separate Darker Nights tab starts with Enable Darker Nights (default Off),
+Moonlight Intensity (0..200%, default 100%/native), and the standalone Remastered
+addon's four Night Schedule controls. Defaults: Darkening Start 18:00, Full
+Darkness Start 23:00, Fade-out Start 03:30, Darkening End 06:00. The cyclic
+schedule uses game time and smoothstep fades, permits equal adjacent events
+for instantaneous transitions, and leaves lighting native for invalid ordering.
+The controls use the existing selected preset/reset/save path. Preset Off and
+the master toggle restore native directional light without discarding sliders.
+Vanilla/Improved Graphics buttons remain independent of this tab.
+
+This iteration adjusts directional moonlight only. It does not bring over the
+standalone addon's regional/weather normalization, ambient sky controls, moon
+disk/size, exposure, grading, fog-density controls or camera lighting. 100% is
+byte-identical to the native directional color; daytime is neutral outside
+the selected schedule. Native weather colors and intensity remain the baseline.
+
+Classic's native renderer builds fresh b13 directional colors at RVA 0xc379a0.
+The renderer's +0xf8 points to the constants; environment +0xafc0/+0xafd0/
++0xafe0 become c1/c51/c52. A post-builder callback scales only their nine RGB
+floats. Alpha, direction, probes, shadows and local-light records are retained.
+All native/custom surface consumers and the existing volumetric sun/moon
+source receive the same scaled input, without extra shader work or readbacks.
+The original environment is not modified, so repeated views/frames cannot
+compound a previous multiplier. HDR color is never saturated to [0,1].
+
+Clock derivation is Classic-specific, rather than copied Remastered offsets:
+RTTI identifies CEnvParameters.m_globalLight at +0x8e0 and m_sunColor at +0x10.
+The 0x2ef4d0 converter resolves that group into runtime parameters +0x640;
+0x2d6170 caches its first color and time at +0x10/+0x20. Per-view parameters
+begin at +0xa10, giving the normalized sun-curve clock at +0x1070. The native
+builder's source/store instructions, clock layout, PE machine, timestamp and
+image size are validated before installation. Changed layouts leave native
+lighting active. Present publishes schedule and intensity together under a
+shared mutex, and the callback uses its own view's clock. The tab displays
+that game time after the feature activates, for live comparison with the HUD.
+
+The native hook installs lazily when enabled, enlists current process threads
+in a Detours transaction, and pins its module/data for callback lifetime.
+Disabling the feature neutralizes the callback; it does not remove patches
+while renderer workers may be executing them. Native-memory changes are local
+to the freshly built render constants, not game saves or shared weather assets.
+
+Validation: Clang x64 Release addon object compiles. tests/darker_nights.cpp
+passes cyclic/instant/invalid schedules and every minute of the default day;
+checks neutral noon/100%, both fade midpoints, signed/HDR RGB, nonfinite source
+preservation, all other constant bytes, repeated fresh uploads and Off. The
+installed Classic executable (SHA256 189cbc2eaad4f35b4d52730e122fe2e48f6eabc496d3d41f586ed5d1f75020ea)
+passes native ABI validation; mutations of all six guarded regions reject.
+Evidence: tmp/witcher3classic-investigation/darker-nights-20261029.
+
+Build target: thewitcher3classic, clang-x64-release. No shader/injection layout
+changes are needed. Live verification: after restarting, the user confirmed moonlight responds
+correctly and the displayed game time matches the game clock, following the
+requested moonlight/fog-versus-torch comparison. Dawn/dusk boundaries, Off and
+preset persistence remain useful broader checks; their automatic schedule/
+neutrality tests pass, but they were not all separately confirmed live.
+
+Release addon/package linked and verified after the game closed. Addon SHA256:
+383BB5B2965E1AAB2CE6319A8EA1A9741295620874F652E60021BE4BAD8B8DD4.
+The 2026.10.29 ZIP is 38,402,981 bytes and retains only the addon, production
+NVIDIA runtimes and licenses. The in-game link still points at build/Release.
+
+
+## Darker Nights: ambient illumination and visible moon (2026-10-29)
+
+The tab now separates Moon, Ambient Illumination, Atmosphere and Night Schedule.
+All additions default to 100%/native and follow the existing clock fades and
+master toggle. Player fill stays exclusively in Graphics, as requested.
+
+- Ambient Light / Ambient Light in Shadows: native diffuse environment gains.
+- Ambient Reflections / Ambient Reflections in Shadows: native indirect specular
+  gains, independent of direct moonlight and local lights.
+- Fog Brightness: weather fog-source RGB, including both local color overrides;
+  preserves extinction, density, coverage and direct light scattering.
+- Distance Haze Brightness: native aerial/desaturation tint, retaining its fade.
+- Sky Brightness: native weather sky and horizon colors, separate from probes.
+- Moon Brightness: visible disk/material glow, separate from cast moonlight.
+- Moon Size: apparent diameter, 1..500%; 100% is native, 200% is twice diameter.
+
+Native Classic common builder RVA 0xcda720 uploads b12. Diffuse gains are
+c183.xy, specular gains c184.xy; c183.zw direct enables and c184.z distance
+scaling remain untouched. Weather RGB uses c39..41/c188/c190, haze c45..47,
+sky c195..201. These operate on fresh native outputs, not shared weather assets.
+Color alpha, density and local lighting are not globally darkened. Existing
+native/custom shader consumers receive the same adjusted common constants.
+
+The builder's native Map/Unmap helpers (0xeb10/0xee40) are intercepted only
+within a thread-local scope for that builder's exact renderer+0x11c buffer
+reference, flags4, offset0, size4304. The final native Map return is redirected
+to aligned cacheable storage only for nonneutral night controls. Before native
+Unmap starts, the completed adjusted buffer is copied to its original target.
+No pointers are substituted in ReShade Map events. This keeps the native
+helper, other addon captures and the GPU on the same completed bytes and avoids
+reading write-combined mapped GPU memory. Daytime and neutral controls retain
+the native map pointer. See Microsoft's D3D11 Map guidance:
+https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-map
+All new helpers/common layout have optional byte guards; failure preserves the
+previously supported directional moonlight controls and native ambient values.
+
+The native builder clears c37.zw. An audit of 1240 dumped original shaders
+found no c37.w reads. Its .w now carries a tagged size/brightness for the two
+moon shader pairs: VS910C4B43/PS8C9C55EC and VS3939C615/PS89760976. Vertex
+replacement is restricted to its paired moon PS, and resizes decompressed
+positions about their local bounding-box center before transforms/fog. Pixel
+replacement changes additive RGB only, retaining phase, normal-map lighting
+and alpha. The primary PS borrows its paired VS common buffer at b12 for the
+tag, then restores the previous pixel binding. No shared HDR injection layout
+or scene-resource format is changed.
+
+Validation: Clang Release shader/addon builds, WARP/NVIDIA volume regressions,
+CPU full-buffer field/alpha/density preservation and neutral/clock cases pass.
+The upload-sequence fixture invokes the actual common-hook -> native-map-hook
+-> native-writer -> native-unmap-hook flow, checking arguments and completed
+camera/constants before the original Unmap is entered. Native image validation
+checks six common/map/unmap regions independently of core moonlight support.
+Real D3D11 WRITE_DISCARD upload/readback preserves every HDR/alpha/tag byte.
+Both native moon shader pairs replay on WARP/NVIDIA: neutral max error 0;
+HDR peaks 4.83898/4.6188; 0/100/200% brightness and half-diameter area0.25 pass.
+Evidence: tmp/witcher3classic-investigation/darker-nights-20261029.
+
+Two live regressions were identified during this iteration. Missing explicit
+moon shader table entries caused the first launch failure; all four pair
+entries are now registered before callback lookup. The first API-event shadow
+upload then blacked out the view when changed; it was replaced by the native
+helper return/publication route above, with a matching sequence fixture. This
+history matters when changing upload interception: matching a buffer's size
+and simulating a standalone Map is insufficient to validate the engine route.
+The user confirmed the revised route and all ambient/reflection/moon controls work correctly, without the blackout.
+
+Revised native-upload Release addon SHA256:
+783EE4FC6DE99C76C1F265B87901BE8ED6BAEBD9C7E75FECF396F949C5EF14D4.
+The rebuilt 2026.10.29 package is 38,415,378 bytes; all 15 addon/NVIDIA/license
+entries are verified, with no loader or install instructions.
+
+
+### Darker Nights: independent cloud and star brightness (2026-10-29)
+
+Atmosphere now includes Cloud Brightness and Star Brightness, each 0-200%,
+default 100%. Both follow the master toggle and existing cyclic night schedule.
+Cloud lighting is adjusted before native atmospheric blending in the two
+normal-mapped cloud families (22D1E925/6F0FF708); coverage and alpha stay native.
+The star contribution alone is adjusted in both textured sky variants
+(BC930752/F12E637D), before atmospheric blending. Moon and horizon controls
+remain independent. No new render pass, resource readback or texture sample is
+introduced. Native 100%, daytime and Off remain neutral.
+
+The guarded native common upload publishes both gains in c184.w, which the
+original builder clears. All 1240 dumped shaders were audited: no static read
+of this component; the sole dynamic b12 lookup uses the separate 99+12*i rows.
+The sky replacements accept only the tagged override and otherwise use 1.
+F12E637D required preservation of the original integer noise register bits and
+signed right shift; its neutral output matches original DXBC in GPU replay.
+
+Validation: Release shader/addon-object build, native upload/clock/ABI tests,
+and WARP plus NVIDIA replay of all four production shaders. Neutral maximum
+error is 4.77e-7; independent 0/100/200% gains preserve alpha, fog baseline and
+HDR (test cloud peaks above 35). Live slider verification remains pending.
+
+
+Cloud-control binding correction (2026-10-29): live testing revealed scene
+corruption despite correct cloud brightness scaling. The two new shader
+registrations (6F0FF708/F12E637D) inherited automatic RenoDX b13 injection.
+The injection helper binds all graphics stages; later native vertex shaders
+were left using the 160-byte settings buffer in place of the 53,168-byte
+lighting buffer. The live F872850A vertex-input capture confirmed the wrong
+buffer, and native DXBC declares/reads b13[3323]. Geralt's hair reached the
+FP16 maximum (65,504) in the captured scene.
+
+Both entries now explicitly decline automatic injection; their gains already
+come from native b12. Cloud/star shader math and sliders are unchanged. The
+new night_bindings.cpp regression uses the actual addon registration table
+and a following GPU draw that consumes native b13 in both VS and PS. WARP
+and NVIDIA pass Off/On and 0/50/100/200% controls, preserving both buffer
+identities and downstream HDR RGB (2,4,8). This covers the state interaction
+that isolated cloud/sky pixel-shader tests did not exercise. The user confirmed
+the corrected build removes the scene corruption. Temporary DevKit overrides were unloaded and
+the prior live-shader path restored.
+
+Cloud binding corrected Release addon SHA256:
+324EF9C3B9284EF712F6933DFD266A05C2DF3C1916550D0AABF14BB3CE3798D9.
+The rebuilt 2026.10.29 ZIP is 38421747 bytes; all 15 addon/NVIDIA/license
+entries passed package verification.
+
+
+### Native sky haze brightness (2026-10-29)
+
+Darker Nights / Atmosphere now exposes Sky Haze Brightness (0-200%, default
+100%). It scales only the native c194 RGB height/horizon haze color in the
+existing guarded common upload, with the existing master toggle and night
+transitions. Alpha, haze coverage/profile (c202.z), fog opacity and the native
+Sky Haze Density control stay unchanged. This also works with Native fog.
+The existing Distance Haze Brightness remains the separate native distance
+desaturation tint (c45-c47); Sky Brightness retains c195-c201.
+
+A live capture with the other sky/fog colors at zero still contained c194 RGB
+(0.00053432,0.00053432,0.00067389), multiplied by the native sky exposure of
+18.9668 and its height profile. That native contribution explains remaining
+sky glow independently of stars, clouds and moonlight. No new shader binding,
+replacement, render pass or texture fetch is needed.
+
+Validation: Release shaders/addon object and native common-upload/clock/ABI
+checks pass, including sky-haze-only routing. WARP and NVIDIA tests replay
+both textured native sky variants with captured weather at 0/100/200%, and
+a 4096x HDR source case; native profile, color blending and alpha agree.
+The user confirmed the native sky haze control works correctly.
+
+
+### Standalone refractive rain (2026-10-29)
+
+Graphics / Rain now exposes Refractive Rain, On by default and saved with the
+other settings. Native Graphics and Preset Off disable it. It works with either
+HDR tonemapper and does not require BlitzFX. If the audited BlitzFX module is
+loaded, its existing rain control owns refraction, preventing duplicate passes.
+
+The paused rainy scene uses native PS105478E1 with two BC3 rain atlases: a
+512x512 atlas (CRC32 A5BD17D8) and a 128x256 atlas (D429D533). Recognition uses
+initial/full mip-zero CPU upload data, including row-padding handling; unknown
+particle atlases retain native behavior. No GPU readback or per-frame hashing
+is used. This avoids applying the effect to unrelated particles/heat distortion.
+
+BlitzFX's original refractive pass (1F3A90A1) supplies the paired normal-atlas
+samples, 0.3/aspect refraction and 400x coverage, retaining depth/fog fades.
+Its audited draw wrapper 180052f40 draws the native rain before its refractive
+pass. The new shader combines that pair exactly in one native ONE/INV_SRC_ALPHA
+draw: nativeRGB*(1-alpha)+premultipliedRefractionRGB, output alpha=alpha.
+This retains native illumination without a second draw.
+
+The game already binds a distinct full-size FP16 scene copy at native t6; the
+current scene's readback confirms HDR scene color including Geralt/background.
+Use its active render rectangle with the existing scene-pool footprint clamp
+for DLSS. No extra full-screen pass/copy is required. The native b12/b13
+constants are retained; only a one-element enable SRV at t110 and a clamp
+sampler at s10 are temporarily bound/restored. Invalid/aliased source, wrong
+blend state, unrecognized atlas or an unsupported view falls back to native.
+
+The original author also records rain/heat-distortion fixes in the
+[BlitzFX changelog](https://www.nexusmods.com/witcher3/mods/6447?tab=description).
+The new regression compares original native and BlitzFX DXBC with production
+shader output on WARP/NVIDIA: Off equivalence, exact two-pass composition in
+one draw, five active/pool sizes (including odd sizes), poisoned unused edges,
+zero/partial/full coverage, signed HDR and VS/PS lighting/sampler/SRV restoration.
+Release shaders/addon-object build passes. Live visual acceptance is pending.
+
+
+### Darker Nights quick presets (2026-10-29)
+
+The tab now has Vanilla and Darker buttons, saved to the selected RenoDX
+preset. Vanilla disables Darker Nights and restores its sliders to native
+100% and the default schedule. Darker enables it with the user-approved
+screenshot values: moonlight 5%, moon brightness/size 50%, all four ambient
+controls 35%, fog/distance haze/sky/sky haze/cloud brightness 35%, stars 100%,
+and transitions at 18:00 / 23:00 / 03:30 / 06:00. Both buttons affect only
+Night-prefixed values and are disabled while the overall RenoDX preset is Off.
+The Release addon object builds successfully; runtime button verification
+remains pending.
+
+
+Settings help cleanup (2026-10-29): all visible setting hints now describe the
+visual effect in brief plain language, including previously missing advanced
+HDR descriptions. Mod-brand references were removed from menu help. Custom
+DLSS/FG controls, diagnostics and action buttons were reviewed as well. The
+frame-generation mode and capture hints now attach to their actual controls.
+Rendering behavior and setting values are unchanged; the Vanilla/Darker night
+preset buttons remain included. Validation: menu-text coverage audit and the
+Classic Release build/package.
+
+Preset-buttons/menu-help Release addon SHA256:
+EC1D200FC64EDFB10B42E5084BC419AB7C2417A399001E8260DAB2E8D8654534.
+Rebuilt 2026.10.29 ZIP: 38434360 bytes, 15 verified addon/NVIDIA/license
+entries. The Vanilla/Darker buttons and all revised menu hints are included.
+
+
+### Regional night normalization and exposure (2026-10-29)
+
+Darker Nights adds Normalize Regional Lighting, On by default when the night
+master is enabled. Its clear-night calibration covers Novigrad/Velen, Skellige,
+Kaer Morhen, White Orchard, winter White Orchard and Toussaint. Values come from
+the installed Classic world-linked .env files (425 decoded environment records,
+207 unique paths, no parse failures), using the standalone addon's median of
+22:00-04:00 authored keys and bounded 0.25..4 channel gains. Classic's Novigrad
+cloud calibration differs from Remastered's. The fixed regional gains multiply
+fresh native lighting before the user sliders and existing night fade. They
+preserve native/custom weather ratios, colors, fog density and cloud coverage;
+there is deliberately no weather-normalization setting. Moon disk, stars and
+local lights retain their independent controls. Special/unknown worlds remain
+unnormalized. Region lookup follows Classic's map system index 22 and numeric
+area enum, validated against the actual executable and a live Skellige scene.
+
+Night Exposure matches the standalone addon's settings and defaults: Auto
+Exposure enabled, Adaptation Smoothed, Apply Exposure Overrides All Day On;
+Custom offers brightening/darkening speeds 1..200% (35/5% defaults), separate
+maximum brightening/darkening 0..100% (100% defaults), and Auto Exposure Off
+exposes logarithmic Fixed Luminance 0.001..10 (0.18 default). Night master and
+RenoDX preset Off restore native exposure. With All Day Off, the existing clock
+schedule fades exposure overrides. Vanilla resets normalization and exposure
+to native; Darker includes normalization and the standalone exposure defaults.
+All values use the existing saved RenoDX profiles.
+
+Native b3 adaptation PS 5622173C was captured with its call stack. Its exact
+constant upload returns to C5242B; tone-map c4/c9 luminance limits upload at
+C56684/C5675B via 19F00. Optional instruction guards gate these hooks independently
+of moonlight. Rate scaling changes the native exponential response, preserving
+frame-time compensation and endpoint alphas; limits scale in exposure stops.
+Fixed luminance sets both metering bounds while keeping the dynamic HDR route
+and live adaptation history. No extra GPU pass, resource copy or production
+readback is added. Cacheable common uploads and native b13 bindings remain in
+use; an additional cloud tag supports normalized gains through 8x without
+changing the original tag's precision or coupling stars.
+
+Validation: Release addon object; 4682 exposure cases, 810 regional/weather
+ratio cases, executable ABI/change rejection, native common upload regression,
+and cloud/sky plus real addon-binding replay on WARP and NVIDIA. Manual after
+restart: compare normalization Off/On in the same region/weather, Native versus
+Smoothed/Custom exposure, fixed luminance, scheduled daytime/All Day, master Off,
+and saved settings after restart. Live acceptance of this new build is pending.
+
+Regional normalization/exposure Release addon SHA256: E6BADE6D254CE96199BA8ABC0B9AB4BA7721A7F44A6F6BAE76CE07DC07F5F04F.
+Package: 38457697 bytes, 15 verified addon/NVIDIA/license entries.
+
+Darker Nights: Sky Haze Brightness also controls the separate additive background glow used by the Toussaint sky (F12E637D). Cloud Brightness covers its C6178ADC and F4B551EC cloud layers. Native weather colours, coverage and alpha are preserved; 100% remains native apart from the separately selected regional normalization.
+
+Water Ambient Light in Darker Nights scales the water-specific ambient source on the night schedule. Its default and Darker preset value are 35%; 100% restores the original ambient input. Custom water preserves direct sunlight/moonlight, refraction, Fresnel reflection weight, coverage and atmospheric fog. Native and legacy water also scale their authored water ambient inputs.
+
+## Current Darker Nights defaults and explicit presets (2026-10-30)
+
+Fresh/reset profiles use Darker with nights enabled: moonlight 35%, moon brightness/size 50%, ambient/reflection/water/fog/haze/sky/cloud controls 35%, stars 100%, and regional normalization On. Schedule: 18:00 / 21:30 / 03:30 / 06:00. Auto Exposure and All Day are On, with Smoothed adaptation. Both Smoothed and Custom default to 35% brightening speed, 5% darkening speed, 5% maximum brightening and 100% maximum darkening. These current values supersede the original defaults documented above.
+
+Vanilla explicitly disables Darker Nights, regional normalization and exposure overrides, retaining native automatic exposure. Both night presets and both graphics presets assign complete tables in presets.hpp, independently of reset defaults or the current profile. Their buttons are in Presets sections immediately below the profile slider. Saved profiles retain their values; select Darker to apply the new defaults to an existing profile.

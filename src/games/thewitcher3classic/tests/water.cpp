@@ -6,9 +6,25 @@
 #include <iostream>
 #include <filesystem>
 #include <fstream>
+#include <unordered_map>
 #include <vector>
 #include "../water/pipeline.hpp"
 using Microsoft::WRL::ComPtr;
+// D3DCompileFromFile's default include handler resolves nested bare names from
+// the working directory. Water and volumetrics both have math.hlsli; resolve
+// against each actual parent file, matching the production FXC build.
+struct WaterIncludes : ID3DInclude {
+  std::unordered_map<const void*,std::filesystem::path> parents;
+  HRESULT __stdcall Open(D3D_INCLUDE_TYPE,const char* name,const void* parent,const void** data,UINT* size) override {
+    auto path=(parents.contains(parent)?parents.at(parent):std::filesystem::current_path()/"../tests")/name;
+    std::ifstream stream(path,std::ios::binary);
+    if(!stream)return E_FAIL;
+    const std::vector<char> bytes{std::istreambuf_iterator<char>(stream),{}};
+    auto* contents=new char[bytes.size()];std::memcpy(contents,bytes.data(),bytes.size());
+    parents[contents]=path.parent_path();*data=contents;*size=UINT(bytes.size());return S_OK;
+  }
+  HRESULT __stdcall Close(const void* data) override {parents.erase(data);delete[] static_cast<const char*>(data);return S_OK;}
+};
 int main(int argc,char**) {
   witcher3classic::water::clarity=1.f; // Fixed reference medium, independent of UI defaults.
   ComPtr<ID3D11Device> device;
@@ -64,14 +80,16 @@ int main(int argc,char**) {
   assert(SUCCEEDED(device->CreateShaderResourceView(depth.Get(),nullptr,&depth_view)));
   context->PSSetShaderResources(15,1,depth_view.GetAddressOf());
   const char* vs_text="float4 main(uint id:SV_VertexID):SV_Position {float2 uv=float2((id<<1)&2,id&2);return float4(uv*float2(2,-2)+float2(-1,1),0,1);}";
-  ComPtr<ID3DBlob> vs_code,ps_code,trace_code,atmosphere_code,errors;
+  ComPtr<ID3DBlob> vs_code,ps_code,trace_code,atmosphere_code,night_code,errors;
   assert(SUCCEEDED(D3DCompile(vs_text,strlen(vs_text),nullptr,nullptr,nullptr,"main","vs_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&vs_code,&errors)));
   const auto working_directory=std::filesystem::current_path();
   std::filesystem::current_path("src/games/thewitcher3classic/water");
-  HRESULT compiled=D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,D3D_COMPILE_STANDARD_FILE_INCLUDE,"main","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&ps_code,&errors);
-  HRESULT trace_compiled=D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,D3D_COMPILE_STANDARD_FILE_INCLUDE,"trace","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&trace_code,&errors);
+  WaterIncludes includes;
+  HRESULT compiled=D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,&includes,"main","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&ps_code,&errors);
+  HRESULT trace_compiled=D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,&includes,"trace","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&trace_code,&errors);
   if(errors)std::cerr<<static_cast<const char*>(errors->GetBufferPointer());assert(SUCCEEDED(trace_compiled));
-  assert(SUCCEEDED(D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,D3D_COMPILE_STANDARD_FILE_INCLUDE,"atmosphere","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&atmosphere_code,&errors)));
+  assert(SUCCEEDED(D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,&includes,"atmosphere","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&atmosphere_code,&errors)));
+  assert(SUCCEEDED(D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,&includes,"night_lighting","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&night_code,&errors)));
   std::filesystem::current_path(working_directory);
   if(errors)std::cerr<<static_cast<const char*>(errors->GetBufferPointer());assert(SUCCEEDED(compiled));
   ComPtr<ID3D11VertexShader> vs;ComPtr<ID3D11PixelShader> ps;
@@ -113,6 +131,36 @@ int main(int argc,char**) {
   }
   context->Unmap(readback.Get(),0);
   water.Restore(context.Get());
+  ComPtr<ID3D11PixelShader> night_ps;
+  assert(SUCCEEDED(device->CreatePixelShader(night_code->GetBufferPointer(),night_code->GetBufferSize(),nullptr,&night_ps)));
+  context->PSSetShader(night_ps.Get(),nullptr,0);
+  std::vector<std::vector<float>> night_results;
+  for (float gain : {0.f, .5f, 1.f, 2.f}) {
+    uint32_t tag=0xd9000000u|uint32_t(std::lround(gain*1048575.f));
+    std::memcpy(&frame[38][3],&tag,4);
+    context->UpdateSubresource(constants.Get(),0,nullptr,frame.data(),0,0);
+    assert(water.Capture(context.Get(),source_view.Get(),constants.Get(),64,4,100+night_results.size()));
+    assert(water.Bind(context.Get(),100+night_results.size()));
+    context->Draw(3,0);context->CopyResource(readback.Get(),output.Get());
+    assert(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&mapped)));
+    std::vector<float> values(64*4*4);
+    for (unsigned row=0;row<4;++row)std::memcpy(values.data()+row*64*4,static_cast<const char*>(mapped.pData)+row*mapped.RowPitch,64*16);
+    context->Unmap(readback.Get(),0);water.Restore(context.Get());
+    night_results.push_back(std::move(values));
+  }
+  for (unsigned row=0;row<4;++row)for(unsigned x=0;x<64;++x)for(unsigned c=0;c<4;++c) {
+    const unsigned i=(row*64+x)*4+c;
+    for (unsigned g=0;g<4;++g)assert(std::isfinite(night_results[g][i]));
+    if(c==3 || row==1 || row==2) {
+      for(unsigned g=1;g<4;++g)assert(night_results[g][i]==night_results[0][i]);
+    } else {
+      assert(std::abs(night_results[3][i]-(2*night_results[2][i]-night_results[0][i]))<.0001f);
+      assert(std::abs(night_results[1][i]-.5f*(night_results[2][i]+night_results[0][i]))<.0001f);
+    }
+  }
+  assert(night_results[3][0]>night_results[0][0]);
+  frame[38][3]=0.f;
+  std::cout<<"PASS water ambient 0/50/100/200%, independent direct light/refraction, unchanged reflection weight, foam and fog-once composition\n";
   for(UINT slot=113;slot<=115;++slot){ComPtr<ID3D11ShaderResourceView> restored;context->PSGetShaderResources(slot,1,&restored);assert(restored.Get()==source_view.Get());}
   assert(!water.Capture(context.Get(),source_view.Get(),constants.Get(),129,4,2));
   assert(!water.Bind(context.Get(),2));

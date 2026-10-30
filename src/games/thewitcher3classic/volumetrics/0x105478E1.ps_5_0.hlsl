@@ -51,6 +51,8 @@ cbuffer cb0 : register(b0)
 #define cmp -
 
 
+#include "../rain/refraction.hlsli"
+
 void main(
   float4 v0 : TEXCOORD0,
   float4 v1 : TEXCOORD1,
@@ -192,6 +194,13 @@ void main(
   r0.w = cb2[2].w * r0.w;
   o0.xyz = r0.xyz * r0.www;
   o0.w = 0;
+  if (ClassicRainReady()) {
+    float4 rain = ClassicRainRefraction(v0,v1,v2,v3,v4,v5,v6);
+    // BlitzFX draws the original particle, then its premultiplied refraction.
+    // The native blend is ONE / INV_SRC_ALPHA: combine both in one draw.
+    o0.rgb = o0.rgb * (1.f-rain.a) + rain.rgb;
+    o0.a = rain.a;
+  }
   // Capture only visible emission, not transparent billboard corners.
   reflection_depth = dot(max(o0.rgb,0.f),float3(.2126f,.7152f,.0722f))>1.e-3f
       ? min(65504.f,abs(v6.w)) : 65504.f;
