@@ -2255,7 +2255,7 @@ Water Ambient Light in Darker Nights scales the water-specific ambient source on
 
 ## Current Darker Nights defaults and explicit presets (2026-10-30)
 
-Fresh/reset profiles use Darker with nights enabled: moonlight 35%, moon brightness/size 50%, ambient/reflection/water/fog/haze/sky/cloud controls 35%, stars 100%, and regional normalization On. Schedule: 18:00 / 21:30 / 03:30 / 06:00. Auto Exposure and All Day are On, with Smoothed adaptation. Both Smoothed and Custom default to 35% brightening speed, 5% darkening speed, 20% maximum brightening and 100% maximum darkening. These current values supersede the original defaults documented above.
+Fresh/reset profiles use Darker with nights enabled: moonlight 35%, moon brightness/size 50%, ambient/reflection/water/fog/haze/sky/cloud controls 35%, stars 100%, and regional normalization On. Schedule: 18:00 / 21:30 / 03:30 / 06:00. Auto Exposure and All Day are On, with Smoothed adaptation. Both Smoothed and Custom default to 35% brightening speed, 5% darkening speed, 100% maximum brightening and 100% maximum darkening. These current values supersede the original defaults documented above.
 
 Vanilla explicitly disables Darker Nights, regional normalization and exposure overrides, retaining native automatic exposure. Both night presets and both graphics presets assign complete tables in presets.hpp, independently of reset defaults or the current profile. Their buttons are in Presets sections immediately below the profile slider. Saved profiles retain their values; select Darker to apply the new defaults to an existing profile.
 
@@ -2270,16 +2270,422 @@ Build `thewitcher3classic` with `clang-x64-release`; generated lighting/composit
 
 ## Updated Smoothed exposure defaults (2026-10-30)
 
-Smoothed uses 35% Brightening Speed, 5% Darkening Speed, 20% Maximum Brightening and 100% Maximum Darkening. Auto Exposure and Apply Exposure Overrides All Day remain enabled by default; Adaptation remains Smoothed. The explicit Darker preset and fresh/reset Custom slider values use the same defaults. Saved Custom values are preserved. Vanilla still disables exposure overrides and retains the game's native automatic exposure.
+Smoothed uses 35% Brightening Speed, 5% Darkening Speed, 100% Maximum Brightening and 100% Maximum Darkening. Auto Exposure and Apply Exposure Overrides All Day remain enabled by default; Adaptation remains Smoothed. The explicit Darker preset and fresh/reset Custom slider values use the same defaults. Saved Custom values are preserved. Vanilla still disables exposure overrides and retains the game's native automatic exposure.
 
 ## Player-fill skin/LOD stability (2026-10-30)
 
 The reported flashing survived DLSS Off, Object Motion Vectors Off, Motion Blur Off and native surface/AO settings. Player Fill Light = Native stopped it; Custom with Match Off and strength 1 also remained stable. A 24-frame moving-scene snapshot sequence caught the unregistered native forward skin shader F1FB6FB1 appearing on characters. Shader-local fill scaling covered the deferred and several forward paths but left other material/LOD paths at native strength. Captured camera-light tags remained stable at 80001800, excluding a changing tag as the observed trigger. Expanded native vertex-output comparisons and reordered local-light indexing tests passed.
 
-Fill strength now runs once after Classic 1.32's native local-light builder (RVA c39be0). It scales only RGB of live records selected by the native high-bit recipient-gain flag, including additional shape/shadow flags. Count, position, radius, flags, shadow/cookie data, sun/moon, environment probes and ordinary world lights remain native. The native function rebuilds the bank and count every call; gains cannot accumulate or depend on which skin/motion shader runs. All consumers receive the same bank, including uncovered native forward and compute shaders. No GPU pass, readback, added upload, per-draw shader binding, or runtime shader discovery is added.
+Gameplay fill was initially scaled after Classic 1.32's native local-light builder (RVA c39be0). The cutscene extension below moves that scaling to the source camera-light builder. It scales only RGB of live records selected by the native high-bit recipient-gain flag, including additional shape/shadow flags. Count, position, radius, flags, shadow/cookie data, sun/moon, environment probes and ordinary world lights remain native. The native function rebuilds the bank and count every call; gains cannot accumulate or depend on which skin/motion shader runs. All consumers receive the same bank, including uncovered native forward and compute shaders. No GPU pass, readback, added upload, per-draw shader binding, or runtime shader discovery is added.
 
-For matching, the native common builder takes the weather's world-fill gain from environment +404c into c71.x. Native tagged lights use gain 1 for characters and c71.x for world receivers. Matching moves the weather gain into tagged-light RGB and sets c71.x to 1 in the existing common upload, so both receivers get strength * weather_gain. With matching Off, only strength scales RGB and c71.x stays native. Both controls work in daytime and with Darker Nights disabled. The weather source itself is not modified. PE identity plus five local/common instruction anchors guard the hook; unsupported code retains native fill. Shader-local PlayerFillScale calls and player-only replacement/binding gates are removed to avoid double scaling and coverage gaps.
+For matching, the native common builder takes the weather's world-fill gain from environment +404c into c71.x. Native tagged lights use gain 1 for characters and c71.x for world receivers. Matching moves the weather gain into tagged-light RGB and sets c71.x to 1 in the existing common upload, so both receivers get strength * weather_gain. With matching Off, only strength scales RGB and c71.x stays native. Both controls work in daytime and with Darker Nights disabled. The weather source itself is not modified. PE identity and native instruction anchors guard the hook; unsupported code retains native fill. Shader-local PlayerFillScale calls and player-only replacement/binding gates are removed to avoid double scaling and coverage gaps.
 
 The per-frame producer placement follows [Microsoft's constant-buffer update guidance](https://learn.microsoft.com/en-us/windows/win32/direct3d11/overviews-direct3d-11-resources-buffers-constant-how-to). Multiplying incident light RGB before material shading preserves the linear-light/HDR model described by [NVIDIA GPU Gems 3, chapter 24](https://developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-24-importance-being-linear). The native ABI, field meanings and offsets above are independently established from this executable's builder disassembly/decompilation and captured GPU constants.
 
 Validation: 480 CPU table/receiver cases, ten-argument native forwarding and repeated fresh builds, actual 1.32 instruction anchors and rejection after mutation; original F1FB6FB1 DXBC replay on WARP/NVIDIA at native/20%/50%, matching across character/world receivers, extra spot flags, unchanged world lights/alpha and HDR values above 1. The negative control detects the old unscaled native skin result. Existing lighting, exposure and night tests remain separate. Build the Release thewitcher3classic target; verify reduced fill while moving through character/material LODs, Match Off/On, PBR/AO native/custom, motion Off/On, daytime/night and reloads. Live acceptance: the user restarted the updated Release addon and confirmed stable reduced fill while moving around affected characters, with matching both Off and On.
+
+
+## Independent cutscene fill (2026-10-30)
+
+Graphics > Player Lighting now has Cutscene Fill Light Strength (0 removes fill, 1 retains native strength; default 0.20), saved independently of gameplay Fill Light Strength. Player Fill Light = Native bypasses both controls. Graphics presets explicitly set the new value: Vanilla 1.00 (master Native), Custom 0.20. Character/world matching applies to both camera sources. Ordinary placed lights keep native intensity.
+
+In the captured cutscene, native CPU records 0/1 had zero RGB while the GPU bank contained nonzero camera light. Classic's c39be0 stores two float4 colour endpoints per Scene camera light in renderer +108/+110; c3a350 later uploads them and dispatches native 0E9BEC7A to replace bank RGB at +3d0/+460 according to exposure. Scaling the earlier zero bank records could never affect this path.
+
+The hook now wraps c3c510, after each fresh successful native camera-light build. It identifies both evaluated-light and curve inputs relative to matrix = environment +10: Scene b0d8/b108 + 3af0/3bc0, Gameplay b138/b168 + 3950/3a20, DialogScene b198/b1c8 + 3c90/3d60, Interior b1f8/b228 + 3e30/3f00. Scene requires auxiliary colours and scales both RGB endpoints before the caller copies them; alpha, exposure selection and the native compute shader stay unchanged. Dialogue/interior use cutscene strength on output RGB +30; gameplay uses its own strength. Matching still moves native environment +404c into camera RGB and sets common c71.x to 1. The previous bank hook is removed to prevent double scaling. No shader coverage, gameplay/cutscene state guess, extra GPU pass, upload or readback is needed. Twelve instruction anchors plus PE/common-ABI checks validate the new path.
+
+Validation: 1,920 CPU cases cover all eight source pairs, independent strengths, matching, both endpoints, complete byte/field preservation, failed builds, repeated fresh output, seven-argument forwarding and daytime common upload. Actual executable anchor mutation checks pass. WARP/NVIDIA replay of original 0E9BEC7A covers 576 combinations per adapter, both exposure choices and two bank destinations, with HDR RGB and unchanged metadata. The original uncovered skin shader F1FB6FB1 and deferred/hair lighting regression tests retain their gameplay fill coverage. Runtime verification: in the same cutscene compare cutscene strength 0/0.2/1, then gameplay strength independently; check camera cuts, indoor dialogue, Native bypass, placed lights and matching Off/On.
+
+
+## Underwater optics research (2026-10-30, initial implementation)
+
+Preserve authored environmental colors. No turquoise grading, saturation
+enhancement or brighter color preset. Physical selective absorption still changes
+color with distance. RGB transport approximates a spectrum; particle density is
+a material parameter, not a measurement of this water.
+
+Primary references:
+
+- [PBRT transmittance](https://www.pbr-book.org/4ed/Volume_Scattering/Transmittance)
+  and [volume transfer](https://www.pbr-book.org/4ed/Light_Transport_II_Volume_Rendering/The_Equation_of_Transfer):
+  exponential extinction, separate incoming-light and outgoing-view paths, and
+  integration bounded by actual interfaces/geometry.
+- [PBRT dielectric interfaces](https://www.pbr-book.org/4ed/Reflection_Models/Specular_Reflection_and_Transmission):
+  Snell refraction, Fresnel and total internal reflection. [Phase functions](https://www.pbr-book.org/4ed/Volume_Scattering/Phase_Functions)
+  establish normalization and direction conventions.
+- [id Software, SIGGRAPH 2020](https://advances.realtimerendering.com/s2020/RenderingDoomEternal.pdf):
+  rasterized refracted wave grid with irradiance derived from triangle area
+  ratios. Experimental shaders use depth layers and additive float accumulation.
+- [NVIDIA water caustics](https://developer.nvidia.com/blog/generating-ray-traced-caustic-effects-in-unreal-engine-4-part-2/):
+  full receiver-aware caustics require geometry intersections and photon
+  footprints. Classic DX11 has no DXR acceleration structure; the FG device does
+  not supply one. Height-field and shadow-map approximations must be explicit.
+
+Black Flag Resynced is a visual reference, not a source of undisclosed code.
+[Ubisoft's technical article](https://blog.playstation.com/?p=420230) confirms
+rebuilt PBR water, new tessellation, volumetric foam and dynamic bubbles. The
+[lead producer interview](https://80.lv/articles/interview-the-tech-behind-assassin-s-creed-black-flag-resynced-s-seamless-open-world)
+identifies improved transparency and caustics and deliberate turquoise color
+exaggeration. That grading is outside scope. Neither source discloses its
+underwater caustic solver, scattering coefficients or sampling scheme.
+
+Captured native contracts: 128133E9 is late underwater blur/tint; 7DAFF617 makes
+the immersion/meniscus mask; E2F7DEC1 supplies water geometry. Regional heights
+are a texture array addressed by cb4[6:50], with zero as global ocean fallback.
+t5.a is signed wave displacement; RGB is not a unit geometric normal. Terrain
+metadata has integer row 0 world bounds and row 1 atlas bounds. FB29B4E6 is the
+directional/ambient lighting compute pass; 05FE9FA8 is its shadow mask. Air fog
+C8C78997 precedes underwater compositing: a second fog overlay double-counts
+submerged paths.
+
+Transport tests pass WARP and NVIDIA against numerical quadrature, including
+HDR, vacuum, TIR and cancelling/reversed optical-depth gradients. The production runtime now prepares a four-depth caustic atlas from the native
+wave height field, applies refracted/attenuated sunlight only to direct surface
+lighting, and replaces fully submerged blur/tint with RGB single scattering.
+Opaque and covered forward submerged surfaces bypass atmospheric fog to avoid
+double-counting. Partial waterline pixels retain the native composite.
+
+Original DXBC fallback, flat-water unity, wave flux conservation, private PS/CS
+state restoration, stale-frame rejection, regional water heights, ambient-light
+isolation, HDR transport and numerical single-scattering comparisons pass on
+WARP and NVIDIA. Release compilation/link passed. Live visual validation of the
+new physical path, moving waterline transitions and gameplay GPU timing remain.
+
+Approximation limits: RGB homogeneous single scattering, four receiver-depth
+planes, a 64-metre camera-centered caustic field, native shadow-map occlusion
+rather than refracted geometry rays, and a mean water plane for view segments.
+The visible water-to-air interface keeps native rendering. Ambient illumination
+is a native-color approximation; particle density is configurable, not measured.
+Water-material constants come from the preceding consecutive frame; camera cuts
+reject stale state. No new turquoise grading or color saturation is introduced.
+
+Controls are in Graphics > Underwater: Native/Custom, Water Murkiness, Sunlight
+Detail (default 2/4) and Caustic Strength. Vanilla explicitly disables this path.
+Build target: thewitcher3classic, clang-x64-release. Check embedded 128133E9 and
+F3C50001..F3C50004. After restarting, compare Native/Custom underwater at midday
+and night, near blockers and near the surface; move across the waterline, change
+regions, test native/custom atmospheric fog and confirm HDR highlights survive.
+
+Isolated NVIDIA synthetic 3840x2160 measurements: caustic preparation 0.039 ms;
+native composite 0.227 ms; custom composite at detail 1/2/4: 0.388/0.661/1.203 ms.
+These include shadow-map reads but use coherent synthetic inputs, not gameplay,
+and exclude the extra cost in the existing surface-lighting pass.
+
+
+### Underwater revision after gameplay feedback (2026-10-30)
+
+The initial implementation above was rejected in gameplay: caustics flickered,
+shafts were noisy, colors were too cyan and characters retained excessive
+ambient illumination. Do not treat its initial GPU tests as visual approval.
+The current version supersedes the initial caustic method and optical material.
+
+- Sunlight Detail now uses an integer display format (%d / 4). The saved value
+  was 2; the incorrect float format displayed 0. A settings regression covers it.
+- Caustics use 256x256 refracted source cells per depth layer and a 1024x1024
+  four-layer float atlas. Each cell deposits its flux through a normalized tent
+  footprint integrated over destination pixels. Projected source differentials
+  expand stretched footprints; a minimum footprint prevents collapsed beams
+  from blinking between pixel centers. No peak clamp or per-image normalization.
+  This is a filtered photon-footprint approximation, informed by NVIDIA's
+  https://developer.nvidia.com/blog/generating-ray-traced-caustic-effects-in-unreal-engine-4-part-2/
+  (the addon still does not ray trace scene geometry).
+- Native water material cb0[13].yzw now parameterizes absorption and particle
+  scattering. Beer-Lambert inversion interprets that color over a 10-metre
+  reference path; this is an explicit authored-material calibration, not a
+  measured regional spectrum. It replaces fixed pure-water RGB coefficients.
+  The native linear brightness gain cb0[14].x is preserved in the composite.
+- Incoming ambient diffuse/reflection illumination is attenuated separately
+  using a four-sample integral over Snell's window. Authored ambient/shadow
+  blending remains unchanged; local and player-fill settings are untouched.
+- The volumetric integral uses deterministic two-point Gauss visibility samples
+  per analytic optical cell. Fine caustics are confined to surface receivers,
+  avoiding aliasing of the caustic field into the coarse volumetric integral.
+
+WARP/NVIDIA tests pass native fallback, HDR, optical quadrature, incoming ambient
+angular integration, binding restoration, settings/presets and folded-wave
+subpixel animation. The strong-wave motion fixture keeps total flux stable and
+its largest per-texel change is about 0.010 for a 0.001-radian phase step. A replay
+of captured ocean waves (synthetic terrain/region arrays) is finite with mean
+0.993 and peak 5.82; it is not a complete gameplay replay. Atlas boundary flux
+is clipped and the receiver sampling fades to uniform light at that boundary.
+
+Isolated NVIDIA synthetic 4K timings for this revision: preparation 0.180 ms;
+native composite 0.229 ms; custom detail 1/2/4: 0.482/0.844/1.600 ms. These omit
+extra work in the existing surface-lighting pass and are not gameplay FPS.
+Release build/package prepared; visual acceptance still needs the user's
+moving underwater/waterline check after restart.
+
+
+### Underwater shadows, forward characters and clarity correction (2026-10-30)
+
+Follow-up gameplay showed large moving silhouettes in shafts, unattenuated
+forward skin and dark water when Murkiness was reduced. Current corrections:
+
+- Murkiness scales absorption AND scattering. Zero has zero optical depth and
+  returns scene radiance with the native underwater brightness gain; reducing
+  only scattering previously exposed residual absorption as blackness.
+- Volumetric sunlight samples native CSM visibility only at its air-to-water
+  entry point. A second CSM query at the underwater sample was invalid after
+  refraction and projected submerged character silhouettes along the wrong ray.
+  Above-water occluders still shadow the medium. Refracted underwater blocker
+  shadows require geometry unavailable to this path and are not fabricated.
+- Shadow integration uses a camera-anchored near-field grid with gradually
+  increasing spacing, rather than redistributing every sample when receiver
+  depth changes. Native cascade fade intervals now blend shadow visibility.
+- Six existing forward character shader variants, transparent hair and HairWorks
+  now attenuate incoming directional and ambient light. Forward source factors
+  use world position, retain their native BRDF directions and local-light terms,
+  and preserve alpha/motion outputs. Color-only variants activate independently
+  of object motion and ambient-AO mode. Do not claim coverage of every unobserved
+  character/material permutation; additional native LODs still need live checks.
+- Caustic lookup uses explicit bilinear texture loads. Underwater binding no
+  longer borrows sampler s12, which conflicts with native hair shadow samplers.
+  HairWorks skips native air fog only while fully submerged, without borrowing
+  its probe sampler for the atmospheric pipeline.
+
+WARP and NVIDIA pass: original/native unbound shader equivalence, incoming
+ambient angular quadrature, forward skin attenuation with native VS linkage,
+forward hair alpha/lighting restoration, untouched comparison sampler bindings,
+zero-density HDR, low-density clearing, above-water vs submerged blocker
+visibility at detail 1/2/4, and the previous caustic conservation/motion tests.
+Live swimming/panning, front-facing Geralt, density sweep and region/LOD coverage
+remain the acceptance checks after installing this revision.
+
+Closed-game NVIDIA synthetic 4K timing for this revision: caustic preparation
+0.155 ms; native composite 0.223 ms; custom composite at Sunlight Detail
+1/2/4: 0.711/0.886/1.067 ms. This isolates the preparation/composite fixture;
+it excludes added surface-lighting cost and is not a gameplay FPS measurement.
+
+
+### Underwater waterline transition (2026-10-30)
+
+The paused transition capture has native immersion R=1 across the image with
+camera z=-0.2538203 m at the global ocean. The previous .35..1 m preparation
+ramp nevertheless selected native underwater tint/blur. Preparation now reaches
+full strength at the displaced surface, with a short above-surface margin for
+the native meniscus. The composite uses native per-pixel coverage to blend the
+unprocessed scene with custom transport, never native underwater grading while
+custom inputs are valid. Ray intervals are clipped to the regional mean plane;
+above-water portions contribute no water extinction/scattering. Wave geometry
+still supplies the native coverage mask; the transport boundary retains the
+existing mean-plane approximation (not an exact displaced-surface intersection).
+Native mode and invalid/stale-input fallback remain unchanged.
+
+WARP and NVIDIA pass the shallow-camera sweep (including -0.254 m), fractional
+coverage 0/.25/.998/1, above-water receiver identity and clipped entry segments
+against independent Beer-Lambert results, plus prior caustic, shadow and HDR
+regressions. Check slow immersion/emergence and wave-crossing in gameplay after
+linking; underwater appearance at full depth should remain unchanged.
+Reference: https://www.pbr-book.org/4ed/Volume_Scattering/Transmittance
+
+### Consistent water viewed from above (2026-10-30)
+
+The above-water capture uses 28D7BDFE/E2F7DEC1 at camera (-70.763,60.399,2.170),
+with native water color (0.403922,0.537255,0.466667). Previously the surface used
+fixed pure-water RGB absorption plus neutral scattering, independently of the
+underwater weather material. Custom surface shading now consumes the prepared
+underwater coefficients and the same two-leg analytic transport/phase/Fresnel
+helpers. Existing refraction traversal, surface specular, foam, SSR encoding,
+boat exclusion and camera-to-surface atmospheric fog remain in place. The old
+surface medium remains a safe fallback until current native optics are ready.
+Water Clarity's existing default 0.50 is neutral relative to shared Murkiness;
+other clarity values intentionally adjust only above-water optical thickness.
+
+Caustic preparation also runs for Custom surface viewing. Directional/ambient
+receiver lighting uses native region and terrain-height data to qualify nearby
+submerged receivers, so the refracted pre-fog scene already contains incoming
+light attenuation and caustics. The caustic factor changes directional sunlight,
+not local lights, reflected sky or the final water pixel. Camera immersion still
+controls underwater composite/air-fog suppression separately. Native surface
+and Native underwater modes remain independently selectable. Shared Murkiness
+and Caustic Strength controls now reside in Water and enable for either mode.
+
+Limits: the existing 64 m caustic field is camera-centered and fades at its edge.
+Above-water receiver correction shares that conservative local extent and the
+captured regional mean elevation. The native heightfield is not complete scene
+geometry or authored boat/interior exclusion volumes; receivers below its cell
+minimum are rejected, and other elevations/no terrain coverage are rejected.
+Test shores, boats, elevated lakes, caves and slow waterline crossings in-game.
+The native material color still uses a 10 m artistic calibration, not measured
+spectral optical properties. No arbitrary color boost or screen-wide caustic
+overlay is added.
+
+Research: PBRT 4, Equation of Transfer and Specular Reflection/Transmission;
+NVIDIA, Generating Ray-Traced Caustic Effects in Unreal Engine 4 Part 2 (2020).
+https://www.pbr-book.org/4ed/Light_Transport_II_Volume_Rendering/The_Equation_of_Transfer
+https://developer.nvidia.com/blog/generating-ray-traced-caustic-effects-in-unreal-engine-4-part-2/
+
+Validation for the above-water revision: Release shaders/addon linked; water,
+underwater/receiver, directional/ambient and forward skin tests pass on WARP
+and NVIDIA. Package 2026.10.30 rebuilt and verified. Closed-game NVIDIA GPU
+microbenchmark: caustic preparation 0.155 ms; native 4K underwater composite
+0.225 ms; custom detail 1/2/4 0.689/0.858/1.035 ms. These timings exclude the
+additional receiver-classification/lighting cost and are not gameplay timings.
+Visual acceptance of the updated shoreline, boat exclusions and waterline is
+pending a restart with the newly linked addon.
+
+### Unified Water controls (2026-10-30)
+
+Supersedes the independently selectable surface/underwater modes above. Graphics
+now has one Water section ordered Water Shading, Water Murkiness, Caustic
+Strength, Sunlight Detail. GfxWater is the sole Native/Custom mode and gates both
+surface and underwater runtime bindings. Removed GfxUnderwater and
+GfxWaterClarity from settings, presets and runtime variables; stale INI entries
+are ignored. Existing density, caustic and detail keys are retained for saved
+profiles. Their controls disable together in Native mode. All water transport
+now uses the same prepared extinction/scattering coefficients without a separate
+surface clarity multiplier. The pre-capture surface fallback also scales both
+absorption and scattering with the shared density, including zero density.
+
+Validation: production water GPU tests cover the now identical prepared
+coefficients on both sides, zero/half/full density, Fresnel, HDR and fog-once
+composition. Preset checks cover removed controls, section grouping, and the
+single Native mode disabling every custom water control.
+
+### Underwater camera postprocess (2026-10-30, replacement)
+
+The first camera implementation was rejected in gameplay: the 1.8% default haze
+was too weak, and the underwater radial distortion interfered with FG. The
+radial mapping, its shared mapping include, the immutable GPU snapshot and
+underwater-specific FG map generation have been removed. Old configuration keys
+GfxWaterCameraDistortion, GfxWaterCameraHaze and GfxWaterCameraTint are no longer settings; they do
+not silently acquire new meanings.
+
+Graphics / Water now exposes:
+- Underwater Blur: 0.15 default, full-frame separable Gaussian softness.
+- Underwater Chromatic Aberration: 1.00 default, constant small RGB separation
+  throughout the image, including the centre. No radial mask or common warp.
+
+Each control is 0..1; zero disables its contribution. Native Water bypasses both, and explicit Graphics presets assign every value. All controls fade with
+camera submersion over 0.05-0.4 m below the regional mean water surface. The
+native per-pixel waterline continues to own meniscus coverage. The added camera tint has been removed completely at user request.
+Camera blur and color fringing are independent artistic postprocess choices;
+physical water absorption and scattering continue to provide the water color.
+
+The new pixel shader runs in two axes after DLSS reconstruction/custom optics
+and before final grading/tone mapping/HUD. It uses dedicated FP16 scratch targets
+and clamps samples to the active viewport inside pooled source allocations.
+Blur weights are normalized, constant colors and black remain unchanged,
+and there is no clamp to SDR white. The
+water geometry, physical transport and caustics are unchanged. This is a visible
+artistic underwater-camera treatment, not a calibrated optical housing model.
+
+FG now uses its original cached global-CA map again. The underwater pass adds
+no geometric magnification/displacement to that map. Green remains at the same
+sample coordinates; red/blue have small fixed opposite offsets (1.5 pixels at
+1080p at maximum, scaled with output height), with no animated phase/history.
+The finished postprocess is present in both the rendered color and HUDless FG
+input; HUD pixels are drawn afterward. This removes the changing water warp
+that failed gameplay, but live FG acceptance is still required after restart.
+
+Technical basis and source boundaries:
+- NVIDIA DLSS integration guide recommends DLSS before postprocessing:
+  https://raw.githubusercontent.com/NVIDIA/DLSS/main/doc/DLSS_Programming_Guide_Release.pdf
+- NVIDIA Streamline FG requires matching postprocessing in backbuffer/HUDless
+  inputs and defines optional bidirectional maps for strong geometric distortion:
+  https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS_G.md
+- Real-Time Underwater Spectral Rendering, Monzon et al., Eurographics 2024:
+  https://graphics.unizar.es/projects/EG24Underwater/
+  Supports retaining wavelength-dependent water appearance. Physical transport
+  remains separate; the camera blur/CA are explicitly artistic controls.
+- Subnautica 2 developer update confirms an optional underwater blur feature:
+  https://www.unknownworlds.com/en/news/subnautica-2-adaptive-measures-update
+  Its exact implementation is not public. Ubisoft's Black Flag Resynced
+  announcement likewise describes modernized water, not its camera shader.
+  No proprietary technique is claimed to have been reproduced here.
+
+Validation: water_camera.cpp checks strong centre/edge blur, full-frame RGB
+separation with unchanged green coordinates, unchanged HDR color, black, zero
+controls/zero immersion bypass, poisoned pooled borders, alpha,
+state restoration and successive frames without retained image history. Runs
+on WARP and NVIDIA. frame_generation_distortion.cpp validates the restored
+original CA-only forward/inverse map and cache. underwater.cpp checks immersion,
+waterline coverage, water transport, shafts, caustics and zero-density behavior.
+Preset checks cover explicit values, Native bypass and removal of old keys.
+The Windows D3D11 debug SDK component is absent; tests use normal D3D11 devices.
+
+Live acceptance: restart, compare both controls at zero/default/max in
+an underwater scene, including the centre of the screen. Swim/pan and cross the
+waterline with FG Off/On; inspect Geralt and HUD stability in HDR, DLAA and DLSS.
+Do not mark the FG gameplay issue resolved solely on synthetic GPU checks.
+
+Accepted revision: remove camera tint, Blur default 0.15 and CA default 1.00.
+Existing saved blur/CA choices are retained; reset/default and Custom preset
+use the approved values. Old tint INI keys are ignored, with no active binding.
+
+### Underwater volumetric shadow sampling (2026-10-30)
+
+Live dock capture showed repeated silhouette-shaped bands in the water around
+thin dock supports (shadows-before.png in the underwater investigation folder).
+The underwater integrator used globally coherent two-point Gauss samples in
+rapidly growing world-space cells. Those samples are suitable for smooth terms,
+but shadow visibility is discontinuous: each point projects another coherent
+copy of a thin blocker across the image. The atmospheric per-pixel fog already
+avoids that pattern with per-pixel stratification.
+
+The underwater pass now stratifies 24/32/48/72 shadow samples per ray at
+Sunlight Detail 1/2/3/4. The bounded budget is smaller than the initial prototype
+after isolated profiling exposed its excessive cost. A stable pixel hash and decorrelated
+cell phases replace shared Gauss planes. Cell boundaries and sample positions
+follow the finite exponential two-leg optical contribution; they remain anchored
+to the camera/interface rather than to moving opaque receiver depth. The final
+cell alone is clipped by a receiver. RGB analytic optical-cell weights reuse the previous transmittance endpoint
+to avoid duplicate exponentials and retain homogeneous-medium energy, including upward rays where eye/light path
+extinction partly cancels. The new volume_sampling.hlsli handles positive,
+negative and near-zero optical slopes without exponential overflow. Night/zero
+source skips sunlight visibility work.
+
+Basis: PBRT, Sampling Volume Scattering and Transmittance:
+https://pbr-book.org/3ed-2018/Light_Transport_II_Volume_Rendering/Sampling_Volume_Scattering
+https://pbr-book.org/4ed/Volume_Scattering/Transmittance
+This is stratified quadrature of visibility with analytic spectral cell weights,
+not a claim of an unbiased full spectral Monte Carlo path tracer. Pixel phases
+are stable, with no new temporal history or frame-varying flicker. The pass runs
+before native TAA/DLSS, whose reconstruction can filter the remaining sampling
+variation. FG consumes the finished image without any new distortion mapping.
+
+Native CSMs still describe the AIR leg only. Visibility is evaluated at each
+sample's refracted surface-entry point; looking up the unrefracted native map
+below the interface would reintroduce false actor shadows. Exact refracted
+shadows from fully submerged geometry require a separate geometry-aware shadow
+representation and are not added by this sampling correction.
+
+Validation: underwater.cpp adds a thin spatial blocker and compares the complete
+production shader against 16,384-step double-precision integration. WARP and
+NVIDIA pass every detail level tested (1/2/4). Final NVIDIA RMS errors relative
+to the unshadowed scattering contribution are 1.490%, 0.916%, 0.380%, compared
+with 1.006%, 0.774%, 0.667% for the previous shader. At the lower settings this
+trades coherent repeated silhouettes for slightly higher decorrelated sampling
+error; it is not an across-the-board numerical-accuracy improvement. Ultra
+reduces both coherence and RMS error. Existing native fallback, HDR,
+zero-density, waterline, caustic and false-air-shadow regression checks pass.
+The old shader is an optional external --compare-shadow fixture, not shipped.
+A temporary DevKit override was unloaded and its prior blank LivePath restored;
+the paused captures alone do not establish acceptance of the embedded rebuild.
+Restart in the dock scene, inspect support silhouettes and shaft continuity,
+then pan/swim at default and Ultra with FG Off/On. Check for noise or shimmer
+in motion as well as the removal of coherent repeated shadow bands.
+
+Hardware comparison filtering replaces four manual depth loads only in the
+underwater composite. Its dedicated s12 sampler is saved/restored explicitly,
+including an originally null sampler. No forward/skin/hair/material binding
+changes are permitted. WARP/NVIDIA tests verify both ordinary material binding
+preservation and the composite sampler scope. Analytic integration also uses
+its stable trapezoidal cancellation limit for nearly equal endpoint depths.
+
+Final isolated 4K timestamps: new/previous underwater pass approximately
+1.01/0.78 ms at detail 1, 1.30/0.97 ms at detail 2, 2.90/1.18 ms at detail 4.
+This excludes the rest of gameplay and uses a synthetic four-cascade fixture.
+The lower-cost default retains roughly a 0.33 ms increment in this measurement;
+Ultra's extra samples cost more. Keep this tradeoff visible during live testing.
+
+### Above-water murkiness ratio (2026-10-31)
+
+Custom surface shading now evaluates absorption and scattering at 1.5 times
+the underwater density, including the initial material-capture fallback. This
+is an intentional visibility preference, not a different physical water type.
+The shared Murkiness control remains the only density control; zero clears
+both views. Underwater optics, reflection weights and HDR output are unchanged.
+The Water Murkiness hint explains the ratio. WARP and NVIDIA water tests pass
+for zero/half/full density and analytic surface transport. Build Release target
+thewitcher3classic; compare the same shoreline above/below the waterline and
+check Murkiness at 0 and 1 after deployment.

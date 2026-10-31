@@ -26,7 +26,7 @@ struct WaterIncludes : ID3DInclude {
   HRESULT __stdcall Close(const void* data) override {parents.erase(data);delete[] static_cast<const char*>(data);return S_OK;}
 };
 int main(int argc,char**) {
-  witcher3classic::water::clarity=1.f; // Fixed reference medium, independent of UI defaults.
+  witcher3classic::water::underwater_density=1.f; // Shared reference medium.
   ComPtr<ID3D11Device> device;
   ComPtr<ID3D11DeviceContext> base;
   assert(SUCCEEDED(D3D11CreateDevice(nullptr,argc>1?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,
@@ -80,7 +80,7 @@ int main(int argc,char**) {
   assert(SUCCEEDED(device->CreateShaderResourceView(depth.Get(),nullptr,&depth_view)));
   context->PSSetShaderResources(15,1,depth_view.GetAddressOf());
   const char* vs_text="float4 main(uint id:SV_VertexID):SV_Position {float2 uv=float2((id<<1)&2,id&2);return float4(uv*float2(2,-2)+float2(-1,1),0,1);}";
-  ComPtr<ID3DBlob> vs_code,ps_code,trace_code,atmosphere_code,night_code,errors;
+  ComPtr<ID3DBlob> vs_code,ps_code,trace_code,atmosphere_code,night_code,transport_code,errors;
   assert(SUCCEEDED(D3DCompile(vs_text,strlen(vs_text),nullptr,nullptr,nullptr,"main","vs_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&vs_code,&errors)));
   const auto working_directory=std::filesystem::current_path();
   std::filesystem::current_path("src/games/thewitcher3classic/water");
@@ -90,6 +90,7 @@ int main(int argc,char**) {
   if(errors)std::cerr<<static_cast<const char*>(errors->GetBufferPointer());assert(SUCCEEDED(trace_compiled));
   assert(SUCCEEDED(D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,&includes,"atmosphere","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&atmosphere_code,&errors)));
   assert(SUCCEEDED(D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,&includes,"night_lighting","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&night_code,&errors)));
+  assert(SUCCEEDED(D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,&includes,"underwater_transport","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&transport_code,&errors)));
   std::filesystem::current_path(working_directory);
   if(errors)std::cerr<<static_cast<const char*>(errors->GetBufferPointer());assert(SUCCEEDED(compiled));
   ComPtr<ID3D11VertexShader> vs;ComPtr<ID3D11PixelShader> ps;
@@ -116,10 +117,10 @@ int main(int argc,char**) {
       assert(std::abs(value[2]+std::expm1(-.3*distance)/.3)<2.e-5);
     } else if(y==2) { assert(value[0]>=0 && value[0]<100); }
     else {
-      const double extinction[]={.3594+.0007+.5,.0654+.0014+.5,.011+.0033+.5};
+      const double extinction[]={.3594+.0007+1.,.0654+.0014+1.,.011+.0033+1.};
       for(UINT c=0;c<3;++c) {
-        double transmission=std::exp(-extinction[c]*2.);
-        double scattering[]={.5007,.5014,.5033};
+        double transmission=std::exp(-extinction[c]*1.5*2.);
+        double scattering[]={1.0007,1.0014,1.0033};
         double ambient=x>=32 ? .25*double(c+1) : 0.;
         double expected=(1.-f0)*(double(2*(c+1))*transmission
             +ambient*scattering[c]*(1.-transmission)/extinction[c])*.75+double(c+1)*.25;
@@ -130,6 +131,38 @@ int main(int argc,char**) {
     }
   }
   context->Unmap(readback.Get(),0);
+  // Surface viewing uses the prepared underwater material at 1.5x density. Compare the
+  // production composition with an independent two-leg homogeneous integral,
+  // including zero density and native air fog applied only once.
+  std::array<std::array<float,4>,8> optics{};
+  optics[3][3]=1.f;
+  D3D11_BUFFER_DESC optics_desc{sizeof(optics),D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE,
+      0,D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,16};
+  ComPtr<ID3D11Buffer> optics_buffer;ComPtr<ID3D11ShaderResourceView> optics_view;
+  assert(SUCCEEDED(device->CreateBuffer(&optics_desc,nullptr,&optics_buffer)));
+  assert(SUCCEEDED(device->CreateShaderResourceView(optics_buffer.Get(),nullptr,&optics_view)));
+  context->PSSetShaderResources(88,1,optics_view.GetAddressOf());
+  for(float density:{1.f,.5f,0.f}) {
+    optics[2]={.1f*density,.2f*density,.3f*density,.5f};
+    optics[3]={.03f*density,.02f*density,.01f*density,1.f};
+    context->UpdateSubresource(optics_buffer.Get(),0,nullptr,optics.data(),0,0);
+    context->Draw(3,0);context->CopyResource(readback.Get(),output.Get());
+    assert(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&mapped)));
+    for(UINT x=0;x<64;++x) {
+      const float* value=reinterpret_cast<const float*>(static_cast<const char*>(mapped.pData)+3*mapped.RowPitch)+4*x;
+      for(UINT c=0;c<3;++c) {
+        double extinction=1.5*optics[2][c],scatter=1.5*optics[3][c];
+        double integral=extinction>0 ? (1-std::exp(-4*extinction))/(2*extinction):2.;
+        double expected=(1-f0)*(2*(c+1)*std::exp(-2*extinction)
+            +(x>=32?.25*(c+1):0)*scatter*integral)*.75+(c+1)*.25;
+        assert(std::isfinite(value[c]) &&std::abs(value[c]-expected)<1.e-4);
+      }
+      assert(std::abs(value[3]-f0*.75)<1.e-5);
+    }
+    context->Unmap(readback.Get(),0);
+  }
+  ID3D11ShaderResourceView* no_optics=nullptr;context->PSSetShaderResources(88,1,&no_optics);
+  std::cout<<"PASS above-water 1.5x density, zero/half/full murkiness, two-leg scattering and unchanged Fresnel\n";
   water.Restore(context.Get());
   ComPtr<ID3D11PixelShader> night_ps;
   assert(SUCCEEDED(device->CreatePixelShader(night_code->GetBufferPointer(),night_code->GetBufferSize(),nullptr,&night_ps)));
@@ -245,6 +278,46 @@ int main(int argc,char**) {
     assert(static_cast<const float*>(mapped.pData)[x*4+c]==float(100+x+c));
   context->Unmap(readback.Get(),0);
   std::cout<<"PASS production water metadata loads select distinct world-bounds/atlas-UV rows across 64 tiles\n";
+  ComPtr<ID3D11PixelShader> transport_ps;
+  assert(SUCCEEDED(device->CreatePixelShader(transport_code->GetBufferPointer(),transport_code->GetBufferSize(),nullptr,&transport_ps)));
+  context->PSSetShader(transport_ps.Get(),nullptr,0);
+  context->Draw(3,0);context->CopyResource(readback.Get(),output.Get());
+  assert(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&mapped)));
+  for(UINT y=0;y<4;++y)for(UINT x=0;x<64;++x) {
+    const auto* pixel=reinterpret_cast<const float*>(static_cast<const char*>(mapped.pData)+y*mapped.RowPitch)+4*x;
+    for(UINT c=0;c<4;++c)assert(std::isfinite(pixel[c]));
+    const double u=double(x)/63, distance=40*u;
+    if(y==0) {
+      for(UINT c=0;c<2;++c) {
+        const double eta=c==0?1.333:1./1.333;
+        const double sine2=eta*eta*(1-u*u);
+        double fresnel=1;
+        if(sine2<1) {
+          const double ct=std::sqrt(1-sine2);
+          fresnel=.5*(std::pow((eta*u-ct)/(eta*u+ct),2)+std::pow((u-eta*ct)/(u+eta*ct),2));
+        }
+        assert(std::abs(pixel[c]-fresnel)<3.e-5);
+      }
+      assert(std::abs(pixel[3]-1./(4*3.141592653589793))<1.e-6);
+      if(x==63)assert(pixel[2]>.45f); // Forward peak of g=.5 exceeds isotropic.
+    } else {
+      for(UINT c=0;c<3;++c) {
+        const double extinction=c==0?0:c==1?.01:.3594;
+        double reference=0;
+        // Independent numerical integration of the physical two-leg path.
+        for(int step=0;step<16384;++step) {
+          double eye=(step+.5)*distance/16384;
+          double sun=y==1?50-1.2*eye:y==2?50-eye:2+eye;
+          reference+=std::exp(-extinction*(eye+sun))*distance/16384;
+        }
+        if(y==3)reference*=32*.2;
+        assert(std::abs(pixel[c]-reference)<2.e-5*std::max(1.,reference));
+      }
+      if(y==3 && x==63)assert(pixel[0]>100.f);
+    }
+  }
+  context->Unmap(readback.Get(),0);
+  std::cout<<"PASS underwater transport: two-sided Fresnel/TIR, phase direction, HDR, vacuum and cancelling/reversed optical paths against numerical quadrature\n";
   std::cout<<"PASS local-fog light transmittance against 10000-step numerical quadrature, including horizontal/downward light and vacuum\n";
   std::cout<<"PASS perspective-correct refraction plane hits, foreground/empty/far rejection and screen-edge/parallel-ray fallbacks\n";
   std::cout<<"PASS water Fresnel, Beer-Lambert, scattering, finite GGX, fog-once composition, poisoned pool isolation, frame copy, stale-frame rejection, binding restoration and resize\n";

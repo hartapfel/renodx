@@ -391,10 +391,10 @@ inline bool Install() {
           && DetourAttach(reinterpret_cast<void**>(&unmap_buffer), reinterpret_cast<void*>(&UnmapBufferHook)) == NO_ERROR;
     }
     if(valid && lighting::player_fill::supported) {
-      lighting::player_fill::build_local_constants = reinterpret_cast<lighting::player_fill::BuildLocalConstants>(
-          reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))+0xc39be0);
-      valid=DetourAttach(reinterpret_cast<void**>(&lighting::player_fill::build_local_constants),
-          reinterpret_cast<void*>(&lighting::player_fill::LocalConstantsHook))==NO_ERROR;
+      lighting::player_fill::build_camera_light = reinterpret_cast<lighting::player_fill::BuildCameraLight>(
+          reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))+0xc3c510);
+      valid=DetourAttach(reinterpret_cast<void**>(&lighting::player_fill::build_camera_light),
+          reinterpret_cast<void*>(&lighting::player_fill::CameraLightHook))==NO_ERROR;
     }
     if (valid && exposure::supported) {
       constants_image_base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));

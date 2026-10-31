@@ -264,9 +264,10 @@ void OnBlitzBloomDrawn(reshade::api::command_list* cmd) {
 bool OnOpticsInject(reshade::api::command_list* cmd) {
   using namespace witcher3classic::temporal;
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
-  if (!data || !data->motion_context || show_object_vectors != 0.f
-      || shader_injection.tone_map_type != CLASSIC_TONE_MAP_PSYCHOV31) return true;
-  auto* context = data->motion_context.Get();
+  auto* water = renodx::utils::data::Get<witcher3classic::volumetrics::DeviceData>(cmd->get_device());
+  auto* context = data && data->motion_context ? data->motion_context.Get()
+      : water ? water->context.Get() : nullptr;
+  if (!context || show_object_vectors != 0.f) return true;
   ComPtr<ID3D11ShaderResourceView> source;
   context->PSGetShaderResources(0, 1, &source);
   if (!source) return true;
@@ -277,21 +278,40 @@ bool OnOpticsInject(reshade::api::command_list* cmd) {
   D3D11_VIEWPORT viewport; UINT count = 1;
   context->RSGetViewports(&count, &viewport);
   if (count != 1 || viewport.TopLeftX != 0 || viewport.TopLeftY != 0
-      || viewport.Width != float(desc.Width) || viewport.Height != float(desc.Height)) return true;
+      || viewport.Width <= 0 || viewport.Height <= 0
+      || viewport.Width > float(desc.Width) || viewport.Height > float(desc.Height)) return true;
   const float sharpening = shader_injection.chromatic_aberration_mode != 0.f
       && shader_injection.chromatic_aberration_intensity > 0.f && shader_injection.sharpening_mode != 0.f
       ? shader_injection.sharpening_strength : 0.f;
-  if (auto* filtered = data->optics.Run(context, source.Get(), desc.Width, desc.Height, data->frame, sharpening)) {
-    data->optics.saved_scene = source;
-    context->PSSetShaderResources(0, 1, &filtered);
-    if (sharpening > 0.f) {
-      data->optics.saved_sharpening = shader_injection.sharpening_strength;
-      shader_injection.sharpening_strength = 0.f;
+  if (data && shader_injection.tone_map_type == CLASSIC_TONE_MAP_PSYCHOV31
+      && viewport.Width == float(desc.Width) && viewport.Height == float(desc.Height)) {
+    if (auto* filtered = data->optics.Run(context, source.Get(), desc.Width, desc.Height, data->frame, sharpening)) {
+      data->optics.saved_scene = source;
+      context->PSSetShaderResources(0, 1, &filtered);
+      if (sharpening > 0.f) {
+        data->optics.saved_sharpening = shader_injection.sharpening_strength;
+        shader_injection.sharpening_strength = 0.f;
+      }
+      source = filtered;
+    }
+  }
+  if (water && witcher3classic::water::mode != 0.f
+      && (witcher3classic::water::camera_blur > 0.f || witcher3classic::water::camera_ca > 0.f)
+      && water->underwater_composite_frame == water->frame
+      && water->underwater.prepared_frame == water->frame) {
+    if (auto* filtered = water->camera.Run(context, source.Get(), water->underwater.StateView(),
+        UINT(viewport.Width), UINT(viewport.Height), water->frame,
+        __swap_chain_proxy_vertex_shader, {witcher3classic::water::camera_blur,
+          witcher3classic::water::camera_ca})) {
+      water->camera.saved_scene = source;
+      context->PSSetShaderResources(0, 1, &filtered);
     }
   }
   return true;
 }
 void OnOpticsDrawn(reshade::api::command_list* cmd) {
+  auto* water = renodx::utils::data::Get<witcher3classic::volumetrics::DeviceData>(cmd->get_device());
+  if (water && water->context) water->camera.Restore(water->context.Get());
   auto* data = renodx::utils::data::Get<witcher3classic::temporal::DeviceData>(cmd->get_device());
   if (!data || !data->optics.saved_scene || !data->motion_context) {
     return;
@@ -310,7 +330,10 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     {0x3939C615, {.crc32 = 0x3939C615, .code = __0x3939C615}},
     {0x89760976, {.crc32 = 0x89760976, .code = __0x89760976}},
     {0x05FE9FA8, {.crc32 = 0x05FE9FA8, .code = __0x05FE9FA8,
-        .on_replace = &witcher3classic::lighting::OnShadow,
+        .on_replace = [](auto* cmd) {
+          witcher3classic::volumetrics::OnUnderwaterPrepare(cmd);
+          return witcher3classic::lighting::OnShadow(cmd);
+        },
         .on_inject = [](auto*) { return false; },
         .on_drawn = &witcher3classic::lighting::OnDrawn}},
     {0x0AB3A292, {.crc32 = 0x0AB3A292, .code = __0x0AB3A292,
@@ -330,9 +353,16 @@ renodx::mods::shader::CustomShaders custom_shaders = {
         .on_inject = [](auto*) { return false; },
         .on_drawn = &witcher3classic::lighting::OnDrawn}},
     {0x4E4E4B53, {.crc32 = 0x4E4E4B53, .code = __0x4E4E4B53,
-        .on_replace = &witcher3classic::lighting::OnHair,
+        .on_replace = [](auto* cmd) {
+          bool lighting=witcher3classic::lighting::OnHair(cmd);
+          witcher3classic::volumetrics::OnUnderwater(cmd);
+          return lighting ||witcher3classic::water::mode!=0.f;
+        },
         .on_inject = [](auto*) { return false; },
-        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+        .on_drawn = [](auto* cmd) {
+          witcher3classic::lighting::OnDrawn(cmd);
+          witcher3classic::volumetrics::OnDrawn(cmd);
+        }}},
     {0x72225972, {.crc32 = 0x72225972, .code = __0x72225972,
         .on_replace = &witcher3classic::lighting::OnLocalLight,
         .on_inject = [](auto*) { return false; },
@@ -350,61 +380,79 @@ renodx::mods::shader::CustomShaders custom_shaders = {
         .on_inject = [](auto*) { return false; },
         .on_drawn = &witcher3classic::lighting::OnDrawn}},
     {0xFB29B4E6, {.crc32 = 0xFB29B4E6, .code = __0xFB29B4E6,
-        .on_replace = &witcher3classic::lighting::OnLighting,
+        .on_replace = [](auto* cmd) {
+          bool lighting=witcher3classic::lighting::OnLighting(cmd);
+          bool underwater=witcher3classic::volumetrics::OnUnderwaterLighting(cmd);
+          return lighting ||underwater;
+        },
         .on_inject = [](auto*) { return false; },
-        .on_drawn = &witcher3classic::lighting::OnDrawn}},
+        .on_drawn = [](auto* cmd) {
+          witcher3classic::volumetrics::OnDrawn(cmd);
+          witcher3classic::lighting::OnDrawn(cmd);
+        }}},
+    {0x128133E9, {.crc32=0x128133E9,.code=__0x128133E9,
+        .on_replace=[](auto*) {return witcher3classic::water::mode!=0.f;},
+        .on_inject=[](auto* cmd) {
+          auto* data=renodx::utils::data::Get<witcher3classic::volumetrics::DeviceData>(cmd->get_device());
+          if(data &&data->context &&data->native_handle==cmd->get_native()) {
+            data->underwater_composite_frame=data->frame;
+            data->underwater.Bind(data->context.Get(),data->frame,false,true);
+          }
+          return false;
+        },
+        .on_drawn=&witcher3classic::volumetrics::OnDrawn}},
     {0xC8C78997, {.crc32 = 0xC8C78997, .code = __0xC8C78997,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnFog,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x4EF2AAF8, {.crc32 = 0x4EF2AAF8, .code = __0x4EF2AAF8,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnParticle,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x44ECC136, {.crc32 = 0x44ECC136, .code = __0x44ECC136,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x2472CF83, {.crc32 = 0x2472CF83, .code = __0x2472CF83,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x8C9C55EC, {.crc32 = 0x8C9C55EC, .code = __0x8C9C55EC,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x28D7BDFE, {.crc32 = 0x28D7BDFE, .code = __0x28D7BDFE,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f
             || (witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
                 && witcher3classic::night::common_supported && witcher3classic::night::water_ambient != 100.f); },
         .on_inject = &witcher3classic::volumetrics::OnWater,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0xFD1D6FBF, {.crc32 = 0xFD1D6FBF, .code = __0xFD1D6FBF,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0xFAB74FB3, {.crc32 = 0xFAB74FB3, .code = __0xFAB74FB3,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x02A34C28, {.crc32 = 0x02A34C28, .code = __0x02A34C28,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnParticle,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0xA7921C82, {.crc32 = 0xA7921C82, .code = __0xA7921C82,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnParticle,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x4FBB126B, {.crc32 = 0x4FBB126B, .code = __0x4FBB126B,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x5F9AE754, {.crc32 = 0x5F9AE754, .code = __0x5F9AE754,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x105478E1, {.crc32 = 0x105478E1, .code = __0x105478E1,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f || witcher3classic::water::mode != 0.f || (!witcher3classic::blitzfx::runtime_aa && witcher3classic::rain::enabled == 1.f); },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f || (!witcher3classic::blitzfx::runtime_aa && witcher3classic::rain::enabled == 1.f); },
         .on_inject = [](auto* cmd) {
           witcher3classic::volumetrics::OnParticle(cmd);
           if (!witcher3classic::blitzfx::runtime_aa) witcher3classic::rain::OnDraw(cmd);
@@ -412,7 +460,7 @@ renodx::mods::shader::CustomShaders custom_shaders = {
         },
         .on_drawn = [](auto* cmd) { witcher3classic::rain::OnDrawn(cmd); witcher3classic::volumetrics::OnDrawn(cmd); }}},
     {0x22FD7485, {.crc32 = 0x22FD7485, .code = __0x22FD7485,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f; },
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f; },
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     // These read gains from native b12. Default RenoDX injection would replace
@@ -439,13 +487,13 @@ renodx::mods::shader::CustomShaders custom_shaders = {
                 && (witcher3classic::night::cloud_brightness != 100.f || witcher3classic::night::normalization::current.load(std::memory_order_relaxed) != 0); },
         .on_inject = [](auto*) { return false; }}},
     {0xBC930752, {.crc32 = 0xBC930752, .code = __0xBC930752,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f
             || (witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
                 && witcher3classic::night::common_supported && witcher3classic::night::star_brightness != 100.f); },
         .on_inject = &witcher3classic::volumetrics::OnForward,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x22D1E925, {.crc32 = 0x22D1E925, .code = __0x22D1E925,
-        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f
+        .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f
             || (witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
                 && witcher3classic::night::common_supported
                 && (witcher3classic::night::cloud_brightness != 100.f || witcher3classic::night::normalization::current.load(std::memory_order_relaxed) != 0)); },
@@ -644,7 +692,19 @@ renodx::utils::settings::Settings settings = {
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxPlayerStrength"),
         .label = "Fill Light Strength",
         .section = "Player Lighting",
-        .tooltip = "Brightness of the camera-following fill light. 0 removes it; 1 keeps the game's original strength.",
+        .tooltip = "Brightness of the camera-following fill light during gameplay. Cutscene fill has its own slider. 0 removes it; 1 keeps the game's original strength.",
+        .min = 0.0f,
+        .max = 1.0f,
+        .format = "%.2f",
+        .is_enabled = [] { return witcher3classic::lighting::player_control != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxCutsceneFillStrength",
+        .binding = &witcher3classic::lighting::cutscene_strength,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCutsceneFillStrength"),
+        .label = "Cutscene Fill Light Strength",
+        .section = "Player Lighting",
+        .tooltip = "Brightness of the extra camera lighting used in cutscenes and conversations, including interior scenes. 0 removes it; 1 keeps the game's original strength. Placed lights stay unchanged.",
         .min = 0.0f,
         .max = 1.0f,
         .format = "%.2f",
@@ -814,22 +874,51 @@ renodx::utils::settings::Settings settings = {
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxWater"),
         .label = "Water Shading",
         .section = "Water",
-        .tooltip = "Custom improves water color, clarity and surface lighting. Native keeps the original appearance. Underwater views keep the game's normal rendering.",
+        .tooltip = "Selects the water appearance both above and below the surface. Custom adds consistent murkiness, wave caustics and underwater sunlight. Native uses the original rendering.",
         .labels = {"Native", "Custom"},
     },
-    new renodx::utils::settings::Setting{
-        .key = "GfxWaterClarity",
-        .binding = &witcher3classic::water::clarity,
-        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxWaterClarity"),
-        .label = "Water Clarity",
-        .section = "Water",
-        .tooltip = "How clearly you can see through water. Higher values reveal more of the river bed; lower values make the water murkier.",
-        .min = .25f,
-        .max = 4.f,
-        .format = "%.2f",
-        .is_enabled = [] { return witcher3classic::water::mode != 0.f; },
-    },
 
+    new renodx::utils::settings::Setting{
+        .key="GfxUnderwaterDensity",.binding=&witcher3classic::water::underwater_density,
+        .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxUnderwaterDensity"),
+        .label="Water Murkiness",.section="Water",
+        .tooltip="Controls how cloudy the water looks. Viewed from above, water is 50% murkier than underwater. Lower values clear both views; zero removes the murkiness.",
+        .min=0.f,.max=4.f,.format="%.2f",
+        .is_enabled=[] {return witcher3classic::water::mode!=0.f;},
+    },
+    new renodx::utils::settings::Setting{
+        .key="GfxWaterCaustics",.binding=&witcher3classic::water::caustics,
+        .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxWaterCaustics"),
+        .label="Caustic Strength",.section="Water",
+        .tooltip="Strength of moving sunlight patterns on submerged surfaces, visible from above and underwater. 1.00 is the calculated strength; 0 removes the patterns.",
+        .min=0.f,.max=2.f,.format="%.2f",
+        .is_enabled=[] {return witcher3classic::water::mode!=0.f;},
+    },
+    new renodx::utils::settings::Setting{
+        .key="GfxUnderwaterDetail",.binding=&witcher3classic::water::underwater_quality,
+        .value_type=renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxUnderwaterDetail"),
+        .label="Sunlight Detail",.section="Water",
+        .tooltip="Detail of underwater light shafts and their shadows. Higher values use more GPU time.",
+        .min=1.f,.max=4.f,.format="%d / 4",
+        .is_enabled=[] {return witcher3classic::water::mode!=0.f;},
+    },
+    new renodx::utils::settings::Setting{
+        .key="GfxWaterCameraBlur",.binding=&witcher3classic::water::camera_blur,
+        .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxWaterCameraBlur"),
+        .label="Underwater Blur",.section="Water",
+        .tooltip="Softens the whole underwater view, including the centre. Higher values create a hazier camera image. Fades out at the surface; 0 keeps the image sharp.",
+        .min=0.f,.max=1.f,.format="%.2f",
+        .is_enabled=[] {return witcher3classic::water::mode!=0.f;},
+    },
+    new renodx::utils::settings::Setting{
+        .key="GfxWaterCameraCA",.binding=&witcher3classic::water::camera_ca,
+        .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxWaterCameraCA"),
+        .label="Underwater Chromatic Aberration",.section="Water",
+        .tooltip="Adds slight colored fringes around details throughout the underwater image, including the centre. Fades out at the surface. 0 removes the fringes.",
+        .min=0.f,.max=1.f,.format="%.2f",
+        .is_enabled=[] {return witcher3classic::water::mode!=0.f;},
+    },
     new renodx::utils::settings::Setting{
         .key = "GfxRefractiveRain",
         .binding = &witcher3classic::rain::enabled,
@@ -1065,7 +1154,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::night, "NightExposureAdaptation"),
         .label = "Adaptation",
         .section = "Night Exposure",
-        .tooltip = "Smoothed uses 35% brightening speed, 5% darkening speed, 20% maximum brightening and 100% maximum darkening. Custom lets you adjust each value.",
+        .tooltip = "Smoothed uses 35% brightening speed, 5% darkening speed, 100% maximum brightening and 100% maximum darkening. Custom lets you adjust each value.",
         .labels = {"Native", "Smoothed", "Custom"},
         .max = 2.f,
         .is_enabled = []() { return witcher3classic::night::enabled == 1.f && witcher3classic::night::exposure::supported; },
@@ -2340,7 +2429,8 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
       auto previous_drawn=shader.on_drawn;
       shader.on_replace=[previous_replace,i,code](auto* cmd) {
         bool replace=previous_replace ? previous_replace(cmd) : true;
-        if(!replace && witcher3classic::lighting::ambient_ao!=0.f)
+        witcher3classic::volumetrics::OnUnderwater(cmd);
+        if(!replace && (witcher3classic::lighting::ambient_ao!=0.f ||witcher3classic::water::mode!=0.f))
           witcher3classic::lighting::BindColorOnly(cmd,i,code);
         return replace;
       };
@@ -2352,6 +2442,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
       };
       shader.on_drawn=[previous_drawn](auto* cmd) {
         witcher3classic::lighting::OnDrawn(cmd);
+        witcher3classic::volumetrics::OnDrawn(cmd);
         if(previous_drawn)previous_drawn(cmd);
       };
     }

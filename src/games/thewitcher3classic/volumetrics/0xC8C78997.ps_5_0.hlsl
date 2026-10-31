@@ -45,6 +45,9 @@ void main(
     r1.xyzw = cb12[213].xyzw + r1.xyzw;
     r1.xyz = r1.xyz / r1.www;
     r2.xyz = t1.Load(r0.xyw).xyz;
+    if(UnderwaterWeight(r1.xyz)>=1.f) {
+      o0=float4(r2.xyz,1.f);return;
+    }
     r0.x = t2.Load(r0.xyz).x;
     r0.x = max(cb3[1].x, r0.x);
     r0.yzw = -cb12[0].xyz + r1.xyz;

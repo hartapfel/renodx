@@ -1,3 +1,4 @@
+#include "../water/underwater_inputs.hlsli"
 #include "../lighting/parameters.hlsli"
 ByteAddressBuffer Raw20 : register(t20);
 // ---- Created with 3Dmigoto v1.3.16 on Fri Oct 23 09:31:09 2026
@@ -310,6 +311,7 @@ void main(
     r7.w = saturate(r7.w * cb12[218].x + cb12[218].y);
     r11.xyz = -cb13[1].xyz + r11.xyz;
     r11.xyz = r7.www * r11.xyz + cb13[1].xyz;
+    r11.xyz *= UnderwaterSunFactor(v2.xyz);
     r5.w = 0.318309873 * r5.w;
     r12.xyz = r5.www * r11.xyz;
     r5.w = dot(cb13[0].xyz, r2.xyz);
@@ -1180,6 +1182,10 @@ void main(
   r3.xyz = r9.xyz * r0.www + cb13[55].www;
   r1.xyz = r3.xyz * r1.xyz;
   r1.xyz = cb13[55].xyz * r1.xyz;
+  float3 underwater_ambient=UnderwaterAmbientFactor(v2.xyz);
+  r1.xyz *= underwater_ambient;
+  r2.xyz *= underwater_ambient;
+  r0.xyz *= underwater_ambient;
   r1.xyz = r17.xyz * cb12[183].www + r1.xyz;
   r0.w = AMBIENT_ONLY_AO ? 1.f : cb12[69].x + cb12[69].y;
   r3.xyz = r8.xyw * r0.www;

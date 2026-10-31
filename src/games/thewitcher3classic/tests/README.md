@@ -1070,7 +1070,7 @@ presets.cpp includes the real addon settings and applies all four explicit prese
 
 Build fog_composite.cpp with /Ibuild/thewitcher3classic.include after the Classic Release shader/object target. Run with the existing native-fog fixture directory and --cache, then --cache --hardware. The production 0xF3C30003 compute shader and 0xC8C78997 composite cover full-resolution HDR, odd active dimensions in pooled depth, thin/lit foreground, sky, missing/stale fallback, forward isolation and private-state restoration. Half-resolution fixtures and dispatch tests were removed with that implementation. Run --pixel-local and --weather --pixel / --weather-color --pixel separately for scalar transport and captured weather comparisons.
 
-Exposure tests cover Smoothed defaults35/5/20/100 and native/custom/logarithmic limits, including20% maximum brightening. Preset coverage verifies default Fog Detail2/4, removed fog controls, method-specific visibility and exposure preset isolation. Gameplay validation remains necessary.
+Exposure tests cover Smoothed defaults35/5/100/100 and native/custom/logarithmic limits, including100% default maximum brightening. Preset coverage verifies default Fog Detail2/4, removed fog controls, method-specific visibility and exposure preset isolation. Gameplay validation remains necessary.
 
 ## Shared player-fill producer
 
@@ -1079,3 +1079,72 @@ player_fill.cpp checks live-count bounds and stale records, every-byte RGB-only 
 player_fill_gpu.cpp intentionally runs original uncovered F1FB6FB1.ps_5_0.cso without a replacement. Pass the captured native skin-constant directory (skin-b1/b2/b3/b4/b12/b13.bin) and original game dump directory, then repeat with --hardware. The fixture uses a valid reoriented detail normal, tiled raw indices and HDR incident light, and checks native identity, 20%/50%/100% scaling, world-light/alpha preservation, matching across native receiver branches and additional spot flags. It fails if the native skin result stays unscaled or loses HDR. Scratch capture used: object-lighting-20261026. No runtime readbacks or fixtures ship in the package.
 
 lighting.cpp applies the same CPU producer to its captured constants before GPU replay. It also compares reordered light indices 1/7/31/255 against native bytecode. object_motion.cpp's G-buffer sweep now checks all reflected native varyings as well as bit-identical clip positions under changing camera, bone and instance transforms.
+
+
+## Underwater optics
+
+water.cpp/water_test.hlsl cover Fresnel/TIR, phase normalization and direction,
+RGB two-leg transport against numerical quadrature, vacuum and HDR.
+underwater.cpp executes the production GPU runtime and embedded shaders. Pass
+the original 0x128133E9.ps_5_0.cso path, optionally --hardware. It validates
+original fallback, light redistribution/flat-water unity, atlas tile isolation,
+PS/CS restoration, stale input rejection, above-water indirect suppression,
+nonzero lake elevations, complete HDR attenuation/scattering and air-fog bypass.
+lighting.cpp also binds underwater state and verifies ambient/reflection identity
+while direct sunlight changes. Compile assertions enabled and use
+/Ibuild/thewitcher3classic.include after the Release object/shader build.
+Add --benchmark after --hardware for timestamp-query caustic preparation and
+3840x2160 native/custom composite measurements. Synthetic coherent inputs are
+not a substitute for gameplay timing, shadow/waterline checks or visual approval.
+
+Underwater revision: underwater.cpp now exercises pixel-integrated adaptive
+photon footprints under folded waves and subpixel phase motion, authored water
+optical coefficients and native brightness gain. lighting.cpp checks incoming
+ambient attenuation against independent angular integration. presets.cpp guards
+the integer Sunlight Detail format. --hardware --scene <fixture-directory>
+replays revision-waves.bin and revision-cb0/4/5/12.bin, exporting the atlas;
+terrain/region arrays remain synthetic. Geometry occlusion, forward-material
+coverage, motion quality and final scene appearance still require gameplay.
+
+underwater_forward.cpp takes the native fixture directory containing
+skin-forward-cb1/2/3/4/12/13.bin, then the original shader dump directory, and
+optionally --hardware. It compares original 20C1C070 DXBC with the native-signature
+F3C40011 variant, then verifies incoming underwater skin attenuation and exact
+restoration without motion vectors. lighting.cpp covers submerged transparent
+hair and alpha identity. underwater.cpp additionally asserts that sampler s12
+remains the native comparison sampler while bound, zero density returns clear
+HDR, and submerged CSM blockers cannot cast false air-path shafts while actual
+above-water blockers still do at low/default/high Sunlight Detail.
+
+Underwater waterline regression: underwater.cpp sweeps shallow camera depths
+through the former native-rendering handoff, checks fractional mask coverage
+against independent transport, excludes the air segment for surface entry, and
+preserves above-water receiver RGBA. Live wave/meniscus continuity is still a
+visual acceptance check; the transport boundary uses a regional mean plane.
+
+Above-water consistency: water.cpp binds prepared optics and verifies shared
+coefficients, zero/half/full density, two-leg scatter integration and unchanged
+Fresnel/air-fog composition against independent equations. underwater.cpp uses
+underwater_receivers.hlsl with the production capture/preparation/bind path to
+check caustics above water, dry land and below-terrain rejection, and analytic
+receiver sunlight attenuation. Missing/other water regions are conservative
+fallbacks; geometry exclusions and live shoreline continuity need gameplay.
+
+water_camera.cpp: compile with /std:c++20 /DNOMINMAX and
+/Ibuild/thewitcher3classic.include; link d3d11.lib d3dcompiler.lib dxgi.lib user32.lib.
+No arguments runs WARP; --hardware runs NVIDIA. A second argument enables isolated
+4K GPU timestamps. Tests full-screen blur/CA (including centre), unchanged green
+coordinates, unchanged HDR color, black, alpha, pooled borders, underwater
+fade/zero controls and binding restoration. frame_generation_distortion.cpp now
+checks the original CA-only map: underwater radial distortion was removed.
+underwater.cpp checks physical water regressions and immersion/scattering state.
+Live FG/HDR swimming and waterline acceptance is required after restart.
+
+Underwater shadow regression: underwater.cpp tests a thin above-water blocker
+against 16,384-step double-precision volume integration at detail 1/2/4. Optional
+arguments after the native shader path are --hardware --compare-shadow <old.cso>
+for a numerical old/new comparison, or --hardware --benchmark <old.cso> for
+isolated 4K timestamps. Old bytecode belongs in scratch, never the mod source.
+Keep the existing below-interface blocker and waterline checks: native air CSMs
+must not be reused as refracted underwater shadow maps. Live dock/panning tests
+are required to assess residual sampling noise and motion stability.

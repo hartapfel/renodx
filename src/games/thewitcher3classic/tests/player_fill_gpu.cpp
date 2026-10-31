@@ -111,7 +111,8 @@ v.e=float4(0,.5,.5,0);v.f=float4(0,1,0,1);v.h=float3(1,0,0);return v;})";
   context->PSSetShaderResources(20,1,raw_view.GetAddressOf());
   auto material=Read(capture/"skin-b2.bin");material.resize(19*16);
   std::fill_n(reinterpret_cast<float*>(material.data())+18*4,4,0.f);
-  std::array<float,0x4050/4> environment{};
+  std::array<float,0xb400/4> environment{};
+  const auto* env=reinterpret_cast<const uint8_t*>(environment.data());
   bool detects_gap=false,has_hdr=false;
   for(UINT flags:{0x1800u,0x80001800u,0x80001801u})for(float gain:{0.f,.25f,1.f,2.f}) {
     std::memcpy(light+61*4+3,&flags,4);common[71*4]=gain;environment[0x404c/4]=gain;
@@ -123,7 +124,8 @@ v.e=float4(0,.5,.5,0);v.f=float4(0,1,0,1);v.h=float3(1,0,0);return v;})";
       bind_constants(2,material);
       auto draw=[&](const player_fill::Controls& controls) {
         auto f=frame,l=lights;
-        player_fill::ApplyCommon(f.data(),controls);player_fill::ApplyLights(l.data(),environment.data(),controls);
+        player_fill::ApplyCommon(f.data(),controls);
+        if(flags&0x80000000u)player_fill::ApplyCameraLight(l.data()+0x3a0,env+0x10,env+0xb148,env+0x3960,nullptr,controls);
         bind_constants(12,f);bind_constants(13,l);return render(native);
       };
       const auto original=draw({false,false,1.f}),off=draw({true,false,0.f});
@@ -146,6 +148,64 @@ v.e=float4(0,.5,.5,0);v.f=float4(0,1,0,1);v.h=float3(1,0,0);return v;})";
       std::cout<<"Native skin F1FB6FB1 flags="<<std::hex<<flags<<std::dec<<" gain="<<gain<<" recipient="<<recipient<<" native="<<original[0]<<" scaled="<<draw({true,false,.2f})[0]<<'\n';
     }
   }
+  // Replay the exact scene-fill compute shader observed twice in the live
+  // cutscene. It overwrites the bank RGB from two exposure-selected colours,
+  // which is why scaling the bank before the dispatch did not cover scenes.
+  const auto scene_code=Read(originals/"0x0E9BEC7A.cs_5_0.cso");
+  ComPtr<ID3D11ComputeShader> scene_shader;
+  assert(SUCCEEDED(device->CreateComputeShader(scene_code.data(),scene_code.size(),nullptr,&scene_shader)));
+  context->CSSetShader(scene_shader.Get(),nullptr,0);
+  std::array<uint32_t,0x500/4> initial;
+  initial.fill(0x12345678u);
+  D3D11_BUFFER_DESC bank_desc{UINT(sizeof(initial)),D3D11_USAGE_DEFAULT,D3D11_BIND_UNORDERED_ACCESS,
+      0,D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS,0};
+  const D3D11_SUBRESOURCE_DATA bank_data{initial.data()};
+  ComPtr<ID3D11Buffer> scene_bank,staging;
+  assert(SUCCEEDED(device->CreateBuffer(&bank_desc,&bank_data,&scene_bank)));
+  D3D11_UNORDERED_ACCESS_VIEW_DESC uav_desc{};uav_desc.Format=DXGI_FORMAT_R32_TYPELESS;
+  uav_desc.ViewDimension=D3D11_UAV_DIMENSION_BUFFER;
+  uav_desc.Buffer.NumElements=UINT(initial.size());uav_desc.Buffer.Flags=D3D11_BUFFER_UAV_FLAG_RAW;
+  ComPtr<ID3D11UnorderedAccessView> scene_uav;
+  assert(SUCCEEDED(device->CreateUnorderedAccessView(scene_bank.Get(),&uav_desc,&scene_uav)));
+  bank_desc.Usage=D3D11_USAGE_STAGING;bank_desc.BindFlags=bank_desc.MiscFlags=0;bank_desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+  assert(SUCCEEDED(device->CreateBuffer(&bank_desc,nullptr,&staging)));
+  const std::array<float,8> scene_colors={6.809904f,7.86273f,7.86273f,.2f,3.931306f,3.342363f,2.093967f,.2f};
+  size_t scene_cases=0;
+  for(float exposure:{0.f,.5f,1.f})for(float strength:{0.f,.2f,1.f})
+    for(float cutscene:{0.f,.2f,.5f,1.f})for(float gain:{0.f,.25f,1.f,2.f})for(bool unify:{false,true})for(bool enabled:{false,true}) {
+      const D3D11_TEXTURE2D_DESC exposure_desc{1,1,1,1,DXGI_FORMAT_R32_FLOAT,{1,0},D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE};
+      const D3D11_SUBRESOURCE_DATA exposure_data{&exposure,4};
+      ComPtr<ID3D11Texture2D> exposure_texture;ComPtr<ID3D11ShaderResourceView> exposure_view;
+      assert(SUCCEEDED(device->CreateTexture2D(&exposure_desc,&exposure_data,&exposure_texture)));
+      assert(SUCCEEDED(device->CreateShaderResourceView(exposure_texture.Get(),nullptr,&exposure_view)));
+      context->CSSetShaderResources(0,1,exposure_view.GetAddressOf());
+      std::array<float,36> record{};auto colors=scene_colors;
+      environment[0x404c/4]=gain;
+      player_fill::ApplyCameraLight(record.data(),env+0x10,env+0xb0e8,env+0x3b00,colors.data(),{enabled,unify,strength,cutscene});
+      assert(colors[3]==scene_colors[3]&&colors[7]==scene_colors[7]);
+      context->UpdateSubresource(scene_bank.Get(),0,nullptr,initial.data(),0,0);
+      for(unsigned second=0;second<2;++second) {
+        std::array<float,12> constants{};constants[0]=float(0x3d0+second*0x90);
+        std::copy(colors.begin(),colors.end(),constants.begin()+4);
+        auto cb=Buffer(device.Get(),constants.data(),sizeof(constants),D3D11_BIND_CONSTANT_BUFFER);
+        context->CSSetConstantBuffers(0,1,cb.GetAddressOf());
+        context->CSSetUnorderedAccessViews(0,1,scene_uav.GetAddressOf(),nullptr);
+        context->Dispatch(1,1,1);
+        ID3D11UnorderedAccessView* none=nullptr;context->CSSetUnorderedAccessViews(0,1,&none,nullptr);
+      }
+      context->CopyResource(staging.Get(),scene_bank.Get());
+      D3D11_MAPPED_SUBRESOURCE mapped{};assert(SUCCEEDED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped)));
+      const auto* words=static_cast<const uint32_t*>(mapped.pData);
+      const unsigned selected=exposure>.5f?0:4;
+      const float scale=enabled?cutscene*(unify?gain:1.f):1.f;
+      for(unsigned i=0;i<initial.size();++i) {
+        const unsigned local=i>=0x460/4?i-0x460/4:i>=0x3d0/4?i-0x3d0/4:4;
+        if(local<3)assert(std::abs(std::bit_cast<float>(words[i])-scene_colors[selected+local]*scale)<.00001f);
+        else assert(words[i]==initial[i]);
+      }
+      context->Unmap(staging.Get(),0);++scene_cases;
+    }
+  std::cout<<"PASS "<<scene_cases<<" original scene-fill compute cases: independent cutscene strength, both exposure choices, two bank offsets, native bypass, matching, RGB-only HDR and untouched metadata\n";
   assert(detects_gap&&has_hdr);
   std::cout<<"PASS original uncovered skin DXBC: native identity, full/20%/50% strengths, world-light identity, matching across receiver types, shadow/shape flags, HDR and regression detects missing scaling\n";
 }

@@ -34,7 +34,7 @@ inline constexpr Value night[] = {
     {"NightExposureAdaptation", 0.f, 1.f},
     {"NightExposureBrighteningSpeed", 100.f, 35.f},
     {"NightExposureDarkeningSpeed", 100.f, 5.f},
-    {"NightExposureMaximumBrightening", 100.f, 20.f},
+    {"NightExposureMaximumBrightening", 100.f, 100.f},
     {"NightExposureMaximumDarkening", 100.f, 100.f},
     {"NightExposureFixedLuminance", .18f, .18f},
     {"NightDarkeningStart", 18.f, 18.f},
@@ -47,7 +47,7 @@ inline constexpr Value graphics[] = {
     {"GfxSoftShadows", 0.f, 1.f}, {"GfxSunDiameter", .15f, .15f},
     {"GfxContactShadows", 0.f, 1.f}, {"GfxContactLength", 1.f, 1.f},
     {"GfxPlayerFill", 0.f, 1.f}, {"GfxPlayerStrength", .2f, .2f},
-    {"GfxPlayerUnify", 0.f, 1.f}, {"GfxVolumetrics", 0.f, 1.f},
+    {"GfxCutsceneFillStrength", 1.f, .2f}, {"GfxPlayerUnify", 0.f, 1.f}, {"GfxVolumetrics", 0.f, 1.f},
     {"GfxFogDensity", 1.f, 1.f}, {"GfxFogSkyDensity", 1.f, 1.f},
     {"GfxFogStart", 0.f, 0.f}, {"GfxFogLight", 1.f, 1.f},
     {"GfxFogLocalLight", 2.f, 2.f}, {"GfxFogAnisotropy", .5f, .5f},
@@ -55,7 +55,10 @@ inline constexpr Value graphics[] = {
     {"GfxFogResolutionQuality", 2.f, 2.f},
     {"GfxFogReconstruction", 0.f, 1.f},
     {"GfxFogShadowQuality", 4.f, 4.f}, {"GfxWater", 0.f, 1.f},
-    {"GfxWaterClarity", .5f, .5f}, {"GfxRefractiveRain", 0.f, 1.f},
+    {"GfxRefractiveRain", 0.f, 1.f},
+    {"GfxUnderwaterDensity",1.f,1.f},
+    {"GfxUnderwaterDetail",2.f,2.f},{"GfxWaterCaustics",1.f,1.f},
+    {"GfxWaterCameraBlur",0.f,.15f},{"GfxWaterCameraCA",0.f,1.f},
 };
 
 template <std::size_t N>

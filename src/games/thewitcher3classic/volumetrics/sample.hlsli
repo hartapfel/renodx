@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #ifndef WITCHER_CLASSIC_VOLUME_SAMPLE
 #define WITCHER_CLASSIC_VOLUME_SAMPLE
+#include "../water/underwater_inputs.hlsli"
 Texture3D<float4> ClassicFogVolume : register(t116);
 StructuredBuffer<float4> ClassicFogParameters : register(t117);
 SamplerState ClassicFogSampler : register(s11);
@@ -122,6 +123,14 @@ float4 SampleClassicFogPixel(float4 position) {
 // The native forward material performs lerp(surface, fog.rgb, fog.a).
 // Retain native artistic desaturation at the sampled medium opacity.
 void ClassicForwardFog(float4 position, inout float desaturation, inout float4 fog) {
+  if(UnderwaterReady() && UnderwaterState[0].w>=1.f) {
+    int2 pixel=int2(position.xy);
+    float4 world=UnderwaterFrame[210]*pixel.x+UnderwaterFrame[211]*pixel.y
+        +UnderwaterFrame[212]*position.z+UnderwaterFrame[213];
+    if(UnderwaterWeight(world.xyz/max(world.w,1.e-7f))>=1.f) {
+      desaturation=0.f;fog=0.f;return;
+    }
+  }
   if (ClassicFogReady()) {
     float4 sampling = ClassicFogParameters[3];
     float2 uv = position.xy*sampling.xy;

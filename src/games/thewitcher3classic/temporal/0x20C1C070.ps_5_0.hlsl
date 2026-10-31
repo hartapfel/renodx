@@ -1,3 +1,4 @@
+#include "../water/underwater_inputs.hlsli"
 #include "../lighting/parameters.hlsli"
 ByteAddressBuffer LightIndices : register(t20);
 
@@ -645,6 +646,7 @@ void main(
     r1.w = saturate(r1.w * cb12[218].x + cb12[218].y);
     r14.xyz = -cb13[1].xyz + r14.xyz;
     r14.xyz = r1.www * r14.xyz + cb13[1].xyz;
+    r14.xyz *= UnderwaterSunFactor(v4.xyz);
     r1.w = cmp(0 < r1.y);
     if (r1.w != 0) {
       r1.w = dot(cb13[0].xyz, r8.xyz);
@@ -1322,6 +1324,9 @@ void main(
   r3.xyz = AMBIENT_ONLY_AO ? 1.f : cb12[69].xxx * r3.xyz + cb12[69].yyy;
   r6.xyz = r8.xyz * r3.xyz;
   r3.xyz = r4.xyz * r3.xyz;
+  float3 underwater_ambient=UnderwaterAmbientFactor(v4.xyz);
+  r0.xyz *= underwater_ambient;
+  r1.xzw *= underwater_ambient;
   r0.xyz = r0.xyz * r5.xyz + r6.xyz;
   r0.xyz = r2.xyz * r0.xyz + r3.xyz;
   o0.xyz = r1.xzw * r5.xyz + r0.xyz;

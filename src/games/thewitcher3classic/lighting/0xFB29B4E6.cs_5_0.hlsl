@@ -32,6 +32,7 @@ cbuffer cb12 : register(b12)
 
 // 3Dmigoto declarations
 #include "brdf.hlsli"
+#include "../water/underwater_inputs.hlsli"
 #define cmp -
 
 
@@ -66,6 +67,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     r4.xyzw = cb12[212].xyzw * r1.xxxx + r4.xyzw;
     r4.xyzw = cb12[213].xyzw + r4.xyzw;
     r4.xyz = r4.xyz / r4.www;
+    float3 underwater_sun_direction=UnderwaterSunDirection(r4.xyz,cb13[0].xyz);
+    float3 underwater_ambient_factor=UnderwaterAmbientFactor(r4.xyz);
     r5.xyz = cb12[0].xyz + -r4.xyz;
     r1.x = dot(r5.xyz, r5.xyz);
     r1.x = rsqrt(r1.x);
@@ -83,7 +86,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     if (r2.y != 0) {
       r1.w = (int)r1.w & 8;
       r9.xy = r1.ww ? cb13[3].xy : float2(1,0);
-      r1.w = dot(cb13[0].xyz, r3.xyz);
+      r1.w = dot(underwater_sun_direction, r3.xyz);
       r2.y = saturate(r1.w);
       r3.w = r2.y + r9.y;
       r3.w = r3.w + r1.y;
@@ -91,7 +94,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
       if (r3.w != 0) {
         r3.w = r1.w * r9.x + r9.y;
         r9.xyz = saturate(r3.www);
-        r5.xyz = r5.xyz * r1.xxx + cb13[0].xyz;
+        r5.xyz = r5.xyz * r1.xxx + underwater_sun_direction;
         r1.x = dot(r5.xyz, r5.xyz);
         r1.x = rsqrt(r1.x);
         r5.xyz = r5.xyz * r1.xxx;
@@ -119,7 +122,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
         if (r1.x != 0) {
           r1.x = 1 + r1.w;
           r1.x = 0.5 * r1.x;
-          r3.w = dot(cb13[0].xyz, -r6.xyz);
+          r3.w = dot(underwater_sun_direction, -r6.xyz);
           r3.w = 1 + r3.w;
           r3.w = 0.5 * r3.w;
           r4.w = dot(r3.xyz, -r6.xyz);
@@ -144,6 +147,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
         r1.x = saturate(r1.x * cb12[218].x + cb12[218].y);
         r10.xyz = -cb13[1].xyz + r10.xyz;
         r10.xyz = r1.xxx * r10.xyz + cb13[1].xyz;
+        r10.xyz *= UnderwaterSunFactor(r4.xyz);
         r12.xyz = r12.xyz * r7.yyy;
         r12.xyz = r12.xyz * r10.xyz;
         r1.x = cmp(0 < r1.w);
@@ -191,6 +195,14 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
       r9.xyz = float3(0,0,0);
       r12.xyz = float3(0,0,0);
       r5.xyz = float3(0,0,0);
+    }
+    if(UnderwaterReceiverWeight(r4.xyz)>0.f) {
+      // This native directional term is reused below to blend ambient/shadow
+      // presets. Refraction must change direct lighting, not those authored
+      // ambient controls. Reconstruct their original (unrefracted) weight.
+      uint native_material=(uint)(r8.w*255.f+.5f);
+      float2 native_wrap=(native_material&8u)!=0u ? cb13[3].xy:float2(1,0);
+      r9.xyz=r7.y>0.f ? saturate(dot(cb13[0].xyz,r3.xyz)*native_wrap.x+native_wrap.y):0.f;
     }
     r9.xyz = min(r9.xyz, r7.yyy);
     r1.xw = -cb12[0].xy + r4.xy;
@@ -795,6 +807,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
     r2.xyz = AMBIENT_ONLY_AO ? 1.f : cb12[69].xxx * r2.xyz + cb12[69].yyy;
     r3.xyz = r4.xyz * r3.xyz;
     r1.xyz = r4.xyz * r1.xzw;
+    r3.xyz *= underwater_ambient_factor;
+    r1.xyz *= underwater_ambient_factor;
     r4.xyz = r9.xyz * r2.xyz;
     r2.xyz = r5.xyz * r2.xyz;
   } else {

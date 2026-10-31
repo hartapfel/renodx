@@ -293,6 +293,7 @@ void main(
       r4.w = saturate(r4.w * cb12[218].x + cb12[218].y);
       r11.xyz = -cb13[1].xyz + r11.xyz;
       r11.xyz = r4.www * r11.xyz + cb13[1].xyz;
+      r11.xyz *= UnderwaterSunFactor(v10.xyz);
       r10.xyz = r10.xyz * r8.xxx;
       r10.xyz = r10.xyz * r11.xyz;
     } else {
@@ -525,6 +526,9 @@ void main(
     r1.w = cb12[69].x + cb12[69].y;
     r1.xyz = r1.xyz * r8.yyy;
     r2.xyz = r10.xyz * r1.www;
+    float3 underwater_ambient=UnderwaterAmbientFactor(v10.xyz);
+    r1.xyz *= underwater_ambient;
+    r3.xyz *= underwater_ambient;
     r2.xyz = r3.xyz * r8.yyy + r2.xyz;
     r0.xyw = r0.xyw * r2.xyz + r1.xyz;
   } else {

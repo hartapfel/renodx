@@ -1,3 +1,4 @@
+#include "../water/underwater_inputs.hlsli"
 ByteAddressBuffer HairLightIndices : register(t20);
 ByteAddressBuffer HairDecalIndices : register(t21);
 // ---- Created with 3Dmigoto v1.3.16 on Tue Oct 27 23:14:41 2026
@@ -95,6 +96,7 @@ void main(
   r0.xyzw = v0.zzzz * cb10[14].xyzw + r0.xyzw;
   r0.xyzw = cb10[15].xyzw + r0.xyzw;
   r0.xyz = r0.xyz / r0.www;
+  float3 underwater_world=r0.xyz;
   r1.xy = floor(v1.xz);
   r2.xy = v1.xz + -r1.xy;
   r3.xyz = cb10[16].xyz + -r0.xyz;
@@ -704,6 +706,7 @@ void main(
   r6.w = saturate(r6.w * cb12[218].x + cb12[218].y);
   r8.xzw = -cb13[1].xyz + r8.xzw;
   r8.xzw = r6.www * r8.xzw + cb13[1].xyz;
+  r8.xzw *= UnderwaterSunFactor(underwater_world);
   r8.xzw = r8.xzw * r1.xxx;
   r7.w = dot(cb13[0].xyz, cb13[0].xyz);
   r7.w = rsqrt(r7.w);
@@ -1519,6 +1522,9 @@ void main(
   r0.w = AMBIENT_ONLY_AO ? 1.f : cb12[69].x + cb12[69].y;
   r3.xyz = r3.xyz * r0.www;
   r4.xyz = r7.xyz * r0.www;
+  float3 underwater_ambient=UnderwaterAmbientFactor(underwater_world);
+  r1.xyz *= underwater_ambient;
+  r0.xyz *= underwater_ambient;
   r1.xyz = r1.xyz * r5.www + r3.xyz;
   r1.xyz = r2.xzw * r1.xyz + r4.xyz;
   r0.xyz = r0.xyz * r5.www + r1.xyz;
@@ -1626,6 +1632,7 @@ void main(
     r1.xyzw = r2.xyzw + -r4.xyzw;
     r4.xyzw = cb12[192].xxxx * r1.xyzw + r4.xyzw;
   }
+  if(UnderwaterWeight(underwater_world)>=1.f) {r0.w=0.f;r4=0.f;}
   r1.x = dot(float3(0.333000004,0.555000007,0.222000003), r0.xyz);
   r1.xyz = r1.xxx * r3.xyz + -r0.xyz;
   r0.xyz = r0.www * r1.xyz + r0.xyz;

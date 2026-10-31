@@ -4,12 +4,17 @@
 #include "pipeline.hpp"
 #include "../water/pipeline.hpp"
 #include "../water/reflections.hpp"
+#include "../water/underwater.hpp"
+#include "../water/camera.hpp"
 #include "../../../utils/data.hpp"
 namespace witcher3classic::volumetrics {
 struct __declspec(uuid("08d5a440-5e33-4e83-bd75-2cd02e204a40")) DeviceData {
   Pipeline pipeline;
   water::Pipeline water_pipeline;
   water::Reflections reflections;
+  water::Underwater underwater;
+  water::Camera camera;
+  uint64_t underwater_composite_frame=UINT64_MAX;
   ComPtr<ID3D11DeviceContext1> context;
   uint64_t native_handle=0, frame=0;
   bool logged=false,logged_reflections=false;
@@ -20,6 +25,7 @@ inline void OnDestroy(reshade::api::device* device) {
   if (data && data->context) {
     data->reflections.Restore(data->context.Get());
     data->water_pipeline.Restore(data->context.Get());
+    data->underwater.Restore(data->context.Get());
     data->pipeline.Restore(data->context.Get());
   }
   renodx::utils::data::Delete<DeviceData>(device);
@@ -29,8 +35,47 @@ inline void OnPresent(reshade::api::command_queue*,reshade::api::swapchain* swap
   auto* data=renodx::utils::data::Get<DeviceData>(swapchain->get_device());
   if (!data) return;
   if (data->context) { data->reflections.Restore(data->context.Get()); data->water_pipeline.Restore(data->context.Get()); data->pipeline.Restore(data->context.Get()); }
+  if(data->context)data->underwater.Restore(data->context.Get());
   if(water::mode==0.f)data->reflections.Invalidate();
   ++data->frame;
+}
+inline bool OnUnderwaterPrepare(reshade::api::command_list* cmd) {
+  if(water::mode==0.f ||cmd->get_device()->get_api()!=reshade::api::device_api::d3d11)return false;
+  auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  if(!data)return false;
+  if(!data->context ||data->native_handle!=cmd->get_native()) {
+    auto* native=reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native());
+    renodx::utils::directx::NativeFromReShadeProxy(&native);
+    if(native->GetType()!=D3D11_DEVICE_CONTEXT_IMMEDIATE)return false;
+    if(data->context) {
+      data->reflections.Restore(data->context.Get());data->water_pipeline.Restore(data->context.Get());
+      data->pipeline.Restore(data->context.Get());data->underwater.Restore(data->context.Get());
+    }
+    data->underwater.captured_frame=UINT64_MAX;
+    data->underwater.prepared_frame=UINT64_MAX;
+    data->context.Reset();if(FAILED(native->QueryInterface(IID_PPV_ARGS(&data->context))))return false;
+    data->native_handle=cmd->get_native();
+  }
+  ComPtr<ID3D11Buffer> frame,lighting;ComPtr<ID3D11ShaderResourceView> shadow;
+  UINT offset=0,count=0;
+  data->context->PSGetConstantBuffers1(12,1,&frame,&offset,&count);if(offset)return false;
+  data->context->PSGetConstantBuffers1(13,1,&lighting,&offset,&count);if(offset)return false;
+  data->context->PSGetShaderResources(8,1,&shadow);
+  data->underwater.Prepare(data->context.Get(),frame.Get(),lighting.Get(),shadow.Get(),data->frame,
+      {{.03f*std::clamp(water::underwater_density,0.f,4.f),.5f,1.f,0},
+       {std::clamp(water::underwater_quality,1.f,4.f),std::clamp(water::caustics,0.f,2.f),1.f,0}});
+  return false;
+}
+inline bool OnUnderwaterLighting(reshade::api::command_list* cmd) {
+  auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  return water::mode!=0.f && data && data->context &&data->native_handle==cmd->get_native()
+      &&data->underwater.Bind(data->context.Get(),data->frame,true);
+}
+inline bool OnUnderwater(reshade::api::command_list* cmd) {
+  auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  if(water::mode!=0.f &&data &&data->context &&data->native_handle==cmd->get_native())
+    data->underwater.Bind(data->context.Get(),data->frame);
+  return false;
 }
 inline bool OnFog(reshade::api::command_list* cmd) {
   if ((mode==0.f && water::mode==0.f) || cmd->get_device()->get_api()!=reshade::api::device_api::d3d11) return false;
@@ -43,7 +88,9 @@ inline bool OnFog(reshade::api::command_list* cmd) {
     if (data->context) {
       data->water_pipeline.Restore(data->context.Get());
       data->pipeline.Restore(data->context.Get());
+      data->underwater.Restore(data->context.Get());
     }
+    data->underwater.captured_frame=data->underwater.prepared_frame=UINT64_MAX;
     data->reflections.Invalidate();
     data->water_pipeline.captured_frame=UINT64_MAX;
     data->pipeline.generated_frame=UINT64_MAX;
@@ -54,6 +101,7 @@ inline bool OnFog(reshade::api::command_list* cmd) {
   auto* context=data->context.Get();
   data->water_pipeline.Restore(context);
   data->pipeline.Restore(context);
+  OnUnderwater(cmd);
   // This is the audited main atmospheric fog pass. Native b12/b13 remain
   // untouched; no shader-injection cbuffer is installed for these replacements.
   D3D11_VIEWPORT viewport; UINT count=1;
@@ -129,6 +177,7 @@ inline bool OnFog(reshade::api::command_list* cmd) {
   return false;
 }
 inline bool OnForward(reshade::api::command_list* cmd) {
+  OnUnderwater(cmd);
   auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
   if (mode!=0.f && data && data->context && data->native_handle==cmd->get_native())
     data->pipeline.Bind(data->context.Get(),false,data->frame);
@@ -137,6 +186,8 @@ inline bool OnForward(reshade::api::command_list* cmd) {
 inline bool OnWater(reshade::api::command_list* cmd) {
   OnForward(cmd);
   auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  if(water::mode!=0.f &&data &&data->context &&data->native_handle==cmd->get_native())
+    data->underwater.Capture(data->context.Get(),data->frame);
   if(water::mode!=0.f && data && data->context && data->native_handle==cmd->get_native())
     data->water_pipeline.Bind(data->context.Get(),data->frame);
   return false;
@@ -180,5 +231,6 @@ inline bool OnReflectionCapture(reshade::api::command_list* cmd) {
 inline void OnDrawn(reshade::api::command_list* cmd) {
   auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
   if (data && data->context) { data->reflections.Restore(data->context.Get()); data->water_pipeline.Restore(data->context.Get()); data->pipeline.Restore(data->context.Get()); }
+  if(data &&data->context)data->underwater.Restore(data->context.Get());
 }
 }  // namespace witcher3classic::volumetrics

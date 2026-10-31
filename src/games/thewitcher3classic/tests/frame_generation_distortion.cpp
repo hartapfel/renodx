@@ -11,11 +11,11 @@
 using Microsoft::WRL::ComPtr;
 using namespace witcher3classic::frame_generation;
 
-int main() {
+int main(int argc, char**) {
   ComPtr<ID3D11Device> device;
   ComPtr<ID3D11DeviceContext> base;
   ComPtr<ID3D11DeviceContext1> context;
-  assert(SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &base)));
+  assert(SUCCEEDED(D3D11CreateDevice(nullptr, argc>1 ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &base)));
   assert(SUCCEEDED(base.As(&context)));
   Distortion lens;
   for (const UINT width : {320u, 430u}) for (const float intensity : {0.f, .5f, 1.f, 3.f, 5.f}) {
@@ -52,7 +52,7 @@ int main() {
       inverse_error=std::max(inverse_error,std::max(std::abs(inverse[0]-u)*3840,std::abs(inverse[1]-v)*2160));
     }
     context->Unmap(staging.Get(),0);
-    std::printf("%ux%u intensity %.1f: forward %.4f px, inverse %.4f px at 4K\n",width,height,intensity,forward_error,inverse_error);
+    std::printf("%ux%u CA %.1f: forward %.4f px, inverse %.4f px at 4K\n",width,height,intensity,forward_error,inverse_error);
     assert(forward_error < 1.0 && inverse_error < 1.0);
     if (intensity <= 1.f) assert(forward_error < .25 && inverse_error < .25);
   }

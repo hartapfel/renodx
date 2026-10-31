@@ -16,6 +16,7 @@
 #include <algorithm>
 #include "../lighting/contact.hpp"
 #include "../lighting/player_fill.hpp"
+#include "../water/caustics_config.h"
 using Microsoft::WRL::ComPtr;
 using Pixel=std::array<float,4>;
 std::vector<char> Read(const std::string& path) {
@@ -50,10 +51,12 @@ int main(int argc,char**) {
   // controls that left uncovered native skin LODs at full strength.
   auto upload_fill=[&](const witcher3classic::lighting::player_fill::Controls& controls) {
     auto common=frame;auto lights=lighting;
-    std::array<float,0x4050/4> environment{};environment[0x404c/4]=frame[71][0];
+    std::array<float,0xb400/4> environment{};environment[0x404c/4]=frame[71][0];
     const UINT count=256;std::memcpy(&lights[57][0],&count,sizeof(count));
     witcher3classic::lighting::player_fill::ApplyCommon(common.data(),controls);
-    witcher3classic::lighting::player_fill::ApplyLights(lights.data(),environment.data(),controls);
+    const auto* env=reinterpret_cast<const uint8_t*>(environment.data());
+    for(unsigned i=0;i<count;++i)if(std::bit_cast<uint32_t>(lights[61+9*i][3])&0x80000000u)
+      witcher3classic::lighting::player_fill::ApplyCameraLight(&lights[58+9*i],env+0x10,env+0xb148,env+0x3960,nullptr,controls);
     ctx->UpdateSubresource(frame_cb.Get(),0,nullptr,common.data(),0,0);
     ctx->UpdateSubresource(light_cb.Get(),0,nullptr,lights.data(),0,0);
   };
@@ -107,6 +110,38 @@ int main(int argc,char**) {
   auto compare=[&](const auto& a,const auto& b,const char* label){float worst=0;size_t nonzero=0;for(size_t i=0;i<a.size();++i){assert(std::isfinite(a[i])&&std::isfinite(b[i]));worst=std::max(worst,std::abs(a[i]-b[i]));if(i%4<3&&a[i]!=0)++nonzero;}std::cout<<label<<" native max error="<<worst<<" nonzero="<<nonzero<<std::endl;assert(worst<.002f&&nonzero>100);};
   auto cs=[&](const std::string& path){auto code=Read(path);ComPtr<ID3D11ComputeShader> shader;assert(SUCCEEDED(device->CreateComputeShader(code.data(),code.size(),nullptr,&shader)));ctx->CSSetShader(shader.Get(),nullptr,0);ctx->CSSetUnorderedAccessViews(0,1,uav.GetAddressOf(),nullptr);ctx->Dispatch(W/16,H/16,1);return read();};
   auto original=cs(scratch+"originals/0xFB29B4E6.cs_5_0.cso");auto baseline=cs("build/thewitcher3classic.include/embed/0xFB29B4E6.cso");compare(original,baseline,"Directional/IBL");
+  // Incoming water transport attenuates ambient light while preserving its authored blend.
+  {
+    std::array<Pixel,8> water{};
+    water[0]={0,0,3,1};water[1]={.3f,0,.9539392f,5};
+    water[2]={.39f,.096f,.044f,0};water[5]={-32,-32,64,256};water[6]={.25f,2,8,32};
+    auto state=buffer(water.data(),sizeof(water),D3D11_BIND_SHADER_RESOURCE,16);
+    ComPtr<ID3D11ShaderResourceView> view;
+    assert(SUCCEEDED(device->CreateShaderResourceView(state.Get(),nullptr,&view)));
+    auto no_sun=lighting;no_sun[1]={};no_sun[51]={};no_sun[52]={};
+    ctx->UpdateSubresource(light_cb.Get(),0,nullptr,no_sun.data(),0,0);
+    auto ambient=cs("build/thewitcher3classic.include/embed/0xFB29B4E6.cso");
+    ctx->CSSetShaderResources(88,1,view.GetAddressOf());
+    auto submerged_ambient=cs("build/thewitcher3classic.include/embed/0xFB29B4E6.cso");
+    for(unsigned c=0;c<3;++c) {
+      double transfer=0;
+      for(unsigned i=0;i<4096;++i) {
+        double a=(i+.5)/4096,eta=1/1.333,b=std::sqrt(1-eta*eta*(1-a*a));
+        double rs=(eta*a-b)/(eta*a+b),rp=(a-eta*b)/(a+eta*b);
+        transfer+=2*a*(1-.5*(rs*rs+rp*rp))*std::exp(-water[2][c]*5/b)/4096;
+      }
+      for(size_t i=c;i<ambient.size();i+=4)
+        assert(std::abs(submerged_ambient[i]-ambient[i]*transfer)<.015*std::abs(ambient[i])+1.e-5);
+    }
+    std::cout<<"PASS underwater incoming ambient transport vs angular quadrature\n";
+    ctx->UpdateSubresource(light_cb.Get(),0,nullptr,lighting.data(),0,0);
+    auto submerged=cs("build/thewitcher3classic.include/embed/0xFB29B4E6.cso");
+    size_t altered=0;
+    for(size_t i=0;i<submerged.size();++i){assert(std::isfinite(submerged[i]));if(std::abs(submerged[i]-baseline[i])>.001f)++altered;}
+    assert(altered>100);
+    ID3D11ShaderResourceView* empty=nullptr;ctx->CSSetShaderResources(88,1,&empty);
+    compare(baseline,cs("build/thewitcher3classic.include/embed/0xFB29B4E6.cso"),"Underwater binding removal");
+  }
   params[0]={1,1,0,0};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);
   auto custom=cs("build/thewitcher3classic.include/embed/0xFB29B4E6.cso");size_t changed=0;for(size_t i=0;i<custom.size();++i){assert(std::isfinite(custom[i]));if(std::abs(custom[i]-baseline[i])>.001f)++changed;}assert(changed>100);std::cout<<"Custom direct BRDF/AO changed="<<changed<<std::endl;
   params={};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);ID3D11UnorderedAccessView* null_uav=nullptr;ctx->CSSetUnorderedAccessViews(0,1,&null_uav,nullptr);
@@ -562,6 +597,23 @@ int main(int argc,char**) {
       for(size_t i=0;i<original.size();++i)if(std::abs(original[i]-unshadowed[i])>.001f)++shadow_pixels;
     }
     assert(shadow_pixels>100);
+    std::array<Pixel,8> water{};
+    water[0]={0,0,3,1};water[1]={.3f,0,.9539392f,10};water[2]={.1f,.2f,.3f,0};
+    water[5]={-32,-32,64,float(CLASSIC_CAUSTIC_TILE)};water[6]={.25f,2,8,32};
+    auto water_buffer=buffer(water.data(),sizeof(water),D3D11_BIND_SHADER_RESOURCE,16);
+    ComPtr<ID3D11ShaderResourceView> water_view;
+    assert(SUCCEEDED(device->CreateShaderResourceView(water_buffer.Get(),nullptr,&water_view)));
+    auto above=ps(custom_path);
+    ctx->PSSetShaderResources(88,1,water_view.GetAddressOf());auto below=ps(custom_path);
+    size_t affected=0;
+    for(size_t i=0;i<below.size();++i) {
+      assert(std::isfinite(below[i]));
+      if(i%4==3)assert(below[i]==above[i]);
+      else if(std::abs(below[i]-above[i])>.0001f)++affected;
+    }
+    assert(affected>100);
+    ID3D11ShaderResourceView* empty=nullptr;ctx->PSSetShaderResources(88,1,&empty);
+    compare(above,ps(custom_path),"Forward underwater bindings removed");
   }
   assert(old_decoder_errors>100);
   std::cout<<"PASS regression detects old numeric shadow-atlas decoding: "<<old_decoder_errors<<" changed components\n";

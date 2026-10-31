@@ -118,10 +118,21 @@ float4 ShadeClassicWater(Texture2D<float4> depth_texture, float4 position,
   // Three-wavelength RGB approximation of pure-water absorption (650/550/450 nm,
   // NASA Ocean Optics protocols, Pope/Fry), m^-1, plus neutral suspended matter.
   // This is a tunable material, not a measured spectral model of this river.
-  float clarity=max(.25f,ClassicWaterParameters[0].z);
-  float3 absorption=float3(.3594f,.0654f,.0110f);
-  float3 scattering=float3(.0007f,.0014f,.0033f)+rcp(2.f*clarity);
+  float density=max(0.f,ClassicWaterParameters[0].z);
+  float3 absorption=float3(.3594f,.0654f,.0110f)*density;
+  float3 scattering=(float3(.0007f,.0014f,.0033f)+1.f)*density;
   float3 extinction=absorption+scattering;
+  // Reuse the underwater region/weather material. The fallback also honors the
+  // shared Murkiness control while waiting for the first native capture.
+  if(WaterOpticsReady()) {
+    scattering=UnderwaterState[3].rgb;
+    extinction=UnderwaterState[2].rgb;
+  }
+  // Deliberate above-water visibility bias: 50% denser than the underwater
+  // view. Scale absorption and scattering together, including the fallback,
+  // so zero murkiness stays clear and the material's scattering albedo is kept.
+  scattering*=1.5f;
+  extinction*=1.5f;
   float4 transmitted=WaterRefraction(depth_texture,position,world,ray,extinction);
   float3 light=normalize(sun_direction);
   float3 sunlight=max(sun_color,0.f)*saturate(visibility);
@@ -138,10 +149,17 @@ float4 ShadeClassicWater(Texture2D<float4> depth_texture, float4 position,
   float3 ambient=max(ambient_radiance,0.f)*ClassicWaterAmbient(asuint(ClassicWaterFrame[38].w));
   float3 light_in_water=refract(-light,float3(0,0,1),1.f/1.333f);
   float g=.5f;
-  float phase=(1.f-g*g)/(12.56637061f*pow(max(.01f,1.f+g*g-2.f*g*dot(-ray,light_in_water)),1.5f));
+  float phase=WaterPhase(dot(-ray,light_in_water),g);
   float3 sun_extinction=extinction*(1.f+max(0.f,-ray.z)/max(.05f,-light_in_water.z));
   float3 scattered=scattering*(ambient*WaterScatterIntegral(extinction,transmitted.w)
       +sunlight*phase*(1.f-WaterFresnel(saturate(light.z)))*WaterScatterIntegral(sun_extinction,transmitted.w));
+  if(WaterOpticsReady()) {
+    float bottom_depth=max(0.f,-ray.z)*transmitted.w;
+    float cosine=max(-light_in_water.z,.01f);
+    float flux=saturate(light.z)*(1.f-WaterInterfaceFresnel(light.z,1.f/1.333f))/cosine;
+    scattered=scattering*(ambient*WaterSunCell(extinction,0.f,transmitted.w,0.f,bottom_depth)
+        +sunlight*phase*flux*WaterSunCell(extinction,0.f,transmitted.w,0.f,bottom_depth/cosine));
+  }
   float fresnel=WaterFresnel(saturate(dot(normal,view)));
   // Filter unresolved normal variance into the direct-light microfacet width.
   float3 dx=ddx(normal),dy=ddy(normal);

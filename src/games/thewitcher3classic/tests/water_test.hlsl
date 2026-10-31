@@ -1,5 +1,6 @@
 // Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #include "../water/shading.hlsli"
+#include "../water/transport.hlsli"
 Texture2D<float4> Depth : register(t15);
 float4 main(float4 position : SV_Position) : SV_Target {
   float x=floor(position.x)/63.f;
@@ -32,4 +33,20 @@ float4 atmosphere(float4 position:SV_Position):SV_Target {
       FogLightTransmittance(height,directions.y,.004f,falloff,1000.f),
       FogLightTransmittance(height,directions.z,.004f,falloff,1000.f),
       FogLightTransmittance(height,.392f,0.f,falloff,1000.f));
+}
+
+float4 underwater_transport(float4 position:SV_Position):SV_Target {
+  float x=floor(position.x)/63.f;
+  if(position.y<1.f)
+    return float4(WaterInterfaceFresnel(x,1.333f),WaterInterfaceFresnel(x,1.f/1.333f),
+        WaterPhase(2.f*x-1.f,.5f),WaterPhase(2.f*x-1.f,0.f));
+  float distance=40.f*x;
+  float3 extinction=float3(0.f,.01f,.3594f);
+  if(position.y<2.f)
+    return float4(WaterSunCell(extinction,0.f,distance,50.f,50.f-1.2f*distance),1.f);
+  if(position.y<3.f)
+    return float4(WaterSunCell(extinction,0.f,distance,50.f,50.f-distance),1.f);
+  // HDR source and opposed light/view directions. Split-vs-unsplit integration
+  // must agree; no clipping of radiance to SDR and no loss from cancellation.
+  return float4(32.f*.2f*WaterSunCell(extinction,0.f,distance,2.f,2.f+distance),1.f);
 }

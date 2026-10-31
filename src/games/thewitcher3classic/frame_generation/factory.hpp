@@ -111,13 +111,14 @@ inline HRESULT Create(IDXGIFactory* factory, IUnknown* device, const DXGI_SWAP_C
       inputs->textures[Interop::UIAlpha] = captured->capture.alpha_valid ? captured->capture.alpha.Get() : nullptr;
       inputs->readiness.hud_valid = true;
     }
-    if (output_constants->tone_map_type == CLASSIC_TONE_MAP_PSYCHOV31 && output_constants->peak_white_nits > 0.f
-        && output_constants->chromatic_aberration_mode != 0.f && output_constants->chromatic_aberration_intensity > 0.f) {
+    const float aberration = output_constants->tone_map_type == CLASSIC_TONE_MAP_PSYCHOV31
+        && output_constants->peak_white_nits > 0.f && output_constants->chromatic_aberration_mode != 0.f
+        ? output_constants->chromatic_aberration_intensity : 0.f;
+    if (aberration > 0.f) {
       D3D11_TEXTURE2D_DESC output{};
       data->dlss.output->GetDesc(&output);
       if (captured->distortion.Update(data->motion_context.Get(), output.Width, output.Height,
-                                      output_constants->chromatic_aberration_intensity,
-                                      __swap_chain_proxy_vertex_shader, __0xF3CF0001)) {
+                                      aberration, __swap_chain_proxy_vertex_shader, __0xF3CF0001)) {
         inputs->distortion = captured->distortion.texture.Get();
         inputs->distortion_version = captured->distortion.version;
       } else inputs->readiness.inputs_valid = false;
