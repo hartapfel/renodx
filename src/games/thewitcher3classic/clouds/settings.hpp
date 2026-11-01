@@ -10,9 +10,9 @@ inline float resolution = 0.f;
 inline float step_size = 1.f;
 inline float shadows = 1.f;
 // Physical values remain compatible with density/shadow shaders. Only the UI
-// units change: the previous Density 400% is the third baseline.
-// Surface Detail and Detail Size retain their second-rebase physical values.
-inline constexpr float DensityBaseline=.6f, DetailBaseline=4.f, DetailSizeBaseline=.4f;
+// units change: the previous Detail Size 200% is the fourth baseline.
+// Density and Surface Detail retain their approved physical values.
+inline constexpr float DensityBaseline=.6f, DetailBaseline=4.f, DetailSizeBaseline=.8f;
 inline float coverage = 1.f, density = DensityBaseline, size = 1.f, thickness = 1.f;
 inline float detail = DetailBaseline, detail_size = DetailSizeBaseline, base_softness = 0.f;
 // Packed with the independent sky-haze scale in the existing parameter row.

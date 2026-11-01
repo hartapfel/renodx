@@ -447,3 +447,21 @@ repeated loading. Clang x64 Release build passed. Cloud-trace and ground-shadow
 bytecode hashes are unchanged. The game addon matches the build via its existing
 link. Addon SHA256: CCB772B1A2B2B41BE47D7997AADD680076E275CAC62AF9D4BFFC7F9AF0A21406.
 Evidence: tmp/witcher3classic-investigation/cloud-rebase3-20261101/.
+
+
+### Fourth cloud baseline: detail size (2026-11-01)
+
+Previous Cloud Detail Size 200% is now 100%, with physical detail size 0.8.
+The physical range 0.2..2 remains available through a 25..250% slider, allowing
+adjustment below and above the new default. Density, Surface Detail and Base
+Softness defaults are unchanged. CloudAppearanceBaseline=4 halves version-3
+detail-size percentages while preserving density and surface detail; versions
+0..2 migrate directly from their own physical units. Missing settings use the
+new default, and version-4 profiles are not converted twice. No shader changes.
+
+Fourth-rebase validation: preset/default/range checks and source-extracted
+production migration checks pass for versions 0..4, missing values, custom
+settings and repeated loading. Clang x64 Release build passed. Cloud trace
+and shadow shader bytecode remain unchanged; the game-folder addon matches
+the build. SHA256: 8F879E236A96C00BF0C7213B4DA3B167E5459983E80B351EC369F3908273831D.
+Evidence: tmp/witcher3classic-investigation/cloud-rebase4-20261101/.

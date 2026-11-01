@@ -3551,3 +3551,14 @@ preserves version-2 shape percentages, and converts older profiles directly
 from their original physical units. Missing values use defaults; version-3
 profiles are not converted again. This only rebases UI units and defaults;
 cloud lighting, shader density evaluation and shadow algorithms are unchanged.
+
+
+### Fourth cloud baseline: detail size (2026-11-01)
+
+Previous Cloud Detail Size 200% is now 100%, with physical detail size 0.8.
+The physical range 0.2..2 remains available through a 25..250% slider, allowing
+adjustment below and above the new default. Density, Surface Detail and Base
+Softness defaults are unchanged. CloudAppearanceBaseline=4 halves version-3
+detail-size percentages while preserving density and surface detail; versions
+0..2 migrate directly from their own physical units. Missing settings use the
+new default, and version-4 profiles are not converted twice. No shader changes.

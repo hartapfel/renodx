@@ -828,7 +828,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudDetailSize"),
         .label = "Cloud Detail Size", .section = "Cloud Shape",
         .tooltip = "Size of the small billows and wisps within each cloud. Lower values create finer texture; higher values create larger lobes. Cloud Size controls the whole formation separately. Fine detail benefits from higher resolution and shorter raymarch steps.",
-        .min = 50.f, .max = 500.f, .format = "%.0f%%",
+        .min = 25.f, .max = 250.f, .format = "%.0f%%",
         .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
         .parse = [](float value) { return value * .01f * witcher3classic::clouds::DetailSizeBaseline; },
     },
@@ -2465,23 +2465,23 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         reshade::set_config_value(nullptr, renodx::utils::settings::global_name.c_str(), setting->key.c_str(), value);
     }
 
-    // Convert original (0), first-rebase (1), or shape-rebase (2) percentages
-    // directly to version 3 units, preserving saved physical appearances.
-    // Missing values adopt defaults; version 3 profiles are not rescaled.
+    // Convert original (0), first (1), shape (2), or density (3) baselines
+    // directly to version 4 units, preserving saved physical appearances.
+    // Missing values adopt defaults; version 4 profiles are not rescaled.
     for (const auto& suffix : {"-preset1", "-preset2", "-preset3"}) {
       const auto section = renodx::utils::settings::global_name + suffix;
       unsigned baseline = 0;
       reshade::get_config_value(nullptr, section.c_str(), "CloudAppearanceBaseline", baseline);
-      if (baseline >= 3) continue;
+      if (baseline >= 4) continue;
       for (const auto& [key, scale] : {
-          std::pair{"GfxCloudDensity", (baseline == 0 ? 1.f : .15f) / witcher3classic::clouds::DensityBaseline},
+          std::pair{"GfxCloudDensity", (baseline == 0 ? 1.f : baseline < 3 ? .15f : .6f) / witcher3classic::clouds::DensityBaseline},
           std::pair{"GfxCloudDetail", (baseline == 0 ? 1.f : baseline == 1 ? 2.f : 4.f) / witcher3classic::clouds::DetailBaseline},
           std::pair{"GfxCloudDetailSize", (baseline == 0 ? 1.f : baseline == 1 ? .5f : .4f) / witcher3classic::clouds::DetailSizeBaseline}}) {
         float value;
         if (reshade::get_config_value(nullptr, section.c_str(), key, value))
           reshade::set_config_value(nullptr, section.c_str(), key, value * scale);
       }
-      reshade::set_config_value(nullptr, section.c_str(), "CloudAppearanceBaseline", 3u);
+      reshade::set_config_value(nullptr, section.c_str(), "CloudAppearanceBaseline", 4u);
     }
 
     // Exposure used raw multipliers in the first test build. Migrate stored

@@ -15,7 +15,7 @@ int main(int argc,char** argv) {
     if(argc>1 &&std::string_view(argv[1])=="--cloud-sampling") {
       namespace clouds=witcher3classic::clouds;
       for(const auto& [key,physical]:{std::pair{"GfxCloudDensity",.6f},std::pair{"GfxCloudDetail",4.f},
-          std::pair{"GfxCloudDetailSize",.4f}}) {
+          std::pair{"GfxCloudDetailSize",.8f}}) {
         auto* setting=ui::FindSetting(key);
         check(setting &&setting->default_value==100.f &&std::abs(*setting->binding-physical)<1.e-6f
             &&std::abs(setting->parse(100.f)-physical)<1.e-6f,"Rebased cloud startup/UI units mismatch");
@@ -50,10 +50,10 @@ int main(int argc,char** argv) {
         }
       }
       check(clouds::Atmosphere(3.f)==std::array<float,4>{3,8,2,1},"Shape settings not packed with independent sky density");
-      ui::FindSetting("GfxCloudDetailSize")->Set(50.f)->Write();
+      ui::FindSetting("GfxCloudDetailSize")->Set(25.f)->Write();
       check(clouds::Atmosphere(3.f)==std::array<float,4>{3,8,.2f,1},"Detail range cannot move above/below the new baseline");
       ApplyTabPreset(preset::graphics,true);
-      check(clouds::Atmosphere(3.f)==std::array<float,4>{3,4,.4f,0},"Shape preset failed to reset explicit values");
+      check(clouds::Atmosphere(3.f)==std::array<float,4>{3,4,.8f,0},"Shape preset failed to reset explicit values");
       std::cout<<"PASS independent cloud resolution and step size, bounds, defaults and explicit presets\n";return 0;
     }
     if(argc>1 &&std::string_view(argv[1])=="--player-fill") {
