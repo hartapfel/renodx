@@ -1,6 +1,13 @@
 // Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #ifndef CLASSIC_WATER_MATH
 #define CLASSIC_WATER_MATH
+// Scale height-field slopes, not the normalized vector's brightness. Applying
+// this before the native wake blend preserves interaction waves and the mesh.
+float3 WaterRippleNormal(float3 normal, float strength) {
+  if (strength == 1.f) return normal;
+  if (strength <= 0.f) return float3(0,0,1);
+  return normalize(float3(normal.xy*saturate(strength),max(normal.z,1.e-5f)));
+}
 // Air to water, unpolarized dielectric Fresnel. IOR 1.333. Unlike the legacy
 // artistic reflection power, reflection and transmission share one energy budget.
 float WaterFresnel(float cosine) {

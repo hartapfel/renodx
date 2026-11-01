@@ -1,3 +1,4 @@
+#include "../clouds/shadow_inputs.hlsli"
 #include "../volumetrics/sample.hlsli"
 #include "scene_pool.hlsli"
 #include "../water/shading.hlsli"
@@ -231,6 +232,7 @@ void main(
   } else {
     r3.w = -10;
   }
+  float water_mean_depth=v2.w-r3.w;
   r3.w = v2.z + -r3.w;
   r5.z = cmp(r3.w >= 0);
   r5.w = r3.w * 2 + -9.5;
@@ -830,10 +832,19 @@ void main(
   r1.z = rsqrt(r1.z);
   r4.xyw = r4.xyw * r1.zzz;
   r0.z = saturate(1 + -r0.z);
+  float water_ripple_coverage=r0.z;
   r4.xy = r4.xy * r0.zz;
   r0.z = dot(r4.xyw, r4.xyw);
   r0.z = rsqrt(r0.z);
   r4.xyw = r4.xyw * r0.zzz;
+  // Match the main water permutation before native local wake composition.
+  if (ClassicWaterReady()) {
+    if(ClassicWaterParameters[1].y!=0.f) {
+      r4.xyw=WaterSurfaceWaveNormal(t5,s5_s,v1.xy,cb4[0].xy,cb4[1].xy,cb4[3].xy,
+          water_mean_depth,length(v1.xy-cb1[8].xy),ClassicWaterParameters[1].x,water_ripple_coverage,
+          max(abs(ddx(v1.xy)),abs(ddy(v1.xy))));
+    } else r4.xyw=WaterRippleNormal(r4.xyw,ClassicWaterParameters[1].x);
+  }
   r2.zw = -cb4[4].xy + v2.xy;
   r2.zw = r2.zw * float2(0.0333333351,0.0333333351) + float2(0.5,0.5);
   r6.xyzw = t1.SampleLevel(s1_s, r2.zw, 0).zxyw;
@@ -1343,6 +1354,7 @@ void main(
   r1.y = r6.z * r6.w + r1.y;
   r1.y = max(0.5, r1.y);
   if (r3.y != 0) {
+    float3 classic_cloud_world_0 = r4.xyw;
     r3.y = 20 * cb12[66].x;
     r8.zw = trunc(cb12[68].xy);
     r11.xyz = -cb12[0].xyz + r4.xyw;
@@ -1379,6 +1391,7 @@ void main(
     r4.x = r4.x + -r3.y;
     r3.y = r4.w * r4.x + r3.y;
     r3.y = -r4.y * r3.y + 1;
+    r3.y = ClassicCloudShadow(classic_cloud_world_0, r3.y);
     r0.x = r3.y * r0.x;
     r4.xyw = r3.zzz ? cb2[45].xyz : cb2[47].xyz;
     r4.xyw = -cb2[46].xyz + r4.xyw;

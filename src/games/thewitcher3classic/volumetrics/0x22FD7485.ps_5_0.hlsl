@@ -1,3 +1,4 @@
+#include "../clouds/shadow_inputs.hlsli"
 #include "sample.hlsli"
 // ---- Created with 3Dmigoto v1.3.16 on Tue Oct 27 18:21:58 2026
 Texture2DArray<float4> t14 : register(t14);
@@ -168,6 +169,7 @@ void main(
   if (ClassicFogReady()) r0.w = SampleClassicFogPixel(fog_position).a;
   r0.xyz = r0.xyz * r0.www;
   r0.xyz = max(float3(0,0,0), r0.xyz);
+  float3 classic_cloud_world_0 = v1.xyz;
   r0.w = 20 * cb3[66].x;
   r1.zw = trunc(cb3[68].xy);
   r2.xyz = -cb3[0].xyz + v1.xyz;
@@ -204,6 +206,7 @@ void main(
   r1.x = r1.x + -r0.w;
   r0.w = r1.z * r1.x + r0.w;
   r0.w = -r1.y * r0.w + 1;
+  r0.w = ClassicCloudShadow(classic_cloud_world_0, r0.w);
   o0.xyz = r0.xyz * r0.www;
   o0.w = 0;
   return;

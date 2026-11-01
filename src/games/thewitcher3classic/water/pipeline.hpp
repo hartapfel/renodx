@@ -46,7 +46,7 @@ class Pipeline {
       buffer.ByteWidth=4304; buffer.BindFlags=D3D11_BIND_SHADER_RESOURCE;
       buffer.MiscFlags=D3D11_RESOURCE_MISC_BUFFER_STRUCTURED; buffer.StructureByteStride=16;
       if (FAILED(device->CreateBuffer(&buffer,nullptr,&frame_))) return false;
-      buffer.ByteWidth=16;
+      buffer.ByteWidth=32;
       if (FAILED(device->CreateBuffer(&buffer,nullptr,&parameters_))
           || FAILED(device->CreateShaderResourceView(parameters_.Get(),nullptr,&parameter_view_))) return false;
       D3D11_SAMPLER_DESC sampler{};
@@ -59,7 +59,8 @@ class Pipeline {
     const D3D11_BOX box{0,0,0,width,height,1};
     context->CopySubresourceRegion(scene_.Get(),0,0,0,0,texture.Get(),0,&box);
     context->CopyResource(frame_.Get(),frame);
-    const std::array<float,4> parameters{float(width),float(height),std::clamp(underwater_density,0.f,4.f),1.f};
+    const std::array<float,8> parameters{float(width),float(height),std::clamp(underwater_density,0.f,4.f),1.f,
+        std::clamp(surface_ripples,0.f,1.f),ripple_pattern!=0.f ? 1.f : 0.f,0.f,0.f};
     context->UpdateSubresource(parameters_.Get(),0,nullptr,parameters.data(),0,0);
     captured_frame=frame_id;
     return true;

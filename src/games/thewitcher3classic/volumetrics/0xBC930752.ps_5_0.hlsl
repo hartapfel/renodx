@@ -1,3 +1,4 @@
+#define CLASSIC_FOG_OPAQUE_CACHE
 #include "../night_sky.hlsli"
 #include "sample.hlsli"
 // ---- Created with 3Dmigoto v1.3.16 on Tue Oct 27 18:43:57 2026
@@ -314,10 +315,9 @@ void main(
   if (ClassicFogReady()) {
     // Sky uses its own native density profile (cb12[44], not opaque [43]).
     // Keep that native fog and add only the volume's direct-light radiance.
-    float4 fog = SampleClassicFogRaw(v2.xy*ClassicFogParameters[3].xy,ClassicFogParameters[0].w);
     uint count,stride;
     ClassicFogParameters.GetDimensions(count,stride);
-    if (count == 21 || count == 22) o0.xyz += ClassicFogDirect(fog);
+    if (count == 21 || count == 22) o0.xyz += SampleClassicSkyDirect(v2.xy*ClassicFogParameters[3].xy,ClassicFogParameters[0].w);
   }
   o0.w = 1;
   return;

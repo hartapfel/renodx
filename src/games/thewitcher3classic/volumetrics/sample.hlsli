@@ -2,6 +2,7 @@
 #ifndef WITCHER_CLASSIC_VOLUME_SAMPLE
 #define WITCHER_CLASSIC_VOLUME_SAMPLE
 #include "../water/underwater_inputs.hlsli"
+#include "../night_sky.hlsli"
 Texture3D<float4> ClassicFogVolume : register(t116);
 StructuredBuffer<float4> ClassicFogParameters : register(t117);
 SamplerState ClassicFogSampler : register(s11);
@@ -65,6 +66,14 @@ float3 ClassicFogDirect(float4 fog) {
   ClassicFogParameters.GetDimensions(count,stride);
   if (count == 22) return max(fog.rgb,0.f);
   return max(fog.rgb-max(ClassicFogParameters[8].rgb,0.f)*saturate(1.f-fog.a),0.f);
+}
+float3 SampleClassicSkyDirect(float2 uv,float distance) {
+  // Clouds modulate the existing transport through CloudShadow(). Never
+  // replace it with a cloud-only integral: that loses terrain/object shadows,
+  // local lights, interiors and the selected fog renderer.
+  uint count,stride;ClassicFogParameters.GetDimensions(count,stride);
+  return ClassicFogDirect(SampleClassicFogRaw(uv,distance))
+      *(count>=21 ? ClassicFogBrightness(asuint(ClassicFogParameters[6].w)):1.f);
 }
 // Native C8C78997/forward weather controls shape fog color independently of
 // extinction. Preserve their endpoint color, two local overrides and background

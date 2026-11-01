@@ -1,3 +1,4 @@
+#include "../clouds/shadow_inputs.hlsli"
 #include "../water/underwater_inputs.hlsli"
 ByteAddressBuffer HairLightIndices : register(t20);
 ByteAddressBuffer HairDecalIndices : register(t21);
@@ -495,6 +496,7 @@ void main(
     }
     }
     r1.x = min(r3.w, r1.x);
+    float3 classic_cloud_world_0 = r0.xyz;
     r1.y = 20 * cb12[66].x;
     r10.zw = trunc(cb12[68].xy);
     r9.xzw = -cb12[0].xyz + r0.xyz;
@@ -532,6 +534,7 @@ void main(
     r4.w = r4.w + -r1.y;
     r1.y = r3.w * r4.w + r1.y;
     r1.y = -r5.w * r1.y + 1;
+    r1.y = ClassicCloudShadow(classic_cloud_world_0, r1.y);
     r1.x = r1.x * r1.y;
   } else {
     r1.x = 0;

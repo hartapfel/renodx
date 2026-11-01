@@ -1,3 +1,4 @@
+#include "../clouds/shadow_inputs.hlsli"
 #include "sample.hlsli"
 #include "../water/shading.hlsli"
 // ---- Created with 3Dmigoto v1.3.16 on Tue Oct 27 18:39:40 2026
@@ -192,6 +193,7 @@ void main(
   } else {
     r4.w = -10;
   }
+  float water_mean_depth=v2.w-r4.w;
   r4.w = v2.z + -r4.w;
   r6.x = saturate(-0.100000001 * r4.w);
   r6.x = 1 + -r6.x;
@@ -263,6 +265,15 @@ void main(
   r3.y = dot(r6.yzw, r6.yzw);
   r3.y = rsqrt(r3.y);
   r6.yzw = r6.yzw * r3.yyy;
+  // Soften the background shading waves before native local wakes are blended.
+  // The same normal continues into reflection coordinates and water transport.
+  if (ClassicWaterReady()) {
+    if(ClassicWaterParameters[1].y!=0.f) {
+      r6.yzw=WaterSurfaceWaveNormal(t5,s5_s,v1.xy,cb4[0].xy,cb4[1].xy,cb4[3].xy,
+          water_mean_depth,length(v1.xy-cb1[8].xy),ClassicWaterParameters[1].x,saturate(1.f-r2.x),
+          max(abs(ddx(v1.xy)),abs(ddy(v1.xy))));
+    } else r6.yzw=WaterRippleNormal(r6.yzw,ClassicWaterParameters[1].x);
+  }
   r3.yw = -cb4[4].xy + v2.xy;
   r3.yw = r3.yw * float2(0.0333333351,0.0333333351) + float2(0.5,0.5);
   r8.xyzw = t1.SampleLevel(s1_s, r3.yw, 0).xyzw;
@@ -689,6 +700,7 @@ void main(
     }
     r0.w = min(r3.z, r0.w);
   }
+  float3 classic_cloud_world_0 = r9.xyz;
   r2.z = 20 * cb12[66].x;
   r10.zw = trunc(cb12[68].xy);
   r12.xyz = -cb12[0].xyz + r9.xyz;
@@ -726,6 +738,7 @@ void main(
   r4.y = r4.y + -r2.z;
   r2.z = r3.z * r4.y + r2.z;
   r2.z = -r7.y * r2.z + 1;
+  r2.z = ClassicCloudShadow(classic_cloud_world_0, r2.z);
   r0.w = r2.z * r0.w;
   float custom_water_visibility = r0.w;
   r8.zw = cb12[211].zw * r0.yy;

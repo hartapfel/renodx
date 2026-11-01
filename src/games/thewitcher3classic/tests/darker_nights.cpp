@@ -95,6 +95,7 @@ int main(int argc, char** argv) {
       for (size_t i = 0; i < common.size(); ++i) {
         const size_t row = i / 4, channel = i % 4;
         if (row == 37 && channel >= 2) continue;
+        if (row == 38 && channel == 3) continue;
         float intensity = 1.f;
         if (i == 183 * 4) intensity = .25f;
         else if (i == 183 * 4 + 1) intensity = .5f;
@@ -111,6 +112,12 @@ int main(int argc, char** argv) {
                 "Ambient upload changed alpha, density, direct enables or another channel");
       }
       uint32_t tag; std::memcpy(&tag, &adjusted[37 * 4 + 3], 4);
+      uint32_t fog_tag;std::memcpy(&fog_tag,&adjusted[38*4+3],4);
+      if(hour!=12.f) {
+        require((fog_tag&0xff000000u)==0xdc000000u,"Missing physical fog lighting tag");
+        require(std::abs(float((fog_tag>>12)&4095u)/511.f-ClockMultiplier(hour/24.f,schedule,.1f))<.001f,"Physical fog brightness fade failed");
+        require((fog_tag&4095u)==2047u,"Fog brightness changes neutral water lighting");
+      }
       uint32_t haze_tag; std::memcpy(&haze_tag, &adjusted[37 * 4 + 2], 4);
       if (hour == 12.f) require(haze_tag == 0, "Daytime writes a sky haze override");
       else {

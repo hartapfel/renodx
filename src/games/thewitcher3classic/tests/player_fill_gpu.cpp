@@ -4,6 +4,7 @@
 #include <iostream>
 #include "motion_gpu.hpp"
 #include "../lighting/player_fill.hpp"
+#include "../lighting/scene_fill.hpp"
 
 // Replay the uncovered native skin material with controlled, HDR fill lights.
 int main(int argc, char** argv) {
@@ -148,6 +149,35 @@ v.e=float4(0,.5,.5,0);v.f=float4(0,1,0,1);v.h=float3(1,0,0);return v;})";
       std::cout<<"Native skin F1FB6FB1 flags="<<std::hex<<flags<<std::dec<<" gain="<<gain<<" recipient="<<recipient<<" native="<<original[0]<<" scaled="<<draw({true,false,.2f})[0]<<'\n';
     }
   }
+  // Original, uncovered skin shader must also receive authored scene proxies.
+  const void* scene_proxy=&native;
+  {std::unique_lock lock(player_fill::scene_fill::sources->mutex);player_fill::scene_fill::sources->proxies.insert(scene_proxy);}
+  for(UINT flags:{0x1800u,0x1801u,0x800u,0x1001u})for(float gain:{0.f,.25f,1.f,2.f}) {
+    environment[0x404c/4]=gain;common[71*4]=gain;std::memcpy(light+61*4+3,&flags,4);
+    std::array<float,4> matched_character{};
+    for(float recipient:{-1.f,1.f}) {
+      reinterpret_cast<float*>(material.data())[16*4]=recipient;bind_constants(2,material);
+      auto draw=[&](const player_fill::Controls& controls) {
+        auto f=frame,l=lights;player_fill::ApplyCommon(f.data(),controls);
+        player_fill::scene_fill::Apply(l.data()+0x3a0,scene_proxy,env,controls);
+        bind_constants(12,f);bind_constants(13,l);return render(native);
+      };
+      const auto native_value=draw({false,false,1.f,1.f}),off=draw({true,false,1.f,0.f});
+      for(float strength:{.2f,.5f,1.f}) {
+        const auto value=draw({true,false,0.f,strength});
+        const auto other_gameplay=draw({true,false,1.f,strength});
+        for(UINT c=0;c<4;++c) {
+          assert(std::abs(value[c]-other_gameplay[c])<.002f);
+          assert(std::abs(value[c]-(off[c]+strength*(native_value[c]-off[c])))<.006f);
+        }
+      }
+      const auto matched=draw({true,true,0.f,.5f});
+      if(recipient<0)matched_character=matched;
+      else for(UINT c=0;c<4;++c)assert(std::abs(matched[c]-matched_character[c])<.006f);
+    }
+  }
+  {std::unique_lock lock(player_fill::scene_fill::sources->mutex);player_fill::scene_fill::sources->proxies.erase(scene_proxy);}
+  std::cout<<"PASS native skin receives authored point/spot cutscene strength, HDR, both matched receiver groups and independent gameplay strength\n";
   // Replay the exact scene-fill compute shader observed twice in the live
   // cutscene. It overwrites the bank RGB from two exposure-selected colours,
   // which is why scaling the bank before the dispatch did not cover scenes.

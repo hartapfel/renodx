@@ -1,4 +1,6 @@
+#define CLASSIC_FOG_OPAQUE_CACHE
 #include "night_sky.hlsli"
+#include "volumetrics/sample.hlsli"
 // ---- Created with 3Dmigoto v1.3.16 on Thu Oct 29 18:31:29 2026
 TextureCube<float4> t1 : register(t1);
 
@@ -395,6 +397,12 @@ void main(
   r2.xyz = -cb12[267].xyz + cb12[238].xyz;
   r0.xzw = r0.xxx * r2.xyz + cb12[267].xyz;
   o0.xyz = r0.xzw * r0.yyy * ClassicSkyHazeBrightness(asuint(cb12[37].z)) + r1.xyz;
+  if (ClassicFogReady()) {
+    // Expansion sky must receive the same cloud-shadowed direct scattering
+    // as the base-game sky, without replacing its native haze or star color.
+    uint count,stride;ClassicFogParameters.GetDimensions(count,stride);
+    if (count == 21 || count == 22) o0.xyz += SampleClassicSkyDirect(v2.xy*ClassicFogParameters[3].xy,ClassicFogParameters[0].w);
+  }
   o0.w = 1;
   return;
 }

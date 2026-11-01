@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #ifndef WITCHER_CLASSIC_SUN_LIGHTING
 #define WITCHER_CLASSIC_SUN_LIGHTING
+#include "../clouds/shadow_inputs.hlsli"
 // Classic's cascades share one world-to-light matrix. cb13[8:10] select
 // bounds; [11:14] map those bounds to each array slice. See native 5CC0DB95.
 float FilterFogCascade(float3 p, float3 dx, float3 dy, float3 dz, uint cascade) {
@@ -118,6 +119,7 @@ float WrappedFogCloud(float2 uv, float layer) {
 }
 #endif
 float CloudShadow(float3 world, float distance) {
+  if(ClassicCloudShadowsReady())return ClassicCloudShadow(world,1.f);
   if (options.z == 0.f || frame[66].x <= 0.f || light[0].z <= .25f) return 1.f;
   float2 projection = world.xy - world.z * light[0].xy / light[0].z;
   float2 uv_near = (projection + frame[67].xy)*(.01f/frame[66].x);

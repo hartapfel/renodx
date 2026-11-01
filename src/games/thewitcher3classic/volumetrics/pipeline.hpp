@@ -35,13 +35,14 @@ class Pipeline {
         || parameters.grid[2]<1 || parameters.grid[3]<=parameters.options[1]) return false;
     if (!Initialize(context)) return false;
     ray_ready_=false;
-    if(parameters.sky[2]>.5f && ray_frame_.Capture(context,device_.Get(),frame,269*16)
-        && ray_lighting_.Capture(context,device_.Get(),lighting,2362*16)) {
+    if(ray_frame_.Capture(context,device_.Get(),frame,269*16)
+        && ray_lighting_.Capture(context,device_.Get(),lighting,2*16)) {
       ray_sources_={local_lights.tiles,ray_frame_.view.Get(),ray_lighting_.view.Get(),shadow,
           local_lights.atlas,local_lights.cubes,cloud,terrain,interiors};
-      ray_ready_=true;
+      ray_ready_=parameters.sky[2]>.5f &&ray_lighting_.bytes>=2362*16;
+    } else {
+      for(auto& view:ray_sources_)view.Reset();
     }
-    if(!ray_ready_)for(auto& view:ray_sources_)view.Reset();
     Parameters effective=parameters;
     effective.sky[2]=ray_ready_?1.f:0.f;
     if(ray_ready_)effective.grid={1,1,1,parameters.grid[3]};
@@ -49,7 +50,14 @@ class Pipeline {
     if (width>512 || height>512 || slices>256) return false;
     if (!cells_.Ensure(device_.Get(),width,height,slices)
         || !volume_.Ensure(device_.Get(),width,height,slices+1)) return false;
+    // The cloud transmission map is shared with native surface shaders. Carry
+    // its reserved inputs into this effect's otherwise isolated compute state.
+    ComPtr<ID3D11ShaderResourceView> cloud_shadow_map,cloud_shadow_data;
+    context->CSGetShaderResources(126,1,&cloud_shadow_map);
+    context->CSGetShaderResources(127,1,&cloud_shadow_data);
     temporal::ContextScope restore(context,state_.Get());
+    ID3D11ShaderResourceView* cloud_shadows[]{cloud_shadow_map.Get(),cloud_shadow_data.Get()};
+    context->CSSetShaderResources(126,2,cloud_shadows);
     context->UpdateSubresource(constants_.Get(),0,nullptr,&effective,0,0);
     ID3D11UnorderedAccessView* parameter_output=parameter_output_.Get();
     context->CSSetUnorderedAccessViews(1,1,&parameter_output,nullptr);
@@ -112,6 +120,20 @@ class Pipeline {
   }
   ID3D11ShaderResourceView* View() const { return volume_.view.Get(); }
   ID3D11ShaderResourceView* ParametersView() const { return parameter_view_.Get(); }
+  // For effects which already own an isolated ContextScope. Share current-frame
+  // fog inputs without mutating Bind/Restore's native-draw bookkeeping.
+  bool BindIsolated(ID3D11DeviceContext1* context,uint64_t frame_id) const {
+    if(generated_frame!=frame_id ||!volume_.view)return false;
+    std::array<ID3D11ShaderResourceView*,9> sources{};
+    for(size_t i=0;i<sources.size();++i)sources[i]=ray_sources_[i].Get();
+    context->PSSetShaderResources(99,UINT(sources.size()),sources.data());
+    ID3D11ShaderResourceView* views[]{volume_.view.Get(),parameter_view_.Get()};
+    context->PSSetShaderResources(116,2,views);
+    ID3D11ShaderResourceView* cached[]{cache_ready_?scattering_.view.Get():nullptr,cache_ready_?endpoint_.view.Get():nullptr};
+    context->PSSetShaderResources(108,2,cached);
+    auto* sampler=linear_sampler_.Get();context->PSSetSamplers(11,1,&sampler);
+    return true;
+  }
   bool Bind(ID3D11DeviceContext1* context, bool vertex, uint64_t frame_id, bool opaque = false) {
     if (bound_ || generated_frame!=frame_id || !volume_.view) return false;
     vertex_=vertex;
@@ -128,7 +150,7 @@ class Pipeline {
     auto* sampler=linear_sampler_.Get();
     if (vertex) { context->VSSetShaderResources(116,2,views); context->VSSetSamplers(11,1,&sampler); }
     else { context->PSSetShaderResources(116,2,views); context->PSSetSamplers(11,1,&sampler); }
-    if(!vertex &&ray_ready_) {
+    if(!vertex &&ray_sources_[1] &&ray_sources_[2]) {
       std::array<ID3D11ShaderResourceView*,9> previous{},sources{};
       context->PSGetShaderResources(99,UINT(previous.size()),previous.data());
       for(size_t i=0;i<previous.size();++i) { saved_ray_[i].Attach(previous[i]);sources[i]=ray_sources_[i].Get(); }

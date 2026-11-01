@@ -1,3 +1,4 @@
+#include "../clouds/shadow_inputs.hlsli"
 // ---- Created with 3Dmigoto v1.3.16 on Tue Oct 27 23:08:19 2026
 Texture2DArray<float4> t19 : register(t19);
 
@@ -424,6 +425,9 @@ void main(
       }
       if (CONTACT_LENGTH > 0.f) r2.w = min(r2.w,FilteredContactVisibility(floor(v0.xy)));
       r0.x = r2.w * r0.w;
+      if (ClassicCloudShadowsReady()) {
+        r0.w = r0.x * ClassicCloudShadow(r1.xyz, 1.f);
+      } else {
       r0.y = 20 * cb12[66].x;
       r2.zw = trunc(cb12[68].xy);
       r3.xyz = -cb12[0].xyz + r1.xyz;
@@ -462,6 +466,7 @@ void main(
       r0.y = r0.z * r1.x + r0.y;
       r0.y = -r1.y * r0.y + 1;
       r0.w = r0.x * r0.y;
+      }
     }
   } else {
     r0.w = 1;

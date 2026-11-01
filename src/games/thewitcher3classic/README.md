@@ -2689,3 +2689,715 @@ The Water Murkiness hint explains the ratio. WARP and NVIDIA water tests pass
 for zero/half/full density and analytic surface transport. Build Release target
 thewitcher3classic; compare the same shoreline above/below the waterline and
 check Murkiness at 0 and 1 after deployment.
+
+
+### Water surface ripples (2026-10-31)
+
+Both 28D7BDFE and 2825099C now scale the background wave-normal slopes before
+native wake composition. Graphics > Water > Surface Ripples defaults to 0.25;
+1.00 retains the previous shading-normal strength. The explicit Vanilla/Custom
+presets set 1.00/0.25. This is a material-detail calibration, not a new measured
+wave simulation: native displacement, weather variation, local wakes and the
+geometry-derived underwater caustics are retained. The softened normal feeds
+both the reflection coordinates and custom refraction/Fresnel lighting.
+
+Direct sunlight uses GGX alpha 0.025 instead of 0.1, with bounded screen-space
+variance (0.15 variance, 0.2 threshold) to avoid a broad plastic-looking sheen.
+These are rendering parameters, not universal physical constants for lakes.
+The surface parameter SRV has two float4 entries; its size guard rejects old
+or missing bindings. Native Water bypasses the new controls. No additional
+render pass, scene copy, texture fetch, history or CPU readback is introduced.
+HDR water transport and the existing reflection compositor are preserved.
+
+References: NVIDIA GPU Gems chapter 1, Effective Water Simulation from Physical
+Models (separate geometry and normal detail; height-field slopes), and Filament
+Materials, specularAntiAliasingVariance/Threshold (bounded roughness filtering):
+https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-1-effective-water-simulation-physical-models
+https://google.github.io/filament/Materials.md.html
+
+The paused scene identifies the main water permutation and excessive background
+ridges. A diagnostic live override did not reach the displayed result; it was
+replaced with the original shader and the prior blank LivePath restored. Do not
+count those captures as visual acceptance. After the Release rebuild, check the
+same scene at 0/0.25/1, then swimming wakes, shores and stormy water, with Native
+and Custom Water, HDR, DLAA and FG. Confirm smooth reflections without sparkling
+highlights or a change in the approved above/underwater murkiness relationship.
+
+Validation: strict FXC compilation passes for both surface permutations (the
+alternate shader retains its pre-existing vector-truncation warning). WARP and
+NVIDIA pass the existing water transport/HDR tests plus the new parameter-upload
+and slope-scaling checks at zero, partial and original strength. Explicit
+Graphics/Darker Nights preset coverage and startup-default checks also pass.
+
+
+### Water surface shape reconstruction (2026-10-31)
+
+The first Detailed pattern was rejected in gameplay: it added fine noise but
+retained the exaggerated broad wave normals. Its eight procedural waves and
+unresolved-spectrum variance have been removed, including their test fixtures.
+
+Ripple Pattern now offers Original / Surface Waves (default). Surface Waves
+replaces ALL background shading bands with normals reconstructed from the two
+native geometric displacement bands. It samples the native animated t5 alpha
+heights and reproduces the domain shader's coordinate warp, horizontal crest
+displacement, depth envelopes and distance fade. The normal is the cross product
+of surface tangents, so the horizontal displacement affects it too. No independent
+noise spectrum or clock is introduced. Native mesh positions remain unchanged.
+
+Both pixel permutations use v1 (undisplaced domain XY) and v2.w (mean elevation),
+cb4[0].xy wavelengths, cb4[1].xy amplitudes and cb4[3].xy geometry warps. These
+are distinct from the larger cb4[3].zw shading warps. Terrain depth is captured
+before the original pixel shader overwrites its terrain-height register.
+The local depth/camera envelope is held constant across each finite difference;
+this is a material normal reconstruction, not an exact derivative of all terrain
+boundaries or native object-displacement volumes. Native wakes are still blended
+afterwards. Folded horizontal maps fall back to an upward height-gradient normal.
+
+Surface Ripples remains a slope-strength control (default 1.00). Original at 1.00
+retains the game's shading normals. Surface Waves at 1.00 follows the reconstructed
+geometry slopes. Existing saved Detailed selections select Surface Waves; explicit
+Vanilla/Custom presets select Original/Surface Waves. No settings key is orphaned.
+
+Normals feed refraction, Fresnel/direct lighting and the normal output used by
+SSR. HDR transport, water color, caustics and the 1.5x above-water density remain
+unchanged. Unlike the first strength-only change, reconstruction adds 16 native
+wave-texture samples per water pixel. Each band's finite-difference footprint is
+at least one texture texel and grows with the projected pixel footprint. The
+existing bounded specular AA remains; no temporal accumulation, frame-index noise,
+additional render pass, scene copy, CPU simulation or readback is introduced.
+
+Source: the native domain-shader reconstruction in the audited WaterDS baseline;
+NVIDIA GPU Gems chapter 1 sections 1.2.2/1.2.3 describe surface tangents and normals
+including lateral crest displacement:
+https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-1-effective-water-simulation-physical-models
+
+Validation: strict FXC compilation of both production shaders; WARP/NVIDIA tests
+compare two-band metric slopes against an independent analytic height gradient,
+then warped-height and horizontal-displacement normals against a continuous
+domain reference. Existing water optics/HDR, binding and explicit preset checks
+remain required. Release build and package verification pass; gameplay visual acceptance is pending.
+Compare Original / Surface Waves in the lake at the same strength, especially
+the broad reflection distortion, then test wakes, shoreline, storms, DLAA and FG.
+The previous live override did not reach displayed output; use a restarted
+Release addon for this comparison rather than treating override activation as
+proof of a visible change.
+
+The isolated full-screen 4K NVIDIA fixture measured 0.0355 ms for strength-only
+Original and 1.1664 ms for Surface Waves with nonzero native coordinate/crest
+warps. This is additional cost, not a performance improvement. The fixture
+excludes production register pressure, refraction and SSR and is not a gameplay
+frame-time prediction. Both generated surface shader blobs were rebuilt into
+the Release addon; the installed symlink resolves to that addon, and the ZIP
+contents were SHA256-verified against their source files.
+
+SSR experiments removed at user request (2026-10-31). Reflection tracing and
+resources are restored to the pre-experiment Classic implementation. The retained
+recent water changes are Original / Surface Waves and Surface Ripples strength
+(default 1.00); the SSR/environment/stabilization controls are removed.
+
+
+### DLSS material texture mip bias (2026-10-31)
+
+The prior DLSS implementation changed primary-view resolution and jitter but
+did not correct material sampler mip bias. It now adds
+log2(actual render width / output width) - 1 to the native material sampler bias,
+following NVIDIA DLSS Programming Guide 3.5 (31 March 2026), epsilon = 0.
+Typical additional offsets are DLAA -1, Quality -1.585, Balanced about -1.786,
+Performance -2 and Ultra Performance about -2.585. Actual queried dimensions,
+not a hard-coded quality ratio, drive the value. Existing shader SampleBias
+and engine/asset sampler bias are retained rather than replaced.
+
+The primary RenderHook owns this value. Nested views temporarily suppress it;
+the material draw callback also requires the primary render-sized viewport,
+depth attachment, active/ready DLSS and a scene pass before temporal resolve.
+It covers the audited object material/vertex families (including forward
+characters/hair and matching primary depth draws) and other three-or-more-target
+G-buffer materials, including static/terrain draws outside the motion list.
+Unknown transparent shader families stay native. The audited material texture
+sampler is PS s0; explicit SampleLevel calls retain their explicit LOD.
+
+TextureMipBias caches an adjusted immutable sampler per native sampler, recreating
+it only when the requested offset changes. It preserves filter/anisotropy,
+addressing and LOD bounds, skips comparison and fixed-LOD samplers, and clamps
+only to the D3D11 legal bias range. The original s0 is restored after the draw.
+The existing draw boundary and present/teardown paths provide cleanup for a
+skipped draw; cleanup does not overwrite a newer engine binding. Other sampler
+slots/stages are untouched. No new rendering pass or GPU readback is introduced.
+Higher texture detail can still increase texture/cache bandwidth cost.
+
+This is a material sampling correction, not a return of the removed SSR,
+environment-probe, reflection-history or mip-chain experiments. Native TAA,
+UI/postprocessing and secondary view scope retain their prior sampling.
+
+Sources:
+https://raw.githubusercontent.com/NVIDIA/DLSS/main/doc/DLSS_Programming_Guide_Release.pdf
+https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_sampler_desc
+NVIDIA section 3.5.1 also cautions that highly repetitive fine textures can need
+a less aggressive content-specific bias to avoid flicker/moire. This revision
+uses the recommended baseline; it does not claim that sharpening cures aliasing.
+
+Validation: WARP/NVIDIA fixtures exercise actual multi-mip texture sampling:
+a native bias of +0.25 samples mip 3.25; adding Performance's -2 samples mip 1.25;
+restoration returns the exact native result. HDR color channels/alpha remain
+unchanged. Tests cover additive pre-existing negative bias, anisotropic settings,
+comparison/fixed-LOD exclusion, quality changes, duplicate scopes, unchanged
+other slots/stages and preserving a newer engine binding. The CPU native-view
+fixture verifies bias during the primary view and suppression/restoration during
+nested views, alongside existing DLAA/Ultra Performance jitter and menu recovery.
+The current capture confirms primary G-buffer viewport 2560x1440 and a bound
+depth attachment for a 3840x2160 Quality output. The full addon/preset fixture
+compiles; its obsolete hard-coded Fog Detail 2 assertion was removed because
+the user edited preset defaults. General preset-table/range/reset checks remain.
+
+The cached sampler scope measured about 0.044 microseconds/draw in the isolated
+NVIDIA CPU fixture; that excludes callback lookup and viewport validation and
+is not a whole-game performance result. Live texture-detail acceptance remains
+pending. After restart, verify the one-time ReShade log includes the actual mip
+offset and input/output sizes, compare text/stone/foliage in Quality/Performance,
+then check DLAA, native TAA, cutscenes and menus. Confirm no sampler change leaks
+into water/SSR, shadows or postprocessing. The user's edited preset table is
+preserved in the build.
+
+
+### Volumetric clouds (2026-10-31)
+
+Graphics / Clouds provides Native or Volumetric rendering and Low, Medium,
+High and Ultra quality. Medium is the custom default; the Vanilla preset
+explicitly restores Native. Existing fog/water defaults are unchanged.
+
+The custom pass replaces the four audited cloud-card families (22D1E925,
+6F0FF708, C6178ADC, F4B551EC), after either native sky family. Replacement
+is restricted to the primary sky target, viewport and common frame buffer.
+Unsupported resources, auxiliary views and failed preparation retain native
+clouds for the entire frame. It does not inject over native b12/b13.
+
+The distant native cloud-shadow texture array supplies continuous weather
+coverage, layer transitions and wind phase (common rows 66-68). An owned,
+tileable Perlin-Worley volume supplies three-dimensional shape and subtractive
+erosion. The spherical layer is calibrated at 1200-2400 metres; it is not a
+claim to recover the original weather author's three-dimensional cloud field.
+Clouds use actual sun/moon radiance and native sky gradients, Beer-Lambert
+extinction, analytic segment integration and a normalized dual-HG phase.
+This first version uses a single-scattering lighting approximation, including
+attenuated sky illumination; it does not add an emissive brightness/powder
+boost. Aerial perspective follows native weather haze coefficients/colors.
+Darker Nights Cloud Brightness is applied to cloud radiance once, before
+the separate atmospheric contribution. Moonlight controls affect direct light.
+
+Low/Medium/High trace at one quarter of the active scene width and height,
+with 32/48/64 view samples and 3/4/5 light samples. Ultra uses half width and
+height, 80 view samples and 6 light samples. Only occupied cloud samples run
+the light march. Below-horizon and conservatively occluded rays are skipped;
+the depth check includes all full-resolution pixels covered by a cloud texel.
+Temporal reconstruction accounts for camera motion, projection jitter and
+native wind. HDR radiance/transmittance use RGBA16F, with separate R32 depth.
+No per-frame CPU texture readback or world geometry replay is required.
+
+Cloud motion augments the existing DLSS/FG preparation only in predominantly
+cloudy, unobstructed sky pixels. It removes projection jitter, includes wind
+and marks unavailable history responsive. It leaves foreground object motion
+and geometry depth untouched. This is one motion layer per pixel, not a full
+solution for separately moving translucent layers. Composition precedes native
+TAA/DLSS and the existing FG HUD capture; no image-space distortion is used.
+
+Scope: internal cloud shadows are volumetric. The game's existing ground/fog
+cloud-shadow maps remain weather-driven; they are not newly generated shadows
+of the exact procedural 3D shapes. Reflection probes are not re-rendered by
+this module. Flying through clouds and multiple cloud decks are outside this
+first ground-view implementation.
+
+Implementation sources (primary publications):
+- Rockstar, Creating the Atmospheric World of Red Dead Redemption 2,
+  SIGGRAPH 2019 course abstract: https://www.realtimerendering.com/advances/s2019/index.htm
+  The published abstract describes shared scattering/transmittance and weather
+  integration. The full presentation was unavailable during this investigation;
+  this implementation does not claim to reproduce Rockstar's renderer.
+- Schneider, Nubis: Authoring Real-Time Volumetric Cloudscapes with the Decima
+  Engine, SIGGRAPH 2017, full slides and speaker notes:
+  https://www.guerrilla-games.com/read/nubis-authoring-real-time-volumetric-cloudscapes-with-the-decima-engine
+  Density, spherical layers, sparse lighting, conservative occlusion and
+  temporal reconstruction follow the production techniques described there.
+- Toft, Bowles and Zimmermann, Sampling Scattering for Real-Time Rendering,
+  2016: https://arxiv.org/abs/1609.05344
+  Analytic per-segment integration and jittered volume sampling.
+
+Verification: build target thewitcher3classic (Release, clang-x64-release).
+Generated embeds F3C60001-F3C60005 are private cloud kernels/composite; they
+are not native shader hashes. tests/clouds.cpp exercises WARP and NVIDIA:
+HDR values above 1, zero-light extinction, clear-weather identity, reversed-Z
+foreground occlusion, native graphics constant/SRV restoration, quality changes
+and wind-aware motion without foreground-vector replacement. Its optional
+hardware benchmark measures GPU timestamps around trace/resolve/composite,
+excluding setup, staging readbacks and noise generation. The D3D debug layer
+is unavailable on this machine; state/numeric assertions still run.
+Full addon/preset checks verify explicit default/Vanilla assignments.
+
+After restarting, check the one-time volumetric-cloud log, clear/storm weather
+transitions, sunlit versus moonlit clouds, Darker Nights Cloud Brightness,
+mountain/tree silhouettes while panning, Native versus Volumetric, DLAA/DLSS,
+FG and quality changes. Visual weather matching remains a live acceptance
+check; isolated correctness and timing results are not whole-game FPS claims.
+
+Isolated RTX 5090 GPU timestamps, 3840x2160, synthetic 75-percent sky view:
+Medium: 0.10 ms empty weather, 0.33 ms partial coverage, 0.37 ms overcast.
+Ultra: 0.34 / 1.50 / 1.75 ms respectively. Uniform weather fixtures deliberately
+exclude world rendering, first-use allocation/noise, the later motion override
+and other game effects; real weather textures can have different cache and
+occupancy behavior. These are cloud-pass timings, not predicted game FPS.
+Release addon and package built and verified; live cloud appearance, weather
+matching and DLSS/FG acceptance remain pending the in-game restart.
+
+
+### Cloud ground shadows (2026-10-31)
+
+This supersedes the previous native-only ground-shadow limitation. Graphics /
+Clouds / Cloud Shadows defaults On with Volumetric rendering. Off removes
+cloud attenuation from the supported lighting paths; selecting Native clouds
+restores native cloud shadow behavior. Cloud Quality also controls shadow-map
+resolution and integration samples: Low 256/32, Medium 384/48, High 512/64,
+Ultra 768/80. The sample count grows at low light elevations, capped at 192.
+
+F3C60006 integrates Beer-Lambert transmission through the same detailed 3D
+density, weather layers and wind as visible clouds. A 16-km world projection
+snapped to texels avoids camera-relative swimming. Receiver height projects
+along the actual light ray, so terrain, elevated surfaces and fog share the
+same light paths. Edges fade to unshadowed direct illumination. The map supports
+sun/moon elevations above 0.015, extending below the native 0.25 cutoff. It is
+a below-cloud ground-view map, not an in-cloud deep-shadow representation.
+
+The cloud term replaces the native cloud attenuation, not the complete scene
+color or the terrain/cascade/contact shadow terms. Ambient/probe and local-light
+terms are retained. Native common/lighting constant buffers remain untouched.
+The reserved map/data inputs at t126/t127 are shared across VS/PS/CS, restored
+at presentation/destruction and preserve newer bindings. Isolated fog compute
+explicitly carries the same inputs. No CPU readbacks or extra geometry renders.
+
+receivers.inc registers 29 audited receiver families: the main deferred shadow
+mask, hair, native/custom surface water, existing forward-fog consumers and
+15 vertex-lighting permutations (including the alternate motion family).
+F3C60020-23 preserve native varying signatures when object motion is disabled;
+the motion variants use the same shadow lookup when enabled. Additional native
+baselines repair raw-buffer loads and integer-one probe-hemisphere selectors;
+native clip MAD order is retained. Eight additional pixel families are included.
+
+The dump audit found four further optional native weather-effect permutations:
+1C049461, 236774C6, 351D45B0 and 3DE2B754. These remain native. A differential
+fixture found a material/noise-rendering mismatch in the 3DE2B754 decompilation;
+the procedural group was excluded instead of shipping an unproven replacement.
+Those optional effects do not receive the new map. Existing underwater camera
+and scattering behavior is retained; this change does not add a new underwater
+cloud-shadow integration or re-render environment probes.
+
+Validation: all 15 vertex receiver families compare against native bytecode
+using captured common/lighting buffers and spatially varying probe atlases on
+WARP/NVIDIA (worst finite difference <= 1.2e-7). Additional pixel fixtures check
+the bounded material case; two are discard-only and are not exhaustive live
+coverage. The existing lighting suite verifies the main native shadow mask,
+hair, local lighting and packed atlas behavior. New mask assertions prove a
+constant 0.25 cloud transmission replaces the old cloud factor exactly while
+retaining other occluders; Off removes the cloud term and unavailable data
+restores native output. The fog suite independently verifies 0.25 direct
+scattering with unchanged opacity through the isolated compute path.
+
+tests/cloud_shadows.cpp checks clear weather, finite [0,1] transmission,
+wind changes, stable camera-grid movement, elevated receivers on one light ray,
+map edges, low sun/moon, Off, native fallback, native b13 preservation and
+all-stage high-slot restoration including newer-owner preservation. Existing
+cloud HDR/DLSS/FG-motion, water, fog and explicit-preset checks pass.
+
+Isolated RTX 5090 GPU timestamps for shadow-map generation only (no game GPU
+contention): Medium 0.014 ms clear, 0.114 ms partial coverage, 0.129 ms overcast;
+Ultra 0.070 / 0.448 / 0.442 ms respectively. These exclude shader setup, noise
+generation and per-receiver sampling, and use synthetic uniform weather; they
+are not a prediction of whole-game FPS.
+
+Method reference: Epic's Volumetric Cloud documentation describes Beer shadow
+maps as reusable transmission for meshes and participating media:
+https://dev.epicgames.com/documentation/unreal-engine/volumetric-cloud-component-in-unreal-engine
+The density and analytic transport sources from the cloud implementation above
+remain applicable. No artist brightness boost or display-space shadow tint.
+
+Build: thewitcher3classic, clang-x64-release. After restart compare Cloud Shadows
+Off/On in broken-cloud sunlight; check terrain, roofs, characters/hair, water
+and fog, then pan/move, vary Cloud Quality, test moonlight, and switch Native /
+Volumetric rendering. Check DLAA/DLSS, FG and object motion Off/On. Live visual
+alignment and weather acceptance remain pending this build's restart.
+
+Release addon and NVIDIA/licenses package rebuilt and hash-verified after the
+main shadow mask was changed to skip native cloud texture lookups when the
+new map is valid. WARP/NVIDIA lighting regression checks pass after that change.
+The installed addon link resolves to the verified Release build.
+
+## Extended cloud quality and weather-relative appearance (2026-10-31)
+
+The user confirmed the previous visible clouds and ground shadows work well.
+Low/Medium/High/Ultra keep their previous integration budgets, render scale,
+and 64-cubed noise volume. Medium remains the default. New optional quality
+levels are Cinematic (half resolution per axis, 128 view/10 light samples)
+and Maximum (full scene resolution, 160 view/12 light samples). Both use a
+128-cubed shape volume, detailed light-ray extinction with quadratic sample
+spacing to the cloud exit, and higher-resolution ground shadows. These are
+intentionally expensive optional levels; the user explicitly requested keeping
+the full-detail version after profiling. No existing quality/default was raised.
+
+Cloud Appearance exposes Coverage, Density, Cloud Size, and Cloud Layer
+Thickness. All default to 100 percent. Coverage below 100 percent thins native
+weather coverage; above it fills the remaining gaps (200 percent full coverage).
+Density scales optical extinction, Size scales horizontal weather/noise features,
+and Thickness scales layer depth while retaining its bottom height. Native wind
+velocity, time-of-day lighting, HDR radiance and Darker Nights gains remain.
+Visible clouds and their ground shadows use the same appearance parameters.
+Appearance/quality changes reject history and mark unobstructed sky responsive
+for DLSS/FG, including pixels where clouds have just disappeared. Native mode
+continues to disable these custom controls. Both explicit graphics presets reset
+them to neutral, and new controls participate in normal saved profiles.
+
+Validation: cloud/shadow fixtures pass on WARP and NVIDIA, including zero
+coverage/density, monotonic extinction, independent size/depth, maximum coverage
+over clear weather, both new qualities/downshift, HDR, foreground isolation,
+wind motion, native-state restoration, and DLSS/FG sky responsiveness. Preset
+fixture checks neutral startup bindings, six quality labels and complete explicit
+presets. Neutral image comparison against the previously shipped six GPU kernels
+at Medium: maximum cloud RGBA error 0.000831 (64/57600 float components differ);
+maximum shadow transmission error 0.000489 (143/147456 differ). These are small
+floating-point rounding differences, not an exact bitwise-equivalence claim.
+
+Isolated RTX 5090 GPU timestamps, synthetic 3840x2160 / 75 percent open sky:
+Medium cloud trace+resolve+composite 0.326 ms partial / 0.428 ms overcast;
+Ultra 1.521 / 1.888 ms; Cinematic 9.203 / 13.688 ms; Maximum 36.238 / 52.558 ms.
+Ground shadow generation with synthetic 0.7/1.0 weather: Medium 0.127/0.126 ms,
+Ultra 0.372/0.364 ms, Cinematic 2.997/2.975 ms, Maximum 5.706/5.634 ms.
+Measurements exclude initialization/noise generation, readbacks and receiver
+sampling; they do not predict gameplay FPS. Larger sky coverage, thicker/denser
+clouds and lower sunlight angles affect cost. Maximum is an image-quality option,
+not a performance recommendation. Detailed light sampling is deliberately kept
+per the user's instruction, rather than silently reduced after profiling.
+
+Method references: Guerrilla Nubis documents weather-driven density, layered
+3D shape/erosion noise and view/light integration with reprojection:
+https://www.guerrilla-games.com/read/nubis-authoring-real-time-volumetric-cloudscapes-with-the-decima-engine
+Epic documents independent cloud layer geometry and view/light/shadow sample
+quality controls:
+https://dev.epicgames.com/documentation/en-us/unreal-engine/volumetric-cloud-component-properties-in-unreal-engine
+
+Build target: thewitcher3classic, clang-x64-release. After restart compare the
+neutral Medium settings with the accepted build, then raise Coverage/Size in a
+sparse sky, vary Density/Thickness, and verify ground shadows follow. Compare
+Ultra/Cinematic/Maximum cloud edges and internal lighting during movement, then
+return to Medium. Check DLAA/DLSS/FG, time/weather changes and Native fallback.
+Live visual acceptance for the new settings remains pending restart.
+Release addon linked, NVIDIA/licenses ZIP rebuilt and byte-verified, and installed
+addon symlink hash matches the Release build. New visual acceptance remains pending.
+
+## Footprint-filtered cloud light sampling (2026-10-31)
+
+This supersedes the earlier decision to retain full-detail light samples in
+Cinematic/Maximum. Those optional levels now select shape-noise mips from the
+quadratic light-integration segment length (128 texels per 2800 world units),
+clamped to LOD 0..4. Nearby segments retain erosion below LOD 1; distant segments
+sample only filtered broad extinction. The actual cloud exit, integration path,
+sample counts, view-ray erosion, 128-cubed shape volume, render resolution and
+higher-resolution ground shadows remain unchanged. Low through Ultra and all
+startup/profile defaults are unchanged. Only the trace shader's enhanced light
+branch changes; no CPU readback, extra pass or new history buffer is introduced.
+
+This follows the Nubis principle of reducing lighting density detail with sample
+footprint/distance. It is a cheaper approximation of internal cloud lighting,
+not an assertion that mipmapped shape values integrate density exactly. It may
+change internal brightness/softness; it does not add an artificial energy boost.
+Source: Guerrilla, Nubis SIGGRAPH 2017, Ray-March Optimizations (slides 95-96):
+https://www.guerrilla-games.com/read/nubis-authoring-real-time-volumetric-cloudscapes-with-the-decima-engine
+
+Verification: extended cloud fixture passes WARP and NVIDIA (HDR, empty weather,
+foreground occlusion/motion isolation, native state, DLSS/FG motion, appearance
+controls and quality changes). Tests/clouds.cpp --hardware --dump-lighting PREFIX
+exports lit and zero-incident-radiance output at all six qualities with the same
+jitter phase. Against the previously packaged shader on NVIDIA, Low-Ultra output
+is bit-identical; zero-light extinction/silhouettes are bit-identical for all six
+levels. Enhanced internal lighting changes intentionally. D3D debug runtime is
+unavailable on this machine; finite output and native bindings are checked.
+
+Build: thewitcher3classic, clang-x64-release. After restart compare Ultra,
+Cinematic and Maximum in broken-cloud sunlight, low sun and moonlight. Check
+cloud edges and internal lighting during wind/camera movement. Visual acceptance
+of the filtered enhanced light path remains pending restart.
+## Weather-cloud coverage and expansion sky scattering audit (2026-10-31)
+
+The live engine weather reports Rain with Storm in its transition state. A
+snapshot identified FE720049 (flow-map storm/thin cloud dome, vertex A060C821)
+between the previously handled cloud-card families. Its native texture/normal
+lighting was still drawn over the custom volume, including when custom Coverage
+or Density was zero. The draw uses the same main target, viewport and 4304-byte
+frame buffer as the tracked sky. FE720049 now uses OnCloud with the other four
+families: 22D1E925, 6F0FF708, C6178ADC and F4B551EC. It has no replacement bytecode;
+Native mode, unsupported views and any failed custom render keep native output.
+Only a successfully rendered main-view cloud frame suppresses the native draw.
+A temporary live transparent override confirmed the pass was active; it was
+unloaded and the original live shader directory restored after capture.
+
+The audit disassembled all 733 available dumped pixel shaders, compared their
+cloud-family instructions/bindings, and checked weather assets. Realistic
+Weather 4's installed bundle overrides four regional weather tables (74 rows,
+39 distinct state names, 19 cloud effects) plus four environment profiles; it
+adds no new cloud shader/material assets. Native/base/expansion assets include
+14 weather table paths / 15 versions / 114 rows, including Toussaint and special
+quest climates. This is a broad dump/asset audit, not a claim to have visually
+replayed every weather/region/time combination. Unknown future shader variants
+and unsupported views retain the native fallback.
+
+The live custom cloud shadow map was bound and nonuniform (768-square, mean
+transmission 0.14993, range 0.000226..1), so this scene was not missing cloud
+shadow generation. Base-game sky BC930752 already receives shadowed atmospheric
+direct scattering. Expansion sky F12E637D did not: it now binds the same fog
+resources via OnForward and composes the same HDR direct term, while retaining
+its native weather background, haze scaling, stars and alpha. Shafts require
+Custom Atmospheric Fog, direct sun/moon radiance and cloud gaps; solid storm
+cover is not forced to show bright rays. This follows shadowed atmospheric
+single scattering rather than adding screen-space radial streaks:
+https://dev.epicgames.com/documentation/en-us/unreal-engine/sky-atmosphere-component-in-unreal-engine
+https://sebh.github.io/publications/egsr2020.pdf
+
+Validation: WARP/NVIDIA native sky replay and independent Darker Nights controls
+pass, including expansion sky/horizon all-zero tests and native alpha. Both sky
+shaders compose direct HDR scattering at 0/25/100 percent with unchanged native
+background/alpha. A spatial cloud-gap transport fixture yields different fog
+radiance (0.0482 shadowed vs 0.2959 illuminated) with identical transmittance,
+proving air-lighting contrast rather than opacity multiplication. Binding tests
+verify the expansion sky's fog callback and native VS/PS b13 preservation.
+
+Build target: thewitcher3classic, clang-x64-release. Pending link/restart, verify
+Coverage or Density zero removes the rainy native cloud dome, restore both to
+100 percent, then test mixed clouds, storm transitions, snow/blizzard and
+Toussaint. With Cloud Shadows On and Custom Atmospheric Fog, inspect shafts
+through cloud gaps and movement, preserving the native weather fog strength.
+The earlier enhanced-quality light-LOD optimization remains included in source.
+## Cloud morphology and light transport revision (2026-10-31)
+
+Supersedes the earlier quality/appearance notes for this revision. The native
+C6178ADC/F9FF6403 capture spans roughly 15 km across its complete cloud mesh.
+The procedural formations now use a 7200 m horizontal noise tile, retaining the
+2800 m vertical tile and independent 360/120/40 m erosion. This moves the broad
+billows toward the native reference, but does not reconstruct exact native card
+silhouettes or their authored placement. The native blended cloud-shadow field
+remains the weather coverage proxy; no CPU weather classification is introduced.
+
+Cloud Coverage remaps that weather footprint, Density scales extinction, Size
+scales horizontal billows only, and Layer Thickness raises the cloud top while
+keeping the 1200 m base. Size no longer rescales the weather front or fine erosion.
+All numeric defaults remain unchanged (Medium quality, 100% appearance controls).
+
+Every quality now includes reduced-energy multiple-scattering approximations.
+High and above add finer erosion, a 128-cubed shape volume, additional scattering
+orders and heterogeneous skylight occlusion. Cinematic/Maximum keep their higher
+resolution and view sample budgets. Lighting uses footprint-filtered broad density;
+shadow rays retain only base erosion, filtering away sub-texel microstructure.
+These approximations follow the production approaches discussed in Hillaire's
+SIGGRAPH 2020 course (multiple scattering/analytic integration) and Guerrilla's
+Nubis work (density detail and light-path LOD), not an extracted RDR2 renderer:
+https://blog.selfshadow.com/publications/s2020-shading-course/hillaire/s2020_pbs_hillaire_slides.pdf
+https://www.guerrilla-games.com/read/nubis-evolved
+
+Base and expansion sky now share cloud-shadowed air transport with the cloud
+composite. It uses the native SKY density profile, actual directional radiance,
+analytic Beer segment weights and the world-space cloud transmission map.
+Custom Atmospheric Fog and Cloud Shadows must be enabled for this path. Native
+weather background colors remain; no forced sun streaks or emissive brightness
+floor is added. Solid cover, vacuum, no incident light, or zero scattering strength
+do not generate shafts. Darker Nights Fog Brightness is transported independently
+of Moon/Cloud Brightness in the existing reserved c38.w word, preserving legacy
+water-only encoding. Native/unsupported sky fallback remains available.
+
+Validation: Release shader/addon builds, WARP and NVIDIA cloud/shadow/fog/sky
+fixtures, explicit presets, night ABI/upload and shader bindings pass. New
+cloud_material.cpp checks Size/weather isolation, fixed base height, density,
+coverage, analytic homogeneous shadowed air, zero-light/vacuum, HDR and separate
+night fog/water tags. clouds.cpp also exercises the combined cloud-shadow/air
+composition and retained reserved SRVs. The D3D debug layer was unavailable;
+numeric/state checks ran without it. Live weather transitions and final appearance
+still require a restart and visual acceptance; the broad weather audit above does
+not constitute replaying every weather state.
+
+Isolated RTX 5090 GPU timestamps, game closed, 3840x2160 with 75% unobscured sky:
+cloud trace/resolve/composite for partial/overcast coverage: Medium 0.294/0.348 ms,
+High 0.755/1.131 ms, Ultra 3.429/6.046 ms, Cinematic 5.546/11.210 ms,
+Maximum 23.120/53.983 ms. The latter levels remain expensive optional settings.
+Separate shadow generation at 70% coverage: Medium 0.123 ms, Ultra 0.721 ms,
+Cinematic 1.118 ms, Maximum 1.564 ms. A separate homogeneous sky-air fixture at
+3840x1620 measured 0.234 ms for 16 samples and 0.646 ms for 48 samples; it is
+not a gameplay benchmark or a complete final-sky-pass measurement. Cloud timing
+above excludes shadow generation and the extra sky draw. These synthetic costs
+are not FPS promises and vary with coverage, sun angle and view direction.
+
+Manual acceptance: compare Native/Volumetric at the supplied scene with appearance
+controls at 100%; inspect broad formations and the opposite-sun side; test each
+appearance slider independently; check clear/storm/Toussaint transitions, shafts
+through cloud gaps, HDR highlights and day/night controls. Then test camera motion
+with DLSS/FG, including cleared cloud history after controls change.
+
+Cloud default update (2026-11-01): fresh/reset and Custom preset values are now
+130% Coverage and 200% Size. Vanilla remains 100% for both. Existing saved
+profiles retain their values until reset or a preset is applied.
+
+## Cloud structure and evolution revision (2026-11-01)
+
+Research and a read-only W3Atmos v0.18.88 source/preset comparison are documented
+in CLOUD_RENDERING_RESEARCH.md. The Classic implementation now separates column
+profiles, broad formations, intermediate billows and height-dependent wisps/edge
+erosion. Four noise channels are used; cell structure is deformed during one-time
+noise generation. Profiles affect the actual density boundary. Visible clouds,
+world shadows and nearby self-shadowing use the shared density field.
+
+Evolution follows native b0 cloud-animation time retained on the GPU, with no
+CPU density work or GPU readback. A paused clock freezes evolution. Bulk motion,
+opacity-change responsiveness, thin evolving edges and clock-jump rejection feed
+the existing cloud temporal/DLSS/FG paths. Coverage 130%, Size 200% and Medium
+quality defaults are retained, together with native-weather coordinates and
+Darker Nights controls. These supersede the prior single-height-profile and
+360/120/40 m edge-only model. The layer is still a ground-view procedural model;
+cloud species and exact native painted silhouettes cannot be recovered uniquely
+from the native coverage field.
+
+Release shaders/addon and WARP/NVIDIA cloud, shadow, material, sky, fog, bindings
+and preset checks pass. Tests include native-clock/paused stability, changing
+shadows, clock jumps, conservative coarse-density bounds, zero light/density,
+HDR, native alpha, foreground motion/state, and independent appearance controls.
+Matched synthetic renders were inspected at neutral settings and retained
+startup defaults, with both front/back lighting. Final gameplay appearance and
+motion still need visual acceptance; the D3D debug layer remains unavailable.
+
+RTX 5090 isolated GPU timestamps, game closed, 3840x2160 and 75% visible sky:
+trace/resolve/composite partial/overcast: Medium 0.479/0.535 ms, High 0.877/1.198 ms,
+Ultra 3.375/4.081 ms, Cinematic 5.938/7.454 ms, Maximum 24.642/34.575 ms.
+Separate shadow generation at 70% coverage: Medium 0.056 ms, Ultra 0.421 ms,
+Cinematic 0.739 ms, Maximum 1.707 ms. These are synthetic costs, exclude the
+separate final sky/air pass, and are not gameplay FPS promises. Medium's added
+material/light work has a cost; the optional highest levels remain demanding.
+
+Build: cmake --build --preset clang-x64-release --target thewitcher3classic.
+Package: build/Release/packages/renodx-witcher3-classic-2026.11.01.zip (addon,
+production NVIDIA runtimes and licenses). Restart for the new addon; compare
+cloud contours, relief, horizon stability, day/night and moving cloud shadows,
+then DLAA/DLSS/FG camera motion in fair, broken and heavy weather.
+
+Cutscene fill coverage (2026-11-01):
+The captured cutscene had zero camera-fill endpoint RGB, but two additional
+untagged spot records remained (35.214/41.745/50 and 5.012/5.061/7.621).
+These use the ordinary point/spot builders, not the camera-light builder.
+Story-light ownership is now recorded at the dedicated native story spawner
+(78B6C0), component creation (0FB650) and proxy factory (BEACA0), before enqueue.
+Component and proxy destruction clear their separate identity sets; queued old
+proxies remain covered through rebuilds. No RGB/radius/flag heuristics classify
+placed world lights. The current per-view environment and published fill
+controls scope the native local-light bank (C39BE0); fresh point/spot RGB follows
+Cutscene Fill Light Strength. Matching carries environment gain once in RGB
+and enables both receiver groups, preserving type, shadow and volume flags.
+Tracking installs even when Player Fill Light starts at Native, enabling later
+changes without losing lights spawned earlier in the same session.
+All eight additional entry signatures require the known Classic 1.32 image;
+the CPU fixture checks actual entry attach/detach in a private executable copy.
+player_fill.cpp covers ownership, disabled creation, rebuild/draining lifetimes,
+address reuse and the bank/point/spot ABIs. player_fill_gpu.cpp replays original
+skin DXBC and scene exposure compute on WARP/NVIDIA, including independent
+strengths, matching, HDR and untouched native world-light records.
+Build target: thewitcher3classic, clang-x64-release. Restart and compare cutscene
+strength 0/1 with matching Off/On; verify ordinary placed lights and gameplay
+fill retain their independent behavior. Live visual acceptance remains needed.
+
+
+## Cloud/fog composition and nested cloud surfaces (2026-11-01)
+
+Volumetric clouds no longer switch sky fog to a separate cloud-only lighting
+integral. Both sky families sample the existing fog transport, retaining object
+cascades, terrain shadows, local lights, interiors and the selected Volume or
+Per-pixel renderer. The cloud composite carries opacity times the foreground
+scattering, bounded by cloud depth. This restores fog light under opaque clouds
+without adding a second copy in clear gaps. Foreground scattering is composed
+after cloud temporal reconstruction, so it does not follow cloud wind/history.
+
+Per-pixel sky scattering now shares the existing full-resolution fog cache with
+opaque geometry and the cloud composite. No additional texture allocation,
+readback or CPU scene processing is needed. Missing caches fall back to the
+same transport; frame admission prevents stale fog inputs. Native weather sky
+opacity and the Darker Nights fog-brightness tag remain independent controls.
+
+Cloud surface structure now includes a finer, domain-warped 3D hierarchy in the
+actual density boundary, rather than relying entirely on fine edge erosion of
+smooth parent puffs. View rays and shadow maps evaluate the same field. Native
+weather, cloud base, lighting equations and user defaults are retained. Density
+structure follows native wind/time, freezes when paused, and is filtered by the
+sampling footprint to suppress unresolved distant detail.
+
+References: PBRT 4e, The Equation of Transfer (foreground scattering plus
+transmitted background):
+https://www.pbr-book.org/4ed/Light_Transport_II_Volume_Rendering/The_Equation_of_Transfer
+Guerrilla Nubis 2017 and Nubis Cubed 2023, hierarchical density modeling:
+https://www.guerrilla-games.com/read/nubis-authoring-real-time-volumetric-cloudscapes-with-the-decima-engine
+https://www.guerrilla-games.com/read/nubis-cubed
+The locally supplied W3Atmos shader was compared for its multiscale shape and
+boundary breakup; this implementation uses the existing Classic noise volume.
+
+Validation: WARP/NVIDIA cloud, shadow, material and sky tests pass, including
+closed-form HDR fog under cloud opacity, cached/uncached Per-pixel equivalence,
+Volume fallback, night fog gain, stale frame rejection, motion/FG inputs, native
+alpha and native constant-buffer preservation. Existing opaque-fog cache and
+registration tests pass. Manual check after restarting: look upward at billow
+surfaces and silhouettes; pan through sunlit gaps with both fog renderers;
+compare native/custom clouds, cloudy/clear weather and night fog brightness.
+
+
+Cloud surface refinement: the first unrestricted fine-density perturbation was
+visually too fragmented. The final field uses a broader 900*sqrt(Size) metre
+noise domain, reduced signed weights (0.4/0.32), and a smooth parent-density
+support envelope. This retains larger connected forms while allowing internal
+billows and shallow boundary breakup. No lighting equation was changed. The
+support envelope also keeps density monotonic as Coverage increases. WARP and
+NVIDIA cloud/shadow/material regressions pass after this refinement.
+
+
+## Independent cloud sampling and reconstruction (2026-11-01)
+
+Graphics / Clouds adds Cloud Resolution: Automatic, Quarter, Half and Full.
+Automatic retains each existing Cloud Quality resolution; explicit choices
+change width and height relative to the current internal/DLSS render resolution,
+without raising light samples, shape-noise resolution or shadow-map quality.
+Raymarch Step Size is 50-200 percent relative to Cloud Quality's view sampling:
+100 percent retains the existing count and 50 percent doubles it. Both new
+controls are saved by the existing profile system and assigned explicitly by
+both Graphics presets. Defaults remain Automatic and 100 percent. Changes reset
+cloud history and DLSS/FG responsiveness; sample-count changes no longer
+reallocate textures unless their actual dimensions change.
+
+Two filtering changes address the soft/smeary appearance. View-ray texture LOD
+now follows the transverse pixel cone, not an isotropic blur based on the depth
+quadrature interval. The existing stochastic depth sampling and step-size
+control handle along-ray integration. Temporal history uses nine-tap separable
+Catmull-Rom reconstruction, constrained to the current HDR neighbourhood, with
+radiance- and motion-dependent confidence. Stable history remains filtered;
+changing opaque-cloud detail no longer relies on opacity alone for rejection.
+Final spatial opacity upsampling remains nonnegative, valid-only bilinear to
+preserve density ordering and foreground silhouettes. No colour, morphology,
+cloud lighting or fog-composition change is made by these controls/filters.
+
+References: Guerrilla Nubis Evolved, distance-dependent density MIP filtering:
+https://www.guerrilla-games.com/read/nubis-evolved
+Yang, Liu and Salvi, A Survey of Temporal Antialiasing Techniques (2020), history
+reconstruction and validation:
+https://research.nvidia.com/labs/rtr/publication/yang2020survey/
+
+Validation: Release shaders/addon compile; WARP/NVIDIA production cloud and
+analytic temporal reconstruction tests pass. A moving five-pixel-period HDR
+signal after 32 quarter-texel reprojections has contrast-normalized RMS error
+0.07624 versus 0.31774 with the previous shader. The old shader fails the same
+0.08 acceptance bound. Constant HDR energy, opacity bounds, no overshoot,
+resolution up/down changes, step-size changes, native time/wind, cloud motion,
+FG responsiveness and foreground isolation pass. Focused preset tests cover all
+six quality levels and both explicit preset buttons without rewriting unrelated
+user-edited preset defaults. This is not a claim of live-scene visual equivalence.
+
+Isolated RTX 5090 timestamps, game closed, 3840x2160 with 75 percent visible sky,
+Medium quality and mixed weather: trace + resolve + composite at 100/50 percent
+step size costs Automatic (Quarter) 0.772/1.270 ms, Half 2.317/3.884 ms and Full
+8.134/12.190 ms. Shadow generation and fog generation are excluded, as are the
+rest of the game and any DLSS costs. These are synthetic timings, not gameplay
+FPS promises. Compare Half at 100 percent first, then reduce Step Size if thin
+structure is missed. Check static sky, camera pans, native wind and DLSS/FG.

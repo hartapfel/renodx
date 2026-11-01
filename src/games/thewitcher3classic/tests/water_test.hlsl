@@ -2,6 +2,24 @@
 #include "../water/shading.hlsli"
 #include "../water/transport.hlsli"
 Texture2D<float4> Depth : register(t15);
+Texture2D<float4> TestWaves : register(t5);
+SamplerState TestWaveSampler : register(s5);
+float4 ripple_warped(float4 position : SV_Position) : SV_Target {
+  return float4(WaterSurfaceWaveNormal(TestWaves,TestWaveSampler,float2(floor(position.x)*.19f+2.f,1.7f+floor(position.y)*.13f),
+      float2(16,8),float2(100,30),float2(.189375f,.154844f),10.f,0.f,1.f,1.f,.001f),1.f);
+}
+float4 ripple_surface(float4 position : SV_Position) : SV_Target {
+  uint row=(uint)position.y;
+  return float4(WaterSurfaceWaveNormal(TestWaves,TestWaveSampler,float2(floor(position.x)*.19f+2.f,1.7f),
+      float2(16,8),float2(100,30),0.f,10.f,row==3?250.f:0.f,
+      row==0?0.f:row==1?.25f:1.f,1.f,.001f),1.f);
+}
+float4 ripples(float4 position : SV_Position) : SV_Target {
+  float slope=(floor(position.x)-31.f)*.2f;
+  float strength=floor(position.y)/3.f;
+  float3 normal=WaterRippleNormal(normalize(float3(slope,-.7f*slope,1.f)),strength);
+  return float4(normal,WaterFresnel(normal.z));
+}
 float4 main(float4 position : SV_Position) : SV_Target {
   float x=floor(position.x)/63.f;
   if (position.y<1.f) return float4(WaterFresnel(x),WaterTransmittance(float3(.1,.2,.3),x*20.f));

@@ -17,6 +17,10 @@ float ClassicSkyHazeBrightness(uint bits) {
   return (bits & 0xff000000u) == 0xd8000000u ? float(bits & 0xffffffu) / 1048575.f : 1.f;
 }
 float ClassicWaterAmbient(uint bits) {
+  if((bits & 0xff000000u)==0xdc000000u)return float(bits &4095u)/2047.f;
   return (bits & 0xff000000u) == 0xd9000000u ? float(bits & 0xffffffu) / 1048575.f : 1.f;
+}
+float ClassicFogBrightness(uint bits) {
+  return (bits &0xff000000u)==0xdc000000u ? float((bits>>12)&4095u)/511.f : 1.f;
 }
 #endif

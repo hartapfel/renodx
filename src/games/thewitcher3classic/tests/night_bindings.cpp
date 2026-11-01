@@ -42,10 +42,15 @@ float4 main(float4 p:SV_Position,float x:TEXCOORD0):SV_Target{return float4(x,f[
       normalization::current.store(region, std::memory_order_relaxed);
       context->VSSetConstantBuffers(13,1,native.GetAddressOf());context->PSSetConstantBuffers(13,1,native.GetAddressOf());
       auto& registration=custom_shaders.at(hash);
+      const auto* forward=registration.on_inject.target<bool(*)(reshade::api::command_list*)>();
+      if(hash==0xF12E637Du &&(!forward ||*forward!=&witcher3classic::volumetrics::OnSky))
+        throw std::runtime_error("Expansion sky does not bind atmospheric scattering");
       // Same default/override decision used by mods::shader::OnCommandAction.
       // PushShaderInjections uses all_graphics, so an accidental default binds
       // the 160-byte settings buffer to both stages, including the native VS.
-      if(registration.on_replace(nullptr)&&(!registration.on_inject||registration.on_inject(nullptr))) {
+      // OnForward needs a real game command list and explicitly declines the
+      // shared injection buffer; its state handling is tested by the fog suite.
+      if(registration.on_replace(nullptr)&&(!registration.on_inject||(!forward &&registration.on_inject(nullptr)))) {
         context->VSSetConstantBuffers(13,1,injection.GetAddressOf());context->PSSetConstantBuffers(13,1,injection.GetAddressOf());
       }
       ComPtr<ID3D11Buffer> vertex_binding,pixel_binding;

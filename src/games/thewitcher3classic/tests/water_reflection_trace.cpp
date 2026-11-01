@@ -10,6 +10,8 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <DirectXPackedVector.h>
+#include "../water/screen_reflections.hpp"
 using Microsoft::WRL::ComPtr;
 std::vector<char> Read(const char* path) {
   std::ifstream f(path,std::ios::binary);assert(f);return {std::istreambuf_iterator<char>(f),{}};
@@ -33,8 +35,8 @@ int main(int argc,char**) {
   D3D11_VIEWPORT viewport{0,0,W,H,0,1};ctx->RSSetViewports(1,&viewport);
   D3D11_RASTERIZER_DESC raster=CD3D11_RASTERIZER_DESC(D3D11_DEFAULT);raster.CullMode=D3D11_CULL_NONE;
   ComPtr<ID3D11RasterizerState> rs;assert(SUCCEEDED(device->CreateRasterizerState(&raster,&rs)));ctx->RSSetState(rs.Get());
-  std::array<float,210*4> frame{};std::array<float,13*4> params{};
-  auto bytes=Read("tmp/witcher3classic-investigation/volumetrics-20261027/trace-cb12.bin");memcpy(frame.data(),bytes.data(),sizeof(frame));
+  std::array<float,269*4> frame{};std::array<float,13*4> params{};
+  auto bytes=Read("tmp/witcher3classic-investigation/volumetrics-20261027/trace-cb12.bin");memcpy(frame.data(),bytes.data(),std::min(bytes.size(),sizeof(frame)));
   bytes=Read("tmp/witcher3classic-investigation/volumetrics-20261027/trace-cb3.bin");memcpy(params.data(),bytes.data(),sizeof(params));
   for(UINT c=0;c<4;++c)params[c]=64;
   params[20]=params[21]=64;params[22]=params[23]=1.f/64;
@@ -104,4 +106,48 @@ int main(int argc,char**) {
     for(UINT i=0;i<W*H;++i)for(UINT c=0;c<3;++c) {if(std::abs(before[i*4+c]-after[i*4+c])>.01f)++changed;if(pixels[0][i][3]==0)assert(after[i*4+c]==0);}
   }
   std::cout<<"Transparent intersection depth changed "<<changed<<" channels; native mask preserved"<<std::endl;assert(changed>10);
+
+  // Exercise the production resource path, not just its shader in isolation.
+  // A cropped active view inside a larger pool is the game's DLSS layout.
+  ComPtr<ID3D11DeviceContext1> context;assert(SUCCEEDED(ctx.As(&context)));
+  witcher3classic::water::ScreenReflections reflections;
+  uint64_t frame_id=0;
+  for(const UINT active:{64u,48u,63u})for(float full:{0.f,1.f})for(float stable:{0.f,1.f}) {
+    witcher3classic::water::ssr_full_resolution=full;
+    witcher3classic::water::ssr_stabilization=stable;
+    for(UINT repeat=0;repeat<3;++repeat,++frame_id) {
+      const UINT q=std::max(1u,active/4);
+      viewport.Width=viewport.Height=float(q);ctx->RSSetViewports(1,&viewport);
+      ctx->PSSetConstantBuffers(3,1,param_buffer.GetAddressOf());
+      ctx->PSSetShaderResources(0,1,views[1].GetAddressOf());
+      ctx->PSSetShaderResources(1,1,views[2].GetAddressOf());
+      if(!full &&!stable) {assert(!reflections.Prepare(context.Get(),active,active,frame_id,false));continue;}
+      assert(reflections.Prepare(context.Get(),active,active,frame_id,false));
+      D3D11_VIEWPORT saved{};UINT count=1;ctx->RSGetViewports(&count,&saved);assert(saved.Width==q);
+      for(UINT i=0;i<7;++i)ctx->PSSetShaderResources(i==6?23:i,1,views[i].GetAddressOf());
+      assert(reflections.Trace(context.Get(),frame_id));
+      ctx->PSSetShaderResources(0,1,views[1].GetAddressOf());
+      assert(reflections.Composite(context.Get(),frame_id));
+      ComPtr<ID3D11ShaderResourceView> selected;context->PSGetShaderResources(0,1,&selected);
+      ComPtr<ID3D11Resource> resource;selected->GetResource(&resource);ComPtr<ID3D11Texture2D> result_texture;
+      assert(SUCCEEDED(resource.As(&result_texture)));D3D11_TEXTURE2D_DESC result_desc;result_texture->GetDesc(&result_desc);
+      assert(result_desc.Width==(full?active:q) &&result_desc.Height==result_desc.Width &&result_desc.MipLevels>1);
+      result_desc.MipLevels=1;result_desc.Usage=D3D11_USAGE_STAGING;result_desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+      result_desc.BindFlags=result_desc.MiscFlags=0;ComPtr<ID3D11Texture2D> readback;
+      assert(SUCCEEDED(device->CreateTexture2D(&result_desc,nullptr,&readback)));
+      ctx->CopySubresourceRegion(readback.Get(),0,0,0,0,result_texture.Get(),0,nullptr);
+      D3D11_MAPPED_SUBRESOURCE map{};assert(SUCCEEDED(ctx->Map(readback.Get(),0,D3D11_MAP_READ,0,&map)));
+      float peak=0;
+      for(UINT y=0;y<result_desc.Height;++y)for(UINT x=0;x<result_desc.Width;++x) {
+        const auto* p=reinterpret_cast<const uint16_t*>(static_cast<const char*>(map.pData)+y*map.RowPitch)+x*4;
+        for(UINT c=0;c<4;++c) {float v=DirectX::PackedVector::XMConvertHalfToFloat(p[c]);assert(std::isfinite(v));if(c<3)peak=std::max(peak,v);}
+      }
+      ctx->Unmap(readback.Get(),0);assert(peak>1.f);
+      reflections.Restore(context.Get());selected.Reset();context->PSGetShaderResources(0,1,&selected);
+      ComPtr<ID3D11Buffer> restored;context->PSGetConstantBuffers(3,1,&restored);
+      assert(selected.Get()==views[1].Get() &&restored.Get()==param_buffer.Get());
+      assert(!reflections.Composite(context.Get(),frame_id));
+    }
+  }
+  std::cout<<"PASS production SSR full/quarter dimensions, DLSS subrects, odd sizes, resize/toggle history, HDR, one composite per frame and native state restoration\n";
 }

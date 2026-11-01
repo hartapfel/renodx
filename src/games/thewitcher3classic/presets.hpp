@@ -43,8 +43,13 @@ inline constexpr Value night[] = {
     {"NightDarkeningEnd", 6.f, 6.f},
 };
 inline constexpr Value graphics[] = {
+    {"GfxClouds", 0.f, 1.f}, {"GfxCloudQuality", 1.f, 1.f},
+    {"GfxCloudShadows", 0.f, 1.f},
+    {"GfxCloudResolution", 0.f, 0.f}, {"GfxCloudStepSize", 100.f, 100.f},
+    {"GfxCloudCoverage", 100.f, 100.f}, {"GfxCloudDensity", 100.f, 100.f},
+    {"GfxCloudSize", 100.f, 100.f}, {"GfxCloudThickness", 100.f, 100.f},
     {"GfxLighting", 0.f, 1.f}, {"GfxAmbientAO", 0.f, 1.f},
-    {"GfxSoftShadows", 0.f, 1.f}, {"GfxSunDiameter", .15f, .15f},
+    {"GfxSoftShadows", 0.f, 1.f}, {"GfxSunDiameter", .35f, .35f},
     {"GfxContactShadows", 0.f, 1.f}, {"GfxContactLength", 1.f, 1.f},
     {"GfxPlayerFill", 0.f, 1.f}, {"GfxPlayerStrength", .2f, .2f},
     {"GfxCutsceneFillStrength", 1.f, .2f}, {"GfxPlayerUnify", 0.f, 1.f}, {"GfxVolumetrics", 0.f, 1.f},
@@ -52,12 +57,14 @@ inline constexpr Value graphics[] = {
     {"GfxFogStart", 0.f, 0.f}, {"GfxFogLight", 1.f, 1.f},
     {"GfxFogLocalLight", 2.f, 2.f}, {"GfxFogAnisotropy", .5f, .5f},
     {"GfxFogHeight", 1.f, 1.f}, {"GfxFogRenderer", 0.f, 0.f},
-    {"GfxFogResolutionQuality", 2.f, 2.f},
+    {"GfxFogResolutionQuality", 1.f, 1.f},
     {"GfxFogReconstruction", 0.f, 1.f},
-    {"GfxFogShadowQuality", 4.f, 4.f}, {"GfxWater", 0.f, 1.f},
-    {"GfxRefractiveRain", 0.f, 1.f},
+    {"GfxFogShadowQuality", 1.f, 1.f}, {"GfxWater", 0.f, 1.f},
+    {"GfxRefractiveRain", 0.f, 1.f}, {"GfxWaterSurfaceRipples",1.f,0.3f},
+    {"GfxWaterRipplePattern",0.f,0.f},
+    {"GfxWaterSSRFullResolution",0.f,1.f},{"GfxWaterSSRStabilization",0.f,1.f},
     {"GfxUnderwaterDensity",1.f,1.f},
-    {"GfxUnderwaterDetail",2.f,2.f},{"GfxWaterCaustics",1.f,1.f},
+    {"GfxUnderwaterDetail",1.f,1.f},{"GfxWaterCaustics",1.f,1.f},
     {"GfxWaterCameraBlur",0.f,.15f},{"GfxWaterCameraCA",0.f,1.f},
 };
 

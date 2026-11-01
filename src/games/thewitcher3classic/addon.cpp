@@ -20,6 +20,7 @@
 #include "./weather_materials.hpp"
 #include "./temporal/runtime.hpp"
 #include "./volumetrics/runtime.hpp"
+#include "./clouds/runtime.hpp"
 #include "./lighting/runtime.hpp"
 #include "./darker_nights_runtime.hpp"
 #include "./rain/runtime.hpp"
@@ -466,10 +467,17 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     // These read gains from native b12. Default RenoDX injection would replace
     // b13 for every graphics stage, including the paired native VS constants.
     {0xF12E637D, {.crc32 = 0xF12E637D, .code = __0xF12E637D,
-        .on_replace = [](auto*) { return witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
+        .on_replace = [](auto*) { return witcher3classic::volumetrics::mode != 0.f
+            || (witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
             && witcher3classic::night::common_supported
             && (witcher3classic::night::star_brightness != 100.f || witcher3classic::night::sky_haze_brightness != 100.f
-                || witcher3classic::night::normalization::current.load(std::memory_order_relaxed) != 0); },
+                || witcher3classic::night::normalization::current.load(std::memory_order_relaxed) != 0)); },
+        .on_inject = &witcher3classic::volumetrics::OnSky,
+        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+    // Storm/thin flow-map cloud dome. Suppress only after the volume rendered
+    // successfully; an empty replacement keeps the exact native fallback.
+    {0xFE720049, {.crc32 = 0xFE720049,
+        .on_replace = [](auto*) { return false; },
         .on_inject = [](auto*) { return false; }}},
     {0x6F0FF708, {.crc32 = 0x6F0FF708, .code = __0x6F0FF708,
         .on_replace = [](auto*) { return witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
@@ -490,14 +498,14 @@ renodx::mods::shader::CustomShaders custom_shaders = {
         .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f
             || (witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
                 && witcher3classic::night::common_supported && witcher3classic::night::star_brightness != 100.f); },
-        .on_inject = &witcher3classic::volumetrics::OnForward,
+        .on_inject = &witcher3classic::volumetrics::OnSky,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     {0x22D1E925, {.crc32 = 0x22D1E925, .code = __0x22D1E925,
         .on_replace = [](auto*) { return witcher3classic::water::mode != 0.f || witcher3classic::volumetrics::mode != 0.f
             || (witcher3classic::night::enabled == 1.f && witcher3classic::night::installed
                 && witcher3classic::night::common_supported
                 && (witcher3classic::night::cloud_brightness != 100.f || witcher3classic::night::normalization::current.load(std::memory_order_relaxed) != 0)); },
-        .on_inject = &witcher3classic::volumetrics::OnForward,
+        .on_inject = &witcher3classic::volumetrics::OnSky,
         .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
     CustomShaderEntry(0x043049C7),  // SDR video with vertex fade.
     CustomShaderEntry(0x30C6DAFA),  // Opaque SDR video.
@@ -509,7 +517,11 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     {0x47CC9FA1, {.crc32 = 0x47CC9FA1, .code = __0x47CC9FA1,
         .on_replace = &witcher3classic::volumetrics::OnReflectionTrace,
         .on_inject = [](auto*) { return false; },
-        .on_drawn = &witcher3classic::volumetrics::OnDrawn}},
+        .on_drawn = &witcher3classic::volumetrics::OnReflectionTraceDrawn}},
+    {0x35624BD6, {.crc32 = 0x35624BD6,
+        .on_inject = [](auto*) { return false; },
+        .on_draw = &witcher3classic::volumetrics::OnReflectionComposite,
+        .on_drawn = &witcher3classic::volumetrics::OnReflectionCompositeDrawn}},
     {0x406B9233, {.crc32 = 0x406B9233, .code = __0x406B9233,
         .on_replace = &witcher3classic::volumetrics::OnReflectionInput,
         .on_inject = [](auto*) { return false; },
@@ -683,7 +695,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxPlayerFill"),
         .label = "Player Fill Light",
         .section = "Player Lighting",
-        .tooltip = "Lets you adjust the extra light that follows the camera and brightens characters and nearby surfaces. World lights keep their normal strength.",
+        .tooltip = "Adjusts camera fill and the extra character lighting added by cutscenes. Native restores the original lighting. Ordinary world lights keep their normal strength.",
         .labels = {"Native", "Custom"},
     },
     new renodx::utils::settings::Setting{
@@ -704,7 +716,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCutsceneFillStrength"),
         .label = "Cutscene Fill Light Strength",
         .section = "Player Lighting",
-        .tooltip = "Brightness of the extra camera lighting used in cutscenes and conversations, including interior scenes. 0 removes it; 1 keeps the game's original strength. Placed lights stay unchanged.",
+        .tooltip = "Brightness of camera fill and extra point or spot lights created for cutscenes and conversations. 0 removes them; 1 keeps their original strength before matching. Placed world lights stay unchanged.",
         .min = 0.0f,
         .max = 1.0f,
         .format = "%.2f",
@@ -717,11 +729,91 @@ renodx::utils::settings::Settings settings = {
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxPlayerUnify"),
         .label = "Match Character and World Fill",
         .section = "Player Lighting",
-        .tooltip = "Uses the same fill-light strength for characters and their surroundings, reducing the extra brightness on characters.",
+        .tooltip = "Matches camera fill and extra cutscene lights to the surrounding environment, using the same strength on characters and nearby surfaces.",
         .labels = {"Off", "On"},
         .is_enabled = [] { return witcher3classic::lighting::player_control != 0.f; },
     },
 
+    new renodx::utils::settings::Setting{
+        .key = "GfxClouds", .binding = &witcher3classic::clouds::mode,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxClouds"),
+        .label = "Cloud Rendering", .section = "Clouds",
+        .tooltip = "Volumetric replaces the game's flat cloud layers with clouds that absorb and scatter sunlight and moonlight. Coverage and wind follow the weather.",
+        .labels = {"Native", "Volumetric"},
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxCloudShadows", .binding = &witcher3classic::clouds::shadows,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudShadows"),
+        .label = "Cloud Shadows", .section = "Clouds",
+        .tooltip = "Clouds cast moving sun and moon shadows on the world. With Atmospheric Fog set to Custom, gaps in the clouds can form light shafts. Ambient lighting and nearby lamps keep their own lighting.",
+        .labels = {"Off", "On"},
+        .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxCloudQuality", .binding = &witcher3classic::clouds::quality,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudQuality"),
+        .label = "Cloud Quality", .section = "Clouds",
+        .tooltip = "Controls cloud sampling, shape detail, lighting accuracy and cloud-shadow quality. Higher levels cost more GPU time. Cloud Resolution controls image sharpness separately; Automatic follows this quality level.",
+        .labels = {"Low", "Medium", "High", "Ultra", "Cinematic", "Maximum"},
+        .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxCloudResolution", .binding = &witcher3classic::clouds::resolution,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudResolution"),
+        .label = "Cloud Resolution", .section = "Clouds",
+        .tooltip = "Higher resolution makes cloud edges and small details clearer, at a higher GPU and memory cost. Quarter and Half refer to width and height. Full uses the game's internal render resolution, including when using DLSS. Automatic follows Cloud Quality.",
+        .labels = {"Automatic", "Quarter", "Half", "Full"},
+        .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxCloudStepSize", .binding = &witcher3classic::clouds::step_size,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudStepSize"),
+        .label = "Raymarch Step Size", .section = "Clouds",
+        .tooltip = "Distance between cloud samples relative to Cloud Quality. Smaller steps capture finer structure and reduce missed thin details, but cost more GPU time. 100% keeps normal sampling; 50% uses twice as many view samples. This does not change cloud resolution.",
+        .min = 50.f, .max = 200.f, .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
+        .parse = [](float value) { return value * .01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxCloudCoverage", .binding = &witcher3classic::clouds::coverage,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudCoverage"),
+        .label = "Cloud Coverage", .section = "Cloud Appearance",
+        .tooltip = "How much of the sky clouds can fill. 100% follows the current weather, lower values open gaps, and higher values fill them. 0% removes clouds; 200% allows maximum coverage. Density controls how opaque they are.",
+        .min = 0.f, .max = 200.f, .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
+        .parse = [](float value) { return value * .01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxCloudDensity", .binding = &witcher3classic::clouds::density,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudDensity"),
+        .label = "Cloud Density", .section = "Cloud Appearance",
+        .tooltip = "How opaque existing clouds are. Higher values block more sunlight and deepen cloud shadows; lower values make clouds more transparent. 100% keeps the current density.",
+        .min = 0.f, .max = 400.f, .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
+        .parse = [](float value) { return value * .01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxCloudSize", .binding = &witcher3classic::clouds::size,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudSize"),
+        .label = "Cloud Size", .section = "Cloud Appearance",
+        .tooltip = "Width of cloud formations. Higher values create broader clouds; lower values create more, smaller formations. Cloud-base height, small details, wind speed and the weather map stay unchanged. Larger clouds can cast broader shadows. 100% is the standard size.",
+        .min = 25.f, .max = 400.f, .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
+        .parse = [](float value) { return value * .01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxCloudThickness", .binding = &witcher3classic::clouds::thickness,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudThickness"),
+        .label = "Cloud Layer Thickness", .section = "Cloud Appearance",
+        .tooltip = "Vertical depth of the cloud layer. Higher values build taller, deeper clouds and block more light. The bottom of the layer stays at the same height. 100% keeps the current thickness.",
+        .min = 50.f, .max = 300.f, .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
+        .parse = [](float value) { return value * .01f; },
+    },
     new renodx::utils::settings::Setting{
         .key = "GfxVolumetrics",
         .binding = &witcher3classic::volumetrics::mode,
@@ -878,6 +970,37 @@ renodx::utils::settings::Settings settings = {
         .labels = {"Native", "Custom"},
     },
 
+    new renodx::utils::settings::Setting{
+        .key="GfxWaterRipplePattern",.binding=&witcher3classic::water::ripple_pattern,
+        .value_type=renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxWaterRipplePattern"),
+        .label="Ripple Pattern",.section="Water",
+        .tooltip="Surface Waves follows the shape of the moving water for smoother, broader ripples. Original uses the game's textured ripple pattern. Both keep swimming wakes.",
+        .labels={"Original","Surface Waves"},
+        .is_enabled=[] {return witcher3classic::water::mode!=0.f;},
+    },
+    new renodx::utils::settings::Setting{
+        .key="GfxWaterSurfaceRipples",.binding=&witcher3classic::water::surface_ripples,
+        .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxWaterSurfaceRipples"),
+        .label="Surface Ripples",.section="Water",
+        .tooltip="Strength of the selected ripple pattern. Lower values give a smoother surface and calmer reflections. With Original selected, 1.00 keeps the game's ripple strength. Swimming wakes and large wave movement remain.",
+        .min=0.f,.max=1.f,.format="%.2f",
+        .is_enabled=[] {return witcher3classic::water::mode!=0.f;},
+    },
+    new renodx::utils::settings::Setting{
+        .key="GfxWaterSSRFullResolution",.binding=&witcher3classic::water::ssr_full_resolution,
+        .value_type=renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxWaterSSRFullResolution"),
+        .label="Full-Resolution Water Reflections",.section="Water",
+        .tooltip="Traces screen-space water reflections at the game's render resolution for finer detail. With DLSS, follows its internal resolution. Uses more GPU time and memory; Off keeps the original lower resolution. Objects outside the screen still cannot be reflected.",
+    },
+    new renodx::utils::settings::Setting{
+        .key="GfxWaterSSRStabilization",.binding=&witcher3classic::water::ssr_stabilization,
+        .value_type=renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxWaterSSRStabilization"),
+        .label="Stabilize Water Reflections",.section="Water",
+        .tooltip="Reduces reflection shimmer by tracking reflected surfaces between frames and rejecting outdated detail during movement. Works at either reflection resolution. Turn both reflection options Off to restore the original reflections.",
+    },
     new renodx::utils::settings::Setting{
         .key="GfxUnderwaterDensity",.binding=&witcher3classic::water::underwater_density,
         .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxUnderwaterDensity"),
@@ -2286,6 +2409,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     reshade::register_event<reshade::addon_event::init_device>(&witcher3classic::night::OnInit);
     reshade::register_event<reshade::addon_event::destroy_device>(&witcher3classic::night::OnDestroy);
     reshade::register_event<reshade::addon_event::init_device>(&witcher3classic::volumetrics::OnInit);
+    reshade::register_event<reshade::addon_event::init_device>(&witcher3classic::clouds::OnInit);
+    reshade::register_event<reshade::addon_event::destroy_device>(&witcher3classic::clouds::OnDestroy);
+    reshade::register_event<reshade::addon_event::present>(&witcher3classic::clouds::OnPresent);
     reshade::register_event<reshade::addon_event::init_device>(&witcher3classic::lighting::OnInit);
     reshade::register_event<reshade::addon_event::destroy_device>(&witcher3classic::volumetrics::OnDestroy);
     reshade::register_event<reshade::addon_event::destroy_device>(&witcher3classic::lighting::OnDestroy);
@@ -2383,6 +2509,50 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     };
     custom_shaders.at(0x249DA2F1).on_inject = &OnBlitzComputeInject;
     custom_shaders.at(0x249DA2F1).on_drawn = &OnBlitzComputeDrawn;
+    for (uint32_t hash : {0xBC930752u, 0xF12E637Du})
+      custom_shaders.at(hash).on_draw = &witcher3classic::clouds::OnSky;
+    for (uint32_t hash : {0x22D1E925u, 0x6F0FF708u, 0xC6178ADCu, 0xF4B551ECu, 0xFE720049u})
+      custom_shaders.at(hash).on_draw = &witcher3classic::clouds::OnCloud;
+    // Every audited native cloud-shadow receiver uses the same volume-derived
+    // transmission. Preserve existing motion/fog/water injection callbacks.
+    const auto cloud_receiver = [&](uint32_t hash,std::span<const uint8_t> code,bool vertex) {
+      auto [entry,inserted]=custom_shaders.try_emplace(hash,renodx::mods::shader::CustomShader{
+          .crc32=hash,.code=code,.on_replace=&witcher3classic::clouds::ShadowsReady,
+          .on_inject=[](auto*) {return false;}});
+      auto& shader=entry->second;
+      auto previous_draw=shader.on_draw;
+      shader.on_draw=[previous_draw,vertex](auto* cmd) {
+        witcher3classic::clouds::PrepareShadows(cmd,vertex);
+        return previous_draw ? previous_draw(cmd) : true;
+      };
+      if(!vertex ||inserted) {
+        auto previous_replace=shader.on_replace;
+        shader.on_replace=[previous_replace](auto* cmd) {
+          return (previous_replace ? previous_replace(cmd) : true) ||witcher3classic::clouds::ShadowsReady(cmd);
+        };
+      }
+    };
+#define CLOUD_RECEIVER_VERTEX(hash) cloud_receiver(hash,__##hash,true);
+#define CLOUD_RECEIVER_PIXEL(hash) cloud_receiver(hash,__##hash,false);
+#include "clouds/receivers.inc"
+#undef CLOUD_RECEIVER_VERTEX
+#undef CLOUD_RECEIVER_PIXEL
+    const std::array<std::pair<uint32_t,std::span<const uint8_t>>,4> cloud_native_vertices{{
+        {0x5CC0DB95,__0xF3C60020},{0xAE216EAE,__0xF3C60021},
+        {0xAB3E8304,__0xF3C60022},{0xB0B4EB6F,__0xF3C60023}}};
+    for(UINT i=0;i<cloud_native_vertices.size();++i) {
+      auto& shader=custom_shaders.at(cloud_native_vertices[i].first);
+      auto previous_replace=shader.on_replace;auto previous_drawn=shader.on_drawn;
+      shader.on_replace=[previous_replace,i,code=cloud_native_vertices[i].second](auto* cmd) {
+        bool replace=previous_replace ? previous_replace(cmd) : true;
+        if(!replace)witcher3classic::clouds::BindNativeVertex(cmd,i,code);
+        return replace;
+      };
+      shader.on_drawn=[previous_drawn](auto* cmd) {
+        witcher3classic::clouds::OnVertexDrawn(cmd);
+        if(previous_drawn)previous_drawn(cmd);
+      };
+    }
     // Restrict shared mesh permutations to their audited moon pixel partners.
     for (const auto& [vertex, pixel] : {std::pair{0x910C4B43u, 0x8C9C55ECu}, std::pair{0x3939C615u, 0x89760976u}}) {
       auto& moon_vertex = custom_shaders.at(vertex);
@@ -2506,6 +2676,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
 #endif
     reshade::unregister_event<reshade::addon_event::init_swapchain>(&OnInitSwapchain);
     reshade::unregister_event<reshade::addon_event::init_device>(&witcher3classic::volumetrics::OnInit);
+    reshade::unregister_event<reshade::addon_event::init_device>(&witcher3classic::clouds::OnInit);
+    reshade::unregister_event<reshade::addon_event::destroy_device>(&witcher3classic::clouds::OnDestroy);
+    reshade::unregister_event<reshade::addon_event::present>(&witcher3classic::clouds::OnPresent);
     reshade::unregister_event<reshade::addon_event::init_device>(&witcher3classic::lighting::OnInit);
     reshade::unregister_event<reshade::addon_event::destroy_device>(&witcher3classic::volumetrics::OnDestroy);
     reshade::unregister_event<reshade::addon_event::destroy_device>(&witcher3classic::lighting::OnDestroy);

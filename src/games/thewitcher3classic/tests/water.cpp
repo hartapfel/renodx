@@ -25,7 +25,7 @@ struct WaterIncludes : ID3DInclude {
   }
   HRESULT __stdcall Close(const void* data) override {parents.erase(data);delete[] static_cast<const char*>(data);return S_OK;}
 };
-int main(int argc,char**) {
+int main(int argc,char** argv) {
   witcher3classic::water::underwater_density=1.f; // Shared reference medium.
   ComPtr<ID3D11Device> device;
   ComPtr<ID3D11DeviceContext> base;
@@ -56,6 +56,20 @@ int main(int argc,char**) {
   context->PSSetShaderResources(113,3,sentinel);
   assert(water.Bind(context.Get(),1));
   assert(!water.Bind(context.Get(),1));
+  ComPtr<ID3D11ShaderResourceView> parameter_view;
+  context->PSGetShaderResources(115,1,&parameter_view);
+  ComPtr<ID3D11Resource> parameter_resource;parameter_view->GetResource(&parameter_resource);
+  D3D11_BUFFER_DESC parameter_desc{32,D3D11_USAGE_STAGING,0,D3D11_CPU_ACCESS_READ};
+  ComPtr<ID3D11Buffer> parameter_readback;
+  assert(SUCCEEDED(device->CreateBuffer(&parameter_desc,nullptr,&parameter_readback)));
+  context->CopyResource(parameter_readback.Get(),parameter_resource.Get());
+  D3D11_MAPPED_SUBRESOURCE parameter_map{};
+  assert(SUCCEEDED(context->Map(parameter_readback.Get(),0,D3D11_MAP_READ,0,&parameter_map)));
+  const float* uploaded_parameters=static_cast<const float*>(parameter_map.pData);
+  assert(uploaded_parameters[0]==64.f &&uploaded_parameters[1]==4.f
+      &&uploaded_parameters[2]==1.f &&uploaded_parameters[3]==1.f &&uploaded_parameters[4]==1.f
+      &&uploaded_parameters[5]==1.f);
+  context->Unmap(parameter_readback.Get(),0);
   // Copy formats, active-rectangle isolation, frame CB -> structured SRV, and
   // binding lifetime are exercised through the real production pipeline.
   ComPtr<ID3D11ShaderResourceView> frame_view,scene_view;
@@ -80,11 +94,14 @@ int main(int argc,char**) {
   assert(SUCCEEDED(device->CreateShaderResourceView(depth.Get(),nullptr,&depth_view)));
   context->PSSetShaderResources(15,1,depth_view.GetAddressOf());
   const char* vs_text="float4 main(uint id:SV_VertexID):SV_Position {float2 uv=float2((id<<1)&2,id&2);return float4(uv*float2(2,-2)+float2(-1,1),0,1);}";
-  ComPtr<ID3DBlob> vs_code,ps_code,trace_code,atmosphere_code,night_code,transport_code,errors;
+  ComPtr<ID3DBlob> vs_code,ps_code,trace_code,atmosphere_code,night_code,transport_code,ripple_code,surface_code,warped_code,errors;
   assert(SUCCEEDED(D3DCompile(vs_text,strlen(vs_text),nullptr,nullptr,nullptr,"main","vs_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&vs_code,&errors)));
   const auto working_directory=std::filesystem::current_path();
   std::filesystem::current_path("src/games/thewitcher3classic/water");
   WaterIncludes includes;
+  assert(SUCCEEDED(D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,&includes,"ripple_warped","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&warped_code,&errors)));
+  assert(SUCCEEDED(D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,&includes,"ripple_surface","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&surface_code,&errors)));
+  assert(SUCCEEDED(D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,&includes,"ripples","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&ripple_code,&errors)));
   HRESULT compiled=D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,&includes,"main","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&ps_code,&errors);
   HRESULT trace_compiled=D3DCompileFromFile(L"../tests/water_test.hlsl",nullptr,&includes,"trace","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&trace_code,&errors);
   if(errors)std::cerr<<static_cast<const char*>(errors->GetBufferPointer());assert(SUCCEEDED(trace_compiled));
@@ -321,4 +338,131 @@ int main(int argc,char**) {
   std::cout<<"PASS local-fog light transmittance against 10000-step numerical quadrature, including horizontal/downward light and vacuum\n";
   std::cout<<"PASS perspective-correct refraction plane hits, foreground/empty/far rejection and screen-edge/parallel-ray fallbacks\n";
   std::cout<<"PASS water Fresnel, Beer-Lambert, scattering, finite GGX, fog-once composition, poisoned pool isolation, frame copy, stale-frame rejection, binding restoration and resize\n";
+  ComPtr<ID3D11PixelShader> ripple_ps;
+  assert(SUCCEEDED(device->CreatePixelShader(ripple_code->GetBufferPointer(),ripple_code->GetBufferSize(),nullptr,&ripple_ps)));
+  context->PSSetShader(ripple_ps.Get(),nullptr,0);
+  context->Draw(3,0);context->CopyResource(readback.Get(),output.Get());
+  assert(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&mapped)));
+  for(UINT y=0;y<4;++y)for(UINT x=0;x<64;++x) {
+    const auto* pixel=reinterpret_cast<const float*>(static_cast<const char*>(mapped.pData)+y*mapped.RowPitch)+4*x;
+    const double slope=(double(x)-31.)*.2*double(y)/3.;
+    const double length=std::sqrt(1.+1.49*slope*slope);
+    const double expected[]={slope/length,-.7*slope/length,1./length};
+    for(UINT c=0;c<3;++c)assert(std::isfinite(pixel[c]) &&std::abs(pixel[c]-expected[c])<2.e-5);
+    assert(std::isfinite(pixel[3]) &&pixel[3]>=f0-1.e-6 &&pixel[3]<=1.f);
+    if(y==0)assert(pixel[0]==0.f &&pixel[1]==0.f &&pixel[2]==1.f);
+  }
+  context->Unmap(readback.Get(),0);
+  std::cout<<"PASS ripple slope scaling: zero/partial/native strengths, steep slopes, unit length and dielectric reflection bounds\n";
+  ComPtr<ID3D11PixelShader> surface_ps;
+  assert(SUCCEEDED(device->CreatePixelShader(surface_code->GetBufferPointer(),surface_code->GetBufferSize(),nullptr,&surface_ps)));
+  // A smooth, known height field: a broad X wave and a second Y wave. Poison
+  // XY so interpreting the artist normal channels as height slopes fails.
+  std::vector<float> wave_pixels(256*256*4);
+  for(UINT y=0;y<256;++y)for(UINT x=0;x<256;++x) {
+    auto* pixel=&wave_pixels[(y*256+x)*4];
+    pixel[0]=.0002f;pixel[1]=-.0003f;
+    pixel[3]=.001f*std::sin(2.*3.141592653589793*(x+.5)/256.)
+        +.0005f*std::cos(2.*3.141592653589793*(y+.5)/256.);
+  }
+  D3D11_TEXTURE2D_DESC wave_desc{256,256,1,1,DXGI_FORMAT_R32G32B32A32_FLOAT,{1,0},D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE};
+  D3D11_SUBRESOURCE_DATA wave_data{wave_pixels.data(),256*16};
+  ComPtr<ID3D11Texture2D> wave_texture;ComPtr<ID3D11ShaderResourceView> wave_view;
+  assert(SUCCEEDED(device->CreateTexture2D(&wave_desc,&wave_data,&wave_texture)));
+  assert(SUCCEEDED(device->CreateShaderResourceView(wave_texture.Get(),nullptr,&wave_view)));
+  context->PSSetShaderResources(5,1,wave_view.GetAddressOf());
+  D3D11_SAMPLER_DESC wave_sampler_desc{};
+  wave_sampler_desc.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+  wave_sampler_desc.AddressU=wave_sampler_desc.AddressV=wave_sampler_desc.AddressW=D3D11_TEXTURE_ADDRESS_WRAP;
+  wave_sampler_desc.MaxLOD=D3D11_FLOAT32_MAX;
+  ComPtr<ID3D11SamplerState> wave_sampler;
+  assert(SUCCEEDED(device->CreateSamplerState(&wave_sampler_desc,&wave_sampler)));
+  context->PSSetSamplers(5,1,wave_sampler.GetAddressOf());
+  context->PSSetShader(surface_ps.Get(),nullptr,0);
+  context->Draw(3,0);context->CopyResource(readback.Get(),output.Get());
+  assert(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&mapped)));
+  for(UINT y=0;y<4;++y)for(UINT x=0;x<64;++x) {
+    const auto* pixel=reinterpret_cast<const float*>(static_cast<const char*>(mapped.pData)+y*mapped.RowPitch)+4*x;
+    for(UINT c=0;c<4;++c)assert(std::isfinite(pixel[c]));
+    assert(std::abs(pixel[0]*pixel[0]+pixel[1]*pixel[1]+pixel[2]*pixel[2]-1.f)<1.e-5);
+    assert(pixel[2]>0.f);
+    if(y==0 || y==3)assert(pixel[0]==0.f &&pixel[1]==0.f &&pixel[2]==1.f);
+    else {
+      // Independent analytic derivative of the input height. Warp=0 isolates
+      // metric scale, octave weights and sign; both octave contributions matter.
+      double dx=0.,dy=0.;
+      for(auto [scale,amplitude]:{std::pair{16.,100.},std::pair{8.,30.}}) {
+        dx+=amplitude*.001*2.*3.141592653589793/scale*std::cos(2.*3.141592653589793*(x*.19+2.)/scale);
+        dy-=amplitude*.0005*2.*3.141592653589793/scale*std::sin(2.*3.141592653589793*1.7/scale);
+      }
+      double strength=y==1?.25:1.;dx*=-strength;dy*=-strength;
+      double length=std::sqrt(dx*dx+dy*dy+1.);
+      assert(std::abs(pixel[0]-dx/length)<2.e-5 &&std::abs(pixel[1]-dy/length)<2.e-5);
+    }
+  }
+  context->Unmap(readback.Get(),0);
+  std::cout<<"PASS surface waves: two-band height-gradient reference, independent of authored normals, flat/partial/full strength and distant fade\n";
+  // Check horizontal crest displacement too, against a continuous native-domain
+  // expression with much smaller finite differences than the texture footprint.
+  for(UINT y=0;y<256;++y)for(UINT x=0;x<256;++x) {
+    wave_pixels[(y*256+x)*4]=.00015f*std::sin(2.*3.141592653589793*(x+.5)/256.);
+    wave_pixels[(y*256+x)*4+1]=.00035f*std::cos(2.*3.141592653589793*(y+.5)/256.);
+  }
+  context->UpdateSubresource(wave_texture.Get(),0,nullptr,wave_pixels.data(),256*16,0);
+  ComPtr<ID3D11PixelShader> warped_ps;
+  assert(SUCCEEDED(device->CreatePixelShader(warped_code->GetBufferPointer(),warped_code->GetBufferSize(),nullptr,&warped_ps)));
+  context->PSSetShader(warped_ps.Get(),nullptr,0);
+  context->Draw(3,0);context->CopyResource(readback.Get(),output.Get());
+  assert(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&mapped)));
+  auto domain_position=[](double x,double y) {
+    constexpr double tau=6.283185307179586;
+    std::array<double,3> result{x,y,0.};
+    constexpr double bands[][4]={{16.,100.,.189375,.00015},{8.,30.,.154844,.00035}};
+    for(const auto& band:bands) {
+      const double u=x/band[0]+band[2]*.00015*std::sin(tau*x/band[0]);
+      const double v=y/band[0]+band[2]*.00035*std::cos(tau*y/band[0]);
+      const double nx=.00015*std::sin(tau*u),ny=.00035*std::cos(tau*v);
+      const double length=std::sqrt(nx*nx+ny*ny+band[3]*band[3]);
+      result[0]-=band[2]*nx/length;result[1]-=band[2]*ny/length;
+      result[2]+=band[1]*(.001*std::sin(tau*u)+.0005*std::cos(tau*v));
+    }
+    return result;
+  };
+  for(UINT x=0;x<64;++x) {
+    const auto* pixel=static_cast<const float*>(mapped.pData)+4*x;
+    auto a=domain_position(x*.19+2.+.001,1.7),b=domain_position(x*.19+2.-.001,1.7);
+    auto c=domain_position(x*.19+2.,1.701),d=domain_position(x*.19+2.,1.699);
+    for(unsigned i=0;i<3;++i){a[i]=(a[i]-b[i])/.002;c[i]=(c[i]-d[i])/.002;}
+    const std::array<double,3> normal{a[1]*c[2]-a[2]*c[1],a[2]*c[0]-a[0]*c[2],a[0]*c[1]-a[1]*c[0]};
+    const double length=std::sqrt(normal[0]*normal[0]+normal[1]*normal[1]+normal[2]*normal[2]);
+    for(unsigned i=0;i<3;++i)assert(std::abs(pixel[i]-normal[i]/length)<8.e-5);
+  }
+  context->Unmap(readback.Get(),0);
+  std::cout<<"PASS surface waves: native horizontal crest displacement and warped-height surface tangents\n";
+  if(argc>2 &&std::string_view(argv[2])=="--benchmark-ripples") {
+    D3D11_TEXTURE2D_DESC timing_desc{3840,2160,1,1,DXGI_FORMAT_R16G16B16A16_FLOAT,{1,0},D3D11_USAGE_DEFAULT,D3D11_BIND_RENDER_TARGET};
+    ComPtr<ID3D11Texture2D> timing_target;ComPtr<ID3D11RenderTargetView> timing_view;
+    assert(SUCCEEDED(device->CreateTexture2D(&timing_desc,nullptr,&timing_target)));
+    assert(SUCCEEDED(device->CreateRenderTargetView(timing_target.Get(),nullptr,&timing_view)));
+    context->OMSetRenderTargets(1,timing_view.GetAddressOf(),nullptr);
+    D3D11_VIEWPORT timing_viewport{0,0,3840,2160,0,1};context->RSSetViewports(1,&timing_viewport);
+    for(auto* shader:{ripple_ps.Get(),warped_ps.Get()}) {
+      context->PSSetShader(shader,nullptr,0);
+      for(unsigned warmup=0;warmup<8;++warmup)context->Draw(3,0);
+      D3D11_QUERY_DESC query_desc{D3D11_QUERY_TIMESTAMP_DISJOINT};
+      ComPtr<ID3D11Query> disjoint,start,end;
+      assert(SUCCEEDED(device->CreateQuery(&query_desc,&disjoint)));
+      query_desc.Query=D3D11_QUERY_TIMESTAMP;
+      assert(SUCCEEDED(device->CreateQuery(&query_desc,&start)));
+      assert(SUCCEEDED(device->CreateQuery(&query_desc,&end)));
+      context->Begin(disjoint.Get());context->End(start.Get());
+      for(unsigned repeat=0;repeat<32;++repeat)context->Draw(3,0);
+      context->End(end.Get());context->End(disjoint.Get());context->Flush();
+      D3D11_QUERY_DATA_TIMESTAMP_DISJOINT frequency{};UINT64 a=0,b=0;
+      while(context->GetData(disjoint.Get(),&frequency,sizeof(frequency),0)==S_FALSE)Sleep(1);
+      assert(!frequency.Disjoint);
+      assert(context->GetData(start.Get(),&a,sizeof(a),0)==S_OK &&context->GetData(end.Get(),&b,sizeof(b),0)==S_OK);
+      std::cout<<"4K ripple microbenchmark "<<(shader==warped_ps.Get()?"Surface Waves":"Original")<<": "<<double(b-a)*1000./double(frequency.Frequency)/32.<<" ms\n";
+    }
+  }
 }

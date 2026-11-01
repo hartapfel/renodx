@@ -1070,7 +1070,7 @@ presets.cpp includes the real addon settings and applies all four explicit prese
 
 Build fog_composite.cpp with /Ibuild/thewitcher3classic.include after the Classic Release shader/object target. Run with the existing native-fog fixture directory and --cache, then --cache --hardware. The production 0xF3C30003 compute shader and 0xC8C78997 composite cover full-resolution HDR, odd active dimensions in pooled depth, thin/lit foreground, sky, missing/stale fallback, forward isolation and private-state restoration. Half-resolution fixtures and dispatch tests were removed with that implementation. Run --pixel-local and --weather --pixel / --weather-color --pixel separately for scalar transport and captured weather comparisons.
 
-Exposure tests cover Smoothed defaults35/5/100/100 and native/custom/logarithmic limits, including100% default maximum brightening. Preset coverage verifies default Fog Detail2/4, removed fog controls, method-specific visibility and exposure preset isolation. Gameplay validation remains necessary.
+Exposure tests cover Smoothed defaults35/5/100/100 and native/custom/logarithmic limits, including100% default maximum brightening. Preset coverage verifies configured Fog Detail default, removed fog controls, method-specific visibility and exposure preset isolation. Gameplay validation remains necessary.
 
 ## Shared player-fill producer
 
@@ -1148,3 +1148,31 @@ isolated 4K timestamps. Old bytecode belongs in scratch, never the mod source.
 Keep the existing below-interface blocker and waterline checks: native air CSMs
 must not be reused as refracted underwater shadow maps. Live dock/panning tests
 are required to assess residual sampling noise and motion stability.
+
+
+texture_mip_bias.cpp: compile with /std:c++20 /DNOMINMAX, link d3d11.lib and
+d3dcompiler.lib. No arguments runs WARP; --hardware runs the NVIDIA fixture.
+It checks actual implicit mip selection, preservation of existing sampler bias
+and anisotropy, comparison/fixed-LOD exclusions, other slots/stages, restoration
+and newer binding preservation. No game dump or live device is required.
+upscale_engine.cpp also verifies primary-view bias and nested-view suppression
+for the existing Quality, DLAA and Ultra Performance scopes. Run the standard
+preset fixture after rebuilding the addon object; defaults come from the table.
+
+cloud_material.cpp: compile with /std:c++20 /DNOMINMAX and link d3d11.lib plus
+ d3dcompiler.lib. Run from the repo root with no arguments for WARP, --hardware
+for NVIDIA; a second argument enables isolated sky-air timestamps. Compiles the
+production HLSL includes and checks appearance/weather isolation, analytic
+shadowed air, vacuum/zero-light/HDR and independent night fog/water tags.
+clouds.cpp also checks shared air/cloud composition with a real cloud shadow map.
+Cloud shape/lighting quality and motion still need gameplay comparison.
+Cloud morphology revision (2026-11-01): clouds.cpp and cloud_shadows.cpp use
+neutral optical fixture values independently of startup defaults. They bind the
+native 256-byte clock, check paused repeatability, time evolution and state
+restoration; clouds.cpp also checks clock-jump history rejection. cloud_material
+checks the coarse/light/view erosion density bound. Optional CLASSIC_CLOUD_PREVIEW
+builds 960x540 diagnostic views (--hardware --preview <prefix> [camera-height]);
+--default-look in place of --hardware uses the startup appearance settings.
+Preview lighting uses a daylight sky gain comparable to the captured scene;
+these are synthetic material/lighting comparisons, not a live-scene replay.
+Water SSR revision (2026-11-01): water_reflection_trace.cpp now includes the production private-resolution path (add /Ibuild/thewitcher3classic.include). water_reflection_history.cpp links d3d11.lib and runs with no args for WARP or --hardware for NVIDIA. Checks HDR noise rejection, virtual-hit camera motion, disocclusion, cuts and native padding. presets.cpp --water-ssr checks the SSR controls and explicit Vanilla/Custom assignments. See ../WATER_SSR_RESEARCH.md for the captured chain and live verification.

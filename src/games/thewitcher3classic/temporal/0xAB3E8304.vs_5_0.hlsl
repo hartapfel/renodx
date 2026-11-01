@@ -1,3 +1,4 @@
+#include "../clouds/shadow_inputs.hlsli"
 ByteAddressBuffer Raw21 : register(t21);
 // ---- Created with 3Dmigoto v1.3.16 on Thu Oct 22 21:17:47 2026
 Texture2D<float4> t24 : register(t24);
@@ -57,7 +58,9 @@ cbuffer cb1 : register(b1)
 #define cmp -
 
 
+#ifndef RENO_NO_OBJECT_MOTION
 #include "./object_vertex.hlsli"
+#endif
 
 void main(
   float3 v0 : POSITION0,
@@ -84,9 +87,13 @@ void main(
   out float4 o7 : TEXCOORD7,
   out float4 o8 : TEXCOORD8,
   out float3 o9 : TEXCOORD9,
-  out float4 o10 : SV_Position0,
+  out float4 o10 : SV_Position0
+#ifndef RENO_NO_OBJECT_MOTION
+,
   out float4 previous_clip : TEXCOORD12,
-  out nointerpolation float motion_history : TEXCOORD13)
+  out nointerpolation float motion_history : TEXCOORD13
+#endif
+)
 {
   const float4 icb[] = { { 1.000000, 0, 0, 0},
                               { 0, 1.000000, 0, 0},
@@ -456,6 +463,7 @@ void main(
       r3.w = r4.z ? r3.w : r1.w;
     }
     r1.w = r5.x * r3.w;
+    float3 classic_cloud_world_0 = r0.xyz;
     r3.w = 20 * cb12[66].x;
     r8.zw = trunc(cb12[68].xy);
     r7.xyw = -cb12[0].xyz + r0.xyz;
@@ -493,6 +501,7 @@ void main(
     r4.w = r4.w + -r3.w;
     r3.w = r4.z * r4.w + r3.w;
     r3.w = -r6.w * r3.w + 1;
+    r3.w = ClassicCloudShadow(classic_cloud_world_0, r3.w);
     r5.x = r3.w * r1.w;
   }
   r4.xy = (int2)r4.xy;
@@ -1048,6 +1057,8 @@ void main(
   o6.xyzw = v6.xyzw;
   o7.xyz = r1.xyz;
   o8.xyz = r0.xyz;
+#ifndef RENO_NO_OBJECT_MOTION
   previous_clip = PreviousObjectClip(v0 * cb2[4].xyz + cb2[5].xyz, v1, v2, v12, 1.f, motion_instance, motion_history);
+#endif
   return;
 }

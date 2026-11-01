@@ -20,11 +20,16 @@ struct Vertex {
 };
 int main(int argc, char** argv) {
   std::cout << std::unitbuf;
-  assert(argc == 3 || (argc == 4 && std::string_view(argv[3]) == "--hardware"));
+  assert(argc>=3 &&argc<=5);
+  bool hardware=false,cloud_receivers=false;
+  for(int i=3;i<argc;++i) {
+    hardware|=std::string_view(argv[i])=="--hardware";
+    cloud_receivers|=std::string_view(argv[i])=="--cloud-receivers";
+  }
   const std::filesystem::path p = argv[1], originals = argv[2];
   ComPtr<ID3D11Device> device;
   ComPtr<ID3D11DeviceContext> context;
-  assert(SUCCEEDED(D3D11CreateDevice(nullptr, argc == 4 ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context)));
+  assert(SUCCEEDED(D3D11CreateDevice(nullptr, hardware ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context)));
   for (UINT slot : {1u, 2u, 3u, 12u, 13u}) {
     auto data = Read(p / ("hair-constantBuffers-" + std::to_string(slot) + ".bin"));
     auto buffer = Buffer(device.Get(), data.data(), UINT(data.size()), D3D11_BIND_CONSTANT_BUFFER);
@@ -47,7 +52,7 @@ int main(int argc, char** argv) {
   auto instances = Buffer(device.Get(), instance.data(), 80, D3D11_BIND_VERTEX_BUFFER);
   const UINT instance_stride = 80, offset = 0;
   context->IASetVertexBuffers(7, 1, instances.GetAddressOf(), &instance_stride, &offset);
-  const auto layout_code = Read(originals / "0xAB3E8304.cso");
+  const auto layout_code = Read(originals / (cloud_receivers ? "0xAB3E8304.vs_5_0.cso" : "0xAB3E8304.cso"));
   const D3D11_INPUT_ELEMENT_DESC layout[] = {
       {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, p)}, {"BLENDINDICES", 0, DXGI_FORMAT_R32G32B32A32_UINT, 0, offsetof(Vertex, index)}, {"BLENDWEIGHT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, weight)}, {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(Vertex, uv)}, {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, normal)}, {"TANGENT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, tangent)}, {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, color)}, {"TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(Vertex, uv1)}, {"INSTANCE_TRANSFORM", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 7, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1}, {"INSTANCE_TRANSFORM", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 7, 16, D3D11_INPUT_PER_INSTANCE_DATA, 1}, {"INSTANCE_TRANSFORM", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 7, 32, D3D11_INPUT_PER_INSTANCE_DATA, 1}, {"INSTANCE_LOD_PARAMS", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 7, 48, D3D11_INPUT_PER_INSTANCE_DATA, 1}, {"INSTANCE_SKINNING_DATA", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 7, 64, D3D11_INPUT_PER_INSTANCE_DATA, 1}};
   ComPtr<ID3D11InputLayout> input;
@@ -108,8 +113,24 @@ int main(int argc, char** argv) {
   assert(SUCCEEDED(device->CreateShaderResourceView(raw.Get(), &rd, &rv)));
   context->VSSetShaderResources(21, 1, rv.GetAddressOf());
   UINT total_failures = 0;
-  for (const char* hash : {"0xAB3E8304", "0xB0B4EB6F", "0x5CC0DB95", "0xAE216EAE"}) {
-    const auto native = Read(originals / (std::string(hash) + ".cso")), replacement = Read(std::filesystem::path("build/thewitcher3classic.include/embed") / (std::string(hash) + ".cso"));
+  std::vector<const char*> families;
+  if(cloud_receivers) {
+#define CLOUD_RECEIVER_VERTEX(hash) families.push_back(#hash);
+#define CLOUD_RECEIVER_PIXEL(hash)
+#include "../clouds/receivers.inc"
+#undef CLOUD_RECEIVER_VERTEX
+#undef CLOUD_RECEIVER_PIXEL
+  } else families={"0xAB3E8304","0xB0B4EB6F","0x5CC0DB95","0xAE216EAE"};
+  for (const char* hash : families) {
+    std::string replacement_hash=hash;
+    if(cloud_receivers) {
+      if(replacement_hash=="0x5CC0DB95")replacement_hash="0xF3C60020";
+      else if(replacement_hash=="0xAE216EAE")replacement_hash="0xF3C60021";
+      else if(replacement_hash=="0xAB3E8304")replacement_hash="0xF3C60022";
+      else if(replacement_hash=="0xB0B4EB6F")replacement_hash="0xF3C60023";
+    }
+    const auto native = Read(originals / (std::string(hash) + (cloud_receivers ? ".vs_5_0.cso" : ".cso"))),
+        replacement = Read(std::filesystem::path("build/thewitcher3classic.include/embed") / (replacement_hash + ".cso"));
     auto mesh = Read(p / "hair-constantBuffers-2.bin");
     if (std::string_view(hash) == "0x5CC0DB95" || std::string_view(hash) == "0xAE216EAE") {
       // These paths consume deformed positions directly. Put their synthetic
@@ -173,9 +194,8 @@ int main(int argc, char** argv) {
       for (UINT i = 0; i < a.size(); ++i) {
         const UINT component = i % count;
         if (std::find(lighting_components.begin(), lighting_components.end(), component) != lighting_components.end()) {
-          assert(std::isfinite(a[i]) && std::isfinite(b[i]));
-          lighting_energy += std::abs(a[i]);
-          ++finite_lighting;
+          if(!cloud_receivers)assert(std::isfinite(a[i]) && std::isfinite(b[i]));
+          if(std::isfinite(a[i])) {lighting_energy += std::abs(a[i]);++finite_lighting;}
         }
         if (std::isfinite(a[i]) && std::isfinite(b[i])) worst = std::max(worst, std::abs(a[i] - b[i]));
         if (!SameColor(a[i], b[i])) {
@@ -184,7 +204,7 @@ int main(int argc, char** argv) {
         }
       }
     }
-    assert(finite_lighting == 12 * 3 * 6 && lighting_energy > .01f);
+    if(!cloud_receivers)assert(finite_lighting == 12 * 3 * 6 && lighting_energy > .01f);
     std::cout << hash << " captured probe lighting: components=" << count << " worst=" << worst << " failures=" << failures
               << " finite lighting=" << finite_lighting << " energy=" << lighting_energy << '\n';
     total_failures += failures;

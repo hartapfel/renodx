@@ -214,6 +214,54 @@ V main(uint id:SV_VertexID){V v;float2 uv=float2((id<<1)&2,id&2);v.p=float4(uv*f
         }
       }
 
+      if(!is_cloud) {
+        // Both sky families must compose the same shadowed HDR scattering.
+        // The transport suite independently checks that cloud transmission
+        // scales this direct term, without changing weather opacity.
+        bind_frame();
+        const auto background=render(production->GetBufferPointer(),production->GetBufferSize());
+        std::array<std::array<float,4>,22> parameters{};
+        parameters[0]={1,1,1,1000};parameters[2][1]=.1f;
+        parameters[3]={1.f/W,1.f/H,1,1};
+        parameters[17][1]=1.f;
+        D3D11_BUFFER_DESC bd{sizeof(parameters),D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE,
+            0,D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,16};
+        D3D11_SUBRESOURCE_DATA data{parameters.data()};ComPtr<ID3D11Buffer> constants;
+        ComPtr<ID3D11ShaderResourceView> constant_view;
+        Check(dev->CreateBuffer(&bd,&data,&constants));Check(dev->CreateShaderResourceView(constants.Get(),nullptr,&constant_view));
+        ctx->PSSetShaderResources(117,1,constant_view.GetAddressOf());ctx->PSSetSamplers(11,1,sampler.GetAddressOf());
+        // The presence of a valid cloud-shadow map must not replace the fog
+        // field with a separate sky-density integral. Use zero sky density and
+        // nonzero fog scattering, as in weather with ground-level mist.
+        auto structured=[&](UINT slot,const void* data,UINT bytes) {
+          D3D11_BUFFER_DESC d{bytes,D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE,0,D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,16};
+          D3D11_SUBRESOURCE_DATA initial{data};ComPtr<ID3D11Buffer> b;ComPtr<ID3D11ShaderResourceView> v;
+          Check(dev->CreateBuffer(&d,&initial,&b));Check(dev->CreateShaderResourceView(b.Get(),nullptr,&v));
+          ctx->PSSetShaderResources(slot,1,v.GetAddressOf());
+        };
+        std::array<std::array<float,4>,269> fog_frame{};
+        std::array<std::array<float,4>,2> fog_lights{{{0,0,1,0},{2000,1000,500,0}}};
+        std::array<std::array<float,4>,4> cloud_metadata{{{0,0,0,16000},{0,0,1,1},{1,1,1,1357},{0,0,0,16}}};
+        structured(100,fog_frame.data(),sizeof(fog_frame));structured(101,fog_lights.data(),sizeof(fog_lights));
+        structured(127,cloud_metadata.data(),sizeof(cloud_metadata));
+        for(float transmission:{0.f,.25f,1.f}) {
+          const float direct[4]{2*transmission,4*transmission,8*transmission,1};
+          const D3D11_TEXTURE3D_DESC desc{1,1,1,1,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE};
+          data={direct,16,16};ComPtr<ID3D11Texture3D> volume;ComPtr<ID3D11ShaderResourceView> view;
+          Check(dev->CreateTexture3D(&desc,&data,&volume));Check(dev->CreateShaderResourceView(volume.Get(),nullptr,&view));
+          ctx->PSSetShaderResources(116,1,view.GetAddressOf());
+          const auto actual=render(production->GetBufferPointer(),production->GetBufferSize());
+          for(size_t i=0;i<actual.size();++i)
+            if(std::abs(actual[i]-background[i]-(i%4==3?0.f:direct[i%4]))>.0005f) {
+              std::cerr<<"Sky sample "<<i<<": background="<<background[i]<<", actual="<<actual[i]
+                  <<", direct="<<(i%4==3?0.f:direct[i%4])<<'\n';
+              throw std::runtime_error("Sky loses shadowed direct scattering or changes native background/alpha");
+            }
+        }
+        ID3D11ShaderResourceView* empty[2]{};ctx->PSSetShaderResources(116,2,empty);
+        ctx->PSSetShaderResources(100,2,empty);ctx->PSSetShaderResources(127,1,empty);
+        std::cout<<"PASS "<<hash<<" shadowed sky scattering 0/25/100%, HDR direct term, unchanged native background/alpha\n";
+      }
     }
     return 0;
   } catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}

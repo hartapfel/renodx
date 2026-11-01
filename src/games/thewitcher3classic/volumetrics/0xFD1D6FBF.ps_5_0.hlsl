@@ -1,3 +1,4 @@
+#include "../clouds/shadow_inputs.hlsli"
 #include "../lighting/parameters.hlsli"
 ByteAddressBuffer Raw20 : register(t20);
 #include "sample.hlsli"
@@ -1101,6 +1102,7 @@ void main(
         r9.z = 1;
       }
       r5.w = r9.z * r0.y;
+      float3 classic_cloud_world_0 = v10.xyz;
       r6.w = 20 * cb3[66].x;
       r10.zw = trunc(cb3[68].xy);
       r11.xy = cb3[67].xy;
@@ -1135,6 +1137,7 @@ void main(
       r7.w = r7.w + -r6.w;
       r4.w = r4.w * r7.w + r6.w;
       r4.w = -r8.w * r4.w + 1;
+      r4.w = ClassicCloudShadow(classic_cloud_world_0, r4.w);
       r0.y = r5.w * r4.w;
     }
     r4.w = cmp(0 < r0.y);

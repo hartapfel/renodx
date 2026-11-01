@@ -2,6 +2,7 @@
 #ifndef CLASSIC_WATER_SHADING
 #define CLASSIC_WATER_SHADING
 #include "math.hlsli"
+#include "ripples.hlsli"
 #include "../night_sky.hlsli"
 #include "../volumetrics/sample.hlsli"
 #include "../volumetrics/math.hlsli"
@@ -12,7 +13,7 @@ SamplerState ClassicWaterSampler : register(s12);
 bool ClassicWaterReady() {
   uint count,stride;
   ClassicWaterParameters.GetDimensions(count,stride);
-  return count==1 && ClassicWaterParameters[0].w==1.f;
+  return count==2 && ClassicWaterParameters[0].w==1.f;
 }
 float3 WaterWorldPosition(int2 pixel,float depth) {
   // Captured native reverse-depth pixel-to-world matrix; integer coordinates
@@ -163,7 +164,10 @@ float4 ShadeClassicWater(Texture2D<float4> depth_texture, float4 position,
   float fresnel=WaterFresnel(saturate(dot(normal,view)));
   // Filter unresolved normal variance into the direct-light microfacet width.
   float3 dx=ddx(normal),dy=ddy(normal);
-  float alpha=sqrt(clamp(.01f+dot(dx,dx)+dot(dy,dy),.01f,1.f));
+  // A narrow water lobe, broadened only where pixel-scale normal variation
+  // needs it. Bounded variance avoids washing resolved waves in a broad sheen
+  // (Tokuyoshi/Kaplanyan geometric specular AA, Filament variance convention).
+  float alpha=sqrt(min(1.f,.000625f+min(.3f*(dot(dx,dx)+dot(dy,dy)),.04f)));
   float3 surface=(1.f-fresnel)*(transmitted.rgb+scattered)
       +sunlight*WaterSpecular(normal,view,light,alpha);
   foam=saturate(foam);

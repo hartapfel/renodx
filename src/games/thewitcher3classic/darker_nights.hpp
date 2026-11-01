@@ -19,6 +19,7 @@
 
 #include "./night_exposure.hpp"
 #include "./lighting/player_fill.hpp"
+#include "./lighting/scene_fill.hpp"
 #include "./night_normalization.hpp"
 
 namespace witcher3classic::night {
@@ -170,7 +171,8 @@ inline bool Supported() {
     supported = ValidateImage(reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr)));
     common_supported = supported && ValidateCommonImage(reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr)));
     lighting::player_fill::supported = common_supported
-        && lighting::player_fill::Validate(reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr)));
+        && lighting::player_fill::Validate(reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr)))
+        && lighting::player_fill::scene_fill::Validate(reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr)));
     if (supported) {
       const auto* image = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
       exposure::Validate(image, 0x3673000);
@@ -225,10 +227,17 @@ inline void ApplyCommon(void* constants, const Controls& controls, float time) {
   // before native sky blending; alpha and the c202.z haze profile stay native.
   ScaleRGB(constants, 0xc20, 1.f + (controls.sky_haze - 1.f) * weight);
   const float water = 1.f + (controls.water - 1.f) * weight;
-  if (water != 1.f) {
+  const float fog = 1.f + (controls.fog - 1.f) * weight;
+  if (water != 1.f || fog != 1.f) {
     // Native fog direction c38 uses xyz only. No dumped shader reads w;
     // keep this gain independent of sky haze, moon and cloud precision.
-    const uint32_t tag = 0xd9000000u | uint32_t(std::lround(std::clamp(water, 0.f, 2.f) * 1048575.f));
+    // When fog is overridden, share this already reserved word with the
+    // physical sky/cloud air-lighting path. The legacy water-only encoding
+    // stays unchanged. c37.w is the moon tag and must never be overwritten.
+    const uint32_t tag = fog != 1.f
+        ? 0xdc000000u | (uint32_t(std::lround(std::clamp(fog,0.f,8.f)*511.f))<<12)
+            | uint32_t(std::lround(std::clamp(water,0.f,2.f)*2047.f))
+        : 0xd9000000u | uint32_t(std::lround(std::clamp(water, 0.f, 2.f) * 1048575.f));
     std::memcpy(bytes + 0x26c, &tag, sizeof(tag));
   }
   const float sky_haze = 1.f + (controls.sky_haze - 1.f) * weight;
@@ -395,6 +404,26 @@ inline bool Install() {
           reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))+0xc3c510);
       valid=DetourAttach(reinterpret_cast<void**>(&lighting::player_fill::build_camera_light),
           reinterpret_cast<void*>(&lighting::player_fill::CameraLightHook))==NO_ERROR;
+      namespace sf=lighting::player_fill::scene_fill;
+      const auto image=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+      sf::spawn=reinterpret_cast<sf::Spawn>(image+0x78b6c0);
+      sf::create_component=reinterpret_cast<sf::CreateComponent>(image+0xfb650);
+      sf::create_proxy=reinterpret_cast<sf::CreateProxy>(image+0xbeaca0);
+      sf::destroy_component=reinterpret_cast<sf::Destroy>(image+0x175510);
+      sf::destroy_proxy=reinterpret_cast<sf::Destroy>(image+0xcc4070);
+      sf::build_bank=reinterpret_cast<sf::BuildBank>(image+0xc39be0);
+      sf::build_point=reinterpret_cast<sf::BuildPoint>(image+0xc3c990);
+      sf::build_spot=reinterpret_cast<sf::BuildSpot>(image+0xc3cbe0);
+      for(const auto& [original,hook]:{
+          std::pair{reinterpret_cast<void**>(&sf::spawn),reinterpret_cast<void*>(&sf::SpawnHook)},
+          std::pair{reinterpret_cast<void**>(&sf::create_component),reinterpret_cast<void*>(&sf::CreateComponentHook)},
+          std::pair{reinterpret_cast<void**>(&sf::create_proxy),reinterpret_cast<void*>(&sf::CreateProxyHook)},
+          std::pair{reinterpret_cast<void**>(&sf::destroy_component),reinterpret_cast<void*>(&sf::DestroyComponentHook)},
+          std::pair{reinterpret_cast<void**>(&sf::destroy_proxy),reinterpret_cast<void*>(&sf::DestroyProxyHook)},
+          std::pair{reinterpret_cast<void**>(&sf::build_bank),reinterpret_cast<void*>(&sf::BuildBankHook)},
+          std::pair{reinterpret_cast<void**>(&sf::build_point),reinterpret_cast<void*>(&sf::BuildPointHook)},
+          std::pair{reinterpret_cast<void**>(&sf::build_spot),reinterpret_cast<void*>(&sf::BuildSpotHook)}})
+        if(valid)valid=DetourAttach(original,hook)==NO_ERROR;
     }
     if (valid && exposure::supported) {
       constants_image_base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
@@ -409,7 +438,9 @@ inline bool Install() {
 }
 
 inline void Update(bool preset_enabled) {
-  if(preset_enabled && lighting::player_control!=0.f && Supported())Install();
+  // Track story-light ownership even when fill is initially Native, so enabling
+  // the override during an existing cutscene does not miss its already spawned lights.
+  if(preset_enabled && Supported())Install();
   lighting::player_fill::Update(preset_enabled && installed && lighting::player_fill::supported);
   Controls controls;
   const bool active = preset_enabled && enabled == 1.f && Supported();

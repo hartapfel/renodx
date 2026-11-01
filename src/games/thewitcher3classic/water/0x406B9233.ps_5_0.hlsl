@@ -12,10 +12,24 @@ StructuredBuffer<float4> current_frame : register(t112);
 StructuredBuffer<float4> parameters : register(t113);
 Texture2D<float> particle_depth : register(t114);
 SamplerState history_linear : register(s12);
+#ifdef CLASSIC_SSR_PREPARE
+cbuffer SSRPrepare : register(b4) { float4 ssr_extent; }
+RWTexture2D<float4> prepared_color : register(u0);
+RWTexture2D<float> prepared_emission : register(u1);
+float4 SampleCurrentOpaque(float2 pixel) {
+  uint w,h;native_scene.GetDimensions(w,h);
+  return native_scene.SampleLevel(history_linear,
+      clamp(pixel,.5f,ssr_extent.zw-.5f)/float2(w,h),0);
+}
+#endif
 
 float4 ResolveReflectionInput(float4 position, out float trace_depth) {
   float2 extent=parameters[0].xy;
   float2 uv=(floor(position.xy)+.5f)/cb3[0].xy;
+#ifdef CLASSIC_SSR_PREPARE
+  extent=ssr_extent.zw;
+  uv=(floor(position.xy)+.5f)/ssr_extent.xy;
+#endif
   int2 pixel=clamp(int2(uv*extent),0,int2(extent)-1);
   float raw=current_depth.Load(int3(pixel,0));
   trace_depth=current_frame[22].x<0.f?0.f:1.f;
@@ -23,8 +37,20 @@ float4 ResolveReflectionInput(float4 position, out float trace_depth) {
   // disocclusion must not sample stale/uninitialized history.
   uint2 native_pixel=uint2(cb3[1].zw*floor(position.xy));
   float4 fallback=native_scene.Load(int3(native_pixel,0));
+#ifdef CLASSIC_SSR_PREPARE
+  // Current-frame opaque radiance avoids an extra frame of lag before the
+  // reflection history even starts. Only late emission needs old-frame color.
+  float2 source_pixel=uv*extent;
+  float2 radius=.25f*extent/ssr_extent.xy;
+  fallback=.25f*(SampleCurrentOpaque(source_pixel-radius)
+      +SampleCurrentOpaque(source_pixel+radius*float2(-1,1))
+      +SampleCurrentOpaque(source_pixel+radius*float2(1,-1))
+      +SampleCurrentOpaque(source_pixel+radius));
+  if(all(ssr_extent.xy==extent))fallback=native_scene.Load(int3(pixel,0));
+#else
   float luma=dot(float3(.333330005f,.333330005f,.333330005f),fallback.rgb);
   fallback.rgb*=min(10.f,luma)/max(.0001f,luma);
+#endif
   if(parameters[0].z==0.f)return fallback;
 
   float2 ndc=uv*float2(2,-2)+float2(-1,1);
@@ -75,17 +101,33 @@ float4 ResolveReflectionInput(float4 position, out float trace_depth) {
     }
   }
 
+#ifdef CLASSIC_SSR_PREPARE
+  if(trace_depth==(current_frame[22].x<0.f?0.f:1.f))return fallback;
+#endif
   // Four bilinear taps prefilter the color at the native quarter-resolution
   // input stage. Preserve scene-linear HDR; do not apply the native luma cap.
-  float2 radius=.5f/cb3[0].xy;
-  float3 color=history_color.SampleLevel(history_linear,history_uv-radius,0).rgb;
-  color+=history_color.SampleLevel(history_linear,history_uv+radius*float2(-1,1),0).rgb;
-  color+=history_color.SampleLevel(history_linear,history_uv+radius*float2(1,-1),0).rgb;
-  color+=history_color.SampleLevel(history_linear,history_uv+radius,0).rgb;
+  float2 history_radius=.5f/cb3[0].xy;
+#ifdef CLASSIC_SSR_PREPARE
+  history_radius=.5f/ssr_extent.xy;
+#endif
+  float3 color=history_color.SampleLevel(history_linear,history_uv-history_radius,0).rgb;
+  color+=history_color.SampleLevel(history_linear,history_uv+history_radius*float2(-1,1),0).rgb;
+  color+=history_color.SampleLevel(history_linear,history_uv+history_radius*float2(1,-1),0).rgb;
+  color+=history_color.SampleLevel(history_linear,history_uv+history_radius,0).rgb;
   if(any(!isfinite(color)))return fallback;
   return float4(max(color*.25f,0.f),0.f);
 }
 
+#ifdef CLASSIC_SSR_PREPARE
+[numthreads(8,8,1)]
+void main(uint3 id:SV_DispatchThreadID) {
+  if(any(id.xy>=uint2(ssr_extent.xy)))return;
+  float depth;
+  prepared_color[id.xy]=ResolveReflectionInput(float4(float2(id.xy)+.5f,0,1),depth);
+  prepared_emission[id.xy]=depth;
+}
+#else
 void main(float4 position : SV_Position,out float4 color : SV_Target0,out float depth : SV_Target1) {
   color=ResolveReflectionInput(position,depth);
 }
+#endif

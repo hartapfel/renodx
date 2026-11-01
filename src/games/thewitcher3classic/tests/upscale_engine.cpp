@@ -17,6 +17,9 @@ unsigned render_calls = 0, post_calls = 0;
 std::set<std::array<float, 2>> samples;
 std::array<float, 2> shadow_delta{};
 unsigned blitz_resizes = 0;
+void SecondaryRender(uint8_t*,uint8_t*,void*) {
+  assert(active && active->material_mip_bias==0.f);
+}
 void ResizeBlitz(uint8_t* renderer_state, uint32_t width, uint32_t height) {
   ++blitz_resizes;
   const uint32_t dimensions[] = {width, height};
@@ -48,6 +51,12 @@ void Render(uint8_t* owner, uint8_t* frame, void* world) {
   assert(owner == renderer.data() && frame == submitted.data());
   if (expect_scaled) {
     assert(active && active->plan == plan);
+    assert(std::abs(active->material_mip_bias-(std::log2(float(plan.width)/plan.output_width)-1.f))<1.e-6f);
+    const float material_bias=active->material_mip_bias;
+    render_function=SecondaryRender;
+    RenderHook(owner,frame,world);
+    render_function=Render;
+    assert(active->material_mip_bias==material_bias);
     assert(*reinterpret_cast<uint32_t*>(frame + 0x828) == plan.width);
     assert(*reinterpret_cast<uint32_t*>(frame + 0x82c) == plan.height);
     assert(*reinterpret_cast<uint32_t*>(pool.data() + 0x168) == 1280);

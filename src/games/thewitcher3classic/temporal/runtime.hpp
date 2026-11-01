@@ -13,7 +13,9 @@
 #include "./prepare.hpp"
 #include "./object_motion.hpp"
 #include "./object_shaders.hpp"
+#include "./texture_mip_bias.hpp"
 #include "../optics/pipeline.hpp"
+#include "../clouds/runtime.hpp"
 
 namespace witcher3classic::temporal {
 inline float mode = 1.f;
@@ -36,6 +38,7 @@ struct __declspec(uuid("fdb6913b-a729-490b-b0f3-46ba64e4b346")) DeviceData {
   optics::Pipeline optics;
   Camera camera;
   ObjectMotion objects;
+  TextureMipBias texture_mip_bias;
   ComPtr<ID3D11DeviceContext1> motion_context;
   uint64_t motion_native_handle = 0;
   ComPtr<ID3D11ShaderResourceView> resolved;
@@ -57,6 +60,7 @@ struct __declspec(uuid("fdb6913b-a729-490b-b0f3-46ba64e4b346")) DeviceData {
   std::array<RenderResolution, 5> render_resolutions = {};
   uint32_t planned_output_width = 0, planned_output_height = 0;
   upscale_engine::Plan logged_resolution;
+  upscale_engine::Plan logged_mip_plan;
 };
 
 inline ConstantUploads* GetConstantUploads(reshade::api::device* device) {
@@ -174,8 +178,10 @@ inline void OnObjectDrawn(reshade::api::command_list* cmd) {
 }
 inline constexpr auto ObjectDrawBoundary = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context> {
   auto* data = renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device());
-  if (!data || !data->objects.HasPendingPass() || !data->motion_context
+  if (!data || !data->motion_context
       || context.cmd_list->get_native() != data->motion_native_handle) return {};
+  data->texture_mip_bias.Restore(data->motion_context.Get());
+  if(!data->objects.HasPendingPass())return {};
   bool keep = (mode != 0.f || optics::MotionActive()) && object_motion != 0.f && data->ready && !context.IsDispatch()
               && object_engine::state->enabled.load(std::memory_order_relaxed);
   if (keep) {
@@ -197,6 +203,34 @@ inline constexpr auto ObjectDrawPost = []<typename Context>(Context& context) ->
   return {.post_callback = [](Context& context, const void*) { OnObjectDrawn(context.cmd_list); }, .replay = true};
 };
 
+inline constexpr auto TextureMipBiasDraw = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context> {
+  const auto* frame=upscale_engine::active;
+  if(mode==0.f || !frame || frame->material_mip_bias>=0.f || frame->temporal_seen || frame->post_restored || context.IsDispatch())return {};
+  auto* data=renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device());
+  if(!data || !data->ready || !data->dlss_ready || !data->motion_context || data->motion_native_handle!=context.cmd_list->get_native())return {};
+  auto* shader=renodx::utils::shader::GetCurrentState(context.cmd_list);
+  const auto* targets=renodx::utils::swapchain::GetCurrentState(context.cmd_list);
+  if(!shader || !targets || !targets->current_depth_stencil.handle)return {};
+  const bool material=FindObjectShader(OBJECT_PIXEL_SHADERS,renodx::utils::shader::GetCurrentPixelShaderHash(shader))!=nullptr
+      || FindObjectShader(OBJECT_VERTEX_SHADERS,renodx::utils::shader::GetCurrentVertexShaderHash(shader))!=nullptr;
+  // Includes terrain/static G-buffer materials outside the motion replacement
+  // list. Forward character/hair materials use the audited pixel-shader list.
+  if(!material && std::ranges::count_if(targets->current_render_targets,[](auto view){return view.handle!=0;})<3)return {};
+  D3D11_VIEWPORT viewport{};UINT count=1;data->motion_context->RSGetViewports(&count,&viewport);
+  if(count!=1 || viewport.TopLeftX!=0 || viewport.TopLeftY!=0 || viewport.Width!=float(frame->plan.width) || viewport.Height!=float(frame->plan.height))return {};
+  if(!data->texture_mip_bias.Bind(data->motion_context.Get(),frame->material_mip_bias))return {};
+  if(data->logged_mip_plan!=frame->plan) {
+    data->logged_mip_plan=frame->plan;
+    reshade::log::message(reshade::log::level::info,std::format(
+        "Witcher Classic: DLSS material mip bias {:+.3f}, added to native bias for {}x{} -> {}x{}.",
+        frame->material_mip_bias,frame->plan.width,frame->plan.height,frame->plan.output_width,frame->plan.output_height).c_str());
+  }
+  return {.post_callback=[](Context& context,const void*) {
+    if(auto* data=renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device()))
+      data->texture_mip_bias.Restore(data->motion_context.Get());
+  },.replay=true};
+};
+
 inline bool OnTemporalDraw(reshade::api::command_list* cmd) {
   if ((mode == 0.f && !optics::NeedsTemporalInputs()) || cmd->get_device()->get_api() != reshade::api::device_api::d3d11) return true;
   if (upscale_engine::active) upscale_engine::active->temporal_seen = true;
@@ -214,6 +248,7 @@ inline bool OnTemporalDraw(reshade::api::command_list* cmd) {
   if (base_context->GetType() != D3D11_DEVICE_CONTEXT_IMMEDIATE) return true;
   ComPtr<ID3D11DeviceContext1> context;
   if (FAILED(base_context->QueryInterface(IID_PPV_ARGS(&context)))) return true;
+  if(data->motion_context)data->texture_mip_bias.Restore(data->motion_context.Get());
   data->motion_context = context;
   data->motion_native_handle = cmd->get_native();
   data->objects.ClosePass(context.Get());
@@ -306,6 +341,8 @@ inline bool OnTemporalDraw(reshade::api::command_list* cmd) {
   if (!data->prepare.Run(context.Get(), scene.Get(), depth.Get(), objects ? data->objects.surfaces[0].Get() : nullptr,
                          camera.Get(), frame.Get(), render_width, render_height,
                          objects ? data->objects.surfaces[1].Get() : nullptr)) return true;
+  clouds::ApplyMotion(cmd->get_device(),context.Get(),depth.Get(),frame.Get(),
+      data->prepare.textures[2].Get(),data->prepare.textures[3].Get(),render_width,render_height);
   data->objects.Finish(context.Get(), data->frame);
   const auto now = std::chrono::steady_clock::now();
   if (optics::custom) {
@@ -450,7 +487,10 @@ inline void OnPresent(reshade::api::command_queue*, reshade::api::swapchain* swa
     blitzfx::temporal_enabled.store(enabled && object_engine::state->installed, std::memory_order_relaxed);
   }
   if (!data) return;
-  if (data->motion_context) data->objects.ClosePass(data->motion_context.Get());
+  if (data->motion_context) {
+    data->texture_mip_bias.Restore(data->motion_context.Get());
+    data->objects.ClosePass(data->motion_context.Get());
+  }
   if (mode == 0.f && data->dlss_attempted) {
     data->resolved.Reset();
     data->dlss.Shutdown();
@@ -489,6 +529,7 @@ inline void OnDestroySwapchain(reshade::api::swapchain* swapchain, bool) {
   upscale_engine::Disable();
   auto* data = renodx::utils::data::Get<DeviceData>(swapchain->get_device());
   if (data && data->swapchain == swapchain) {
+    if(data->motion_context)data->texture_mip_bias.Restore(data->motion_context.Get());
     data->swapchain = nullptr;
     data->last_resolve = UINT64_MAX;
   }
@@ -497,7 +538,10 @@ inline void OnDestroyDevice(reshade::api::device* device) {
   blitzfx::temporal_enabled.store(false, std::memory_order_relaxed);
   upscale_engine::Disable();
   object_engine::Disable();
-  if (renodx::utils::data::Get<DeviceData>(device)) renodx::utils::data::Delete<DeviceData>(device);
+  if(auto* data=renodx::utils::data::Get<DeviceData>(device)) {
+    if(data->motion_context)data->texture_mip_bias.Restore(data->motion_context.Get());
+    renodx::utils::data::Delete<DeviceData>(device);
+  }
   if (renodx::utils::data::Get<MotionCapabilities>(device)) renodx::utils::data::Delete<MotionCapabilities>(device);
 }
 inline void Use(DWORD reason) {
@@ -512,6 +556,8 @@ inline void Use(DWORD reason) {
     reshade::register_event<reshade::addon_event::execute_secondary_command_list>(OnMotionExecute);
     renodx::utils::command_action::Register(ObjectDrawBoundary, {.command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW
         | renodx::utils::command_action::COMMAND_TYPE_DISPATCH | renodx::utils::command_action::COMMAND_TYPE_INDIRECT});
+    renodx::utils::command_action::Register(TextureMipBiasDraw, {.command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW
+        | renodx::utils::command_action::COMMAND_TYPE_INDIRECT});
     for (const auto& shader : OBJECT_VERTEX_SHADERS) {
       renodx::utils::command_action::Register(ObjectDrawPost, {.shader_hash = shader.hash, .command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW | renodx::utils::command_action::COMMAND_TYPE_INDIRECT});
     }
@@ -530,6 +576,7 @@ inline void Use(DWORD reason) {
     reshade::unregister_event<reshade::addon_event::execute_secondary_command_list>(OnMotionExecute);
     upscale_engine::Disable();
     renodx::utils::command_action::Unregister(ObjectDrawPost);
+    renodx::utils::command_action::Unregister(TextureMipBiasDraw);
     renodx::utils::command_action::Unregister(ObjectDrawBoundary);
     reshade::unregister_event<reshade::addon_event::present>(OnPresent);
     reshade::unregister_event<reshade::addon_event::destroy_swapchain>(OnDestroySwapchain);

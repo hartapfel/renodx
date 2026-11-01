@@ -33,6 +33,13 @@ cbuffer cb3 : register(b3)
   float4 cb3[13];
 }
 
+#ifdef CLASSIC_SSR_TRACE
+cbuffer SSRTrace : register(b4) {
+  float4 ssr_extent; // trace extent, active render extent
+  float4 ssr_depth;  // opaque depth active/allocation, DDA stride, unused
+}
+#endif
+
 
 
 
@@ -42,7 +49,11 @@ cbuffer cb3 : register(b3)
 
 // Only augment intersections. Empty emission retains native depth and hits.
 float SampleReflectionDepth(float2 uv) {
+#ifdef CLASSIC_SSR_TRACE
+  float opaque = t2.SampleLevel(s0_s,uv*ssr_depth.xy,0).x;
+#else
   float opaque = t2.SampleLevel(s0_s,uv,0).x;
+#endif
   float emissive = reflection_depth.SampleLevel(s0_s,uv,0);
   return cb12[22].x<0.f ? max(opaque,emissive) : min(opaque,emissive);
 }
@@ -52,6 +63,17 @@ void main(
   out float4 o0 : SV_Target0,
   out float4 o1 : SV_Target1)
 {
+#ifdef CLASSIC_SSR_TRACE
+  float4 ssr_cb[13];
+  [unroll] for(uint i=0;i<13;++i)ssr_cb[i]=cb3[i];
+  ssr_cb[0]=ssr_extent.xyxy;
+  ssr_cb[3].xy=1.f;
+  ssr_cb[5]=float4(ssr_extent.xy,rcp(ssr_extent.xy));
+  ssr_cb[8]=float4(ssr_extent.xy/ssr_extent.zw,ssr_extent.zw/ssr_extent.xy);
+#define cb3 ssr_cb
+  float2 guide=0.f;
+  float3 water_origin=0.f;
+#endif
   float4 r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15,r16;
   uint4 bitmask, uiDest;
   float4 fDest;
@@ -85,6 +107,10 @@ void main(
     r3.xyzw = cb12[208].xyzw * r0.zzzz + r3.xyzw;
     r3.xyzw = cb12[209].xyzw + r3.xyzw;
     r3.xyz = r3.xyz / r3.www;
+#ifdef CLASSIC_SSR_TRACE
+    water_origin=r3.xyz;
+    guide=float2(-1.f,r3.z);
+#endif
     r0.z = cmp(cb12[0].z >= r3.z);
     r0.z = r0.z ? 1 : -1;
     r4.xy = float2(0,0);
@@ -135,6 +161,10 @@ void main(
     r9.xy = cb3[0].zw * abs(r5.xz);
     r1.x = r1.x ? r9.x : r9.y;
     r1.x = 1 / r1.x;
+#ifdef CLASSIC_SSR_TRACE
+    // More rays at full resolution, without quadrupling each ray's work too.
+    r1.x *= ssr_depth.z;
+#endif
     r9.xyz = r5.xzw * r1.xxx;
     r1.y = cmp(0 < r6.z);
     r2.w = max(cb3[0].x, cb3[0].y);
@@ -206,6 +236,15 @@ void main(
       r5.y = 0;
     }
     if (r5.y != 0) {
+#ifdef CLASSIC_SSR_TRACE
+      float2 hit_ndc=r11.xy*float2(2,-2)+float2(-1,1);
+      float hit_raw=SampleReflectionDepth(r11.xy);
+      float4 hit_world=cb12[206]*hit_ndc.x+cb12[207]*hit_ndc.y
+          +cb12[208]*hit_raw+cb12[209];
+      hit_world.xyz/=hit_world.w;
+      guide.x=distance(cb12[0].xyz,water_origin)+distance(hit_world.xyz,water_origin);
+      if(!isfinite(guide.x))guide.x=-1.f;
+#endif
       r1.x = r11.y / r6.z;
       r1.x = -0.5 + r1.x;
       r1.x = -abs(r1.x) * 2 + 1;
@@ -635,6 +674,11 @@ void main(
     }
     r4.xyz = -r8.xyz + r5.xyz;
     r5.xyz = r1.xxx * r4.xyz + r8.xyz;
+#ifdef CLASSIC_SSR_TRACE
+    o0=float4(all(isfinite(r5.xyz))?max(r5.xyz,0.f):0.f,1.f);
+    o1=float4(guide,0,0);
+    return;
+#endif
     r0.z = r0.z * 4 + -1;
     r0.z = saturate(2.5 * r0.z);
     r3.w = 1;
@@ -719,6 +763,10 @@ void main(
   r0.x = cmp(r0.x != r0.x);
   r3.xyzw = max(float4(0,0,0,0), r5.xyzw);
   o0.xyzw = r0.xxxx ? float4(0,0,0,0) : r3.xyzw;
+#ifdef CLASSIC_SSR_TRACE
+  o1=0.f;
+  return;
+#else
   r0.xyzw = t3.SampleLevel(s1_s, r1.xy, 0).xyzw;
   r1.x = dot(float4(0.333000004,0.333000004,0.333000004,0.333000004), r0.xyzw);
   r1.x = cmp(r1.x != r1.x);
@@ -726,4 +774,8 @@ void main(
   r0.xyzw = r1.xxxx ? float4(0,0,0,0) : r0.xyzw;
   o1.xyzw = r2.xxxx ? r5.xyzw : r0.xyzw;
   return;
+#endif
 }
+#ifdef CLASSIC_SSR_TRACE
+#undef cb3
+#endif

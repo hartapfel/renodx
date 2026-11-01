@@ -217,6 +217,31 @@ int main(int argc,char**) {
   lighting[4]={.5f,0,0,0};lighting[5]={0,.5f,0,0};lighting[6]={0,0,.01f,0};lighting[7]={0,0,.5f,0};lighting[8]={0,0,0,0};lighting[9]={0,0,0,0};lighting[10]={.15f,.3f,.6f,1};lighting[15][2]=4;lighting[17]={.15f,.15f,.15f,.15f};lighting[35]={0,0,0,0};for(UINT i=0;i<4;++i)lighting[11+i]={.5f,.5f,.5f/lighting[10][i],1.f/64};
   ctx->UpdateSubresource(light_cb.Get(),0,nullptr,lighting.data(),0,0);
   auto a=ps(scratch+"originals/0x05FE9FA8.ps_5_0.cso"),b=ps("build/thewitcher3classic.include/embed/0x05FE9FA8.cso");compare(a,b,"Shadow mask");
+  {
+    // Replace the native cloud term, retaining terrain/cascade/contact terms.
+    // Multiplying a finished scene or stacking both cloud masks fails this.
+    auto native_clear=texture(8,8,4,2,DXGI_FORMAT_R32_FLOAT,[](UINT,UINT,UINT,UINT){return Pixel{0,0,0,0};});
+    ctx->PSSetShaderResources(14,1,native_clear.GetAddressOf());
+    auto no_clouds=ps(scratch+"originals/0x05FE9FA8.ps_5_0.cso");
+    ctx->PSSetShaderResources(14,1,cloud.GetAddressOf());
+    auto volume_shadow=texture(8,8,1,1,DXGI_FORMAT_R32_FLOAT,[](UINT,UINT,UINT,UINT){return Pixel{.25f,0,0,0};});
+    std::array<Pixel,4> region{{{0,0,0,16000},{.3f,0,.9539392f,1},{8,8,1,1357},{}}};
+    auto metadata=buffer(region.data(),sizeof(region),D3D11_BIND_SHADER_RESOURCE,16);
+    ComPtr<ID3D11ShaderResourceView> metadata_view;assert(SUCCEEDED(device->CreateShaderResourceView(metadata.Get(),nullptr,&metadata_view)));
+    ctx->PSSetShaderResources(126,1,volume_shadow.GetAddressOf());ctx->PSSetShaderResources(127,1,metadata_view.GetAddressOf());
+    auto quarter=ps("build/thewitcher3classic.include/embed/0x05FE9FA8.cso");
+    size_t covered=0;
+    for(UINT i=0;i<quarter.size();++i) {
+      assert(std::isfinite(quarter[i]) &&std::abs(quarter[i]-no_clouds[i]*.25f)<.002f);
+      if(no_clouds[i]>.1f)++covered;
+    }
+    assert(covered>100);
+    region[2][2]=0;ctx->UpdateSubresource(metadata.Get(),0,nullptr,region.data(),0,0);
+    compare(no_clouds,ps("build/thewitcher3classic.include/embed/0x05FE9FA8.cso"),"Cloud shadows off removes native cloud term");
+    ID3D11ShaderResourceView* clear[2]{};ctx->PSSetShaderResources(126,2,clear);
+    compare(b,ps("build/thewitcher3classic.include/embed/0x05FE9FA8.cso"),"Cloud shadow native fallback");
+    std::cout<<"PASS volume cloud shadow replaces native attenuation without double shadowing; other shadow terms preserved\n";
+  }
   params[0][2]=1;params[2]={.535f,0,W,H};ctx->UpdateSubresource(param_buffer.Get(),0,nullptr,params.data(),0,0);
   auto c=ps("build/thewitcher3classic.include/embed/0x05FE9FA8.cso");float low=1,high=0;for(float v:c){assert(std::isfinite(v)&&v>=0&&v<=1);low=std::min(low,v);high=std::max(high,v);}std::cout<<"PCSS visibility "<<low<<".."<<high<<std::endl;assert(low<.1f&&high>.8f);
   // Perspective depth field: a plane at view Z=3 and an occluding strip at 2.9.

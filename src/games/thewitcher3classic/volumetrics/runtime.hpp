@@ -4,14 +4,18 @@
 #include "pipeline.hpp"
 #include "../water/pipeline.hpp"
 #include "../water/reflections.hpp"
+#include "../water/screen_reflections.hpp"
+#include "../temporal/upscale_engine.hpp"
 #include "../water/underwater.hpp"
 #include "../water/camera.hpp"
 #include "../../../utils/data.hpp"
 namespace witcher3classic::volumetrics {
+inline void OnDrawn(reshade::api::command_list* cmd);
 struct __declspec(uuid("08d5a440-5e33-4e83-bd75-2cd02e204a40")) DeviceData {
   Pipeline pipeline;
   water::Pipeline water_pipeline;
   water::Reflections reflections;
+  water::ScreenReflections screen_reflections;
   water::Underwater underwater;
   water::Camera camera;
   uint64_t underwater_composite_frame=UINT64_MAX;
@@ -23,6 +27,7 @@ inline void OnInit(reshade::api::device* device) { renodx::utils::data::Create<D
 inline void OnDestroy(reshade::api::device* device) {
   auto* data=renodx::utils::data::Get<DeviceData>(device);
   if (data && data->context) {
+    data->screen_reflections.Restore(data->context.Get());
     data->reflections.Restore(data->context.Get());
     data->water_pipeline.Restore(data->context.Get());
     data->underwater.Restore(data->context.Get());
@@ -34,6 +39,8 @@ inline void OnPresent(reshade::api::command_queue*,reshade::api::swapchain* swap
                       const reshade::api::rect*,const reshade::api::rect*,uint32_t,const reshade::api::rect*) {
   auto* data=renodx::utils::data::Get<DeviceData>(swapchain->get_device());
   if (!data) return;
+  if(data->context)data->screen_reflections.Restore(data->context.Get());
+  if(!water::ScreenReflections::Enabled())data->screen_reflections.Invalidate();
   if (data->context) { data->reflections.Restore(data->context.Get()); data->water_pipeline.Restore(data->context.Get()); data->pipeline.Restore(data->context.Get()); }
   if(data->context)data->underwater.Restore(data->context.Get());
   if(water::mode==0.f)data->reflections.Invalidate();
@@ -183,6 +190,13 @@ inline bool OnForward(reshade::api::command_list* cmd) {
     data->pipeline.Bind(data->context.Get(),false,data->frame);
   return false;
 }
+inline bool OnSky(reshade::api::command_list* cmd) {
+  OnUnderwater(cmd);
+  auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  if(mode!=0.f &&data &&data->context &&data->native_handle==cmd->get_native())
+    data->pipeline.Bind(data->context.Get(),false,data->frame,true);
+  return false;
+}
 inline bool OnWater(reshade::api::command_list* cmd) {
   OnForward(cmd);
   auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
@@ -206,10 +220,47 @@ inline bool OnReflectionTrace(reshade::api::command_list* cmd) {
 }
 inline bool OnReflectionInput(reshade::api::command_list* cmd) {
   auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
-  if(water::mode==0.f || !data || !data->context || data->native_handle!=cmd->get_native()
-      || data->water_pipeline.captured_frame!=data->frame)return false;
-  return data->reflections.Bind(data->context.Get(),data->water_pipeline.FrameView(),
-      data->water_pipeline.Width(),data->water_pipeline.Height(),data->frame);
+  if(!data ||cmd->get_device()->get_api()!=reshade::api::device_api::d3d11)return false;
+  if(!data->context) {
+    auto* native=reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native());
+    renodx::utils::directx::NativeFromReShadeProxy(&native);
+    if(native->GetType()!=D3D11_DEVICE_CONTEXT_IMMEDIATE
+        ||FAILED(native->QueryInterface(IID_PPV_ARGS(&data->context))))return false;
+    data->native_handle=cmd->get_native();
+  }
+  if(data->native_handle!=cmd->get_native())return false;
+  const bool replace=water::mode!=0.f &&data->water_pipeline.captured_frame==data->frame
+      &&data->reflections.Bind(data->context.Get(),data->water_pipeline.FrameView(),
+          data->water_pipeline.Width(),data->water_pipeline.Height(),data->frame);
+  UINT width=0,height=0;
+  if(auto* active=temporal::upscale_engine::active;active &&!active->post_restored) {
+    width=active->plan.width;height=active->plan.height;
+  } else if(data->water_pipeline.captured_frame==data->frame) {
+    width=data->water_pipeline.Width();height=data->water_pipeline.Height();
+  } else {
+    ComPtr<ID3D11ShaderResourceView> scene;ComPtr<ID3D11Resource> resource;ComPtr<ID3D11Texture2D> texture;
+    data->context->PSGetShaderResources(0,1,&scene);
+    if(scene)scene->GetResource(&resource);
+    if(resource &&SUCCEEDED(resource.As(&texture))) {D3D11_TEXTURE2D_DESC d{};texture->GetDesc(&d);width=d.Width;height=d.Height;}
+  }
+  data->screen_reflections.Prepare(data->context.Get(),width,height,data->frame,replace);
+  return replace;
+}
+inline void OnReflectionTraceDrawn(reshade::api::command_list* cmd) {
+  auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  if(data &&data->context &&data->native_handle==cmd->get_native())
+    data->screen_reflections.Trace(data->context.Get(),data->frame);
+  OnDrawn(cmd);
+}
+inline bool OnReflectionComposite(reshade::api::command_list* cmd) {
+  auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  if(data &&data->context &&data->native_handle==cmd->get_native())
+    data->screen_reflections.Composite(data->context.Get(),data->frame);
+  return true;
+}
+inline void OnReflectionCompositeDrawn(reshade::api::command_list* cmd) {
+  auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  if(data &&data->context)data->screen_reflections.Restore(data->context.Get());
 }
 inline void OnReflectionInputDrawn(reshade::api::command_list* cmd) {
   auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());

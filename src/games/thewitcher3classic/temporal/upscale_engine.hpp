@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <mutex>
 #include "../blitzfx/compatibility.hpp"
@@ -33,6 +34,7 @@ struct Frame {
   Plan plan;
   std::array<float, 2> jitter{};
   std::array<float, 2> shadow_jitter_delta{};
+  float material_mip_bias = 0.f;
   bool temporal_seen = false;
   bool reconstructed = false;
   bool post_restored = false;
@@ -113,10 +115,16 @@ inline void RenderHook(uint8_t* renderer, uint8_t* submitted, void* world) {
       || *reinterpret_cast<const uint32_t*>(submitted + 0xb424) != plan.output_height
       || *reinterpret_cast<const uint32_t*>(pool + 0x168) != plan.output_width
       || *reinterpret_cast<const uint32_t*>(pool + 0x16c) != plan.output_height) {
+    // Nested views must not inherit the primary camera's texture correction.
+    const float material_bias = active ? active->material_mip_bias : 0.f;
+    if (active) active->material_mip_bias = 0.f;
     render_function(renderer, submitted, world);
+    if (active) active->material_mip_bias = material_bias;
     return;
   }
   Frame frame{submitted + 0x10, plan};
+  // NVIDIA DLSS guide 3.5: additive to the asset/engine's native mip bias.
+  frame.material_mip_bias = std::log2(float(plan.width) / float(plan.output_width)) - 1.f;
   {
     std::lock_guard lock(state->mutex);
     // NVIDIA: eight phases per output/input pixel-area ratio. Use at least

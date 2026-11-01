@@ -103,6 +103,43 @@ int main(int argc,char**) {
   const double expected=std::exp(-.002*(1000.-.2-1.));
   assert(std::abs(result[3]-expected)<.001);
   for (int c=0;c<3;++c) assert(result[c]==0.f); // Native ambient is composed after volume sampling.
+  {
+    // Shared cloud attenuation must survive the fog's isolated compute state,
+    // and affect direct scattering without changing density/transmittance.
+    a.p.medium[2]=1.f;auto clear=a.CenterEnd(a.Run());
+    std::array<float,64> pixels{};pixels.fill(.25f);
+    D3D11_TEXTURE2D_DESC desc{8,8,1,1,DXGI_FORMAT_R32_FLOAT,{1,0},D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE};
+    D3D11_SUBRESOURCE_DATA data{pixels.data(),32};ComPtr<ID3D11Texture2D> map;
+    ComPtr<ID3D11ShaderResourceView> map_view,metadata_view;
+    assert(SUCCEEDED(a.device->CreateTexture2D(&desc,&data,&map)));
+    assert(SUCCEEDED(a.device->CreateShaderResourceView(map.Get(),nullptr,&map_view)));
+    std::array<std::array<float,4>,4> region{{{0,0,0,16000},{0,0,1,1},{8,8,1,1357},{}}};
+    D3D11_BUFFER_DESC buffer{64,D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE,0,D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,16};
+    data={region.data()};ComPtr<ID3D11Buffer> metadata;
+    assert(SUCCEEDED(a.device->CreateBuffer(&buffer,&data,&metadata)));
+    assert(SUCCEEDED(a.device->CreateShaderResourceView(metadata.Get(),nullptr,&metadata_view)));
+    ID3D11ShaderResourceView* inputs[]{map_view.Get(),metadata_view.Get()};a.context->CSSetShaderResources(126,2,inputs);
+    auto cloudy=a.CenterEnd(a.Run());
+    assert(clear[0]>.01f &&cloudy[3]==clear[3]);
+    for(UINT c=0;c<3;++c)assert(std::abs(cloudy[c]-.25f*clear[c])<.002f);
+    // A cloud gap must form spatially varying volumetric lighting, rather
+    // than merely darkening surfaces or multiplying the final fog opacity.
+    for(UINT y=0;y<8;++y)for(UINT x=0;x<8;++x)pixels[y*8+x]=x<4?0.f:1.f;
+    a.context->UpdateSubresource(map.Get(),0,nullptr,pixels.data(),32,0);
+    region[0][3]=2000.f;a.context->UpdateSubresource(metadata.Get(),0,nullptr,region.data(),0,0);
+    const auto shafts=a.Run();
+    const auto left=4*((UINT(a.p.grid[2])*UINT(a.p.grid[1])+UINT(a.p.grid[1])/2)*UINT(a.p.grid[0])+UINT(a.p.grid[0])/4);
+    const auto right=left+4*(UINT(a.p.grid[0])/2);
+    std::cout<<"Cloud gap direct scattering: left="<<shafts[left]<<", right="<<shafts[right]
+        <<", T="<<shafts[left+3]<<'/'<<shafts[right+3]<<std::endl;
+    // Both rays start on the filtered cloud boundary, so the shadowed ray
+    // still receives some near-camera light before entering full shadow.
+    assert(shafts[right]>.01f &&shafts[left]<shafts[right]*.25f);
+    assert(shafts[left+3]==shafts[right+3]);
+    ComPtr<ID3D11ShaderResourceView> restored;a.context->CSGetShaderResources(126,1,&restored);assert(restored==map_view);
+    ID3D11ShaderResourceView* empty[2]{};a.context->CSSetShaderResources(126,2,empty);a.p.medium[2]=0.f;
+    std::cout<<"PASS shared cloud shadows attenuate direct fog scattering only and survive isolated compute state\n";
+  }
   // Actual half-float native interval input, in the top-left quarter of a
   // pooled texture. The stale remainder deliberately describes open air.
   // Expected optical lengths are analytic integrals of two-metre cubic ramps.
