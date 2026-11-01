@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
   assert(size_t(dos->e_lfanew) + sizeof(IMAGE_NT_HEADERS64) <= file.size());
   const auto* pe = reinterpret_cast<const IMAGE_NT_HEADERS64*>(file.data() + dos->e_lfanew);
   assert(pe->Signature == IMAGE_NT_SIGNATURE && pe->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC);
-  std::vector<unsigned char> image(pe->OptionalHeader.SizeOfImage + 0x1000);
+  std::vector<unsigned char> image(pe->OptionalHeader.SizeOfImage + 0x20000);
   assert(pe->OptionalHeader.SizeOfHeaders <= file.size());
   std::memcpy(image.data(), file.data(), pe->OptionalHeader.SizeOfHeaders);
   const auto* sections = IMAGE_FIRST_SECTION(pe);
@@ -30,41 +30,37 @@ int main(int argc, char** argv) {
     std::memcpy(image.data() + sections[i].VirtualAddress,
                 file.data() + sections[i].PointerToRawData, sections[i].SizeOfRawData);
   }
-  // Rebase CVar descriptor pointers for either audited image. An unrelated
-  // value at the other profile's RVA must never be treated as a pointer.
-  for (const auto& profile : witcher::night::native_layouts) {
-    if (profile.sky_impact + sizeof(float) > pe->OptionalHeader.SizeOfImage) continue;
-    std::vector<unsigned> cvars{profile.sky_impact};
-    if (image[profile.environment + 0xd19] == 0xe8) {
-      int32_t displacement;
-      std::memcpy(&displacement, image.data() + profile.environment + 0xd1a, sizeof(displacement));
-      const int64_t target = int64_t(profile.environment) + 0xd1e + displacement;
-      if (target >= 0 && uint64_t(target) + 0x443 <= image.size()) {
-        for (unsigned load : {0x2eau, 0x3d6u}) {
-          std::memcpy(&displacement, image.data() + target + load + 4, sizeof(displacement));
-          const int64_t value = target + load + 8 + displacement;
-          if (value >= 32 && uint64_t(value) + 4 <= image.size()) cvars.push_back(static_cast<unsigned>(value));
-        }
-      }
-    }
-    for (unsigned rva : cvars) for (unsigned offset : {rva - 32u, rva - 16u}) {
+  // Apply every PE relocation, as the Windows loader does. This also rebases
+  // newly moved CVar descriptors without any knowledge of their addresses.
+  const auto reloc = pe->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+  for (size_t offset = reloc.VirtualAddress; offset < uint64_t(reloc.VirtualAddress) + reloc.Size;) {
+    const auto* block = reinterpret_cast<const IMAGE_BASE_RELOCATION*>(image.data() + offset);
+    assert(block->SizeOfBlock >= sizeof(*block));
+    const auto* entries = reinterpret_cast<const WORD*>(block + 1);
+    for (unsigned i = 0; i < (block->SizeOfBlock - sizeof(*block)) / sizeof(WORD); ++i) {
+      if ((entries[i] >> 12) != IMAGE_REL_BASED_DIR64) continue;
       uintptr_t pointer;
-      std::memcpy(&pointer, image.data() + offset, sizeof(pointer));
-      if (pointer < pe->OptionalHeader.ImageBase
-          || pointer - pe->OptionalHeader.ImageBase >= pe->OptionalHeader.SizeOfImage) continue;
-      pointer = reinterpret_cast<uintptr_t>(image.data()) + pointer - pe->OptionalHeader.ImageBase;
-      std::memcpy(image.data() + offset, &pointer, sizeof(pointer));
+      const uint32_t address = block->VirtualAddress + (entries[i] & 0xfff);
+      std::memcpy(&pointer, image.data() + address, sizeof(pointer));
+      pointer += reinterpret_cast<uintptr_t>(image.data()) - pe->OptionalHeader.ImageBase;
+      std::memcpy(image.data() + address, &pointer, sizeof(pointer));
     }
+    offset += block->SizeOfBlock;
   }
   auto* header = reinterpret_cast<IMAGE_NT_HEADERS64*>(image.data() + dos->e_lfanew);
   unsigned cases = 0;
   assert(witcher::night::ValidateImage(image.data()));
   assert(witcher::night::fog_density_supported);
   assert(witcher::night::interior_fog::supported);
-  for (unsigned address : {0x22b02e5u, 0x22b1fceu, 0x22b4adcu, 0x22b9582u, 0x22b959cu,
-                           0x22b95c6u, 0x22b9631u, 0x22b5701u, 0x22b1f7du,
-                           0x22b546fu, 0x22b545au, 0x22b5518u, 0x22b53e8u, 0x22b58d4u, 0x22b58deu,
-                           0x22b4f87u, 0x22b4f93u, 0x22b4fabu}) {
+  const auto interior = witcher::night::interior_fog::addresses;
+  const auto regional = witcher::night::normalization::addresses;
+  const auto layout = *witcher::night::active_layout;
+  for (unsigned address : {interior.world, interior.state, interior.blend, interior.profile,
+                          interior.profile + 0x1a, interior.profile + 0x44, interior.profile + 0xaf,
+                          interior.weight, interior.order, interior.order + 0x15, interior.order + 0xbe,
+                          interior.layer, interior.layer + 0x4ec, interior.layer + 0x4f6,
+                          interior.weather, interior.weather + 0xc, interior.weather + 0x24,
+                          interior.state - 0x51}) {
     image[address] ^= 1;
     assert(witcher::night::ValidateImage(image.data()) && !witcher::night::interior_fog::supported);
     image[address] ^= 1;
@@ -91,8 +87,10 @@ int main(int argc, char** argv) {
   assert(witcher::night::camera_supported && witcher::night::cutscene_supported && witcher::night::grading::supported);
   assert(witcher::night::normalization::supported);
   assert(witcher::night::normalization::weather_supported);
-  for (unsigned address : {0x1d76120u, 0x22b02e5u, 0x239bd64u, 0x239d4e8u, 0x239d57fu,
-                           0x239c2d4u, 0x23a0b0fu, 0x23a0b78u, 0x26b90a0u, 0x31c444u}) {
+  for (unsigned address : {regional.selector, regional.world, regional.weather_pointer,
+                          regional.weather_start, regional.weather_start + 0x97,
+                          regional.weather_finish, regional.weather_progress, regional.weather_progress + 0x69,
+                          regional.intern}) {
     image[address] ^= 1;
     assert(witcher::night::ValidateImage(image.data()) && witcher::night::normalization::supported
            && !witcher::night::normalization::weather_supported);
@@ -106,7 +104,6 @@ int main(int argc, char** argv) {
   assert(witcher::night::water_sky_supported && witcher::night::build_sky_constants);
   const unsigned sky_builder = static_cast<unsigned>(reinterpret_cast<uintptr_t>(witcher::night::build_sky_constants)
                                                     - reinterpret_cast<uintptr_t>(image.data()));
-  const auto layout = *witcher::night::active_layout;
   assert(reinterpret_cast<uintptr_t>(witcher::night::build_environment) == reinterpret_cast<uintptr_t>(image.data()) + layout.environment);
   assert(reinterpret_cast<uintptr_t>(witcher::night::build_direct_constants) == reinterpret_cast<uintptr_t>(image.data()) + layout.direct);
   assert(reinterpret_cast<uintptr_t>(witcher::night::build_common_constants) == reinterpret_cast<uintptr_t>(image.data()) + layout.common);
@@ -167,7 +164,7 @@ int main(int argc, char** argv) {
   }
   // Region identification is optional: reject changed instructions without
   // disabling any previously supported lighting/exposure control.
-  for (unsigned offset : {0x1d6f74eu, 0x1dd3250u, 0x1dec500u, 0x239bd20u, 0x1dec6b4u}) {
+  for (unsigned offset : {regional.manager, regional.area, regional.converter, regional.game_load + 3, regional.converter + 0x1b4}) {
     image[offset] ^= 1;
     assert(witcher::night::ValidateImage(image.data()) && !witcher::night::normalization::supported);
     image[offset] ^= 1;
@@ -256,12 +253,11 @@ int main(int argc, char** argv) {
     ++cases;
   }
   assert(witcher::night::ValidateImage(image.data()));
-  if (layout.grade_caller_offset == -0x1620) {
-    assert(witcher::night::exposure::supported && witcher::night::exposure::rate_caller == 0x1c147a9);
+  if (witcher::night::exposure::supported) {
     std::vector<uintptr_t> exposure_stores{witcher::night::exposure::rate_caller - 0x22,
                                          witcher::night::exposure::rate_caller - 4};
     for (unsigned i = 0; i < 3; ++i) {
-      const uintptr_t caller = int64_t(witcher::night::exposure::limit_uploads[i].second) + layout.grade_caller_offset;
+      const uintptr_t caller = witcher::night::exposure::resolved_limit_uploads[i];
       exposure_stores.push_back(caller - 4);
       exposure_stores.push_back(caller - (i == 0 ? 0x3b : i == 1 ? 0x38 : 0x3f));
     }
@@ -276,6 +272,81 @@ int main(int argc, char** argv) {
     std::printf("Exposure upload validation passed: rates %llX, primary/transition metering and optional rejection guards.\n",
                 static_cast<unsigned long long>(witcher::night::exposure::rate_caller));
   }
+  // Simulate a link update moving each native builder, the grading uploads,
+  // and the skylight descriptor independently. These copied bytes are never
+  // executed. Only relative references used by validation need rebasing.
+  auto* mapped_sections = IMAGE_FIRST_SECTION(header);
+  const unsigned section_count = header->FileHeader.NumberOfSections;
+  assert(reinterpret_cast<unsigned char*>(mapped_sections + section_count + 2)
+         <= image.data() + header->OptionalHeader.SizeOfHeaders);
+  const uint32_t relocated = original_size;
+  mapped_sections[section_count] = {};
+  mapped_sections[section_count].VirtualAddress = relocated;
+  mapped_sections[section_count].Misc.VirtualSize = 0x10000;
+  mapped_sections[section_count].Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE;
+  mapped_sections[section_count + 1] = {};
+  mapped_sections[section_count + 1].VirtualAddress = relocated + 0x10000;
+  mapped_sections[section_count + 1].Misc.VirtualSize = 0x3000;
+  mapped_sections[section_count + 1].Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE;
+  header->FileHeader.NumberOfSections += 2;
+  header->OptionalHeader.SizeOfImage = relocated + 0x13000;
+  // A byte-for-byte code copy in writable data is not a hook candidate.
+  std::memcpy(image.data() + relocated + 0x11000, image.data() + layout.environment, 0x1000);
+  assert(witcher::night::ValidateImage(image.data()));
+  ++cases;
+  struct Move { uint32_t from, to, bytes; };
+  const uint32_t grade_first = int64_t(witcher::night::grading::grade_uploads[0].second) + layout.grade_caller_offset;
+  const Move moves[] = {
+      {layout.environment, relocated, 0x1000},
+      {layout.direct, relocated + 0x1000, 0x2000},
+      {layout.common, relocated + 0x4000, 0x2000},
+      {layout.global, relocated + 0x7000, 0x400},
+      {layout.camera, relocated + 0x8000, 0x500},
+      {grade_first - 0x40, relocated + 0x9000, 0x800},
+  };
+  for (const auto& move : moves) {
+    std::memcpy(image.data() + move.to, image.data() + move.from, move.bytes);
+  }
+  assert(!witcher::night::ValidateImage(image.data())); // Duplicate candidates are ambiguous.
+  ++cases;
+  for (const auto& move : moves) std::memset(image.data() + move.from, 0, move.bytes);
+  for (const auto& [instruction, target] : {
+           std::pair{relocated + 0xd19, sky_builder},
+           std::pair{relocated + 0x1000 + 0x1c68, relocated + 0x8000},
+           std::pair{relocated + 0x1000 + 0x1d64, relocated + 0x8000}}) {
+    const int32_t displacement = int64_t(target) - (int64_t(instruction) + 5);
+    std::memcpy(image.data() + instruction + 1, &displacement, 4);
+  }
+  for (const auto& [slot, original_caller] : witcher::night::grading::grade_uploads) {
+    const uint32_t caller = relocated + 0x9000 + (original_caller - witcher::night::grading::grade_uploads[0].second) + 0x40;
+    const int32_t displacement = int64_t(layout.pixel_constants) - caller;
+    std::memcpy(image.data() + caller - 4, &displacement, 4);
+  }
+  const uint32_t descriptor = relocated + 0x10000;
+  std::memcpy(image.data() + descriptor, image.data() + layout.sky_impact - 32, 36);
+  const uintptr_t relocated_value = reinterpret_cast<uintptr_t>(image.data() + descriptor + 32);
+  std::memcpy(image.data() + descriptor + 16, &relocated_value, sizeof(relocated_value));
+  std::memset(image.data() + layout.sky_impact - 32, 0, 36);
+  assert(witcher::night::ValidateImage(image.data()));
+  assert(witcher::night::active_layout->environment == relocated);
+  assert(witcher::night::active_layout->direct == relocated + 0x1000);
+  assert(witcher::night::active_layout->common == relocated + 0x4000);
+  assert(witcher::night::active_layout->global == relocated + 0x7000);
+  assert(witcher::night::sky_impact.value == reinterpret_cast<float*>(image.data() + descriptor + 32));
+  assert(witcher::night::camera_supported && witcher::night::cutscene_supported && witcher::night::grading::supported);
+  assert(witcher::night::exposure::supported && witcher::night::normalization::weather_supported);
+  assert(witcher::night::interior_fog::supported && witcher::night::fog_density_supported && witcher::night::fog_distance_supported);
+  assert(witcher::night::water_sky_supported && witcher::night::moon_supported && witcher::night::sun_supported && witcher::night::rain_supported);
+  ++cases;
+  // An independently registered CVar with the same name is ambiguous.
+  std::memcpy(image.data() + descriptor + 0x80, image.data() + descriptor, 36);
+  const uintptr_t duplicate_value = reinterpret_cast<uintptr_t>(image.data() + descriptor + 0xa0);
+  std::memcpy(image.data() + descriptor + 0x90, &duplicate_value, sizeof(duplicate_value));
+  assert(!witcher::night::ValidateImage(image.data()));
+  ++cases;
+  std::memset(image.data() + descriptor + 0x80, 0, 36);
+  assert(witcher::night::ValidateImage(image.data()));
+  ++cases;
   assert(!witcher::night::ValidateImage(nullptr));
   ++cases;
   std::printf("Passed %u executable detection cases (environment RVA %X): metadata flexibility, bounds, signatures, CVar and optional hooks.\n", cases, layout.environment);

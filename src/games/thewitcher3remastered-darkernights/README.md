@@ -31,19 +31,22 @@ The ZIP follows the game-root layout. Systemcluster's The Witcher 3 Mod Manager
 does not copy native addon DLLs from archives, so this ZIP requires manual
 extraction. It does not belong in `Mods` and needs no Script Merger step.
 
-The native hooks validate the x64 executable's image bounds, renderer instruction
-signatures and lighting data before installation. Different timestamps or image
-sizes are accepted when the required layout matches. Incompatible layouts keep
-native lighting and show unavailable controls. Camera and grading hooks are
-validated independently so a missing optional hook does not disable core lighting.
+Native hooks discover unique instruction anchors in executable PE sections,
+then decode relative call targets, global references and CVar descriptors.
+Renderer functions, grading/exposure uploads and data can move independently;
+there is no timestamp, checksum or fixed-address whitelist. Instruction/field
+contracts, section bounds and uniqueness are still required. Ambiguous or
+changed code keeps its native behavior, with optional features checked separately.
+Discovery runs once, not per frame or per draw. ReShade.log reports the selected
+locations and a validation failure if a future update changes a required contract.
 
-The October 8 game update moves the native renderer functions and skylight
-variable. Both the previous and updated address layouts are supported, with
-the same instruction and data checks. Camera call targets are decoded rather
-than tied to one build's relative displacement; night grading uses the matching
-upload return addresses. The directional-light buffer pointer moves from
-renderer offset `0x690` to `0x698`, and its native load instruction is checked
-before hooking. No per-frame scanning is added.
+The 2026-10-30 executable `5.0.0.1090142` passes all lighting, fog, camera,
+grading, exposure, regional/weather, interior, sun/moon, rain and water-sky
+checks. The directional-light buffer field is decoded from its validated native
+load rather than selected from a build profile. Regression fixtures move native
+builders, grading uploads and the skylight descriptor independently, and reject
+ambiguous copies or changed semantics. This tolerates relocation-only updates;
+changes to the actual renderer fields or shader interfaces still require review.
 
 The updated Path Tracing Photo Mode capture retains the existing moon,
 cloud and Photo Mode grading shader hashes. The new executable passes all native

@@ -8,14 +8,12 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
-#include <fstream>
-#include <iterator>
 #include <vector>
 #include <windows.h>
 
 #include "../night_grading.hpp"
 
-int main(int argc, char** argv) {
+int main() {
   using namespace witcher::night::grading;
   unsigned cases = 0;
   for (const auto& [slot, caller] : grade_uploads) {
@@ -82,27 +80,4 @@ int main(int argc, char** argv) {
     ++cases;
   }
   std::printf("Passed %u native grading cases.\n", cases);
-  if (argc == 2) {
-    std::ifstream stream(argv[1], std::ios::binary);
-    assert(stream);
-    const std::vector<unsigned char> file{std::istreambuf_iterator<char>(stream), {}};
-    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(file.data());
-    const auto* pe = reinterpret_cast<const IMAGE_NT_HEADERS64*>(file.data() + dos->e_lfanew);
-    assert(pe->FileHeader.TimeDateStamp == 0x6abd8695 && pe->OptionalHeader.SizeOfImage == 0x63f8000);
-    std::vector<unsigned char> image(pe->OptionalHeader.SizeOfImage);
-    const auto* sections = IMAGE_FIRST_SECTION(pe);
-    for (unsigned i = 0; i < pe->FileHeader.NumberOfSections; ++i) {
-      std::memcpy(image.data() + sections[i].VirtualAddress,
-                  file.data() + sections[i].PointerToRawData, sections[i].SizeOfRawData);
-    }
-    assert(Validate(image.data()));
-    for (const auto& [slot, caller] : grade_uploads) {
-      image[caller - 5] ^= 1;
-      assert(!Validate(image.data()));
-      image[caller - 5] ^= 1;
-    }
-    image[0x1ed9a30] ^= 1;
-    assert(!Validate(image.data()));
-    std::puts("Executable upload signatures and rejection guards passed.");
-  }
 }

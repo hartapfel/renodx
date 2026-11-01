@@ -646,7 +646,7 @@ void OnPresent(reshade::api::command_queue*, reshade::api::swapchain*, const res
   if (witcher::night::attempted && !reported) {
     reshade::log::message(witcher::night::installed ? reshade::log::level::info : reshade::log::level::warning,
                          witcher::night::installed ? "[RenoDX Witcher Lighting] Native lighting controls installed."
-                                                   : "[RenoDX Witcher Lighting] Unsupported build; native lighting preserved.");
+                                                   : "[RenoDX Witcher Lighting] Native lighting hooks unavailable; lighting preserved. See the native hook scan for details.");
     if (witcher::night::installed && !witcher::night::camera_supported) {
       reshade::log::message(reshade::log::level::warning,
                            "[RenoDX Witcher Lighting] Gameplay camera-light control unavailable.");

@@ -5,11 +5,15 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <utility>
+
+#include "../../utils/pe_image.hpp"
+#include "./night_grading.hpp"
 
 namespace witcher::night::exposure {
 
@@ -34,8 +38,11 @@ inline int32_t caller_offset = 0;
 // c4 and c9 are the first/second native exposure states. The latter is used
 // during environment transitions, not the separate analytic grading upload.
 inline constexpr std::pair<uint32_t, uint32_t> limit_uploads[] = {
-    {24, 0x34e3f3}, {29, 0x34e42b}, {24, 0x34e56c},
+    {24, 0x34e3f3},
+    {29, 0x34e42b},
+    {24, 0x34e56c},
 };
+inline std::array<uint32_t, 3> resolved_limit_uploads{};
 
 inline void Update(bool active) {
   float up = 1.f, down = 1.f, reference = 0.f, range = 1.f, boost = 1.f;
@@ -89,8 +96,12 @@ inline bool AdjustConstants(uint32_t first, float* values, uintptr_t caller, flo
   const float range = darkening_range.load(std::memory_order_relaxed);
   const float boost = brightening_range.load(std::memory_order_relaxed);
   if (reference == 0.f && range == 1.f && boost == 1.f) return false;
-  for (const auto& [slot, address] : limit_uploads) {
-    if (first != slot || caller != static_cast<uintptr_t>(int64_t(address) + caller_offset)) continue;
+  for (unsigned i = 0; i < std::size(limit_uploads); ++i) {
+    const auto& [slot, address] = limit_uploads[i];
+    const uintptr_t expected = resolved_limit_uploads[i] != 0
+                                   ? resolved_limit_uploads[i]
+                                   : static_cast<uintptr_t>(int64_t(address) + caller_offset);
+    if (first != slot || caller != expected) continue;
     if (!std::isfinite(values[1]) || !std::isfinite(values[2]) || values[1] > values[2]) return false;
     if (reference == 0.f) {
       // Exposure gain is a power of metered luminance. Interpolate its
@@ -99,7 +110,7 @@ inline bool AdjustConstants(uint32_t first, float* values, uintptr_t caller, flo
       const float amount = 1.f + (range - 1.f) * weight;
       if (amount != 1.f && values[2] > metering_anchor) {
         ceiling = amount == 0.f ? metering_anchor
-            : std::min(values[2], static_cast<float>(metering_anchor * std::pow(double(values[2]) / metering_anchor, amount)));
+                                : std::min(values[2], static_cast<float>(metering_anchor * std::pow(double(values[2]) / metering_anchor, amount)));
         floor = std::min(floor, ceiling);
       }
       const float lift = 1.f + (boost - 1.f) * weight;
@@ -107,7 +118,7 @@ inline bool AdjustConstants(uint32_t first, float* values, uintptr_t caller, flo
         // The shader already floors the final metered value at 1e-4. Use
         // that effective endpoint when the native minimum is zero/negative.
         floor = lift == 0.f ? metering_anchor
-            : std::max(values[1], static_cast<float>(metering_anchor * std::pow(double(std::max(values[1], 0.0001f)) / metering_anchor, lift)));
+                            : std::max(values[1], static_cast<float>(metering_anchor * std::pow(double(std::max(values[1], 0.0001f)) / metering_anchor, lift)));
         ceiling = std::max(ceiling, floor);
       }
       if (floor == values[1] && ceiling == values[2]) return false;
@@ -126,48 +137,43 @@ inline bool AdjustConstants(uint32_t first, float* values, uintptr_t caller, flo
   return false;
 }
 
-inline bool Validate(const unsigned char* image, uint32_t image_size,
-                     uint32_t environment_rva, uint32_t setter_rva, int32_t grade_offset) {
+inline constexpr unsigned char RATE_UPLOAD[] = {
+    0xb9, 0x14, 0x00, 0x00, 0x00,
+    0xc5, 0x7a, 0x11, 0x54, 0x24, 0x30, 0xc5, 0xfa, 0x11, 0x7c, 0x24, 0x34,
+    0xc5, 0xfa, 0x11, 0x74, 0x24, 0x38, 0xc5, 0xfa, 0x11, 0x74, 0x24, 0x3c, 0xe8};
+
+inline bool Validate(const unsigned char* image, uint32_t setter_rva, int32_t grade_offset) {
   supported = false;
   rate_caller = 0;
-  constexpr unsigned char setter_prefix[] = {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,
-                                            0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20};
-  if (uint64_t(setter_rva) + sizeof(setter_prefix) > image_size
-      || std::memcmp(image + setter_rva, setter_prefix, sizeof(setter_prefix))) return false;
-  // Find the audited rate upload once in the small lighting-renderer region.
-  // Its RVA moves independently of the environment and grading builders.
-  constexpr unsigned char rates[] = {
-      0xb9,0x14,0x00,0x00,0x00,
-      0xc5,0x7a,0x11,0x54,0x24,0x30,0xc5,0xfa,0x11,0x7c,0x24,0x34,
-      0xc5,0xfa,0x11,0x74,0x24,0x38,0xc5,0xfa,0x11,0x74,0x24,0x3c,0xe8};
-  if (environment_rva < 0x30000 || environment_rva > image_size) return false;
-  for (uint32_t address = environment_rva - 0x30000; address + sizeof(rates) + 4 <= environment_rva; ++address) {
-    if (image[address] != rates[0] || std::memcmp(image + address, rates, sizeof(rates))) continue;
-    int32_t displacement;
-    std::memcpy(&displacement, image + address + sizeof(rates), sizeof(displacement));
-    const uint32_t caller = address + sizeof(rates) + 4;
-    if (int64_t(caller) + displacement != setter_rva) continue;
-    if (rate_caller != 0) return false;  // Ambiguous signatures stay native.
-    rate_caller = caller;
+  resolved_limit_uploads = {};
+  const renodx::utils::pe::Image executable(image);
+  const uint32_t image_size = executable.size;
+  if (!executable.Match(setter_rva, grading::PIXEL_CONSTANTS_PREFIX)) return false;
+  // Resolve this upload independently: its code can move separately from the
+  // environment and grading builders without changing its native contract.
+  if (const uint32_t address = executable.FindUnique({{0, RATE_UPLOAD}})) {
+    const uint32_t caller = address + sizeof(RATE_UPLOAD) + 4;
+    if (executable.Relative(address + sizeof(RATE_UPLOAD) - 1, 1, 5) == setter_rva) rate_caller = caller;
   }
   if (rate_caller == 0) return false;
   // Confirm the actual environment-luminance loads, not just reused slots.
   constexpr unsigned char loads[][16] = {
-      {0xc5,0xfa,0x10,0x86,0xbc,0x69,0,0,0xc5,0xfa,0x10,0x8e,0xdc,0x69,0,0},
-      {0xc5,0xfa,0x10,0x86,0x4c,0xb3,0,0,0xc5,0xfa,0x10,0x8e,0x6c,0xb3,0,0},
-      {0xc5,0xfa,0x10,0x8e,0x2c,0x20,0,0},
+      {0xc5, 0xfa, 0x10, 0x86, 0xbc, 0x69, 0, 0, 0xc5, 0xfa, 0x10, 0x8e, 0xdc, 0x69, 0, 0},
+      {0xc5, 0xfa, 0x10, 0x86, 0x4c, 0xb3, 0, 0, 0xc5, 0xfa, 0x10, 0x8e, 0x6c, 0xb3, 0, 0},
+      {0xc5, 0xfa, 0x10, 0x8e, 0x2c, 0x20, 0, 0},
   };
   constexpr uint32_t distances[] = {0x3b, 0x38, 0x3f};
   for (unsigned i = 0; i < 3; ++i) {
-    const int64_t address = int64_t(limit_uploads[i].second) + grade_offset;
-    if (address < distances[i] || uint64_t(address) > image_size) return false;
-    int32_t displacement;
-    std::memcpy(&displacement, image + address - 4, sizeof(displacement));
-    if (image[address - 5] != 0xe8 || address + displacement != setter_rva
-        || std::memcmp(image + address - distances[i], loads[i], i == 2 ? 8 : 16)) return false;
+    constexpr unsigned char call[] = {0xe8};
+    const uint32_t source = executable.FindUnique({{0, std::span(loads[i]).first(i == 2 ? 8 : 16)},
+                                                   {distances[i] - 5, call}});
+    if (!source) return false;
+    const uint32_t address = source + distances[i];
+    if (address > image_size || executable.Relative(address - 5, 1, 5) != setter_rva) return false;
+    resolved_limit_uploads[i] = address;
   }
-  constexpr unsigned char last_max[] = {0xc5,0xfa,0x10,0x86,0x4c,0x20,0,0};
-  if (std::memcmp(image + int64_t(limit_uploads[2].second) + grade_offset - 0x26, last_max, sizeof(last_max))) return false;
+  constexpr unsigned char last_max[] = {0xc5, 0xfa, 0x10, 0x86, 0x4c, 0x20, 0, 0};
+  if (!executable.Match(resolved_limit_uploads[2] - 0x26, last_max)) return false;
   caller_offset = grade_offset;
   supported = true;
   return true;

@@ -146,10 +146,10 @@ int main() {
   float skylight = 1.7f;
   witcher::night::NativeImpact weather_skylight;
   weather_skylight.Initialize(&skylight);
-  for (const auto& layout : witcher::night::native_layouts) {
-    witcher::night::direct_constants_offset = layout.direct_buffer_offset;
+  for (uint32_t direct_buffer_offset : {0x690u, 0x698u}) {
+    witcher::night::direct_constants_offset = direct_buffer_offset;
     renderer.fill(0xa5);
-    std::memcpy(renderer.data() + layout.direct_buffer_offset, &direct_pointer, sizeof(direct_pointer));
+    std::memcpy(renderer.data() + direct_buffer_offset, &direct_pointer, sizeof(direct_pointer));
     for (const auto& [hour, weight] : {std::pair{0.f, 1.f}, std::pair{4.f, 1.f}, std::pair{5.f, 0.5f},
              std::pair{6.f, 0.f}, std::pair{12.f, 0.f}, std::pair{18.f, 0.f},
              std::pair{19.f, 0.5f}, std::pair{20.f, 1.f}, std::pair{24.f, 1.f}}) {

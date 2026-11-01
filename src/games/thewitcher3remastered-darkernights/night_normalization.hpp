@@ -5,13 +5,15 @@
 
 #include <windows.h>
 
-#include <atomic>
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
+
+#include "../../utils/pe_image.hpp"
 
 namespace witcher::night::normalization {
 
@@ -44,12 +46,12 @@ struct Region {
   uint32_t name = 0;
 };
 inline Region regions[] = {
-    {1, {0.9358445f, 0.4073316f, 0.6464123f, 0.6651766f, 0.9648604f, 0.25f, 0.8022886f, 4.f, 0.8120155f}}, // Novigrad / Velen
-    {2, {0.7220017f, 0.6248091f, 2.0722807f, 1.f, 0.9812378f, 1.f, 4.f, 0.25f, 0.4314402f}}, // Skellige
-    {3, {3.1696537f, 1.0028292f, 0.8539378f, 1.1396453f, 1.f, 1.4454798f, 0.4289377f, 0.25f, 2.5423424f}}, // Kaer Morhen
-    {4, {1.f, 2.8799830f, 1.f, 0.5569652f, 1.1881890f, 0.5379598f, 1.2221310f, 1.7938465f, 1.f}}, // White Orchard
-    {8, {1.9064568f, 1.0910116f, 1.2882105f, 0.2827803f, 1.0172732f, 1.1028074f, 0.5185504f, 0.25f, 0.5985672f}}, // Winter White Orchard
-    {11, {4.f, 1.f, 4.f, 1.0768531f, 3.7532525f, 1.0978556f, 1.f, 1.f, 1.6692019f}}, // Toussaint
+    {1, {0.9358445f, 0.4073316f, 0.6464123f, 0.6651766f, 0.9648604f, 0.25f, 0.8022886f, 4.f, 0.8120155f}},         // Novigrad / Velen
+    {2, {0.7220017f, 0.6248091f, 2.0722807f, 1.f, 0.9812378f, 1.f, 4.f, 0.25f, 0.4314402f}},                       // Skellige
+    {3, {3.1696537f, 1.0028292f, 0.8539378f, 1.1396453f, 1.f, 1.4454798f, 0.4289377f, 0.25f, 2.5423424f}},         // Kaer Morhen
+    {4, {1.f, 2.8799830f, 1.f, 0.5569652f, 1.1881890f, 0.5379598f, 1.2221310f, 1.7938465f, 1.f}},                  // White Orchard
+    {8, {1.9064568f, 1.0910116f, 1.2882105f, 0.2827803f, 1.0172732f, 1.1028074f, 0.5185504f, 0.25f, 0.5985672f}},  // Winter White Orchard
+    {11, {4.f, 1.f, 4.f, 1.0768531f, 3.7532525f, 1.0978556f, 1.f, 1.f, 1.6692019f}},                               // Toussaint
 };
 
 #include "./night_weather_profiles.hpp"
@@ -182,7 +184,7 @@ inline bool ReadWeather(uint32_t* from, uint32_t* to, float* blend, uint64_t* am
   // Preserve fractional/zero overrides. Eight-bit weights keep zero/one exact
   // and the entire immutable-table selection in one lock-free atomic.
   *amounts = (uint64_t(std::round(std::clamp(source_amount, 0.f, 1.f) * 255.f)) << 48)
-      | (uint64_t(std::round(std::clamp(target_amount, 0.f, 1.f) * 255.f)) << 56);
+             | (uint64_t(std::round(std::clamp(target_amount, 0.f, 1.f) * 255.f)) << 56);
   return true;
 }
 
@@ -198,7 +200,10 @@ inline void Update(bool active) {
         names_initialized = true;
       }
       for (unsigned i = 0; i < std::size(regions); ++i) {
-        if (regions[i].name == area) { selection = i + 1; break; }
+        if (regions[i].name == area) {
+          selection = i + 1;
+          break;
+        }
       }
       // AN_Velen is an alias for the Novigrad world; its usual ID is the
       // combined AN_NMLandNovigrad, but resolve the explicit alias as well.
@@ -236,33 +241,64 @@ inline void Update(bool active) {
   current.store(selection, std::memory_order_relaxed);
 }
 
+// Two independent loads in the weather-name reader must resolve to the same
+// writable game slot. Both regional and interior detection use this contract.
+inline uint32_t FindGameGlobal(const renodx::utils::pe::Image& executable, uint32_t* instruction = nullptr) {
+  constexpr unsigned char guarded_world[] = {
+      0x48, 0x85, 0xc0, 0x74, 0x4d, 0x48, 0x8b, 0x80, 0xf0, 0, 0, 0, 0x48, 0x85, 0xc0, 0x74, 0x41,
+      0x48, 0x8b, 0x48, 0x08, 0x48, 0x85, 0xc9, 0x74, 0x38, 0xe8};
+  constexpr unsigned char load[] = {0x48, 0x8b, 0x05};
+  const uint32_t address = executable.FindUnique({{7, guarded_world}, {0, load}, {0x2b, load}});
+  if (instruction) *instruction = address;
+  if (!address) return 0;
+  const uint32_t game = executable.Relative(address, 3, 7, IMAGE_SCN_MEM_WRITE);
+  if (!game || !executable.InSection(game, sizeof(void*), IMAGE_SCN_MEM_WRITE)
+      || executable.Relative(address + 0x2b, 3, 7, IMAGE_SCN_MEM_WRITE) != game) return 0;
+  return game;
+}
+
+// Resolved locations are also exposed to offline rejection/relocation tests.
+struct NativeAddresses {
+  uint32_t manager = 0, area = 0, converter = 0, game_load = 0, game = 0, names = 0;
+  uint32_t selector = 0, world = 0, weather_pointer = 0, weather_start = 0;
+  uint32_t weather_finish = 0, weather_progress = 0, intern = 0;
+};
+inline NativeAddresses addresses;
 
 inline bool ValidateWeather(const unsigned char* image) {
   // Current-world selection, source/target names, remaining/duration and native
   // name interning are independent optional guards. Unknown layouts retain
   // regional normalization and all other lighting controls.
-  constexpr unsigned char selector[] = {0x33,0xc0,0x38,0x81,0x3a,0xfd,0x00,0x00,0x74,0x27,0x48,0x8b,0x89,0x68,0x60,0x01,0x00,0x48,0x85,0xc9,0x74,0x06,0x4c,0x8b,0x41,0x08,0xeb,0x03,0x4c,0x8b,0xc0,0x41,0x39,0x40,0x7c,0x74,0x0c,0x48,0x85,0xc9,0x74,0x04,0x48,0x8b,0x41,0x08,0x8b,0x40,0x7c,0x89,0x02,0x48,0x8b,0xc2,0xc3};
-  constexpr unsigned char world_selector[] = {0x80,0xb9,0x3a,0xfd,0x00,0x00,0x00,0x74,0x20,0x48,0x8b,0x01,0x48,0x8d,0x54,0x24,0x38,0xff,0x90,0x58,0x01,0x00,0x00,0x83,0x38,0x00,0x74,0x0d,0x48,0x8b,0x83,0x30,0x02,0x00,0x00,0x48,0x83,0xc4,0x20,0x5b,0xc3,0x48,0x8b,0x83,0x28,0x02,0x00,0x00,0x48,0x83,0xc4,0x20,0x5b};
-  constexpr unsigned char weather_pointer[] = {0x48,0x8b,0x80,0x70,0x22,0x09,0x00,0x48,0x85,0xc0,0x74,0x06,0x48,0x83,0xc0,0x18,0xeb,0x07};
-  constexpr unsigned char weather_start[] = {0x48,0x8d,0x8f,0x38,0x02,0x00,0x00,0x48,0x8b,0xd6,0x44,0x89,0xa7,0x18,0x06,0x00,0x00,0xc5,0xfa,0x11,0x9f,0x10,0x06,0x00,0x00,0xe8,0x7a,0x26,0x5b,0xfe,0x48,0x8d,0x8f,0x28,0x01,0x00,0x00,0x48,0x8d,0x57,0x18};
-  constexpr unsigned char weather_clock[] = {0xc5,0xfa,0x11,0xb7,0x4c,0x03,0x00,0x00,0xc5,0xfa,0x11,0xb7,0x48,0x03,0x00,0x00};
-  constexpr unsigned char weather_finish[] = {0x48,0x8d,0x8f,0x28,0x01,0x00,0x00,0xff,0xc8,0x48,0x8d,0x57,0x18,0x83,0xe0,0x01,0x89,0x87,0x78,0x03,0x00,0x00,0xe8,0x91,0x38,0x5b,0xfe,0x48,0x8d,0x97,0x38,0x02,0x00,0x00,0x48,0x8d,0x4f,0x18,0xe8,0x81,0x38,0x5b,0xfe,0x80,0xbf,0x40,0x01,0x00};
-  constexpr unsigned char weather_progress[] = {0xc5,0xfa,0x10,0x87,0x4c,0x03,0x00,0x00,0xc4,0xc1,0x78,0x2f,0xc3,0x0f,0x86,0x12,0x03,0x00,0x00,0xc4,0xc1,0x7a,0x5c,0xc6,0xc4,0xc1,0x78,0x2f,0xc3,0xc5,0xfa,0x11,0x87,0x4c,0x03,0x00,0x00,0x77};
-  constexpr unsigned char weather_ratio[] = {0xc5,0xfa,0x5e,0x87,0x48,0x03,0x00,0x00,0xc5,0xfa,0x10,0x1d,0xa4,0x6e,0x71,0x01,0x8b,0x8f,0x64,0x03,0x00,0x00,0xc5,0xc2,0x5c,0xc8,0xc4,0xc1,0x72,0x5f,0xc3,0xc5,0xfa,0x5d,0xef};
-  constexpr unsigned char intern[] = {0x48,0x89,0x5c,0x24,0x20,0x55,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x20,0x4c,0x8b,0xf2,0x48,0x8b,0xe9};
-  constexpr unsigned char name_global[] = {0x48,0x8b,0x05,0x8d,0xb9,0x53,0x05};
-  if (std::memcmp(image + 0x1d76120, selector, sizeof(selector))
-      || std::memcmp(image + 0x22b02e5, world_selector, sizeof(world_selector))
-      || std::memcmp(image + 0x239bd64, weather_pointer, sizeof(weather_pointer))
-      || std::memcmp(image + 0x239d4e8, weather_start, sizeof(weather_start))
-      || std::memcmp(image + 0x239d57f, weather_clock, sizeof(weather_clock))
-      || std::memcmp(image + 0x239c2d4, weather_finish, sizeof(weather_finish))
-      || std::memcmp(image + 0x23a0b0f, weather_progress, sizeof(weather_progress))
-      || std::memcmp(image + 0x23a0b78, weather_ratio, sizeof(weather_ratio))
-      || std::memcmp(image + 0x26b90a0, intern, sizeof(intern))
-      || std::memcmp(image + 0x31c444, name_global, sizeof(name_global))) return false;
-  name_manager = reinterpret_cast<void* const*>(const_cast<unsigned char*>(image) + 0x5857dd8);
-  intern_name = reinterpret_cast<InternName>(const_cast<unsigned char*>(image) + 0x26b90a0);
+  constexpr unsigned char selector[] = {0x33, 0xc0, 0x38, 0x81, 0x3a, 0xfd, 0x00, 0x00, 0x74, 0x27, 0x48, 0x8b, 0x89, 0x68, 0x60, 0x01, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x06, 0x4c, 0x8b, 0x41, 0x08, 0xeb, 0x03, 0x4c, 0x8b, 0xc0, 0x41, 0x39, 0x40, 0x7c, 0x74, 0x0c, 0x48, 0x85, 0xc9, 0x74, 0x04, 0x48, 0x8b, 0x41, 0x08, 0x8b, 0x40, 0x7c, 0x89, 0x02, 0x48, 0x8b, 0xc2, 0xc3};
+  constexpr unsigned char world_selector[] = {0x80, 0xb9, 0x3a, 0xfd, 0x00, 0x00, 0x00, 0x74, 0x20, 0x48, 0x8b, 0x01, 0x48, 0x8d, 0x54, 0x24, 0x38, 0xff, 0x90, 0x58, 0x01, 0x00, 0x00, 0x83, 0x38, 0x00, 0x74, 0x0d, 0x48, 0x8b, 0x83, 0x30, 0x02, 0x00, 0x00, 0x48, 0x83, 0xc4, 0x20, 0x5b, 0xc3, 0x48, 0x8b, 0x83, 0x28, 0x02, 0x00, 0x00, 0x48, 0x83, 0xc4, 0x20, 0x5b};
+  constexpr unsigned char weather_pointer[] = {0x48, 0x8b, 0x80, 0x70, 0x22, 0x09, 0x00, 0x48, 0x85, 0xc0, 0x74, 0x06, 0x48, 0x83, 0xc0, 0x18, 0xeb, 0x07};
+  constexpr unsigned char weather_start[] = {0x48, 0x8d, 0x8f, 0x38, 0x02, 0x00, 0x00, 0x48, 0x8b, 0xd6, 0x44, 0x89, 0xa7, 0x18, 0x06, 0x00, 0x00, 0xc5, 0xfa, 0x11, 0x9f, 0x10, 0x06, 0x00, 0x00, 0xe8, 0x7a, 0x26, 0x5b, 0xfe, 0x48, 0x8d, 0x8f, 0x28, 0x01, 0x00, 0x00, 0x48, 0x8d, 0x57, 0x18};
+  constexpr unsigned char weather_clock[] = {0xc5, 0xfa, 0x11, 0xb7, 0x4c, 0x03, 0x00, 0x00, 0xc5, 0xfa, 0x11, 0xb7, 0x48, 0x03, 0x00, 0x00};
+  constexpr unsigned char weather_finish[] = {0x48, 0x8d, 0x8f, 0x28, 0x01, 0x00, 0x00, 0xff, 0xc8, 0x48, 0x8d, 0x57, 0x18, 0x83, 0xe0, 0x01, 0x89, 0x87, 0x78, 0x03, 0x00, 0x00, 0xe8, 0x91, 0x38, 0x5b, 0xfe, 0x48, 0x8d, 0x97, 0x38, 0x02, 0x00, 0x00, 0x48, 0x8d, 0x4f, 0x18, 0xe8, 0x81, 0x38, 0x5b, 0xfe, 0x80, 0xbf, 0x40, 0x01, 0x00};
+  constexpr unsigned char weather_progress[] = {0xc5, 0xfa, 0x10, 0x87, 0x4c, 0x03, 0x00, 0x00, 0xc4, 0xc1, 0x78, 0x2f, 0xc3, 0x0f, 0x86, 0x12, 0x03, 0x00, 0x00, 0xc4, 0xc1, 0x7a, 0x5c, 0xc6, 0xc4, 0xc1, 0x78, 0x2f, 0xc3, 0xc5, 0xfa, 0x11, 0x87, 0x4c, 0x03, 0x00, 0x00, 0x77};
+  constexpr unsigned char weather_ratio[] = {0xc5, 0xfa, 0x5e, 0x87, 0x48, 0x03, 0x00, 0x00, 0xc5, 0xfa, 0x10, 0x1d, 0xa4, 0x6e, 0x71, 0x01, 0x8b, 0x8f, 0x64, 0x03, 0x00, 0x00, 0xc5, 0xc2, 0x5c, 0xc8, 0xc4, 0xc1, 0x72, 0x5f, 0xc3, 0xc5, 0xfa, 0x5d, 0xef};
+  constexpr unsigned char intern[] = {0x48, 0x89, 0x5c, 0x24, 0x20, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xec, 0x20, 0x4c, 0x8b, 0xf2, 0x48, 0x8b, 0xe9};
+  const renodx::utils::pe::Image executable(image);
+  addresses.selector = executable.FindUnique({{0, selector}});
+  addresses.world = executable.FindUnique({{0, world_selector}});
+  addresses.weather_pointer = executable.FindUnique({{0, weather_pointer}});
+  addresses.weather_start = executable.FindUnique({{0, std::span(weather_start).first(26)},
+                                                   {30, std::span(weather_start).subspan(30)},
+                                                   {0x97, weather_clock}});
+  addresses.weather_finish = executable.FindUnique({{0, std::span(weather_finish).first(23)},
+                                                    {27, std::span(weather_finish).subspan(27, 12)},
+                                                    {43, std::span(weather_finish).subspan(43)}});
+  addresses.weather_progress = executable.FindUnique({{0, weather_progress},
+                                                      {0x69, std::span(weather_ratio).first(12)},
+                                                      {0x79, std::span(weather_ratio).subspan(16)}});
+  addresses.intern = executable.FindUnique({{0, intern}});
+  if (!addresses.selector || !addresses.world || !addresses.weather_pointer || !addresses.weather_start
+      || !addresses.weather_finish || !addresses.weather_progress || !addresses.intern) return false;
+  const uint32_t copy = executable.Relative(addresses.weather_start + 25, 1, 5);
+  if (!copy || executable.Relative(addresses.weather_start + 41, 1, 5) != copy
+      || executable.Relative(addresses.weather_finish + 22, 1, 5) != copy
+      || executable.Relative(addresses.weather_finish + 38, 1, 5) != copy) return false;
+  intern_name = reinterpret_cast<InternName>(const_cast<unsigned char*>(image) + addresses.intern);
   return true;
 }
 
@@ -280,42 +316,54 @@ inline bool Validate(const unsigned char* image, uint32_t size) {
   // GetWeatherConditionName's shared GGame load. Optional, independent of
   // the existing lighting layout; an unknown build leaves normalization off.
   constexpr unsigned char manager[] = {
-      0x83,0xb9,0xc0,0xfd,0,0,0x17,0x7e,0x28,0x48,0x8b,0x81,0xb8,0xfd,0,0,
-      0x48,0x8b,0x88,0xb8,0,0,0,0x33,0xc0,0x8b,0xd8,0x48,0x85,0xc9,0x74,0x15,
-      0x48,0x8b,0x49,0x08,0x48,0x85,0xc9,0x74,0x0c};
-  constexpr unsigned char area[] = {0x48,0xff,0x42,0x30,0x4d,0x85,0xc0,0x74,0x09,
-                                  0x8b,0x81,0x10,0x01,0,0,0x41,0x89,0,0xc3};
-  constexpr unsigned char converter[] = {0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,
-                                       0x83,0xfa,0x0b,0x0f,0x87,0x8a,0x01,0,0};
-  constexpr unsigned char global[] = {0x48,0x8b,0x05};
-  if (size < 0x5a5b930 || std::memcmp(image + 0x1d6f74e, manager, sizeof(manager))
-      || std::memcmp(image + 0x1dd3250, area, sizeof(area))
-      || std::memcmp(image + 0x1dec500, converter, sizeof(converter))
-      || std::memcmp(image + 0x239bd1d, global, sizeof(global))) return false;
+      0x83, 0xb9, 0xc0, 0xfd, 0, 0, 0x17, 0x7e, 0x28, 0x48, 0x8b, 0x81, 0xb8, 0xfd, 0, 0,
+      0x48, 0x8b, 0x88, 0xb8, 0, 0, 0, 0x33, 0xc0, 0x8b, 0xd8, 0x48, 0x85, 0xc9, 0x74, 0x15,
+      0x48, 0x8b, 0x49, 0x08, 0x48, 0x85, 0xc9, 0x74, 0x0c};
+  constexpr unsigned char area[] = {0x48, 0xff, 0x42, 0x30, 0x4d, 0x85, 0xc0, 0x74, 0x09,
+                                    0x8b, 0x81, 0x10, 0x01, 0, 0, 0x41, 0x89, 0, 0xc3};
+  constexpr unsigned char converter[] = {0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xd9,
+                                         0x83, 0xfa, 0x0b, 0x0f, 0x87, 0x8a, 0x01, 0, 0};
+  constexpr unsigned char global[] = {0x48, 0x8b, 0x05};
+  const renodx::utils::pe::Image executable(image);
+  if (!executable || executable.size != size) return false;
+  addresses = {};
+  addresses.manager = executable.FindUnique({{0, manager}});
+  addresses.area = executable.FindUnique({{0, area}});
+  addresses.converter = executable.FindUnique({{0, converter}});
+  addresses.game = FindGameGlobal(executable, &addresses.game_load);
+  if (!addresses.manager || !addresses.area || !addresses.converter || !addresses.game_load || !addresses.game
+      || !executable.InSection(addresses.converter, 0x1e0, IMAGE_SCN_MEM_EXECUTE)) return false;
   int32_t displacement;
-  std::memcpy(&displacement, image + 0x239bd20, sizeof(displacement));
-  if (int64_t(0x239bd24) + displacement != 0x5a5b928) return false;
+  uint32_t name_getter = 0;
   // Check every calibrated enum's case, string and common intern target.
   for (uint32_t area_enum : {1u, 2u, 3u, 4u, 8u, 11u, 9u}) {
     uint32_t address;
-    std::memcpy(&address, image + 0x1dec6b0 + area_enum * 4, sizeof(address));
-    if (address < 0x1dec528 || address > 0x1dec67d || image[address] != 0xe8
+    std::memcpy(&address, image + addresses.converter + 0x1b0 + area_enum * 4, sizeof(address));
+    if (address < addresses.converter + 0x28 || address > addresses.converter + 0x17d || image[address] != 0xe8
         || std::memcmp(image + address + 5, "\x48\x8d\x15", 3)) return false;
     std::memcpy(&displacement, image + address + 1, sizeof(displacement));
-    if (int64_t(address) + 5 + displacement != 0x31c440) return false;
+    const uint32_t getter = executable.Relative(address, 1, 5);
+    if (!getter || (name_getter && name_getter != getter)) return false;
+    name_getter = getter;
     std::memcpy(&displacement, image + address + 8, sizeof(displacement));
     const int64_t string = int64_t(address) + 12 + displacement;
-    const char* expected = area_enum == 1 ? "AN_NMLandNovigrad"
-        : area_enum == 2 ? "AN_Skellige_ArdSkellig"
-        : area_enum == 3 ? "AN_Kaer_Morhen"
-        : area_enum == 4 ? "AN_Prologue_Village"
-        : area_enum == 8 ? "AN_Prologue_Village_Winter"
-        : area_enum == 9 ? "AN_Velen" : "AN_Bob";
+    const char* expected = area_enum == 1   ? "AN_NMLandNovigrad"
+                           : area_enum == 2 ? "AN_Skellige_ArdSkellig"
+                           : area_enum == 3 ? "AN_Kaer_Morhen"
+                           : area_enum == 4 ? "AN_Prologue_Village"
+                           : area_enum == 8 ? "AN_Prologue_Village_Winter"
+                           : area_enum == 9 ? "AN_Velen"
+                                            : "AN_Bob";
     if (string < 0 || uint64_t(string) + std::strlen(expected) + 1 > size
         || std::memcmp(image + string, expected, std::strlen(expected) + 1)) return false;
   }
-  game_address = reinterpret_cast<const unsigned char* const*>(image + 0x5a5b928);
-  area_name = reinterpret_cast<AreaName>(const_cast<unsigned char*>(image) + 0x1dec500);
+  constexpr unsigned char getter_prefix[] = {0x48, 0x83, 0xec, 0x28, 0x48, 0x8b, 0x05};
+  if (!executable.Match(name_getter, getter_prefix)) return false;
+  addresses.names = executable.Relative(name_getter + 4, 3, 7, IMAGE_SCN_MEM_WRITE);
+  if (!addresses.names) return false;
+  name_manager = reinterpret_cast<void* const*>(image + addresses.names);
+  game_address = reinterpret_cast<const unsigned char* const*>(image + addresses.game);
+  area_name = reinterpret_cast<AreaName>(const_cast<unsigned char*>(image) + addresses.converter);
   supported = true;
   weather_supported = ValidateWeather(image);
   return true;

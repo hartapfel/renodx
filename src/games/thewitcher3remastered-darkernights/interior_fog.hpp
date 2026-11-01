@@ -35,13 +35,13 @@ inline int Classify(std::string_view path) {
   if (path == "environment\\definitions\\wyzima\\global\\wip\\env_outdoor_wyzima_01.env"
       || path == "environment\\definitions\\wyzima\\global\\wip\\env_outdoor_wyzima_02.env") return 0;
   for (std::string_view name : {"\\crossroads_inn\\", "\\barons_lair\\", "\\interiors\\dandelion\\",
-                               "\\tavern\\", "\\interiors\\kt_castle\\", "\\kaer_trolde_inn\\",
-                               "\\kaer_morhen\\interior\\", "\\wyzima\\global\\"}) {
+                                "\\tavern\\", "\\interiors\\kt_castle\\", "\\kaer_trolde_inn\\",
+                                "\\kaer_morhen\\interior\\", "\\wyzima\\global\\"}) {
     if (path.find(name) != std::string_view::npos) return 1;
   }
   // Individually authored building profiles outside those directory groups.
   for (std::string_view name : {"\\env_castle_interiors.env", "\\env_bathouse_v01.env", "\\env_novigrad_int.env",
-                               "\\env_winter_epilog_white_grass_hendriks_house.env"}) {
+                                "\\env_winter_epilog_white_grass_hendriks_house.env"}) {
     if (path.ends_with(name)) return 1;
   }
   // Installed-asset audit: explicit room variants outside the known groups.
@@ -198,51 +198,53 @@ inline float Update(bool active, uint64_t milliseconds = GetTickCount64()) {
   return fade_weight;
 }
 
+struct NativeAddresses {
+  uint32_t world = 0, state = 0, blend = 0, profile = 0, order = 0, layer = 0, weather = 0, weight = 0, game = 0;
+};
+inline NativeAddresses addresses;
+
 inline bool Validate(const unsigned char* image, uint32_t size) {
   supported = false;
   game_address = nullptr;
   // The same active-world selection used by the engine and weather reader.
-  constexpr unsigned char world_selector[] = {0x80,0xb9,0x3a,0xfd,0,0,0,0x74};
-  constexpr unsigned char state_store[] = {0x88,0x88,0x48,0x24,0x09,0,0x88,0x90,0x49,0x24,0x09,0};
-  constexpr unsigned char blend_store[] = {0xc5,0xfa,0x11,0x89,0x54,0x24,0x09,0};
-  constexpr unsigned char profile_limit[] = {0x41,0x83,0xfb,0x08};
-  constexpr unsigned char profile_stride[] = {0x48,0x69,0xf8,0xd0,0x5d,0x01,0};
-  constexpr unsigned char profile_path[] = {0x48,0x8b,0x8f,0xac,0x5d,0x01,0};
-  constexpr unsigned char profile_weight[] = {0x89,0x87,0xa8,0x5d,0x01,0};
-  constexpr unsigned char profile_area[] = {0x48,0x8b,0x8f,0x80,0x5d,0x01,0};
-  constexpr unsigned char order_count[] = {0x44,0x8b,0x93,0x9c,0xd3,0x01,0};
-  constexpr unsigned char order_priority[] = {0x39,0x84,0xcb,0xdc,0xd2,0x01,0};
-  constexpr unsigned char order_index[] = {0x48,0x63,0x84,0xcb,0xf0,0xd2,0x01,0};
-  constexpr unsigned char layer_count[] = {0x4c,0x8d,0xb1,0x60,0x22,0x09,0};
-  constexpr unsigned char layer_stride[] = {0x48,0x69,0xf0,0x70,0xe9,0,0};
-  constexpr unsigned char layer_weight[] = {0x48,0x81,0xc6,0x40,0xc0,0x02,0};
-  constexpr unsigned char weather_source[] = {0x48,0x8b,0x87,0x70,0x22,0x09,0};
-  constexpr unsigned char weather_store[] = {0xc5,0xfa,0x11,0x80,0xd0,0x05,0,0};
-  constexpr unsigned char weather_default[] = {0xc7,0x80,0xd0,0x05,0,0,0,0,0x80,0x3f};
-  if (!image || size < 0x5a5b930
-      || std::memcmp(image + 0x22b02e5, world_selector, sizeof(world_selector))
-      || std::memcmp(image + 0x22b1fce, state_store, sizeof(state_store))
-      || std::memcmp(image + 0x22b4adc, blend_store, sizeof(blend_store))
-      || std::memcmp(image + 0x22b9582, profile_limit, sizeof(profile_limit))
-      || std::memcmp(image + 0x22b959c, profile_stride, sizeof(profile_stride))
-      || std::memcmp(image + 0x22b95c6, profile_path, sizeof(profile_path))
-      || std::memcmp(image + 0x22b9631, profile_area, sizeof(profile_area))
-      || std::memcmp(image + 0x22b546f, order_count, sizeof(order_count))
-      || std::memcmp(image + 0x22b545a, order_priority, sizeof(order_priority))
-      || std::memcmp(image + 0x22b5518, order_index, sizeof(order_index))
-      || std::memcmp(image + 0x22b53e8, layer_count, sizeof(layer_count))
-      || std::memcmp(image + 0x22b58d4, layer_stride, sizeof(layer_stride))
-      || std::memcmp(image + 0x22b58de, layer_weight, sizeof(layer_weight))
-      || std::memcmp(image + 0x22b4f87, weather_source, sizeof(weather_source))
-      || std::memcmp(image + 0x22b4f93, weather_store, sizeof(weather_store))
-      || std::memcmp(image + 0x22b4fab, weather_default, sizeof(weather_default))
-      || std::memcmp(image + 0x22b5701, profile_weight, sizeof(profile_weight))) return false;
-  constexpr unsigned char global[] = {0x48,0x8b,0x05};
-  int32_t displacement;
-  std::memcpy(&displacement, image + 0x22b1f80, sizeof(displacement));
-  if (std::memcmp(image + 0x22b1f7d, global, sizeof(global))
-      || int64_t(0x22b1f84) + displacement != 0x5a5b928) return false;
-  game_address = reinterpret_cast<const unsigned char* const*>(image + 0x5a5b928);
+  constexpr unsigned char world_selector[] = {0x80, 0xb9, 0x3a, 0xfd, 0, 0, 0, 0x74};
+  constexpr unsigned char state_store[] = {0x88, 0x88, 0x48, 0x24, 0x09, 0, 0x88, 0x90, 0x49, 0x24, 0x09, 0};
+  constexpr unsigned char blend_store[] = {0xc5, 0xfa, 0x11, 0x89, 0x54, 0x24, 0x09, 0};
+  constexpr unsigned char profile_limit[] = {0x41, 0x83, 0xfb, 0x08};
+  constexpr unsigned char profile_stride[] = {0x48, 0x69, 0xf8, 0xd0, 0x5d, 0x01, 0};
+  constexpr unsigned char profile_path[] = {0x48, 0x8b, 0x8f, 0xac, 0x5d, 0x01, 0};
+  constexpr unsigned char profile_weight[] = {0x89, 0x87, 0xa8, 0x5d, 0x01, 0};
+  constexpr unsigned char profile_area[] = {0x48, 0x8b, 0x8f, 0x80, 0x5d, 0x01, 0};
+  constexpr unsigned char order_count[] = {0x44, 0x8b, 0x93, 0x9c, 0xd3, 0x01, 0};
+  constexpr unsigned char order_priority[] = {0x39, 0x84, 0xcb, 0xdc, 0xd2, 0x01, 0};
+  constexpr unsigned char order_index[] = {0x48, 0x63, 0x84, 0xcb, 0xf0, 0xd2, 0x01, 0};
+  constexpr unsigned char layer_count[] = {0x4c, 0x8d, 0xb1, 0x60, 0x22, 0x09, 0};
+  constexpr unsigned char layer_stride[] = {0x48, 0x69, 0xf0, 0x70, 0xe9, 0, 0};
+  constexpr unsigned char layer_weight[] = {0x48, 0x81, 0xc6, 0x40, 0xc0, 0x02, 0};
+  constexpr unsigned char weather_source[] = {0x48, 0x8b, 0x87, 0x70, 0x22, 0x09, 0};
+  constexpr unsigned char weather_store[] = {0xc5, 0xfa, 0x11, 0x80, 0xd0, 0x05, 0, 0};
+  constexpr unsigned char weather_default[] = {0xc7, 0x80, 0xd0, 0x05, 0, 0, 0, 0, 0x80, 0x3f};
+  const renodx::utils::pe::Image executable(image);
+  if (!executable || executable.size != size) return false;
+  addresses = {};
+  // Tie the short selector prefix to its two distinct world-field loads.
+  constexpr unsigned char alternate_world[] = {0x48, 0x8b, 0x83, 0x30, 0x02, 0, 0};
+  constexpr unsigned char primary_world[] = {0x48, 0x8b, 0x83, 0x28, 0x02, 0, 0};
+  addresses.world = executable.FindUnique({{0, world_selector}, {0x1c, alternate_world}, {0x29, primary_world}});
+  addresses.state = executable.FindUnique({{0, state_store}});
+  addresses.blend = executable.FindUnique({{0, blend_store}});
+  addresses.profile = executable.FindUnique({{0, profile_limit}, {0x1a, profile_stride}, {0x44, profile_path}, {0xaf, profile_area}});
+  addresses.weight = executable.FindUnique({{0, profile_weight}});
+  addresses.order = executable.FindUnique({{0, order_priority}, {0x15, order_count}, {0xbe, order_index}});
+  addresses.layer = executable.FindUnique({{0, layer_count}, {0x4ec, layer_stride}, {0x4f6, layer_weight}});
+  addresses.weather = executable.FindUnique({{0, weather_source}, {0xc, weather_store}, {0x24, weather_default}});
+  constexpr unsigned char global[] = {0x48, 0x8b, 0x05};
+  if (addresses.state < 0x51 || !executable.Match(addresses.state - 0x51, global)) return false;
+  addresses.game = executable.Relative(addresses.state - 0x51, 3, 7, IMAGE_SCN_MEM_WRITE);
+  if (addresses.game != normalization::FindGameGlobal(executable)) return false;
+  if (!addresses.world || !addresses.state || !addresses.blend || !addresses.profile || !addresses.order
+      || !addresses.layer || !addresses.weather || !addresses.weight || !addresses.game) return false;
+  game_address = reinterpret_cast<const unsigned char* const*>(image + addresses.game);
   return supported = true;
 }
 }  // namespace witcher::night::interior_fog

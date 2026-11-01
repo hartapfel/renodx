@@ -112,33 +112,34 @@ without these lighting hooks. Remove Artificial Player Lights.
 
 ## Executable compatibility
 
-`executable_detection.cpp` maps the supplied executable and tests the actual
-native lighting validator. Its 61 cases accept changed timestamps/image sizes
-with matching layouts and reject insufficient image bounds, invalid PE types,
-each changed required renderer signature and invalid skylight CVar data.
-It also checks that every hook binds to the selected layout, grading matches
-that layout's callers, and camera calls resolve to the correct target. Optional
-camera/grading failures preserve core lighting support. This does not prove
-support for GOG executables with other renderer layouts.
+`executable_detection.cpp` maps the supplied executable and applies all PE
+relocations. It exercises the production detector: metadata variations, bounds,
+changed required instructions, CVar pointers/values, call targets, and independent
+optional-feature rejection. No test addresses are tied to one game build.
 
-The October 8 executable passes with environment RVA `0x1C2E400`, direct
-constants `0x1C6FF10`, common constants `0x1BE4C00`, global constants `0x1C7D140`,
-camera builder `0x35B500`, `PTSkyImpact` `0x5149788`, and pixel-constant setter
-`0x1EDFD70`. Its six grading callers move by `-0x1620`. The previous profile
-passes the same 61 cases using a loader-only relocated instruction fixture;
-that fixture is never executed as a game binary. All 283 grading and 992
-lighting/camera/schedule/moon cases pass.
+On 2026-10-30, all 132 cases passed for `5.0.0.1090142`, SHA-256
+`05948D7238E1C9620A1CB9B3125520F1C143CE04A8E5718A3735120C37D7BAE0`.
+The extra loader-only fixture independently relocates environment/direct/common/
+global/camera builders, grading uploads, and the skylight descriptor. All features
+remain detected. Duplicate executable candidates and duplicate CVar descriptors
+are rejected, while matching bytes in a non-executable section are ignored.
+These fixtures are never executed as game binaries.
 
-The renderer's directional-light buffer pointer moves from `+0x690` to `+0x698`.
-Validation checks both the pointer-load opcode and its displacement. The
-lighting tests execute the hook for both layouts with an invalid sentinel at
-the unused offset; selecting the old field in the new layout reproduces the
-startup crash rather than silently passing a colour-only check.
+The current resolved RVAs are environment `1C2DFD0`, direct `1C6FAA0`, common
+`1BE4740`, global `1C7CCC0`, camera `35C700`, setter `1EDF680` and PTSkyImpact
+`51477D8`. They are diagnostic results, not detection inputs. Exposure limits
+are located independently of grading uploads. The renderer's validated pointer
+load supplies `+698`; math tests also preserve the older `+690` contract.
 
 ```powershell
 clang-cl /std:c++20 /EHsc /O2 /MT /DNOMINMAX /Iexternal/Detours/include src/games/thewitcher3remastered-darkernights/tests/executable_detection.cpp /Fe:tmp/darker-nights-detection.exe /Fo:tmp/darker-nights-detection.obj /link external/Detours/lib.X64/detours.lib
-./tmp/darker-nights-detection.exe "E:/SteamLibrary/steamapps/common/The Witcher 3/bin/x64_dx12/witcher3.exe"
+./tmp/darker-nights-detection.exe '<path-to-witcher3.exe>'
 ```
+
+`night_grading.cpp` covers math and caller filtering; executable validation now
+belongs to the full detection test above. Both addons still require a restarted
+live check for slider response, camera/cutscene behavior and menu transitions.
+Only the user launches or restarts the game.
 
 ## Addon coexistence
 

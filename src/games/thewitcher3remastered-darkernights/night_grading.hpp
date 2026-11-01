@@ -4,13 +4,15 @@
  */
 #pragma once
 
+#include <intrin.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <intrin.h>
 #include <utility>
+
+#include "../../utils/pe_image.hpp"
 
 namespace witcher::night::grading {
 
@@ -28,8 +30,12 @@ inline SetPixelConstants set_pixel_constants = nullptr;
 // 20 begins CustomPixelConsts: 29=c9, 31-33=c11-13, 34=c14, 35=c15.
 // Other passes reuse these slots, so the register number alone is insufficient.
 inline constexpr std::pair<uint32_t, uint32_t> grade_uploads[] = {
-    {29, 0x34b775}, {31, 0x34bd61}, {32, 0x34bd75},
-    {33, 0x34bd8a}, {34, 0x34bdd9}, {35, 0x34b7bf},
+    {29, 0x34b775},
+    {31, 0x34bd61},
+    {32, 0x34bd75},
+    {33, 0x34bd8a},
+    {34, 0x34bdd9},
+    {35, 0x34b7bf},
 };
 
 // Work on a fresh float4 copy. Native gamma, vignette, tonal selectors, LUT
@@ -42,7 +48,8 @@ inline bool AdjustConstants(uint32_t first, float* values, uintptr_t caller_rva,
     if (first == slot && caller_rva == static_cast<uintptr_t>(int64_t(caller) + caller_rva_offset)) matched = true;
   }
   if (!matched || weight == 0.f || (luminance_amount == 1.f && chroma_amount == 1.f)) return false;
-  for (unsigned i = 0; i < 4; ++i) if (!std::isfinite(values[i])) return false;
+  for (unsigned i = 0; i < 4; ++i)
+    if (!std::isfinite(values[i])) return false;
   const float l = 1.f + (luminance_amount - 1.f) * weight;
   const float c = 1.f + (chroma_amount - 1.f) * weight;
   if (first == 34 || first == 35) {
@@ -68,13 +75,17 @@ inline bool AdjustConstants(uint32_t first, float* values, uintptr_t caller_rva,
   return true;
 }
 
+inline constexpr unsigned char PIXEL_CONSTANTS_PREFIX[] = {
+    0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10,
+    0x48, 0x89, 0x74, 0x24, 0x18, 0x48, 0x89, 0x7c, 0x24, 0x20};
+
 inline bool Validate(unsigned char* image, uint32_t constants_rva = 0x1ed9a30, int32_t caller_offset = 0) {
-  constexpr unsigned char prefix[] = {
-      0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,
-      0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20};
-  if (std::memcmp(image + constants_rva, prefix, sizeof(prefix))) return false;
+  const renodx::utils::pe::Image executable(image);
+  if (!executable.Match(constants_rva, PIXEL_CONSTANTS_PREFIX)) return false;
   for (const auto& [slot, caller] : grade_uploads) {
-    const uintptr_t upload_rva = static_cast<uintptr_t>(int64_t(caller) + caller_offset);
+    const int64_t candidate = int64_t(caller) + caller_offset;
+    if (candidate < 40 || candidate > executable.size || !executable.InSection(candidate - 40, 40, IMAGE_SCN_MEM_EXECUTE)) return false;
+    const uint32_t upload_rva = static_cast<uint32_t>(candidate);
     int32_t displacement;
     std::memcpy(&displacement, image + upload_rva - 4, sizeof(displacement));
     if (image[upload_rva - 5] != 0xe8 || int64_t(upload_rva) + displacement != constants_rva) return false;
