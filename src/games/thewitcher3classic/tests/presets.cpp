@@ -14,6 +14,13 @@ int main(int argc,char** argv) {
     ui::preset_index=0; // no config writes or game hooks in this executable
     if(argc>1 &&std::string_view(argv[1])=="--cloud-sampling") {
       namespace clouds=witcher3classic::clouds;
+      for(const auto& [key,physical]:{std::pair{"GfxCloudDensity",.6f},std::pair{"GfxCloudDetail",4.f},
+          std::pair{"GfxCloudDetailSize",.4f}}) {
+        auto* setting=ui::FindSetting(key);
+        check(setting &&setting->default_value==100.f &&std::abs(*setting->binding-physical)<1.e-6f
+            &&std::abs(setting->parse(100.f)-physical)<1.e-6f,"Rebased cloud startup/UI units mismatch");
+      }
+      check(clouds::base_softness==0.f &&clouds::coverage==1.f &&clouds::size==1.f,"Approved appearance defaults mismatch");
       auto* resolution=ui::FindSetting("GfxCloudResolution");
       auto* steps=ui::FindSetting("GfxCloudStepSize");
       check(resolution &&steps &&resolution->section=="Clouds" &&steps->section=="Clouds"
@@ -34,7 +41,19 @@ int main(int argc,char** argv) {
       for(bool custom:{false,true}) {
         resolution->Set(3.f)->Write();steps->Set(50.f)->Write();ApplyTabPreset(preset::graphics,custom);
         check(clouds::resolution==0.f &&clouds::step_size==1.f,"Explicit cloud sampling preset values missing");
+        for(const auto& [key,expected]:{std::pair{"GfxCloudDetail",100.f},std::pair{"GfxCloudDetailSize",100.f},
+            std::pair{"GfxCloudBaseSoftness",0.f}}) {
+          auto* style=ui::FindSetting(key);
+          check(style &&style->section=="Cloud Shape" &&!style->tooltip.empty()
+              &&style->GetValue()==expected &&style->default_value==expected,"Cloud shape preset/default mismatch");
+          style->Set(style->GetMax())->Write();
+        }
       }
+      check(clouds::Atmosphere(3.f)==std::array<float,4>{3,8,2,1},"Shape settings not packed with independent sky density");
+      ui::FindSetting("GfxCloudDetailSize")->Set(50.f)->Write();
+      check(clouds::Atmosphere(3.f)==std::array<float,4>{3,8,.2f,1},"Detail range cannot move above/below the new baseline");
+      ApplyTabPreset(preset::graphics,true);
+      check(clouds::Atmosphere(3.f)==std::array<float,4>{3,4,.4f,0},"Shape preset failed to reset explicit values");
       std::cout<<"PASS independent cloud resolution and step size, bounds, defaults and explicit presets\n";return 0;
     }
     if(argc>1 &&std::string_view(argv[1])=="--player-fill") {
@@ -68,11 +87,11 @@ int main(int argc,char** argv) {
     check(witcher3classic::clouds::quality==1.f
         &&ui::FindSetting("GfxCloudQuality")->labels.size()==6
         &&preset::Default(preset::graphics,"GfxCloudQuality")==1.f,"Cloud quality default or extended levels mismatch");
-    for(const auto& [key,expected]:{std::pair{"GfxCloudCoverage",130.f},std::pair{"GfxCloudDensity",100.f},
-        std::pair{"GfxCloudSize",200.f},std::pair{"GfxCloudThickness",100.f}}) {
+    for(const auto& [key,expected]:{std::pair{"GfxCloudCoverage",100.f},std::pair{"GfxCloudDensity",100.f},
+        std::pair{"GfxCloudSize",100.f},std::pair{"GfxCloudThickness",100.f}}) {
       const auto* setting=ui::FindSetting(key);
       check(setting->section=="Cloud Appearance" &&setting->default_value==expected
-          &&setting->binding &&*setting->binding==setting->parse(expected) &&setting->parse(100.f)==1.f,
+          &&setting->binding &&*setting->binding==setting->parse(expected),
           "Cloud appearance startup/reset defaults differ from approved values");
     }
     check(witcher3classic::water::ripple_pattern==1.f

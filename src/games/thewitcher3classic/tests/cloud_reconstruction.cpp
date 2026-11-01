@@ -9,9 +9,10 @@
 #include <iostream>
 #include <vector>
 #include <embed/0xF3C60003.h>
+#include "../clouds/fast_noise.hpp"
 using Microsoft::WRL::ComPtr;
 int main(int argc,char** argv) {
-  constexpr UINT W=64,H=8;
+  constexpr UINT W=128,H=128;
   ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> context;
   assert(SUCCEEDED(D3D11CreateDevice(nullptr,argc>1?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,
       nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&context)));
@@ -88,5 +89,35 @@ int main(int argc,char** argv) {
   assert(rms<.08);
   signal(0,9000);context->UpdateSubresource(textures[1].Get(),0,nullptr,pixels.data(),W*16,0);run();
   for(UINT i=0;i<actual.size();++i)assert(std::abs(actual[i]-pixels[i])<.01f);
+  // The same FAST sequence as production, over an exposure-scaled gradient.
+  // Measure noise rejection without tolerating brightness or hue drift.
+  previous=frame;buffer(3,previous.data(),sizeof(previous));
+  for(float scale:{.001f,1.f,9000.f}) {
+    signal(0,scale);context->UpdateSubresource(textures[1].Get(),0,nullptr,pixels.data(),W*16,0);
+    double input_error=0,output_error=0,bias=0;unsigned samples=0;
+    for(unsigned n=0;n<96;++n) {
+      for(UINT y=0;y<H;++y)for(UINT x=0;x<W;++x) {
+        const UINT i=(y*W+x)*4;
+        const float reference=scale*(.8f+.4f*x/W);
+        const float random=(witcher3classic::clouds::fast_noise[(n%32)*128*128+y*128+x]+.5f)/256.f;
+        pixels[i]=reference*(1.f+.2f*(random-.5f));pixels[i+1]=pixels[i]*.5f;pixels[i+2]=pixels[i]*.25f;pixels[i+3]=.2f;
+      }
+      run();
+      if(n>=32)for(UINT y=2;y<H-2;++y)for(UINT x=2;x<W-2;++x) {
+        const UINT i=(y*W+x)*4;const double reference=scale*(.8f+.4f*x/W);
+        input_error+=std::pow((pixels[i]-reference)/reference,2);
+        output_error+=std::pow((actual[i]-reference)/reference,2);
+        bias+=(actual[i]-reference)/reference;++samples;
+        assert(std::abs(actual[i+1]/actual[i]-.5f)<1.e-5f &&std::abs(actual[i+2]/actual[i]-.25f)<1.e-5f);
+        assert(std::abs(actual[i+3]-.2f)<1.e-5f);
+      }
+    }
+    const double reduction=std::sqrt(output_error/input_error);
+    std::cout<<"FAST gradient scale="<<scale<<" RMS ratio="<<reduction<<" relative mean bias="<<bias/samples<<std::endl;
+    assert(reduction<.35 &&std::abs(bias/samples)<.002);
+  }
+  // Reprojection cuts must not drag the accumulated cloud into the new view.
+  previous[0][0]=200.f;buffer(3,previous.data(),sizeof(previous));signal(0,17.f);run();
+  for(UINT i=0;i<actual.size();++i)assert(std::abs(actual[i]-pixels[i])<1.e-5f);
   std::cout<<"PASS analytic moving-detail reconstruction, no HDR/opacity overshoot, constant HDR energy and finite output\n";
 }

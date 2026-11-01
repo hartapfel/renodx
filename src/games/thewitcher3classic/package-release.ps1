@@ -43,6 +43,7 @@ $files = [ordered]@{
   'bin/x64/renodx-thewitcher3classic.addon64' = $addonPath
   'bin/x64/renodx-licenses/RenoDX-LICENSE.txt' = Join-Path $repoRoot 'LICENSE'
   'bin/x64/renodx-licenses/Optics-LICENSE.txt' = Join-Path $PSScriptRoot 'optics/LICENSE.optics'
+  'bin/x64/renodx-licenses/FAST-LICENSE.txt' = Join-Path $PSScriptRoot 'clouds/LICENSE.fastnoise'
   'bin/x64/renodx-witcher3classic-dlss/NVIDIA-DLSS-LICENSE.txt' = Join-Path $StreamlineSdk 'bin/x64/nvngx_dlss.license.txt'
   'bin/x64/renodx-frame-generation/NVIDIA-DLSS-LICENSE.txt' = Join-Path $StreamlineSdk 'bin/x64/nvngx_dlss.license.txt'
   'bin/x64/renodx-frame-generation/NVIDIA-Reflex-LICENSE.txt' = Join-Path $StreamlineSdk 'bin/x64/reflex.license.txt'

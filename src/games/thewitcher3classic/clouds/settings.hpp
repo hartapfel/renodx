@@ -9,7 +9,17 @@ inline float quality = 1.f;
 inline float resolution = 0.f;
 inline float step_size = 1.f;
 inline float shadows = 1.f;
-inline float coverage = 1.3f, density = 1.f, size = 2.f, thickness = 1.f;
+// Physical values remain compatible with density/shadow shaders. Only the UI
+// units change: the previous Density 400% is the third baseline.
+// Surface Detail and Detail Size retain their second-rebase physical values.
+inline constexpr float DensityBaseline=.6f, DetailBaseline=4.f, DetailSizeBaseline=.4f;
+inline float coverage = 1.f, density = DensityBaseline, size = 1.f, thickness = 1.f;
+inline float detail = DetailBaseline, detail_size = DetailSizeBaseline, base_softness = 0.f;
+// Packed with the independent sky-haze scale in the existing parameter row.
+inline std::array<float,4> Atmosphere(float sky_density) {
+  return {std::clamp(sky_density,0.f,4.f),std::clamp(detail,0.f,8.f),
+      std::clamp(detail_size,.2f,2.f),std::clamp(base_softness,0.f,1.f)};
+}
 inline std::array<float,4> Appearance() {
   return {std::clamp(coverage,0.f,2.f),std::clamp(density,0.f,4.f),
       std::clamp(size,.25f,4.f),std::clamp(thickness,.5f,3.f)};

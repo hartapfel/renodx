@@ -25,9 +25,12 @@ int main(int argc,char** argv) {
 #else
   constexpr UINT width=160,height=90;
 #endif
+  const auto startup_atmosphere=witcher3classic::clouds::Atmosphere(1.f);
   const auto startup_appearance=witcher3classic::clouds::Appearance();
   witcher3classic::clouds::coverage=witcher3classic::clouds::density=1.f;
   witcher3classic::clouds::size=witcher3classic::clouds::thickness=1.f;
+  witcher3classic::clouds::detail=witcher3classic::clouds::detail_size=1.f;
+  witcher3classic::clouds::base_softness=.5f;
   std::array<std::array<float,4>,269> frame{};
   // Ordinary perspective camera looking upward. Match Classic's independent
   // projection and reversed hardware-depth conventions rather than assuming
@@ -51,6 +54,8 @@ int main(int argc,char** argv) {
     if(std::string_view(argv[1])=="--default-look") {
       witcher3classic::clouds::coverage=startup_appearance[0];witcher3classic::clouds::density=startup_appearance[1];
       witcher3classic::clouds::size=startup_appearance[2];witcher3classic::clouds::thickness=startup_appearance[3];
+      witcher3classic::clouds::detail=startup_atmosphere[1];witcher3classic::clouds::detail_size=startup_atmosphere[2];
+      witcher3classic::clouds::base_softness=startup_atmosphere[3];
     }
   }
   std::array<std::array<float,4>,3323> light{};light[0]={.1f,.4f,.91f,1};light[1]={30,20,10,0};
@@ -85,23 +90,26 @@ int main(int argc,char** argv) {
   context->PSSetConstantBuffers(13,1,frame_buffer.GetAddressOf());
   context->PSSetConstantBuffers(0,1,clock_buffer.GetAddressOf());
   context->PSSetShaderResources(14,1,weather_view.GetAddressOf());
+  context->CSSetShaderResources(7,1,weather_view.GetAddressOf());
   context->OMSetRenderTargets(1,target.GetAddressOf(),nullptr);
   const D3D11_VIEWPORT viewport{0,0,width,height,0,1};context->RSSetViewports(1,&viewport);
   witcher3classic::clouds::Pipeline pipeline;
   uint64_t serial=0;
+  std::array<float,4> background{.2f,.3f,.4f,.75f};
   const witcher3classic::volumetrics::Pipeline* active_fog=nullptr;
   auto render=[&](float quality,bool invalidate=true) {
     if(invalidate)pipeline.Invalidate();
     context->UpdateSubresource(frame_buffer.Get(),0,nullptr,frame.data(),0,0);
     context->UpdateSubresource(light_buffer.Get(),0,nullptr,light.data(),0,0);
     context->UpdateSubresource(clock_buffer.Get(),0,nullptr,scene_clock.data(),0,0);
-    const float clear[4]{.2f,.3f,.4f,.75f};context->ClearRenderTargetView(target.Get(),clear);
+    context->ClearRenderTargetView(target.Get(),background.data());
     assert(pipeline.Render(context.Get(),frame_buffer.Get(),light_buffer.Get(),weather_view.Get(),depth_view.Get(),
         target.Get(),width,height,++serial,quality,active_fog));
     ComPtr<ID3D11Buffer> restored;context->VSGetConstantBuffers(13,1,&restored);assert(restored==light_buffer);
     restored.Reset();context->PSGetConstantBuffers(13,1,&restored);assert(restored==frame_buffer);
     restored.Reset();context->PSGetConstantBuffers(0,1,&restored);assert(restored==clock_buffer);
     ComPtr<ID3D11ShaderResourceView> restored_view;context->PSGetShaderResources(14,1,&restored_view);assert(restored_view==weather_view);
+    restored_view.Reset();context->CSGetShaderResources(7,1,&restored_view);assert(restored_view==weather_view);
     context->CopyResource(readback.Get(),output.Get());D3D11_MAPPED_SUBRESOURCE mapped{};
     assert(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&mapped)));
     std::vector<float> image(width*height*4);
@@ -149,12 +157,16 @@ int main(int argc,char** argv) {
   assert(changed>100 &&maximum>1.f);
   // Empty weather must preserve the scene exactly at every quality, even after
   // an opaque/cloudy history. No dark clear-sky veil or stale cloud rectangles.
+  // Isolate clear weather after a frame discontinuity; weather fades on
+  // consecutive frames are covered by cloud_weather/cloud_shadows fixtures.
+  serial+=1023;
   weather_data.fill(0.f);for(UINT layer=0;layer<2;++layer)context->UpdateSubresource(weather.Get(),layer,nullptr,weather_data.data(),32,0);
   for(float q:{0.f,1.f,2.f,3.f}) {
     image=render(q,false);
     for(UINT i=0;i<image.size();i+=4)assert(std::abs(image[i]-.2f)<1.e-5f &&std::abs(image[i+1]-.3f)<1.e-5f);
   }
   // Reversed-Z foreground geometry is never covered by the cloud composite.
+  serial+=1023;
   weather_data.fill(1.f);for(UINT layer=0;layer<2;++layer)context->UpdateSubresource(weather.Get(),layer,nullptr,weather_data.data(),32,0);
   depth_data.assign(width*height,1.f);context->UpdateSubresource(depth.Get(),0,nullptr,depth_data.data(),width*4,0);
   image=render(1);for(UINT i=0;i<image.size();i+=4)assert(image[i]==.2f &&image[i+1]==.3f);
@@ -208,6 +220,7 @@ int main(int argc,char** argv) {
   {
     // Evolution must follow the retained native clock, freeze when paused and
     // reject history across a clock jump without overwriting native b0.
+    serial+=1023;
     weather_data.fill(.7f);for(UINT layer=0;layer<2;++layer)context->UpdateSubresource(weather.Get(),layer,nullptr,weather_data.data(),32,0);
     serial+=1023;auto paused=render(1);
     serial+=1023;assert(paused==render(1));
@@ -255,6 +268,34 @@ int main(int argc,char** argv) {
     thickness=2.f;auto thicker=appearance_image();float thickness_change=0;
     for(UINT i=0;i<thicker.size();i+=4)thickness_change+=std::abs(thicker[i]-neutral[i]);
     assert(thickness_change>1.f);thickness=1.f;
+    // Surface relief must remain visible when high optical density hides the
+    // cloud interior. Compare extinction, not a lighting boost, at fixed jitter.
+    density=4.f;witcher3classic::clouds::detail=0.f;
+    auto smooth=appearance_image();witcher3classic::clouds::detail=1.f;
+    auto textured=appearance_image();float relief_change=0.f;
+    for(UINT i=0;i<smooth.size();i+=4)relief_change+=std::abs(smooth[i]-textured[i]);
+    assert(relief_change>1.f);
+    for(auto* style:{&witcher3classic::clouds::detail_size,&witcher3classic::clouds::base_softness}) {
+      const float saved=*style;*style=.5f*saved;
+      auto reshaped=appearance_image();float change=0.f;
+      for(UINT i=0;i<reshaped.size();i+=4)change+=std::abs(reshaped[i]-textured[i]);
+      assert(change>1.f);*style=saved;
+    }
+    // The rebased 100% must have usable controls on either side. Compare real
+    // GPU extinction at fixed jitter, not only the UI's parsed numbers.
+    witcher3classic::clouds::detail=4.f;witcher3classic::clouds::detail_size=.4f;
+    auto baseline_detail=appearance_image();
+    witcher3classic::clouds::detail=8.f;auto extra_detail=appearance_image();
+    witcher3classic::clouds::detail=4.f;witcher3classic::clouds::detail_size=.2f;
+    auto smaller_detail=appearance_image();
+    float extra_change=0,smaller_change=0;
+    for(UINT i=0;i<baseline_detail.size();i+=4) {
+      extra_change+=std::abs(extra_detail[i]-baseline_detail[i]);
+      smaller_change+=std::abs(smaller_detail[i]-baseline_detail[i]);
+    }
+    assert(extra_change>1.f &&smaller_change>1.f);
+    witcher3classic::clouds::detail=witcher3classic::clouds::detail_size=1.f;
+    density=1.f;
     for(UINT control=0;control<2;++control) {
       if(control==0)coverage=0.f;else {coverage=1.f;density=0.f;}
       auto clear=render(1,false);
@@ -344,6 +385,25 @@ int main(int argc,char** argv) {
     std::cout<<"PASS cloud/fog HDR composition, opaque-cloud and clear-gap energy, terrain/object shadow inputs, both fog renderers, cached/uncached equivalence, night fog control, stale-frame rejection and isolated state restoration\n";
   }
 #endif
+  {
+    // HDR sun-disc radiance must not leak through an optically opaque cloud.
+    // The former 0.5% march cutoff left a plainly visible bright disc even at
+    // high density. Keep clear-sky HDR and destination alpha unchanged.
+    const auto saved_frame=frame;const auto saved_light=light;
+    for(UINT i:{39u,40u,41u,44u,194u,195u,196u,197u,199u,200u})frame[i]={0,0,0,0};
+    light[1]={0,0,0,0};background={50000,50000,50000,.75f};
+    witcher3classic::clouds::coverage=2;witcher3classic::clouds::density=4;
+    weather_data.fill(1);for(UINT layer=0;layer<2;++layer)context->UpdateSubresource(weather.Get(),layer,nullptr,weather_data.data(),32,0);
+    serial+=1023;const auto occulted=render(3);UINT opaque=0;
+    for(UINT y=0;y<height/4;++y)for(UINT x=width/4;x<width*3/4;++x)
+      if(occulted[(y*width+x)*4]<.01f)++opaque;
+    assert(opaque>20);
+    witcher3classic::clouds::coverage=0;const auto clear=render(3);
+    for(UINT i=0;i<clear.size();i+=4)assert(clear[i]==50000 &&clear[i+3]==.75f);
+    witcher3classic::clouds::coverage=witcher3classic::clouds::density=1;
+    background={.2f,.3f,.4f,.75f};frame=saved_frame;light=saved_light;
+    std::cout<<"PASS opaque-cloud occultation of 50000 HDR background, clear-sky headroom and alpha preservation\n";
+  }
   if(benchmark) {
     ComPtr<IDXGIDevice> dxgi_device;ComPtr<IDXGIAdapter> adapter;DXGI_ADAPTER_DESC adapter_desc{};
     if(SUCCEEDED(device.As(&dxgi_device)) &&SUCCEEDED(dxgi_device->GetAdapter(&adapter))

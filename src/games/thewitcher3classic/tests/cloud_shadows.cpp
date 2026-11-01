@@ -13,6 +13,8 @@ using Microsoft::WRL::ComPtr;
 int main(int argc,char** argv) {
   witcher3classic::clouds::coverage=witcher3classic::clouds::density=1.f;
   witcher3classic::clouds::size=witcher3classic::clouds::thickness=1.f;
+  witcher3classic::clouds::detail=witcher3classic::clouds::detail_size=1.f;
+  witcher3classic::clouds::base_softness=.5f;
   const bool benchmark=argc>2 &&std::string_view(argv[2])=="--benchmark";
   ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> base;ComPtr<ID3D11DeviceContext1> context;
   assert(SUCCEEDED(D3D11CreateDevice(nullptr,argc>1?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,
@@ -41,7 +43,10 @@ int main(int argc,char** argv) {
   runtime.context=context;
   auto& pipeline=runtime.pipeline;
   uint64_t serial=0;
-  auto generate=[&](float coverage,float quality,bool enabled=true) {
+  auto generate=[&](float coverage,float quality,bool enabled=true,bool reset_weather=true) {
+    // Most checks isolate steady weather; consecutive frames below exercise
+    // the production wall-time fade instead of treating an input edit as a cut.
+    if(reset_weather)serial+=1023;
     weather_pixels.fill(coverage);
     for(UINT layer=0;layer<2;++layer)context->UpdateSubresource(weather.Get(),layer,nullptr,weather_pixels.data(),32,0);
     context->UpdateSubresource(frame_buffer.Get(),0,nullptr,frame.data(),0,0);
@@ -72,6 +77,15 @@ int main(int argc,char** argv) {
     dump.write(reinterpret_cast<const char*>(cloudy.data()),cloudy.size()*sizeof(float));
   }
   assert(shadows>cloudy.size()/20);
+  std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  auto fading=generate(0,1,true,false);UINT retained=0,changed=0;
+  for(UINT i=0;i<fading.size();++i) {
+    assert(fading[i]+.001f>=cloudy[i]);
+    if(fading[i]<.8f)++retained;
+    if(fading[i]>cloudy[i]+.001f)++changed;
+  }
+  assert(retained>fading.size()/40 &&changed>100);
+  cloudy=generate(.7f,1);
   // Sub-texel camera movement cannot move a world-anchored shadow grid.
   frame[0][0]+=.1f;auto still=generate(.7f,1);assert(cloudy==still);
   frame[67][0]+=10.f;auto wind=generate(.7f,1);float difference=0;

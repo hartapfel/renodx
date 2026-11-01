@@ -20,6 +20,9 @@ RWStructuredBuffer<float4> output:register(u0);
   output[id]=float4(CloudWeather(p),CloudDensity(p,3u,0),CloudDensity(p,0u,0),CloudDensity(p,1u,0));
   if(id==0) {
     output[8]=float4(CloudInterval(0,float3(0,0,1)),ClassicWaterAmbient(asuint(frame[38].w)),ClassicFogBrightness(asuint(frame[38].w)));
+    float3 base=float3(-4500,0,CloudBase-10.f);
+    output[9]=float4(CloudDensity(base,3u,0),CloudDensity(base,0u,0),CloudDensity(base,1u,0),
+        CloudDensity(float3(base.xy,CloudMinimum()-1.f),3u,0));
   }
 })";
   ComPtr<ID3DBlob> code,errors;
@@ -29,16 +32,17 @@ RWStructuredBuffer<float4> output:register(u0);
   ComPtr<ID3D11ComputeShader> shader;
   assert(SUCCEEDED(device->CreateComputeShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&shader)));
   std::array<std::array<float,4>,269> frame{};frame[66][0]=5;
-  std::array<std::array<float,4>,5> parameters{};parameters[2]={1,1,1,1};parameters[4]={1,1,16,64};
+  std::array<std::array<float,4>,5> parameters{};parameters[2]={1,1,1,1};
+  parameters[3]={1,1,1,.5f};parameters[4]={1,1,16,64};
   D3D11_BUFFER_DESC bd{sizeof(frame),D3D11_USAGE_DEFAULT,D3D11_BIND_CONSTANT_BUFFER};
   ComPtr<ID3D11Buffer> frame_buffer,parameters_buffer,output,read;
   assert(SUCCEEDED(device->CreateBuffer(&bd,nullptr,&frame_buffer)));
   bd.ByteWidth=sizeof(parameters);assert(SUCCEEDED(device->CreateBuffer(&bd,nullptr,&parameters_buffer)));
   D3D11_SUBRESOURCE_DATA initial{};
-  bd={144,D3D11_USAGE_DEFAULT,D3D11_BIND_UNORDERED_ACCESS,0,D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,16};
+  bd={160,D3D11_USAGE_DEFAULT,D3D11_BIND_UNORDERED_ACCESS,0,D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,16};
   assert(SUCCEEDED(device->CreateBuffer(&bd,nullptr,&output)));
   ComPtr<ID3D11UnorderedAccessView> uav;assert(SUCCEEDED(device->CreateUnorderedAccessView(output.Get(),nullptr,&uav)));
-  bd={144,D3D11_USAGE_STAGING,0,D3D11_CPU_ACCESS_READ};assert(SUCCEEDED(device->CreateBuffer(&bd,nullptr,&read)));
+  bd={160,D3D11_USAGE_STAGING,0,D3D11_CPU_ACCESS_READ};assert(SUCCEEDED(device->CreateBuffer(&bd,nullptr,&read)));
   std::array<float,64> weather{};for(unsigned i=0;i<64;++i)weather[i]=i%8<4?0.f:1.f;
   D3D11_TEXTURE2D_DESC td{8,8,1,1,DXGI_FORMAT_R32_FLOAT,{1,0},D3D11_USAGE_DEFAULT,D3D11_BIND_SHADER_RESOURCE};
   initial={weather.data(),32};ComPtr<ID3D11Texture2D> weather_texture;
@@ -65,11 +69,12 @@ RWStructuredBuffer<float4> output:register(u0);
     ID3D11UnorderedAccessView* empty=nullptr;context->CSSetUnorderedAccessViews(0,1,&empty,nullptr);
     context->CopyResource(read.Get(),output.Get());D3D11_MAPPED_SUBRESOURCE mapped{};
     assert(SUCCEEDED(context->Map(read.Get(),0,D3D11_MAP_READ,0,&mapped)));
-    std::array<std::array<float,4>,9> result{};std::memcpy(result.data(),mapped.pData,144);context->Unmap(read.Get(),0);
+    std::array<std::array<float,4>,10> result{};std::memcpy(result.data(),mapped.pData,160);context->Unmap(read.Get(),0);
     for(auto row:result)for(float v:row)assert(std::isfinite(v));return result;
   };
   auto neutral=run();assert(neutral[0][0]==0 &&neutral[1][0]==1 &&neutral[1][1]>0);
   for(unsigned i=0;i<8;++i)assert(neutral[i][1]<=neutral[i][3] &&neutral[i][3]<=neutral[i][2]);
+  assert(neutral[9][0]>0 &&neutral[9][0]<=neutral[9][2] &&neutral[9][2]<=neutral[9][1] &&neutral[9][3]==0);
   for(float size:{.25f,2.f,4.f}) {
     parameters[2][2]=size;auto changed=run();
     for(unsigned i=0;i<8;++i)assert(changed[i][0]==neutral[i][0]);
@@ -80,10 +85,20 @@ RWStructuredBuffer<float4> output:register(u0);
   parameters[2][1]=0;auto clear=run();for(unsigned i=0;i<8;++i)assert(clear[i][1]==0);
   parameters[2][1]=1;parameters[2][0]=0;clear=run();for(unsigned i=0;i<8;++i)assert(clear[i][0]==0 &&clear[i][1]==0);
   parameters[2][0]=1;parameters[2][3]=2;auto thick=run();
-  assert(std::abs(thick[8][0]-1200)<.1f &&std::abs(thick[8][1]-3600)<.1f);parameters[2][3]=1;
+  assert(std::abs(thick[8][0]-neutral[8][0])<.1f &&thick[8][0]<1200
+      &&std::abs(thick[8][1]-3600)<.1f);parameters[2][3]=1;
+  // The reported scene uses 200% detail, 50% detail size and a 150% layer.
+  // Verify bounded density and optical scaling at those settings as well.
+  parameters[3]={1,2,.5f,1};parameters[2][3]=1.5f;
+  auto detailed=run();
+  for(unsigned i=0;i<8;++i)assert(detailed[i][1]>=0 &&detailed[i][1]<=detailed[i][3]+1.e-6f &&detailed[i][3]<=detailed[i][2]+1.e-6f);
+  parameters[2][1]=4;auto detailed_dense=run();
+  for(unsigned i=0;i<8;++i)assert(std::abs(detailed_dense[i][1]-4*detailed[i][1])<1.e-6f);
+  assert(detailed_dense[9][3]==0);
+  parameters[2]={1,1,1,1};parameters[3]={1,1,1,.5f};
   uint32_t tag=0xdc000000u|2047u;std::memcpy(&frame[38][3],&tag,4);
   auto night=run();assert(night[8][2]==1 &&night[8][3]==0);
   tag=0xdc000000u|(511u<<12);std::memcpy(&frame[38][3],&tag,4);
   night=run();assert(night[8][2]==0 &&night[8][3]==1);
-  std::cout<<"PASS cloud weather/size isolation, density/coverage/thickness and independent night tags\n";
+  std::cout<<"PASS cloud weather/size isolation, density/coverage/thickness, hanging-base bounds, reported detail settings and independent night tags\n";
 }

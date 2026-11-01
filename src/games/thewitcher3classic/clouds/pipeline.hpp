@@ -7,9 +7,12 @@
 #include <embed/0xF3C60004.h>
 #include <embed/0xF3C60005.h>
 #include <embed/0xF3C60006.h>
+#include <embed/0xF3C60007.h>
 #include <array>
 #include <cstdint>
+#include <chrono>
 #include "settings.hpp"
+#include "fast_noise.hpp"
 #include "../volumetrics/pipeline.hpp"
 #include "../temporal/context.hpp"
 namespace witcher3classic::clouds {
@@ -48,11 +51,12 @@ class Pipeline {
     auto lighting_quality=QualityLighting(quality);
     lighting_quality[1]=1.f; // filtered shadows do not resolve view-ray micro-erosion
     if(!PrepareNoise(context,UINT(lighting_quality[3])))return false;
+    if(!PrepareWeather(context,frame,weather,serial))return false;
     const Parameters parameters{{float(size[0]),float(size[0]),16000.f,float(size[1])},
-        {cast ? 1.f : 0.f,0,0,0},Appearance(),{},lighting_quality};
+        {cast ? 1.f : 0.f,0,0,0},Appearance(),Atmosphere(volumetrics::sky_density),lighting_quality};
     context->UpdateSubresource(parameters_.Get(),0,nullptr,&parameters,0,0);
     ID3D11Buffer* constants[]{frame,lighting,parameters_.Get()};
-    ID3D11ShaderResourceView* inputs[]{noise_view_.Get(),weather};
+    ID3D11ShaderResourceView* inputs[]{noise_view_.Get(),weather_buffers_[weather_index_].view.Get()};
     ID3D11UnorderedAccessView* outputs[]{shadow_output_.Get(),shadow_data_output_.Get()};
     auto* sampler=wrap_.Get();context->CSSetSamplers(0,1,&sampler);
     context->CSSetConstantBuffers(0,3,constants);context->CSSetShaderResources(0,2,inputs);
@@ -84,7 +88,7 @@ class Pipeline {
         ||(texture_desc.Format!=DXGI_FORMAT_R16G16B16A16_FLOAT &&texture_desc.Format!=DXGI_FORMAT_R32G32B32A32_FLOAT))return false;
     const auto samples=Quality(quality);
     const auto appearance=Appearance();
-    const std::array<float,4> atmosphere{std::clamp(volumetrics::sky_density,0.f,4.f),0,0,0};
+    const auto atmosphere=Atmosphere(volumetrics::sky_density);
     if(appearance_!=appearance ||atmosphere_!=atmosphere) {
       Invalidate();cut_frame_=serial;appearance_=appearance;atmosphere_=atmosphere;
     }
@@ -114,6 +118,7 @@ class Pipeline {
     context->CSSetShaderResources(126,2,shadow_inputs);
     const auto lighting_quality=QualityLighting(quality);
     if(!PrepareNoise(context,UINT(lighting_quality[3])))return false;
+    if(!PrepareWeather(context,frame,weather,serial))return false;
     const bool history=history_frame_!=UINT64_MAX &&serial==history_frame_+1;
     const Parameters parameters{{float(low_width),float(low_height),float(width),float(height)},
         {float(samples[1]),float(samples[2]),float(serial%1024),history?1.f:0.f},appearance,atmosphere,lighting_quality};
@@ -125,8 +130,9 @@ class Pipeline {
     context->CSSetConstantBuffers(0,4,constants);context->CSSetSamplers(0,2,samplers);
     ID3D11Buffer* clocks[]{clock.Get(),previous_clock_.Get()};
     context->CSSetConstantBuffers(5,2,clocks);
-    ID3D11ShaderResourceView* inputs[]{noise_view_.Get(),weather,depth};
+    ID3D11ShaderResourceView* inputs[]{noise_view_.Get(),weather_buffers_[weather_index_].view.Get(),depth};
     context->CSSetShaderResources(0,3,inputs);
+    context->CSSetShaderResources(7,1,samples_view_.GetAddressOf());
     ID3D11UnorderedAccessView* outputs[]{buffers_[0].uav.Get(),buffers_[1].uav.Get(),nullptr};
     context->CSSetUnorderedAccessViews(0,2,outputs,nullptr);
     context->CSSetShader(trace_.Get(),nullptr,0);context->Dispatch((low_width+7)/8,(low_height+7)/8,1);
@@ -140,7 +146,7 @@ class Pipeline {
     context->CSSetUnorderedAccessViews(0,3,outputs,nullptr);
     context->CSSetShader(resolve_.Get(),nullptr,0);context->Dispatch((low_width+7)/8,(low_height+7)/8,1);
     outputs[0]=outputs[1]=outputs[2]=nullptr;context->CSSetUnorderedAccessViews(0,3,outputs,nullptr);
-    std::array<ID3D11ShaderResourceView*,7> empty{};context->CSSetShaderResources(0,7,empty.data());
+    std::array<ID3D11ShaderResourceView*,8> empty{};context->CSSetShaderResources(0,8,empty.data());
     context->CSSetShader(nullptr,nullptr,0);
     context->PSSetConstantBuffers(0,4,constants);context->PSSetSamplers(0,2,samplers);
     if(fog)fog->BindIsolated(context,serial);
@@ -214,6 +220,45 @@ class Pipeline {
     output=nullptr;context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
     context->GenerateMips(noise_view_.Get());noise_ready_=true;return true;
   }
+  bool PrepareWeather(ID3D11DeviceContext1* context,ID3D11Buffer* frame,
+      ID3D11ShaderResourceView* source,uint64_t serial) {
+    if(weather_frame_==serial)return true;
+    if(!weather_buffers_[0].texture) {
+      ComPtr<ID3D11Device> device;context->GetDevice(&device);
+      // FP32 avoids frame-rate-dependent stalls near the fade target caused
+      // by repeatedly rounding small exponential updates to half precision.
+      const D3D11_TEXTURE2D_DESC desc{128,128,1,1,DXGI_FORMAT_R32_FLOAT,{1,0},D3D11_USAGE_DEFAULT,
+          D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS};
+      D3D11_SHADER_RESOURCE_VIEW_DESC view{};view.Format=desc.Format;
+      view.ViewDimension=D3D11_SRV_DIMENSION_TEXTURE2DARRAY;view.Texture2DArray.MipLevels=1;view.Texture2DArray.ArraySize=1;
+      D3D11_UNORDERED_ACCESS_VIEW_DESC output{};output.Format=desc.Format;
+      output.ViewDimension=D3D11_UAV_DIMENSION_TEXTURE2DARRAY;output.Texture2DArray.ArraySize=1;
+      for(auto& item:weather_buffers_) {
+        if(FAILED(device->CreateTexture2D(&desc,nullptr,&item.texture))
+            ||FAILED(device->CreateShaderResourceView(item.texture.Get(),&view,&item.view))
+            ||FAILED(device->CreateUnorderedAccessView(item.texture.Get(),&output,&item.uav))) {
+          weather_buffers_={};return false;
+        }
+      }
+    }
+    const auto now=std::chrono::steady_clock::now();
+    // Exponential filtering is independent of frame rate and game time scale.
+    // Wall time also permits a paused scene's changed weather to fade normally.
+    Parameters parameters{};
+    parameters.integration={float(-std::expm1(-std::clamp(std::chrono::duration<double>(now-weather_time_).count(),0.,.25)/.8)),
+        0,0,weather_frame_!=UINT64_MAX &&serial==weather_frame_+1 ? 1.f : 0.f};
+    context->UpdateSubresource(parameters_.Get(),0,nullptr,&parameters,0,0);
+    ID3D11Buffer* constants[]{parameters_.Get(),weather_previous_.Get()};context->CSSetConstantBuffers(2,2,constants);
+    context->CSSetShaderResources(1,1,&source);context->CSSetConstantBuffers(0,1,&frame);
+    context->CSSetShaderResources(3,1,weather_buffers_[weather_index_].view.GetAddressOf());
+    auto* sampler=wrap_.Get();context->CSSetSamplers(0,1,&sampler);
+    const UINT write=1u-weather_index_;
+    auto* output=weather_buffers_[write].uav.Get();context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
+    context->CSSetShader(weather_shader_.Get(),nullptr,0);context->Dispatch(16,16,1);
+    output=nullptr;context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
+    context->CopyResource(weather_previous_.Get(),frame);
+    weather_index_=write;weather_frame_=serial;weather_time_=now;return true;
+  }
   bool Initialize(ID3D11Device* device) {
     if(ready_)return true;
     // Retry initialization as a unit. A partially created state never means
@@ -224,11 +269,18 @@ class Pipeline {
         ||FAILED(device->CreateComputeShader(__0xF3C60003.data(),__0xF3C60003.size(),nullptr,&resolve_))
         ||FAILED(device->CreateComputeShader(__0xF3C60005.data(),__0xF3C60005.size(),nullptr,&motion_))
         ||FAILED(device->CreateComputeShader(__0xF3C60006.data(),__0xF3C60006.size(),nullptr,&shadow_))
+        ||FAILED(device->CreateComputeShader(__0xF3C60007.data(),__0xF3C60007.size(),nullptr,&weather_shader_))
         ||FAILED(device->CreateVertexShader(__0xF3C10002.data(),__0xF3C10002.size(),nullptr,&vertex_))
         ||FAILED(device->CreatePixelShader(__0xF3C60004.data(),__0xF3C60004.size(),nullptr,&composite_)))return false;
+    D3D11_TEXTURE3D_DESC samples{128,128,32,1,DXGI_FORMAT_R8_UNORM,D3D11_USAGE_IMMUTABLE,D3D11_BIND_SHADER_RESOURCE};
+    D3D11_SUBRESOURCE_DATA samples_data{fast_noise,128,128*128};
+    if(FAILED(device->CreateTexture3D(&samples,&samples_data,&samples_))
+        ||FAILED(device->CreateShaderResourceView(samples_.Get(),nullptr,&samples_view_)))return false;
     D3D11_BUFFER_DESC desc{sizeof(Parameters),D3D11_USAGE_DEFAULT,D3D11_BIND_CONSTANT_BUFFER};
     if(FAILED(device->CreateBuffer(&desc,nullptr,&parameters_)))return false;
-    desc.ByteWidth=4304;if(FAILED(device->CreateBuffer(&desc,nullptr,&previous_)))return false;
+    desc.ByteWidth=4304;
+    if(FAILED(device->CreateBuffer(&desc,nullptr,&previous_))
+        ||FAILED(device->CreateBuffer(&desc,nullptr,&weather_previous_)))return false;
     const std::array<float,64> zero{};D3D11_SUBRESOURCE_DATA initial{zero.data()};
     desc.ByteWidth=256;
     if(FAILED(device->CreateBuffer(&desc,&initial,&zero_clock_))
@@ -260,12 +312,14 @@ class Pipeline {
   };
   std::array<Buffer,7> buffers_;
   ComPtr<ID3DDeviceContextState> state_;
-  ComPtr<ID3D11ComputeShader> noise_shader_,trace_,resolve_,motion_,shadow_;
+  ComPtr<ID3D11ComputeShader> noise_shader_,trace_,resolve_,motion_,shadow_,weather_shader_;
   ComPtr<ID3D11VertexShader> vertex_;
   ComPtr<ID3D11PixelShader> composite_;
   ComPtr<ID3D11Buffer> parameters_,previous_,zero_clock_,previous_clock_;
   ComPtr<ID3D11SamplerState> wrap_,clamp_;
   ComPtr<ID3D11Texture3D> noise_;
+  ComPtr<ID3D11Texture3D> samples_;
+  ComPtr<ID3D11ShaderResourceView> samples_view_;
   ComPtr<ID3D11ShaderResourceView> noise_view_;
   ComPtr<ID3D11UnorderedAccessView> noise_uav_;
   ComPtr<ID3D11BlendState> blend_;
@@ -279,6 +333,11 @@ class Pipeline {
   ComPtr<ID3D11Buffer> shadow_data_;
   UINT shadow_size_=0;
   uint64_t shadow_frame_=UINT64_MAX;
+  std::array<Buffer,2> weather_buffers_;
+  ComPtr<ID3D11Buffer> weather_previous_;
+  UINT weather_index_=0;
+  uint64_t weather_frame_=UINT64_MAX;
+  std::chrono::steady_clock::time_point weather_time_{};
   bool ready_=false,noise_ready_=false;
   UINT noise_size_=0;
   UINT width_=0,height_=0,render_width_=0,render_height_=0,history_index_=2;

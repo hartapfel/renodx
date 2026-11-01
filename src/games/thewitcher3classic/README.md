@@ -3401,3 +3401,153 @@ step size costs Automatic (Quarter) 0.772/1.270 ms, Half 2.317/3.884 ms and Full
 rest of the game and any DLSS costs. These are synthetic timings, not gameplay
 FPS promises. Compare Half at 100 percent first, then reduce Step Size if thin
 structure is missed. Check static sky, camera pans, native wind and DLSS/FG.
+
+## Cloud density hierarchy and shape controls - 2026-11-01
+
+The previous Classic state was committed and pushed as
+0925f2ec63024522123ebce9e352d95ebeb58b05 before this revision.
+Research and alternatives are recorded in CLOUD_RENDERING_RESEARCH.md under
+"Density hierarchy revision", including WMO, Nubis 2017/2022/2023 and Frostbite,
+followed by a read-only comparison of the supplied W3Atmos style controls.
+
+The cloud density field now separates weather-driven formations, nested billows,
+local envelope relief and smaller erosion. Detail is modeled in world units,
+independently of formation width and layer thickness. Increasing optical density
+still scales extinction after all shape operations. The noise bake retains
+separate cellular scales and a wispy field, with tileable gradient-noise warping;
+it removes the under-resolved 32-cell octave from the 64-voxel tile. This is a
+procedural density approximation, not a fluid simulation or measured weather
+reconstruction. No W3Atmos/SideFX code, assets or binaries are bundled.
+
+Graphics / Cloud Shape adds Cloud Surface Detail (100%), Cloud Detail Size
+(100%) and Cloud Base Softness (50%). Both Graphics presets explicitly assign
+these values. Changes reset cloud history and use the existing DLSS/FG
+responsiveness handling. Coverage, density, size, quality, resolution and
+raymarch-step defaults remain unchanged. Near light segments resolve the visible
+quality's detail; distant segments retain a filtered erosion band instead of
+shadowing with an un-eroded solid envelope. Existing sample budgets, ground
+shadow-map dimensions, HDR lighting and fog composition remain in place.
+
+Validation: Release target thewitcher3classic linked successfully. Production
+cloud, shadow and material tests pass on WARP and NVIDIA, including dense-cloud
+relief/control changes, zero-light extinction, independent weather coordinates,
+clear weather, paused clock, animation/history rejection, native state restore,
+HDR cloud/fog composition and DLSS/FG foreground-motion isolation. Focused cloud
+sampling/preset checks pass; unrelated user-edited defaults were not rewritten.
+The D3D debug layer remains unavailable. Synthetic front/back-lit comparisons
+cover weather inputs 0.45/0.7/1.0, normal density and density 3; they do not replace
+visual acceptance in the user's saved scene.
+
+Final isolated RTX 5090 GPU timestamps, game closed, 3840x2160 with 75% sky,
+mixed weather and 100% step: Medium Automatic 0.557 ms, Medium Half 1.544 ms,
+Ultra Half 5.416-5.568 ms. These include weather preparation, cloud trace,
+resolve and composite, excluding fog/shadow generation, one-time noise
+preparation, the rest of the game and DLSS. Synthetic timings are not gameplay
+FPS promises; morphology changes the occupied volume and work per ray.
+
+Release package rebuilt and archive contents/hashes verified by package-release.ps1:
+build/Release/packages/renodx-witcher3-classic-2026.11.01.zip.
+Addon/build and installed-link SHA256:
+47E9E9B3FFEE8F4599D0875B79EBDCA9238030D28EACB45E8134CDE8415420C2.
+Package remains addon + production NVIDIA runtime files + licenses only.
+
+Gameplay check: retain the current weather and compare density 100/300%, pan the
+camera, and inspect the three shape controls independently. Check shadows and
+sun shafts, day/night changes, thick overcast, DLAA/DLSS and FG. Existing saved
+settings are retained; the new controls appear under Graphics / Cloud Shape.
+Cloud height / weather follow-up: local native shadow opacity no longer drives
+cloud height inversely. Thin weather-mask edges previously grew above cloud
+cores, creating vertical walls; fading coverage could even darken some shadows.
+The production fade regression fails before this correction and passes after it.
+The native silhouette is now filtered into a broad 128-square coverage field
+before 3D shaping. Its layers retain native blending, with an automatic 0.8-second
+exponential weather fade shared by clouds and their shadows. FP32 ping-pong
+storage avoids high-frame-rate rounding stalls; wind/scale/origin reprojection
+keeps the transition aligned. Fine detail now follows the same bulk evolution
+rate as temporal/DLSS/FG motion, without an extra unmatched vertical scroll.
+
+The new cloud_weather.cpp fixture covers sharp mask edges, mean preservation,
+layer blending, bounded in/out fading, elapsed-time subdivision and wind/scale
+reprojection. The wall-time shadow fade and all existing HDR/fog/motion/state
+checks pass on WARP and NVIDIA. Runtime visual acceptance of the supplied
+close-up and a weather change remains necessary after loading this build.
+Underside / HDR sun follow-up: lower cloud envelopes now have signed relief,
+including hanging billows below the nominal base, with conservative ray bounds.
+Detail strength uses smooth compounded erosion instead of a hard plateau at
+high strengths. Optical density still scales only extinction. The cloud march
+continues inexpensive extinction after its lighting cutoff, preventing residual
+transmission from exposing an HDR sun through opaque cover. Ground shadow-map
+technique, resolution and sampling budgets remain unchanged.
+
+Production GPU checks pass on WARP/NVIDIA, including the reported 200% detail,
+50% detail size, 150% thickness settings and a 50000-linear-value background.
+The previous extinction cutoff fails the new opaque-cloud background test.
+Visual acceptance of sun occultation, moving undersides and weather changes
+still requires loading the rebuilt addon in the user's gameplay scene.
+
+Cloud lighting follow-up (2026-11-01), final revision: Medium's local-density
+skylight shortcut is removed; all quality levels now integrate the actual
+overhead cloud column. The earlier view-only opacity boost is superseded by a
+liquid-cloud optical model using the same extinction for view and incoming
+light, near-conservative scattering, and two-stream diffuse skylight transport.
+The direct sun disc attenuates with optical depth while scattered illumination
+remains. General cloud shading/opacity changes too; no sun-shaped mask is added.
+Ground-shadow density, coefficient, sampling and bytecode are unchanged.
+
+Clang x64 Release and WARP/NVIDIA cloud, shadow and cloud-lighting tests pass.
+The Medium sky-only comparison improves 82% against dense integration; this
+does not establish complete in-game removal of banding. See
+`CLOUD_RENDERING_RESEARCH.md` for physical assumptions, limitations and timings.
+The existing game-folder symlink points to the rebuilt Release addon, SHA256
+`C1423483D2542E610C13B41D8579413488573BDC60375884EFC629E97B970C93`.
+Restart and compare sun-crossing clouds, shaded undersides and camera motion
+in the reported scene. Runtime visual acceptance remains pending.
+
+
+### Cloud baseline and lighting sampling update (2026-11-01)
+
+The approved density 15%, surface detail 200% and detail size 50% are now shown
+as 100%. Coverage, size and layer thickness default to 100%; base softness to
+0%. Existing profiles migrate once, preserving their physical appearance.
+Surface Detail can increase to 200%; Detail Size can decrease to 50% (and
+increase to 400%). Both CPU and shader limits support the extended range.
+
+Cloud ray sampling uses EA FAST masks, refined sun/sky integration and
+luminance-relative HDR temporal validation. Research, measurements, performance
+cost and live-test limitations are in [CLOUD_RENDERING_RESEARCH.md](CLOUD_RENDERING_RESEARCH.md)
+and [clouds/sampling.md](clouds/sampling.md). The mask is embedded; packaging
+includes its BSD license. This improves synthetic lighting-reference agreement
+but does not establish that every reported gameplay band is gone.
+
+Build `thewitcher3classic` with `build-release.ps1` (Clang x64 Release), with the
+game closed. Restart and check the normalized controls, detail above/below the
+baseline, shaded/bright clouds, camera pans, the sun and world shadows.
+
+
+### Second cloud-shape baseline (2026-11-01)
+
+The first-rebase Surface Detail 200% and Detail Size 80% are now 100%
+defaults: physical strength 4 and size 0.4. Base Softness remains 0%.
+Surface Detail retains a usable 0..200% range (physical 0..8); Detail Size
+supports 50..500% (physical 0.2..2), allowing smaller detail while preserving
+the previous largest size. The shader floor matches the new minimum.
+Density and other appearance baselines are unchanged.
+
+CloudAppearanceBaseline=2 migrates original and version-1 profiles directly,
+without double conversion. Version-1 detail percentages halve and detail-size
+percentages multiply by 1.25; density is unchanged. Original percentages use
+the original physical units. Already-migrated profiles are left alone. Missing
+values use the new defaults. Rebuild the Classic Release addon with the game
+closed, then check 100% defaults and adjustment on both sides of the baseline.
+
+
+### Third cloud baseline: density (2026-11-01)
+
+Previous Cloud Density 400% is now 100%, with physical density 0.6.
+The 0..4 physical range is preserved (new UI range 0..approximately 667%).
+The second-rebase cloud shape defaults/ranges remain unchanged.
+CloudAppearanceBaseline=3 divides version-1/2 density percentages by four,
+preserves version-2 shape percentages, and converts older profiles directly
+from their original physical units. Missing values use defaults; version-3
+profiles are not converted again. This only rebases UI units and defaults;
+cloud lighting, shader density evaluation and shadow algorithms are unchanged.

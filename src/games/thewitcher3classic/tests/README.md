@@ -1176,3 +1176,52 @@ builds 960x540 diagnostic views (--hardware --preview <prefix> [camera-height]);
 Preview lighting uses a daylight sky gain comparable to the captured scene;
 these are synthetic material/lighting comparisons, not a live-scene replay.
 Water SSR revision (2026-11-01): water_reflection_trace.cpp now includes the production private-resolution path (add /Ibuild/thewitcher3classic.include). water_reflection_history.cpp links d3d11.lib and runs with no args for WARP or --hardware for NVIDIA. Checks HDR noise rejection, virtual-hit camera motion, disocclusion, cuts and native padding. presets.cpp --water-ssr checks the SSR controls and explicit Vanilla/Custom assignments. See ../WATER_SSR_RESEARCH.md for the captured chain and live verification.
+
+Cloud shape revision (2026-11-01): tests/clouds.cpp also checks that surface
+relief survives optical density 4 and that detail size/base softness independently
+change the production extinction field. tests/cloud_material.cpp initializes the
+new style lanes while preserving weather/size isolation and fine-density bounds.
+The presets --cloud-sampling mode validates the three Cloud Shape keys, explicit
+Vanilla/Custom assignments, defaults and parameter packing. Run these alongside
+cloud_shadows.cpp on WARP/hardware after rebuilding the Classic shader target.
+Weather follow-up: cloud_weather.cpp compiles the production 0xF3C60007 kernel
+and checks native layer blending, sharp-mask filtering, mean preservation,
+wind/scale/origin reprojection and exponential in/out fade behavior. It links
+against d3d11/d3dcompiler and runs with no argument for WARP or --hardware for
+NVIDIA. cloud_shadows.cpp checks a consecutive-frame weather fade in the full
+pipeline; older isolated constant-weather scenarios use explicit frame cuts.
+Cloud underside / sun follow-up: cloud_material.cpp checks signed relief below
+the nominal base, the lower conservative bound, and the reported high-detail
+style settings. clouds.cpp checks opaque-cloud occultation over a 50000-linear
+HDR background, clear-sky headroom and destination alpha. The previous 0.005
+view-transmission termination fails this case; the extinction-tail correction
+passes on WARP/NVIDIA. Rerun cloud_shadows.cpp and cloud_weather.cpp as well.
+
+Cloud optical transport follow-up: compile `cloud_lighting.cpp` with
+C++20, /EHsc /O2 /DNOMINMAX; link d3d11.lib and d3dcompiler.lib. Run from the
+repo root with no arguments for WARP or --hardware for NVIDIA. It compiles
+production `clouds/lighting.hlsli`, compares diffuse reflection/transmission
+against a double-precision hyperbolic reference, and checks finite results,
+energy bounds, vacuum, monotonicity and direct versus diffuse attenuation.
+`clouds.cpp` and `cloud_shadows.cpp` pass with the final Release embeds.
+
+Scratch `cloud-lighting-20261101/sky-diagnostic.cpp` and `verify-sky.py` isolate
+the Medium skylight error against dense integration and a local-density
+negative control. `opacity.cpp` compares production view transmission at four
+densities against saved original bytecode, allowing propagated FP16 rounding;
+exact vacuum and clear-weather identity are checked by `clouds.cpp`.
+`benchmark.cpp` measures the isolated pipeline. Combined lighting convergence
+remains limited by sparse directional sampling; see the research document.
+
+
+Cloud FAST/HDR validation (2026-11-01): `cloud_reconstruction.cpp` exercises the
+production resolve with the embedded FAST sequence across a 128x128 gradient
+at linear scales 0.001/1/9000 for 96 frames. It checks normalized noise rejection,
+mean-energy drift, hue, opacity, moving detail and cuts. `presets.cpp --cloud-sampling`
+checks normalized startup/default values and extended detail-size/detail bounds.
+`clouds.cpp` fixes legacy regression inputs explicitly, verifies CS t7 restoration,
+and checks that surface detail above the new baseline and detail size below it
+actually alter GPU density. `cloud_shadows.cpp` retains explicit legacy inputs.
+Run WARP and hardware fixtures after the Release build. Research/provenance and
+synthetic timing limitations are in `../clouds/sampling.md` and
+`../CLOUD_RENDERING_RESEARCH.md`; gameplay acceptance remains manual.

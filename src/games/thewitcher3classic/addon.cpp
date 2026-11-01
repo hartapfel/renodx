@@ -791,10 +791,10 @@ renodx::utils::settings::Settings settings = {
         .key = "GfxCloudDensity", .binding = &witcher3classic::clouds::density,
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudDensity"),
         .label = "Cloud Density", .section = "Cloud Appearance",
-        .tooltip = "How opaque existing clouds are. Higher values block more sunlight and deepen cloud shadows; lower values make clouds more transparent. 100% keeps the current density.",
-        .min = 0.f, .max = 400.f, .format = "%.0f%%",
+        .tooltip = "How opaque existing clouds are. Higher values block more sunlight and deepen cloud shadows; lower values make clouds more transparent. 100% is the standard density.",
+        .min = 0.f, .max = 400.f / witcher3classic::clouds::DensityBaseline, .format = "%.0f%%",
         .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
-        .parse = [](float value) { return value * .01f; },
+        .parse = [](float value) { return value * .01f * witcher3classic::clouds::DensityBaseline; },
     },
     new renodx::utils::settings::Setting{
         .key = "GfxCloudSize", .binding = &witcher3classic::clouds::size,
@@ -811,6 +811,33 @@ renodx::utils::settings::Settings settings = {
         .label = "Cloud Layer Thickness", .section = "Cloud Appearance",
         .tooltip = "Vertical depth of the cloud layer. Higher values build taller, deeper clouds and block more light. The bottom of the layer stays at the same height. 100% keeps the current thickness.",
         .min = 50.f, .max = 300.f, .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
+        .parse = [](float value) { return value * .01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxCloudDetail", .binding = &witcher3classic::clouds::detail,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudDetail"),
+        .label = "Cloud Surface Detail", .section = "Cloud Shape",
+        .tooltip = "Breaks smooth cloud surfaces into smaller billows and wispy gaps. Higher values create more broken, textured clouds and let more light through. 0% keeps only the broad shapes.",
+        .min = 0.f, .max = 200.f, .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
+        .parse = [](float value) { return value * .01f * witcher3classic::clouds::DetailBaseline; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxCloudDetailSize", .binding = &witcher3classic::clouds::detail_size,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudDetailSize"),
+        .label = "Cloud Detail Size", .section = "Cloud Shape",
+        .tooltip = "Size of the small billows and wisps within each cloud. Lower values create finer texture; higher values create larger lobes. Cloud Size controls the whole formation separately. Fine detail benefits from higher resolution and shorter raymarch steps.",
+        .min = 50.f, .max = 500.f, .format = "%.0f%%",
+        .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
+        .parse = [](float value) { return value * .01f * witcher3classic::clouds::DetailSizeBaseline; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "GfxCloudBaseSoftness", .binding = &witcher3classic::clouds::base_softness,
+        .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudBaseSoftness"),
+        .label = "Cloud Base Softness", .section = "Cloud Shape",
+        .tooltip = "How gently the bottom of each cloud fades and breaks into wisps. Lower values give a firmer, flatter base; higher values make it looser. The cloud layer stays at the same height.",
+        .min = 0.f, .max = 100.f, .format = "%.0f%%",
         .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
         .parse = [](float value) { return value * .01f; },
     },
@@ -2436,6 +2463,25 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
       if (!reshade::get_config_value(nullptr, renodx::utils::settings::global_name.c_str(), setting->key.c_str(), value)
           && reshade::get_config_value(nullptr, (renodx::utils::settings::global_name + "-preset1").c_str(), setting->key.c_str(), value))
         reshade::set_config_value(nullptr, renodx::utils::settings::global_name.c_str(), setting->key.c_str(), value);
+    }
+
+    // Convert original (0), first-rebase (1), or shape-rebase (2) percentages
+    // directly to version 3 units, preserving saved physical appearances.
+    // Missing values adopt defaults; version 3 profiles are not rescaled.
+    for (const auto& suffix : {"-preset1", "-preset2", "-preset3"}) {
+      const auto section = renodx::utils::settings::global_name + suffix;
+      unsigned baseline = 0;
+      reshade::get_config_value(nullptr, section.c_str(), "CloudAppearanceBaseline", baseline);
+      if (baseline >= 3) continue;
+      for (const auto& [key, scale] : {
+          std::pair{"GfxCloudDensity", (baseline == 0 ? 1.f : .15f) / witcher3classic::clouds::DensityBaseline},
+          std::pair{"GfxCloudDetail", (baseline == 0 ? 1.f : baseline == 1 ? 2.f : 4.f) / witcher3classic::clouds::DetailBaseline},
+          std::pair{"GfxCloudDetailSize", (baseline == 0 ? 1.f : baseline == 1 ? .5f : .4f) / witcher3classic::clouds::DetailSizeBaseline}}) {
+        float value;
+        if (reshade::get_config_value(nullptr, section.c_str(), key, value))
+          reshade::set_config_value(nullptr, section.c_str(), key, value * scale);
+      }
+      reshade::set_config_value(nullptr, section.c_str(), "CloudAppearanceBaseline", 3u);
     }
 
     // Exposure used raw multipliers in the first test build. Migrate stored

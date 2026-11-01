@@ -48,6 +48,8 @@ inline constexpr Value graphics[] = {
     {"GfxCloudResolution", 0.f, 0.f}, {"GfxCloudStepSize", 100.f, 100.f},
     {"GfxCloudCoverage", 100.f, 100.f}, {"GfxCloudDensity", 100.f, 100.f},
     {"GfxCloudSize", 100.f, 100.f}, {"GfxCloudThickness", 100.f, 100.f},
+    {"GfxCloudDetail", 100.f, 100.f}, {"GfxCloudDetailSize", 100.f, 100.f},
+    {"GfxCloudBaseSoftness", 0.f, 0.f},
     {"GfxLighting", 0.f, 1.f}, {"GfxAmbientAO", 0.f, 1.f},
     {"GfxSoftShadows", 0.f, 1.f}, {"GfxSunDiameter", .35f, .35f},
     {"GfxContactShadows", 0.f, 1.f}, {"GfxContactLength", 1.f, 1.f},

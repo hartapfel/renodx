@@ -34,20 +34,21 @@ void main(uint3 id:SV_DispatchThreadID) {
   uint width,height,depth;noise.GetDimensions(width,height,depth);
   if(any(id>=uint3(width,height,depth)))return;
   float3 uv=(id+.5f)/float3(width,height,depth);
-  // Periodic divergence-free domain displacement breaks the cellular lattice.
-  // This is a procedural turbulence approximation, not a fluid simulation.
-  float3 warped=frac(uv+.045f*sin(6.28318530718f*uv.yzx)
-      +.018f*sin(12.56637061436f*uv.zxy));
+  // Bake irregular, tileable domain warping once. This is procedural
+  // turbulence, not a physical fluid simulation or a divergence-free field.
+  float3 warp=float3(Perlin(uv*4,4),Perlin(uv.yzx*4+7.f,4),
+      Perlin(uv.zxy*4+13.f,4))-.5f;
+  float3 warped=frac(uv+.16f*warp);
   float p4=Perlin(warped*4,4);
   float perlin=.625f*p4+.25f*Perlin(warped*8,8)+.125f*Perlin(warped*16,16);
   float w4=Worley(warped*4,4),w8=Worley(warped*8,8);
-  float w16=Worley(warped*16,16),w32=Worley(warped*32,32);
-  float potential=saturate((perlin-.35f*(1.f-w4))/.65f);
-  // Separate formation potential, billows, erosion and broad column variation.
-  // Preserve the inter-scale structure instead of baking everything into a
-  // biased scalar and leaving two channels unused (Nubis 2017/2022).
-  noise[id]=float4(saturate(.5f+(potential-.5f)*1.6f),
-      .625f*w4+.25f*w8+.125f*w16,
-      .625f*w8+.25f*w16+.125f*w32,
-      .65f*Perlin(uv*2,2)+.35f*p4);
+  float w16=Worley(warped*16,16);
+  float potential=saturate((perlin-.25f*(1.f-w4))/.75f);
+  // R: formation potential. G/B: independent billow scales, rather than
+  // repeatedly sampling the same already-averaged cellular fBm. A: wisps.
+  // No 32-cell octave in a 64-voxel tile: it had only two texels per feature.
+  // The density sampler nests these scales inside the parent envelope.
+  noise[id]=float4(saturate(.5f+(potential-.5f)*1.8f),
+      saturate(w4*1.5f),saturate((.7f*w8+.3f*w16)*1.5f),
+      saturate(.5f+1.8f*(.65f*Perlin(warped*8,8)+.35f*Perlin(warped*16,16)-.5f)));
 }
