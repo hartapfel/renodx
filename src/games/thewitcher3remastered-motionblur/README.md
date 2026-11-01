@@ -94,3 +94,13 @@ DevKit needs independent private/shared utility state when inspecting addons bui
 against different C++ layouts. Its device-destruction lock must also be released
 before deleting the object that owns the mutex. Both fixes are in DevKit; the
 official HDR binary is preserved, and the user confirmed gameplay with it. No rebase or loss of local custom work is needed.
+
+## Executable updates
+
+Automatic activation uses unique code-section anchors and independently validates
+the referenced AllowMotionBlur CVar and game slot. PE bounds and descriptor
+validation share the same read-only utility as Darker Nights. On 2026-10-30,
+`5.0.0.1090142` passed all 50 native activation cases; fixtures also relocate the
+builder, CVar and game slot independently and reject duplicate candidates.
+The pre-update addon was already logging active Classic reconstruction on this
+executable. Shader reconstruction and GPU resource lifetimes are unchanged.

@@ -41,7 +41,9 @@ allocator never waits.
 and reports warmed GPU time. It requires the built compute embed and a hardware GPU.
 
 The existing activation test privately maps the executable and exercises the
-validated flag hook without launching the game. The registration test checks
+validated flag hook without launching the game. Its PE fixture independently moves the builder,
+CVar descriptor and game slot, and rejects ambiguous executable copies.
+The registration test checks
 balanced callbacks and absence of global descriptor/CBV/draw tracking.
 
 Live checks: filter-active log, visual quality while moving, repeated inventory/map

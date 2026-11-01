@@ -22,7 +22,7 @@ int main(int argc, char** argv) { try {
   Require(bytes.size() > 4096, "Cannot read executable");
   const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(bytes.data());
   const auto* pe = reinterpret_cast<const IMAGE_NT_HEADERS64*>(bytes.data() + dos->e_lfanew);
-  auto* image = static_cast<unsigned char*>(VirtualAlloc(nullptr, pe->OptionalHeader.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+  auto* image = static_cast<unsigned char*>(VirtualAlloc(nullptr, pe->OptionalHeader.SizeOfImage + 0x3000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
   Require(image != nullptr, "Cannot map test image");
   std::memcpy(image, bytes.data(), pe->OptionalHeader.SizeOfHeaders);
   const auto* sections = IMAGE_FIRST_SECTION(pe);
@@ -43,6 +43,53 @@ int main(int argc, char** argv) { try {
   Require(ValidateImage(image), "Real executable signature/CVar validation failed");
   auto native = build_flags;
   auto* code = reinterpret_cast<unsigned char*>(native);
+  // Prove address-only updates are accepted without executing the relocated
+  // fixture. Its flag builder, game pointer and CVar descriptor move separately.
+  auto* mapped_header = reinterpret_cast<IMAGE_NT_HEADERS64*>(image + dos->e_lfanew);
+  auto* mapped_sections = IMAGE_FIRST_SECTION(mapped_header);
+  const unsigned old_count = mapped_header->FileHeader.NumberOfSections;
+  const uint32_t old_size = mapped_header->OptionalHeader.SizeOfImage;
+  Require(reinterpret_cast<unsigned char*>(mapped_sections + old_count + 2)
+              <= image + mapped_header->OptionalHeader.SizeOfHeaders, "No spare test section headers");
+  mapped_sections[old_count] = {};
+  mapped_sections[old_count].VirtualAddress = old_size;
+  mapped_sections[old_count].Misc.VirtualSize = 0x1000;
+  mapped_sections[old_count].Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE;
+  mapped_sections[old_count + 1] = {};
+  mapped_sections[old_count + 1].VirtualAddress = old_size + 0x1000;
+  mapped_sections[old_count + 1].Misc.VirtualSize = 0x1000;
+  mapped_sections[old_count + 1].Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE;
+  mapped_header->FileHeader.NumberOfSections += 2;
+  mapped_header->OptionalHeader.SizeOfImage += 0x2000;
+  const renodx::utils::pe::Image fixture(image);
+  const uint32_t original = static_cast<uint32_t>(code - image);
+  const uint32_t allow_rva = fixture.Relative(original + 0x146, 3, 7, IMAGE_SCN_MEM_WRITE);
+  const uint32_t game_rva = fixture.Relative(original + 0xa, 3, 7, IMAGE_SCN_MEM_WRITE);
+  std::array<unsigned char, 0x1bb> saved_code;
+  std::array<unsigned char, 36> saved_cvar;
+  std::memcpy(saved_code.data(), code, saved_code.size());
+  std::memcpy(saved_cvar.data(), image + allow_rva - 32, saved_cvar.size());
+  std::memcpy(image + old_size, code, saved_code.size());
+  Require(!ValidateImage(image), "Ambiguous flag builder was accepted");
+  std::memset(code, 0, saved_code.size());
+  const uint32_t new_cvar = old_size + 0x1000;
+  const uintptr_t new_value = reinterpret_cast<uintptr_t>(image + new_cvar + 32);
+  std::memcpy(image + new_cvar, saved_cvar.data(), saved_cvar.size());
+  std::memcpy(image + new_cvar + 16, &new_value, sizeof(new_value));
+  std::memset(image + allow_rva - 32, 0, saved_cvar.size());
+  std::memcpy(image + new_cvar + 0x80, image + game_rva, sizeof(void*));
+  const int32_t new_allow = int64_t(new_cvar + 32) - (int64_t(old_size) + 0x14d);
+  const int32_t new_game = int64_t(new_cvar + 0x80) - (int64_t(old_size) + 0x11);
+  std::memcpy(image + old_size + 0x149, &new_allow, 4);
+  std::memcpy(image + old_size + 0xd, &new_game, 4);
+  Require(ValidateImage(image) && reinterpret_cast<unsigned char*>(build_flags) == image + old_size
+              && reinterpret_cast<unsigned char*>(world_slot) == image + new_cvar + 0x80,
+          "Relocated builder/globals/CVar did not validate");
+  std::memcpy(code, saved_code.data(), saved_code.size());
+  std::memcpy(image + allow_rva - 32, saved_cvar.data(), saved_cvar.size());
+  mapped_header->FileHeader.NumberOfSections = old_count;
+  mapped_header->OptionalHeader.SizeOfImage = old_size;
+  Require(ValidateImage(image), "Original builder not restored after fixture");
   // Altered mask/store/scene semantics must reject the override, not guess.
   for (unsigned offset : {0x11u, 0x15du, 0x1afu}) {
     code[offset] ^= 1;
