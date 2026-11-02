@@ -15,12 +15,18 @@ int main(int argc,char** argv) {
     if(argc>1 &&std::string_view(argv[1])=="--cloud-sampling") {
       namespace clouds=witcher3classic::clouds;
       for(const auto& [key,physical]:{std::pair{"GfxCloudDensity",.6f},std::pair{"GfxCloudDetail",4.f},
-          std::pair{"GfxCloudDetailSize",.8f}}) {
+          std::pair{"GfxCloudDetailSize",.8f},std::pair{"GfxCloudThickness",1.3f}}) {
         auto* setting=ui::FindSetting(key);
         check(setting &&setting->default_value==100.f &&std::abs(*setting->binding-physical)<1.e-6f
             &&std::abs(setting->parse(100.f)-physical)<1.e-6f,"Rebased cloud startup/UI units mismatch");
       }
       check(clouds::base_softness==0.f &&clouds::coverage==1.f &&clouds::size==1.f,"Approved appearance defaults mismatch");
+      auto* thickness=ui::FindSetting("GfxCloudThickness");
+      thickness->Set(thickness->min)->Write();
+      check(std::abs(clouds::Appearance()[3]-.5f)<1.e-6f,"Rebased thickness loses the previous minimum");
+      thickness->Set(thickness->GetMax())->Write();
+      check(std::abs(clouds::Appearance()[3]-3.f)<1.e-6f,"Rebased thickness loses the previous maximum");
+      thickness->Set(100.f)->Write();
       auto* resolution=ui::FindSetting("GfxCloudResolution");
       auto* steps=ui::FindSetting("GfxCloudStepSize");
       check(resolution &&steps &&resolution->section=="Clouds" &&steps->section=="Clouds"

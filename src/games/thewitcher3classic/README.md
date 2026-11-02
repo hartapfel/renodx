@@ -3562,3 +3562,14 @@ Softness defaults are unchanged. CloudAppearanceBaseline=4 halves version-3
 detail-size percentages while preserving density and surface detail; versions
 0..2 migrate directly from their own physical units. Missing settings use the
 new default, and version-4 profiles are not converted twice. No shader changes.
+
+
+### Fifth cloud baseline: layer thickness (2026-11-01)
+
+Previous Cloud Layer Thickness 130% is now 100%, with physical thickness 1.3.
+The physical range 0.5..3 remains available through UI bounds 50/1.3..300/1.3
+(approximately 38.46..230.77%). Other cloud defaults remain unchanged.
+CloudAppearanceBaseline=5 divides saved thickness percentages by 1.3 and
+preserves version-4 density/shape percentages. Older profiles convert directly
+from their own units. Missing thickness values use the new default; version-5
+profiles are not converted again. Shader code and shadow integration are unchanged.

@@ -809,10 +809,11 @@ renodx::utils::settings::Settings settings = {
         .key = "GfxCloudThickness", .binding = &witcher3classic::clouds::thickness,
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxCloudThickness"),
         .label = "Cloud Layer Thickness", .section = "Cloud Appearance",
-        .tooltip = "Vertical depth of the cloud layer. Higher values build taller, deeper clouds and block more light. The bottom of the layer stays at the same height. 100% keeps the current thickness.",
-        .min = 50.f, .max = 300.f, .format = "%.0f%%",
+        .tooltip = "Vertical depth of the cloud layer. Higher values build taller, deeper clouds and block more light. The bottom of the layer stays at the same height. 100% is the standard thickness.",
+        .min = 50.f / witcher3classic::clouds::ThicknessBaseline,
+        .max = 300.f / witcher3classic::clouds::ThicknessBaseline, .format = "%.0f%%",
         .is_enabled = [] { return witcher3classic::clouds::mode != 0.f; },
-        .parse = [](float value) { return value * .01f; },
+        .parse = [](float value) { return value * .01f * witcher3classic::clouds::ThicknessBaseline; },
     },
     new renodx::utils::settings::Setting{
         .key = "GfxCloudDetail", .binding = &witcher3classic::clouds::detail,
@@ -2465,23 +2466,24 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         reshade::set_config_value(nullptr, renodx::utils::settings::global_name.c_str(), setting->key.c_str(), value);
     }
 
-    // Convert original (0), first (1), shape (2), or density (3) baselines
-    // directly to version 4 units, preserving saved physical appearances.
-    // Missing values adopt defaults; version 4 profiles are not rescaled.
+    // Convert original (0), first (1), shape (2), density (3), or detail-size
+    // (4) baselines directly to version 5 units, preserving saved appearances.
+    // Missing values adopt defaults; version 5 profiles are not rescaled.
     for (const auto& suffix : {"-preset1", "-preset2", "-preset3"}) {
       const auto section = renodx::utils::settings::global_name + suffix;
       unsigned baseline = 0;
       reshade::get_config_value(nullptr, section.c_str(), "CloudAppearanceBaseline", baseline);
-      if (baseline >= 4) continue;
+      if (baseline >= 5) continue;
       for (const auto& [key, scale] : {
           std::pair{"GfxCloudDensity", (baseline == 0 ? 1.f : baseline < 3 ? .15f : .6f) / witcher3classic::clouds::DensityBaseline},
           std::pair{"GfxCloudDetail", (baseline == 0 ? 1.f : baseline == 1 ? 2.f : 4.f) / witcher3classic::clouds::DetailBaseline},
-          std::pair{"GfxCloudDetailSize", (baseline == 0 ? 1.f : baseline == 1 ? .5f : .4f) / witcher3classic::clouds::DetailSizeBaseline}}) {
+          std::pair{"GfxCloudDetailSize", (baseline == 0 ? 1.f : baseline == 1 ? .5f : baseline < 4 ? .4f : .8f) / witcher3classic::clouds::DetailSizeBaseline},
+          std::pair{"GfxCloudThickness", 1.f / witcher3classic::clouds::ThicknessBaseline}}) {
         float value;
         if (reshade::get_config_value(nullptr, section.c_str(), key, value))
           reshade::set_config_value(nullptr, section.c_str(), key, value * scale);
       }
-      reshade::set_config_value(nullptr, section.c_str(), "CloudAppearanceBaseline", 4u);
+      reshade::set_config_value(nullptr, section.c_str(), "CloudAppearanceBaseline", 5u);
     }
 
     // Exposure used raw multipliers in the first test build. Migrate stored

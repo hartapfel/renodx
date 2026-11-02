@@ -465,3 +465,21 @@ settings and repeated loading. Clang x64 Release build passed. Cloud trace
 and shadow shader bytecode remain unchanged; the game-folder addon matches
 the build. SHA256: 8F879E236A96C00BF0C7213B4DA3B167E5459983E80B351EC369F3908273831D.
 Evidence: tmp/witcher3classic-investigation/cloud-rebase4-20261101/.
+
+
+### Fifth cloud baseline: layer thickness (2026-11-01)
+
+Previous Cloud Layer Thickness 130% is now 100%, with physical thickness 1.3.
+The physical range 0.5..3 remains available through UI bounds 50/1.3..300/1.3
+(approximately 38.46..230.77%). Other cloud defaults remain unchanged.
+CloudAppearanceBaseline=5 divides saved thickness percentages by 1.3 and
+preserves version-4 density/shape percentages. Older profiles convert directly
+from their own units. Missing thickness values use the new default; version-5
+profiles are not converted again. Shader code and shadow integration are unchanged.
+
+Fifth-rebase validation: preset/default/range checks and production migration
+checks pass for versions 0..5, missing values, custom settings and repeated
+loading. Clang x64 Release build passed. Cloud trace and shadow shader bytecode
+remain unchanged; the game-folder addon matches the build.
+SHA256: 9E6073D7BD7FBD09516166431A9EED2A38207D385D0ED66CE5B7B34DBD4586E8.
+Evidence: tmp/witcher3classic-investigation/cloud-rebase5-20261101/.
