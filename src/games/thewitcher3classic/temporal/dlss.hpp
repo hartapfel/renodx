@@ -1,5 +1,6 @@
 /* Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT */
 #pragma once
+#include "../graphics_profile.hpp"
 
 #include <d3d11_1.h>
 #include <dxgi.h>
@@ -116,6 +117,7 @@ class Dlss {
   // No CPU/GPU waits, resource sharing, helper process, or buffer readbacks.
   // The caller consumes output only after true, on this same ordered context.
   bool Evaluate(ID3D11DeviceContext1* context, const DlssInputs& inputs) {
+    profiling::Scope profile(context, "DLSS evaluation");
     if (failed_ || !initialized_ || !parameters_) return false;
     if (!inputs.motion_validated && !inputs.development_inputs) { status = "Waiting for validated object motion"; return false; }
     if (!inputs.width || !inputs.height || !inputs.output_width || !inputs.output_height

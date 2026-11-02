@@ -112,11 +112,9 @@ void main(uint3 id : SV_DispatchThreadID) {
     // jittering the authored extinction or crossing screen-space light tiles.
     float begin=SliceDistance(id.z,grid.z,options.y,far_distance);
     float end=SliceDistance(id.z+1.f,grid.z,options.y,far_distance);
-    [unroll]for(uint stratum=0;stratum<2;++stratum) {
-      float offset=.25f*(stratum+fog_jitter.z);
-      source += .25f*(LocalScattering(uv,frame[0].xyz+ray*lerp(begin,end,.5f+offset),ray,falloff)
-          +LocalScattering(uv,frame[0].xyz+ray*lerp(begin,end,.5f-offset),ray,falloff));
-    }
+    float2 offset=.25f*(float2(0.f,1.f)+fog_jitter.z);
+    source += LocalScattering(uv,ray,falloff,
+        lerp(begin,end,float4(.5f+offset.x,.5f-offset.x,.5f+offset.y,.5f-offset.y)));
   }
   // Albedo is one for the water droplets represented by the atmospheric fog.
   cells[id] = float4(min(source*max(extinction,FogSourceFloor),60000.f),min(extinction,100.f));

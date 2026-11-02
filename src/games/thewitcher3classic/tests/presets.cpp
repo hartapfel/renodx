@@ -14,13 +14,19 @@ int main(int argc,char** argv) {
     ui::preset_index=0; // no config writes or game hooks in this executable
     if(argc>1 &&std::string_view(argv[1])=="--cloud-sampling") {
       namespace clouds=witcher3classic::clouds;
-      for(const auto& [key,physical]:{std::pair{"GfxCloudDensity",.6f},std::pair{"GfxCloudDetail",4.f},
+      for(const auto& [key,physical]:{std::pair{"GfxCloudDensity",.18f},std::pair{"GfxCloudDetail",4.f},
           std::pair{"GfxCloudDetailSize",.8f},std::pair{"GfxCloudThickness",1.3f}}) {
         auto* setting=ui::FindSetting(key);
         check(setting &&setting->default_value==100.f &&std::abs(*setting->binding-physical)<1.e-6f
             &&std::abs(setting->parse(100.f)-physical)<1.e-6f,"Rebased cloud startup/UI units mismatch");
       }
       check(clouds::base_softness==0.f &&clouds::coverage==1.f &&clouds::size==1.f,"Approved appearance defaults mismatch");
+      auto* density=ui::FindSetting("GfxCloudDensity");
+      density->Set(density->min)->Write();
+      check(clouds::Appearance()[1]==0.f,"Rebased density loses zero density");
+      density->Set(density->GetMax())->Write();
+      check(std::abs(clouds::Appearance()[1]-4.f)<1.e-6f,"Rebased density loses the previous maximum");
+      density->Set(100.f)->Write();
       auto* thickness=ui::FindSetting("GfxCloudThickness");
       thickness->Set(thickness->min)->Write();
       check(std::abs(clouds::Appearance()[3]-.5f)<1.e-6f,"Rebased thickness loses the previous minimum");
@@ -77,15 +83,15 @@ int main(int argc,char** argv) {
       std::cout<<"PASS player/cutscene fill menu and explicit preset controls\n";return 0;
     }
     if(argc>1 &&std::string_view(argv[1])=="--water-ssr") {
-      for(const auto& [key,value]:{std::pair{"GfxWaterSSRFullResolution",0.f},std::pair{"GfxWaterSSRStabilization",1.f}}) {
+      for(const auto& [key,value]:{std::pair{"GfxWaterSSRQuality",2.f},std::pair{"GfxWaterSSRStabilization",1.f}}) {
         auto* setting=ui::FindSetting(key);
         check(setting &&setting->section=="Water" &&setting->default_value==value
             &&setting->binding &&*setting->binding==value &&!setting->tooltip.empty(),"SSR startup/default/menu mismatch");
       }
       ApplyTabPreset(preset::graphics,false);
-      check(witcher3classic::water::ssr_full_resolution==0.f &&witcher3classic::water::ssr_stabilization==0.f,"Vanilla leaves custom SSR active");
+      check(witcher3classic::water::ssr_quality==0.f &&witcher3classic::water::ssr_stabilization==0.f,"Vanilla leaves custom SSR active");
       ApplyTabPreset(preset::graphics,true);
-      check(witcher3classic::water::ssr_full_resolution==0.f &&witcher3classic::water::ssr_stabilization==1.f,"Custom SSR assignments incomplete");
+      check(witcher3classic::water::ssr_quality==2.f &&witcher3classic::water::ssr_stabilization==1.f,"Custom SSR assignments incomplete");
       check(!custom_shaders.at(0x35624BD6).on_inject(nullptr),"Native water compositor injects settings into native lighting slot");
       std::cout<<"PASS SSR menu/defaults, explicit Vanilla/Custom assignments, native compositor injection bypass\n";
       return 0;
@@ -100,12 +106,12 @@ int main(int argc,char** argv) {
           &&setting->binding &&*setting->binding==setting->parse(expected),
           "Cloud appearance startup/reset defaults differ from approved values");
     }
-    check(witcher3classic::water::ripple_pattern==1.f
+    check(witcher3classic::water::ripple_pattern==0.f
         &&ui::FindSetting("GfxWaterRipplePattern")->section=="Water"
-        &&preset::Default(preset::graphics,"GfxWaterRipplePattern")==1.f,"Water ripple pattern startup/default mismatch");
-    check(witcher3classic::water::surface_ripples==1.f
+        &&preset::Default(preset::graphics,"GfxWaterRipplePattern")==0.f,"Water ripple pattern startup/default mismatch");
+    check(witcher3classic::water::surface_ripples==.3f
         &&ui::FindSetting("GfxWaterSurfaceRipples")->section=="Water"
-        &&preset::Default(preset::graphics,"GfxWaterSurfaceRipples")==1.f,"Water ripple startup/default mismatch");
+        &&preset::Default(preset::graphics,"GfxWaterSurfaceRipples")==.3f,"Water ripple startup/default mismatch");
     check(night::enabled==1.f && night::moonlight==35.f && night::full_darkness_start==21.5f,"Runtime night defaults differ from Darker");
     check(!ui::FindSetting("GfxFogLightingResolution") && !ui::FindSetting("GfxFogLocalDistance")
         && !ui::FindSetting("GfxFogPixelLighting"),"Removed fog controls are still exposed");

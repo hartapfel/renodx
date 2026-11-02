@@ -5,6 +5,7 @@
 #include <embed/0xF3C40022.h>
 #include <embed/0xF3C40023.h>
 #include "../temporal/context.hpp"
+#include "../graphics_profile.hpp"
 #include <array>
 namespace witcher3classic::lighting {
 using Microsoft::WRL::ComPtr;
@@ -21,6 +22,7 @@ class ContactPipeline {
     bool consecutive=last_frame_!=UINT64_MAX && last_frame_+1==frame;
     last_frame_=UINT64_MAX;
     if(!parameters||!width||!height||width>8192||height>8192)return nullptr;
+    profiling::Scope profile(context, "Contact shadows", width, height);
     ComPtr<ID3D11Device> device;context->GetDevice(&device);
     if(!state_) {
       if(FAILED(device->CreateComputeShader(__0xF3C40020.data(),__0xF3C40020.size(),nullptr,&pack_))

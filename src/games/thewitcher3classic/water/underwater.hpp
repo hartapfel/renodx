@@ -7,6 +7,7 @@
 #include <embed/0xF3C50003.h>
 #include <embed/0xF3C50004.h>
 #include "../temporal/context.hpp"
+#include "../graphics_profile.hpp"
 namespace witcher3classic::water {
 using Microsoft::WRL::ComPtr;
 // GPU-only water optics preparation. CPU work is resource validation and a fixed
@@ -17,6 +18,7 @@ class Underwater {
   struct Controls { std::array<float,4> medium{.03f,.5f,1,0},quality{2,1,0,0}; };
   uint64_t captured_frame=UINT64_MAX,prepared_frame=UINT64_MAX;
   bool Capture(ID3D11DeviceContext1* context,uint64_t frame_id) {
+    profiling::Scope profile(context, "Water input capture");
     if(!Initialize(context))return false;
     captured_frame=UINT64_MAX;
     std::array<ComPtr<ID3D11Buffer>,4> buffers;
@@ -45,6 +47,7 @@ class Underwater {
   }
   bool Prepare(ID3D11DeviceContext1* context,ID3D11Buffer* frame,ID3D11Buffer* lighting,
                ID3D11ShaderResourceView* shadows,uint64_t frame_id,const Controls& controls) {
+    profiling::Scope profile(context, "Water caustic preparation");
     prepared_frame=UINT64_MAX;
     if(captured_frame==UINT64_MAX ||captured_frame+1!=frame_id ||!frame ||!lighting ||!shadows ||!Initialize(context))return false;
     D3D11_BUFFER_DESC desc{};frame->GetDesc(&desc);if(desc.ByteWidth!=269*16)return false;

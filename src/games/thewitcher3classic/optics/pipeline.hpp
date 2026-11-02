@@ -8,6 +8,7 @@
 #include <span>
 #include "../temporal/context.hpp"
 #include "./settings.hpp"
+#include "../graphics_profile.hpp"
 
 namespace witcher3classic::optics {
 using Microsoft::WRL::ComPtr;
@@ -58,6 +59,7 @@ class Pipeline {
     const bool dof = dof_mode == 1.f && dof_strength > 0.f;
     const bool motion = MotionActive() && history_ && motion_ && (!ObjectOnly() || (objects_ && object_depth_));
     if (!bloom && !dof && !motion && sharpening <= 0.f) return nullptr;
+    profiling::Scope profile(context, "Optics total", width, height);
     if (!full_[0].Ensure(device_.Get(), width, height) || !full_[1].Ensure(device_.Get(), width, height)) return nullptr;
     temporal::ContextScope restore(context, state_.Get());
     context_ = context;
@@ -68,31 +70,74 @@ class Pipeline {
     size_t next = 0;
     const uint32_t half_width = (width + 1) / 2, half_height = (height + 1) / 2;
     if (bloom) {
-      for (auto& target : bloom_)
-        if (!target.Ensure(device_.Get(), (width + 3) / 4, (height + 3) / 4)) return nullptr;
+      profiling::Scope profile(context, "Bloom", width, height);
+      if (!bloom_[0].Ensure(device_.Get(), (width + 3) / 4, (height + 3) / 4)) return nullptr;
       params.f0 = {std::clamp(bloom_extraction, 1.f, 4.f), 0, 0, 0};
       if (!Pass(1, bloom_[0], current, nullptr, nullptr, params)) return nullptr;
       const int passes = std::clamp(int(std::floor(bloom_size * 10.f)), 1, 64);
       const float gain = bloom_size >= .1f && bloom_size < .2f ? 1.f : 1.728f;
-      const float clear[4] = {};
-      context->ClearRenderTargetView(bloom_[2].target.Get(), clear);
-      for (int i = 0; i < passes; ++i) {
-        const float radius = std::max(.5f, (i + .5f) * .5f);
-        params.f0 = {radius, 0, 0, 0};
-        Pass(2, bloom_[1], bloom_[0].view.Get(), nullptr, nullptr, params);
-        params.f0 = {0, radius, 0, 0};
-        Pass(2, bloom_[0], bloom_[1].view.Get(), nullptr, nullptr, params);
-        params.f0 = {gain / passes, 0, 0, 0};
-        Pass(3, bloom_[2], bloom_[0].view.Get(), nullptr, nullptr, params, true);
+      if (passes > 4) {
+        // Match the second moment of the old accumulated Gaussian kernels.
+        // Wide components belong on coarse levels, not in dozens of repeated
+        // quarter-resolution draws. Weights sum to the original bloom gain.
+        if (bloom_passes_ != passes) {
+          bloom_weights_.fill(0.f);
+          float variance = 0.f;
+          bloom_levels_ = 0;
+          for (int i = 0; i < passes; ++i) {
+            const float radius = std::max(.5f, (i + .5f) * .5f);
+            for (const auto& tap : std::array<std::array<float, 2>, 2>{{{1.3846153846f, .3162162162f}, {3.2307692308f, .0702702703f}}}) {
+              const float distance = radius * tap[0], integral = std::floor(distance);
+              variance += 2.f * tap[1] * (integral * integral + (distance - integral) * (2.f * integral + 1.f));
+            }
+            const size_t upper = std::clamp(size_t(std::ceil(std::log2(1.f + variance / 1.5f) * .5f)), size_t(1), bloom_weights_.size() - 1);
+            const float lower_variance = 1.5f * (std::pow(4.f, float(upper - 1)) - 1.f);
+            const float fraction = std::clamp((variance - lower_variance) / (3.f * (lower_variance + 1.5f)), 0.f, 1.f);
+            bloom_weights_[upper - 1] += gain * (1.f - fraction) / passes;
+            bloom_weights_[upper] += gain * fraction / passes;
+            bloom_levels_ = std::max(bloom_levels_, upper);
+          }
+          bloom_passes_ = passes;
+        }
+        for (size_t level = 1; level <= bloom_levels_; ++level) {
+          const UINT divisor = 4u << level;
+          if (!bloom_down_[level - 1].Ensure(device_.Get(), (width + divisor - 1) / divisor, (height + divisor - 1) / divisor)) return nullptr;
+          if (!Pass(18, bloom_down_[level - 1], level == 1 ? bloom_[0].view.Get() : bloom_down_[level - 2].view.Get(), nullptr, nullptr, params)) return nullptr;
+        }
+        ID3D11ShaderResourceView* coarse = bloom_down_[bloom_levels_ - 1].view.Get();
+        for (size_t level = bloom_levels_; level-- > 0;) {
+          const UINT divisor = 4u << level;
+          if (!bloom_up_[level].Ensure(device_.Get(), (width + divisor - 1) / divisor, (height + divisor - 1) / divisor)) return nullptr;
+          params.f0 = {bloom_weights_[level], level == bloom_levels_ - 1 ? bloom_weights_[bloom_levels_] : 1.f, 0, 0};
+          if (!Pass(19, bloom_up_[level], level == 0 ? bloom_[0].view.Get() : bloom_down_[level - 1].view.Get(), coarse, nullptr, params)) return nullptr;
+          coarse = bloom_up_[level].view.Get();
+        }
+        params.f0 = {bloom_strength, 0, 0, 0};
+        if (!Pass(4, full_[next], current, coarse, nullptr, params)) return nullptr;
+      } else {
+        for (size_t i = 1; i < bloom_.size(); ++i)
+          if (!bloom_[i].Ensure(device_.Get(), (width + 3) / 4, (height + 3) / 4)) return nullptr;
+        const float clear[4] = {};
+        context->ClearRenderTargetView(bloom_[2].target.Get(), clear);
+        for (int i = 0; i < passes; ++i) {
+          const float radius = std::max(.5f, (i + .5f) * .5f);
+          params.f0 = {radius, 0, 0, 0};
+          Pass(2, bloom_[1], bloom_[0].view.Get(), nullptr, nullptr, params);
+          params.f0 = {0, radius, 0, 0};
+          Pass(2, bloom_[0], bloom_[1].view.Get(), nullptr, nullptr, params);
+          params.f0 = {gain / passes, 0, 0, 0};
+          Pass(3, bloom_[2], bloom_[0].view.Get(), nullptr, nullptr, params, true);
+        }
+        params.f0 = {bloom_strength, 0, 0, 0};
+        Pass(4, full_[next], current, bloom_[2].view.Get(), nullptr, params);
       }
-      params.f0 = {bloom_strength, 0, 0, 0};
-      Pass(4, full_[next], current, bloom_[2].view.Get(), nullptr, params);
       current = full_[next].view.Get();
       next = 1 - next;
     }
     if (dof) {
-      for (auto& target : half_)
-        if (!target.Ensure(device_.Get(), half_width, half_height)) return nullptr;
+      profiling::Scope profile(context, "Depth of field", width, height);
+      for (size_t i = 0; i < (near_strength > 0.f ? half_.size() : 2u); ++i)
+        if (!half_[i].Ensure(device_.Get(), half_width, half_height)) return nullptr;
       const float focal = std::clamp(focal_length, 1.f, 300.f) * .001f;
       const float focus = std::max(focus_distance, focal + .001f);
       const float s = focal * focal / std::max(aperture, .1f) / std::max(focus - focal, 1e-5f) * 26666.666f * dof_strength;
@@ -106,15 +151,18 @@ class Pipeline {
       params.f0 = {far_radius, 0, 0, 0};
       Pass(6, half_[0], sharp, nullptr, nullptr, params);
       Pass(8, half_[1], half_[0].view.Get(), nullptr, nullptr, params);
-      params.f0 = {near_radius, 0, 0, 0};
-      Pass(7, half_[2], sharp, nullptr, nullptr, params);
-      Pass(9, half_[3], half_[2].view.Get(), nullptr, nullptr, params);
+      if (near_strength > 0.f) {
+        params.f0 = {near_radius, 0, 0, 0};
+        Pass(7, half_[2], sharp, nullptr, nullptr, params);
+        Pass(9, half_[3], half_[2].view.Get(), nullptr, nullptr, params);
+      }
       params.f0 = {far_radius * 2.f, near_strength, 0, 0};
-      Pass(10, full_[next], sharp, half_[3].view.Get(), half_[1].view.Get(), params);
+      Pass(10, full_[next], sharp, near_strength > 0.f ? half_[3].view.Get() : nullptr, half_[1].view.Get(), params);
       current = full_[next].view.Get();
       next = 1 - next;
     }
     if (motion) {
+      profiling::Scope profile(context, "Motion blur", width, height);
       if (!velocity_.Ensure(device_.Get(), render_width_, render_height_)) return nullptr;
       uint32_t tile_width = render_width_, tile_height = render_height_;
       for (size_t i = 0; i < tiles_.size(); ++i) {
@@ -152,6 +200,7 @@ class Pipeline {
       next = 1 - next;
     }
     if (sharpening > 0.f) {
+      profiling::Scope profile(context, "Sharpening", width, height);
       // Sharpen once before the Custom cubic lens gather, not at every lens tap.
       params.f0 = {sharpening, 0, 0, 0};
       Pass(17, full_[next], current, nullptr, nullptr, params);
@@ -255,6 +304,10 @@ class Pipeline {
   std::array<Target, 2> full_;
   std::array<Target, 4> half_;
   std::array<Target, 3> bloom_;
+  std::array<Target, 8> bloom_down_, bloom_up_;
+  std::array<float, 9> bloom_weights_{};
+  size_t bloom_levels_ = 0;
+  int bloom_passes_ = 0;
   std::array<Target, 6> tiles_;
   Target velocity_;
   ID3D11DeviceContext1* context_ = nullptr;

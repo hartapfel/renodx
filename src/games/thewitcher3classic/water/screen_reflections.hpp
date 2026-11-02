@@ -10,6 +10,7 @@
 #include <embed/0xF3C70002.h>
 #include "../temporal/context.hpp"
 #include "settings.hpp"
+#include "../graphics_profile.hpp"
 
 namespace witcher3classic::water {
 using Microsoft::WRL::ComPtr;
@@ -44,7 +45,8 @@ class ScreenReflections {
   ComPtr<ID3D11Buffer> controls_,input_parameters_,current_frame_,previous_frame_,composite_size_;
   ComPtr<ID3D11ShaderResourceView> input_parameters_view_,current_frame_view_,previous_frame_view_;
   Image input_,emission_,raw_,guide_;
-  std::array<Image,2> history_,history_guide_;
+  std::array<Image,2> history_;
+  Image history_guide_;
   ComPtr<ID3D11Texture2D> opaque_depth_;
   ComPtr<ID3D11ShaderResourceView> opaque_view_;
   ComPtr<ID3D11ShaderResourceView> saved_scene_;
@@ -84,7 +86,7 @@ class ScreenReflections {
   }
 
  public:
-  static bool Enabled() {return ssr_full_resolution!=0.f || ssr_stabilization!=0.f;}
+  static bool Enabled() {return ssr_quality!=0.f || ssr_stabilization!=0.f;}
   void Restore(ID3D11DeviceContext1* context) {
     if(!bound_)return;
     context->PSSetShaderResources(0,1,saved_scene_.GetAddressOf());
@@ -98,11 +100,14 @@ class ScreenReflections {
                uint64_t frame,bool late_emission_bound) {
     if(!Enabled()) {Invalidate();return false;}
     if(prepared_==frame ||!render_width ||!render_height ||!Initialize(context))return false;
+    profiling::Scope profile(context, "Water SSR preparation", render_width, render_height);
     prepared_=traced_=UINT64_MAX;
     D3D11_VIEWPORT vp{};UINT count=1;context->RSGetViewports(&count,&vp);
     if(count!=1 ||vp.TopLeftX ||vp.TopLeftY ||vp.Width<1 ||vp.Height<1)return false;
-    const bool full=ssr_full_resolution!=0.f,stable=ssr_stabilization!=0.f;
-    const UINT width=full?render_width:UINT(vp.Width),height=full?render_height:UINT(vp.Height);
+    const bool full=ssr_quality!=0.f,stable=ssr_stabilization!=0.f;
+    const UINT divisor=ssr_quality>=1.5f?1u:2u;
+    const UINT width=full?(render_width+divisor-1)/divisor:UINT(vp.Width);
+    const UINT height=full?(render_height+divisor-1)/divisor:UINT(vp.Height);
     if(width>8192 ||height>8192 ||width>render_width ||height>render_height)return false;
     ComPtr<ID3D11Buffer> cb3,frame_buffer;
     UINT offset=0,n=0;context->PSGetConstantBuffers1(12,1,&frame_buffer,&offset,&n);
@@ -143,9 +148,10 @@ class ScreenReflections {
       if(!input_.Create(device_.Get(),width,height,DXGI_FORMAT_R16G16B16A16_FLOAT)
           ||!emission_.Create(device_.Get(),width,height,DXGI_FORMAT_R32_FLOAT)
           ||!raw_.Create(device_.Get(),width,height,DXGI_FORMAT_R16G16B16A16_FLOAT)
-          ||!guide_.Create(device_.Get(),width,height,DXGI_FORMAT_R32G32_FLOAT))return false;
-      for(UINT i=0;i<2;++i)if(!history_[i].Create(device_.Get(),width,height,DXGI_FORMAT_R16G16B16A16_FLOAT,true)
-          ||!history_guide_[i].Create(device_.Get(),width,height,DXGI_FORMAT_R32G32_FLOAT))return false;
+          ||!guide_.Create(device_.Get(),width,height,DXGI_FORMAT_R32G32_FLOAT)
+          ||!history_guide_.Create(device_.Get(),width,height,DXGI_FORMAT_R32G32_FLOAT))return false;
+      for(UINT i=0;i<2;++i)
+        if(!history_[i].Create(device_.Get(),width,height,DXGI_FORMAT_R16G16B16A16_FLOAT,true))return false;
       width_=width;height_=height;render_width_=render_width;render_height_=render_height;full_=full;
     }
     if(stable_!=stable)filtered_=UINT64_MAX;
@@ -185,7 +191,7 @@ class ScreenReflections {
     D3D11_TEXTURE2D_DESC d{};texture->GetDesc(&d);
     temporal::ContextScope scope(context,isolated_.Get());
     const std::array<float,12> controls{float(width_),float(height_),float(render_width_),float(render_height_),
-        float(full_?render_width_:width_)/d.Width,float(full_?render_height_:height_)/d.Height,stride_,0};
+        float(full_?render_width_:width_)/d.Width,float(full_?render_height_:height_)/d.Height,stride_,full_?1.f:0.f};
     context->UpdateSubresource(controls_.Get(),0,nullptr,controls.data(),0,0);
     ID3D11ShaderResourceView* sources[24]{};
     for(UINT i=0;i<views.size();++i)sources[i]=views[i].Get();
@@ -199,11 +205,16 @@ class ScreenReflections {
     const D3D11_VIEWPORT viewport{0,0,float(width_),float(height_),0,1};context->RSSetViewports(1,&viewport);
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->VSSetShader(vertex_.Get(),nullptr,0);context->PSSetShader(trace_.Get(),nullptr,0);
-    context->Draw(3,0);traced_=frame;return true;
+    {
+      profiling::Scope profile(context, "Water SSR trace", width_, height_);
+      context->Draw(3,0);
+    }
+    traced_=frame;return true;
   }
 
   bool Composite(ID3D11DeviceContext1* context,uint64_t frame) {
     if(!Enabled() ||traced_!=frame ||filtered_==frame ||bound_)return false;
+    profiling::Scope profile(context, "Water SSR history and mips", width_, height_);
     ComPtr<ID3D11Buffer> native_size;context->PSGetConstantBuffers(3,1,&native_size);
     ComPtr<ID3D11ShaderResourceView> padding;context->PSGetShaderResources(0,1,&padding);
     if(!native_size ||!padding)return false;
@@ -220,13 +231,15 @@ class ScreenReflections {
       context->UpdateSubresource(controls_.Get(),0,nullptr,controls.data(),0,0);
       context->CSSetConstantBuffers(0,1,controls_.GetAddressOf());
       ID3D11ShaderResourceView* sources[]={raw_.view.Get(),guide_.view.Get(),history_[ping_].view.Get(),
-          history_guide_[ping_].view.Get(),current_frame_view_.Get(),previous_frame_view_.Get(),padding.Get()};
+          history_guide_.view.Get(),current_frame_view_.Get(),previous_frame_view_.Get(),padding.Get()};
       context->CSSetShaderResources(0,7,sources);context->CSSetSamplers(0,1,linear_.GetAddressOf());
       context->CSSetUnorderedAccessViews(0,1,history_[next].output.GetAddressOf(),nullptr);
       context->CSSetShader(filter_.Get(),nullptr,0);context->Dispatch((width_+7)/8,(height_+7)/8,1);
       ID3D11UnorderedAccessView* clear=nullptr;context->CSSetUnorderedAccessViews(0,1,&clear,nullptr);
       context->GenerateMips(history_[next].view.Get());
-      context->CopyResource(history_guide_[next].texture.Get(),guide_.texture.Get());
+      // Trace and history need only current/previous guides. Exchange their
+      // ownership after filtering instead of a full-image copy and third guide.
+      std::swap(history_guide_,guide_);
       context->CopyResource(previous_frame_.Get(),current_frame_.Get());
     }
     ping_=next;filtered_=frame;

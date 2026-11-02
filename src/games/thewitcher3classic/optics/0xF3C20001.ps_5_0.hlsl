@@ -92,7 +92,8 @@ float4 main(float4 position : SV_Position) : SV_Target {
     return float4(Finite(near_layer?color*alpha:color),alpha);
   }
   if(stage==10) { // CoC-aware full-resolution reconstruction.
-    float4 sharp=Source.Load(int3(position.xy,0)), near_layer=Second.SampleLevel(LinearClamp,uv,0);
+    float4 sharp=Source.Load(int3(position.xy,0)), near_layer=0;
+    [branch] if(f0.y>0.f) near_layer=Second.SampleLevel(LinearClamp,uv,0);
     uint w,h; Third.GetDimensions(w,h);
     float2 p=uv*float2(w,h)-.5f,f=frac(p); int2 base=int2(floor(p));
     float3 far_layer=0; float weight=0;
@@ -181,5 +182,24 @@ float4 main(float4 position : SV_Position) : SV_Target {
     return float4(Finite(lerp(Source.Load(int3(position.xy,0)).rgb,blur.rgb,saturate(blur.a))),1);
   }
   if(stage==17) return float4(Finite(WitcherSharpenScene(Source,int2(position.xy),uint2(dimensions.zw),f0.x)),1);
+  if(stage==18) { // Normalized, overlapping 13-tap pyramid reduction.
+    float2 texel=rcp(dimensions.zw);
+    float3 color=Source.SampleLevel(LinearClamp,uv,0).rgb*.125f;
+    [unroll] for(int y=-1;y<=1;++y) [unroll] for(int x=-1;x<=1;++x) {
+      if(x!=0 || y!=0) color+=Source.SampleLevel(LinearClamp,uv+float2(x,y)*texel*2.f,0).rgb
+          *((x==0 || y==0)?.0625f:.03125f);
+    }
+    [unroll] for(int j=-1;j<=1;j+=2) [unroll] for(int i=-1;i<=1;i+=2)
+      color+=Source.SampleLevel(LinearClamp,uv+float2(i,j)*texel,0).rgb*.125f;
+    return float4(Finite(color),1);
+  }
+  if(stage==19) { // Tent upsample; add this scale without another blend draw.
+    uint width,height;Second.GetDimensions(width,height);
+    float3 color=0;
+    [unroll] for(int y=-1;y<=1;++y) [unroll] for(int x=-1;x<=1;++x)
+      color+=Second.SampleLevel(LinearClamp,uv+float2(x,y)/float2(width,height),0).rgb
+          *((x==0?2.f:1.f)*(y==0?2.f:1.f)/16.f);
+    return float4(Finite(Source.SampleLevel(LinearClamp,uv,0).rgb*f0.x+color*f0.y),1);
+  }
   return 0;
 }

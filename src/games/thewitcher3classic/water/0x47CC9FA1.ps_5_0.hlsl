@@ -36,7 +36,7 @@ cbuffer cb3 : register(b3)
 #ifdef CLASSIC_SSR_TRACE
 cbuffer SSRTrace : register(b4) {
   float4 ssr_extent; // trace extent, active render extent
-  float4 ssr_depth;  // opaque depth active/allocation, DDA stride, unused
+  float4 ssr_depth;  // opaque depth active/allocation, DDA stride, full-depth input
 }
 #endif
 
@@ -91,7 +91,13 @@ void main(
     r2.yz = cb3[5].zw * r1.zw;
     r2.x = cmp(0.5 < r2.x);
     r0.z = 0;
+#ifdef CLASSIC_SSR_TRACE
+    // Half-resolution tracing still uses the preserved full-resolution opaque
+    // depth. The native quarter path retains its own downsampled depth origin.
+    r0.z=t2.Load(int3(uint2(r0.xy*(ssr_depth.w>0.f?ssr_extent.zw/ssr_extent.xy:1.f)),0)).x;
+#else
     r0.z = t2.Load(r0.xyz).x;
+#endif
     r1.xy = cb3[8].zw * r1.xy;
     r3.xy = (uint2)r1.xy;
     r3.zw = float2(0,0);

@@ -86,7 +86,7 @@ float3 LocalRadiance(uint base, float3 world, float3 ray, float falloff) {
   return max(light[base+3].xyz,0.f) * (attenuation*visibility*transmittance
       * PhaseHG(dot(ray,direction),medium.w)*sampling.w);
 }
-float3 LocalScattering(float2 uv, float3 world, float3 ray, float falloff) {
+float3 LocalScattering(float2 uv, float3 ray, float falloff, float4 distances) {
   uint bytes;
   local_tiles.GetDimensions(bytes);
   if (sampling.w <= 0.f || bytes < 1024 || any(sampling.xy <= 0.f)) return 0.f;
@@ -100,7 +100,7 @@ float3 LocalScattering(float2 uv, float3 world, float3 ray, float falloff) {
   if (offset > bytes-1024u) return 0.f;
   uint count = min(asuint(light[57].x),256u);
   if (count == 0) return 0.f;
-  float3 scattering = 0.f;
+  float3 scattering[4] = {float3(0,0,0),float3(0,0,0),float3(0,0,0),float3(0,0,0)};
   [loop] for (uint entry=0; entry<256u; ++entry) {
     uint index = local_tiles.Load(offset+entry*4u);
     if (index >= 256u) break;
@@ -109,8 +109,16 @@ float3 LocalScattering(float2 uv, float3 world, float3 ray, float falloff) {
     uint flags = asuint(light[base+3].w);
     // Camera/player fill is a surface-lighting aid, not a luminous scene lamp.
     if (flags == 0x80001800u || light[base].w <= 0.f) continue;
-    scattering += LocalRadiance(base,world,ray,falloff);
+    if (!any(light[base+3].xyz > 0.f)) continue;
+    // All four quadrature samples share the screen tile and ray. Reject a
+    // light only when even the closest point of their enclosing segment is
+    // outside its radius. Keep the original per-sample accumulation order.
+    float3 relative = light[base].xyz-frame[0].xyz;
+    float3 closest = relative-ray*clamp(dot(relative,ray),distances.w,distances.z);
+    if (dot(closest,closest) > light[base].w*light[base].w*1.00001f) continue;
+    [unroll] for(uint sample=0;sample<4;++sample)
+      scattering[sample] += LocalRadiance(base,frame[0].xyz+ray*distances[sample],ray,falloff);
   }
-  return scattering;
+  return .25f*(scattering[0]+scattering[1])+.25f*(scattering[2]+scattering[3]);
 }
 #endif

@@ -64,7 +64,7 @@ inline constexpr Value graphics[] = {
     {"GfxFogShadowQuality", 1.f, 1.f}, {"GfxWater", 0.f, 1.f},
     {"GfxRefractiveRain", 0.f, 1.f}, {"GfxWaterSurfaceRipples",1.f,0.3f},
     {"GfxWaterRipplePattern",0.f,0.f},
-    {"GfxWaterSSRFullResolution",0.f,1.f},{"GfxWaterSSRStabilization",0.f,1.f},
+    {"GfxWaterSSRQuality",0.f,2.f},{"GfxWaterSSRStabilization",0.f,1.f},
     {"GfxUnderwaterDensity",1.f,1.f},
     {"GfxUnderwaterDetail",1.f,1.f},{"GfxWaterCaustics",1.f,1.f},
     {"GfxWaterCameraBlur",0.f,.15f},{"GfxWaterCameraCA",0.f,1.f},

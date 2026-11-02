@@ -219,6 +219,22 @@ void OnMaterialViewDestroyed(reshade::api::device* device, reshade::api::resourc
 }
 void OnBloomPresent(reshade::api::command_queue* queue, reshade::api::swapchain* swapchain,
                     const reshade::api::rect*, const reshade::api::rect*, uint32_t, const reshade::api::rect*) {
+  auto& capture = witcher3classic::profiling::capture;
+  if ((capture.requested.load(std::memory_order_relaxed) || capture.Active())
+      && swapchain->get_device()->get_api() == reshade::api::device_api::d3d11) {
+    wchar_t window_class[32]{};
+    if (GetClassNameW(static_cast<HWND>(swapchain->get_hwnd()), window_class, int(std::size(window_class)))
+        && std::wcscmp(window_class, L"W2ViewportClass") == 0) {
+      Microsoft::WRL::ComPtr<ID3D11DeviceContext1> context;
+      if (SUCCEEDED(reinterpret_cast<IUnknown*>(queue->get_immediate_command_list()->get_native())->QueryInterface(IID_PPV_ARGS(&context)))) {
+        capture.Frame(context.Get());
+        if (!capture.report.empty()) {
+          reshade::log::message(reshade::log::level::info, capture.report.c_str());
+          capture.report.clear();
+        }
+      }
+    }
+  }
   witcher3classic::optics::custom = shader_injection.tone_map_type == CLASSIC_TONE_MAP_PSYCHOV31;
   if (auto* data = renodx::utils::data::Get<BloomRouting>(swapchain->get_device())) {
     if (pending_weather_device.load(std::memory_order_relaxed) == swapchain->get_device()) {
@@ -955,7 +971,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogResolutionQuality"),
         .label = "Fog Detail",
         .section = "Fog Quality",
-        .tooltip = "Higher values use more samples to reduce steps and noise in fog and light shafts. Higher detail costs more GPU time; 2 is the default.",
+        .tooltip = "Higher values refine fog and light shafts at a greater GPU and memory cost. 1 is recommended for normal play; 2 offers finer detail. FAST sampling and temporal smoothing remain active at every grid detail level.",
         .min = 1.f,
         .max = 4.f,
         .format = "%d / 4",
@@ -1016,18 +1032,19 @@ renodx::utils::settings::Settings settings = {
         .is_enabled=[] {return witcher3classic::water::mode!=0.f;},
     },
     new renodx::utils::settings::Setting{
-        .key="GfxWaterSSRFullResolution",.binding=&witcher3classic::water::ssr_full_resolution,
-        .value_type=renodx::utils::settings::SettingValueType::BOOLEAN,
-        .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxWaterSSRFullResolution"),
-        .label="Full-Resolution Water Reflections",.section="Water",
-        .tooltip="Traces screen-space water reflections at the game's render resolution for finer detail. With DLSS, follows its internal resolution. Uses more GPU time and memory; Off keeps the original lower resolution. Objects outside the screen still cannot be reflected.",
+        .key="GfxWaterSSRQuality",.binding=&witcher3classic::water::ssr_quality,
+        .value_type=renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxWaterSSRQuality"),
+        .label="Water Reflection Detail",.section="Water",
+        .tooltip="Balanced traces at half the render width and height to reduce GPU work and memory. High traces at full render resolution for finer reflections. Native keeps the original resolution. All follow DLSS's internal resolution; objects outside the screen still cannot be reflected.",
+        .labels={"Native","Balanced","High"},
     },
     new renodx::utils::settings::Setting{
         .key="GfxWaterSSRStabilization",.binding=&witcher3classic::water::ssr_stabilization,
         .value_type=renodx::utils::settings::SettingValueType::BOOLEAN,
         .default_value=witcher3classic::presets::Default(witcher3classic::presets::graphics,"GfxWaterSSRStabilization"),
         .label="Stabilize Water Reflections",.section="Water",
-        .tooltip="Reduces reflection shimmer by tracking reflected surfaces between frames and rejecting outdated detail during movement. Works at either reflection resolution. Turn both reflection options Off to restore the original reflections.",
+        .tooltip="Reduces reflection shimmer by tracking reflected surfaces between frames and rejecting outdated detail during movement. Works at every reflection detail level. Select Native detail and disable stabilization to restore the original reflections.",
     },
     new renodx::utils::settings::Setting{
         .key="GfxUnderwaterDensity",.binding=&witcher3classic::water::underwater_density,
@@ -1746,10 +1763,10 @@ renodx::utils::settings::Settings settings = {
         .key = "FxMotionBlurMode",
         .binding = &witcher3classic::optics::motion_mode,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f,
+        .default_value = 2.f,
         .label = "Motion Blur",
         .section = "Motion Blur",
-        .tooltip = "Adds blur to movement. Object Only keeps camera movement sharp while blurring moving objects. Requires Object Motion and the game's Anti-aliasing option.",
+        .tooltip = "Off keeps movement sharp and avoids the blur passes. Object Only keeps camera movement sharp while blurring moving objects. Requires Object Motion and the game's Anti-aliasing option.",
         .labels = {"Camera + Object", "Object Only", "Off"},
         .is_enabled = &IsCustom,
     },
@@ -2095,6 +2112,13 @@ renodx::utils::settings::Settings settings = {
         .value_type = renodx::utils::settings::SettingValueType::TEXT,
         .label = "Display peak unavailable: default is 1000 nits. Set Peak Brightness manually.",
         .section = "About",
+    },
+    new renodx::utils::settings::Setting{
+        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
+        .label = "Capture GPU Performance",
+        .section = "About",
+        .tooltip = "Developer capture: warms up for 120 frames, then records 300 frames. Keep the camera and settings fixed. Writes pass timings to a temporary CSV and its location to ReShade.log. Disable Frame Generation for comparisons.",
+        .on_change = []() { witcher3classic::profiling::capture.requested.store(true); },
     },
     new renodx::utils::settings::Setting{
         .key = "FxDepthOfFieldControls",
@@ -2466,24 +2490,34 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         reshade::set_config_value(nullptr, renodx::utils::settings::global_name.c_str(), setting->key.c_str(), value);
     }
 
-    // Convert original (0), first (1), shape (2), density (3), or detail-size
-    // (4) baselines directly to version 5 units, preserving saved appearances.
-    // Missing values adopt defaults; version 5 profiles are not rescaled.
+    // Preserve the old boolean's actual behavior. Missing keys use the new
+    // defaults; an existing quality selection is never migrated again.
+    for (const auto& suffix : {"-preset1", "-preset2", "-preset3"}) {
+      const auto section = renodx::utils::settings::global_name + suffix;
+      float quality, full_resolution;
+      if (!reshade::get_config_value(nullptr, section.c_str(), "GfxWaterSSRQuality", quality)
+          && reshade::get_config_value(nullptr, section.c_str(), "GfxWaterSSRFullResolution", full_resolution))
+        reshade::set_config_value(nullptr, section.c_str(), "GfxWaterSSRQuality", witcher3classic::water::LegacySSRQuality(full_resolution));
+    }
+
+    // Convert original (0), first (1), shape (2), density (3), detail-size (4),
+    // or thickness (5) baselines to version 6 units, preserving saved appearances.
+    // Missing values adopt defaults; version 6 profiles are not rescaled.
     for (const auto& suffix : {"-preset1", "-preset2", "-preset3"}) {
       const auto section = renodx::utils::settings::global_name + suffix;
       unsigned baseline = 0;
       reshade::get_config_value(nullptr, section.c_str(), "CloudAppearanceBaseline", baseline);
-      if (baseline >= 5) continue;
+      if (baseline >= 6) continue;
       for (const auto& [key, scale] : {
           std::pair{"GfxCloudDensity", (baseline == 0 ? 1.f : baseline < 3 ? .15f : .6f) / witcher3classic::clouds::DensityBaseline},
           std::pair{"GfxCloudDetail", (baseline == 0 ? 1.f : baseline == 1 ? 2.f : 4.f) / witcher3classic::clouds::DetailBaseline},
           std::pair{"GfxCloudDetailSize", (baseline == 0 ? 1.f : baseline == 1 ? .5f : baseline < 4 ? .4f : .8f) / witcher3classic::clouds::DetailSizeBaseline},
-          std::pair{"GfxCloudThickness", 1.f / witcher3classic::clouds::ThicknessBaseline}}) {
+          std::pair{"GfxCloudThickness", (baseline < 5 ? 1.f : 1.3f) / witcher3classic::clouds::ThicknessBaseline}}) {
         float value;
         if (reshade::get_config_value(nullptr, section.c_str(), key, value))
           reshade::set_config_value(nullptr, section.c_str(), key, value * scale);
       }
-      reshade::set_config_value(nullptr, section.c_str(), "CloudAppearanceBaseline", 5u);
+      reshade::set_config_value(nullptr, section.c_str(), "CloudAppearanceBaseline", 6u);
     }
 
     // Exposure used raw multipliers in the first test build. Migrate stored
@@ -2709,6 +2743,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         .name = "Classic scene color",
     });
   } else if (reason == DLL_PROCESS_DETACH) {
+    witcher3classic::profiling::capture.Reset();
     witcher3classic::night::Update(false);
     reshade::unregister_event<reshade::addon_event::present>(&OnNightPresent);
     reshade::unregister_event<reshade::addon_event::init_device>(&witcher3classic::rain::OnInit);

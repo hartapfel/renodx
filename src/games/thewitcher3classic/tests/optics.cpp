@@ -269,6 +269,29 @@ int main(int argc, char**) {
     f.context->Unmap(staging.Get(), 0);
   }
   std::cout << "PASS camera removal: 32 translating/rotating/projection-changing camera pairs with different jitters\n";
+  // Independent impulse-shape gate against the pre-optimization bloom at
+  // size 2: radial RMS 125.23 pixels, inner-16px energy fraction 0.1801.
+  // Energy follows the authored gain; the target is not the pyramid weights.
+  optics::motion_mode = 2; optics::dof_mode = 0; optics::bloom_mode = 1;
+  optics::bloom_size = 2; optics::bloom_strength = 1; optics::bloom_extraction = 3;
+  {
+    constexpr UINT w = 1024;
+    std::vector<float> color(w*w*4), depths(w*w,.1f), vectors(w*w*4);
+    for(UINT y=w/2-8;y<w/2+8;++y)for(UINT x=w/2-8;x<w/2+8;++x)
+      for(UINT c=0;c<3;++c)color[(y*w+x)*4+c]=16;
+    const auto result=f.Run(w,w,color,depths,vectors);
+    double energy=0, moment=0, core=0;
+    for(UINT y=0;y<w;++y)for(UINT x=0;x<w;++x) {
+      const double value=result[(y*w+x)*4]-color[(y*w+x)*4];
+      const double distance=(x-511.5)*(x-511.5)+(y-511.5)*(y-511.5);
+      assert(value>=-.001);
+      energy+=value;moment+=value*distance;if(distance<256)core+=value;
+    }
+    assert(std::abs(energy/(256*16*1.728)-1)<.02);
+    assert(std::abs(std::sqrt(moment/energy)/125.23039-1)<.08);
+    assert(std::abs(core/energy-.1801)<.03);
+    std::cout<<"PASS bloom impulse energy="<<energy<<" RMS radius="<<std::sqrt(moment/energy)<<" core="<<core/energy<<'\n';
+  }
   ComPtr<ID3D11InfoQueue> info;
   if (SUCCEEDED(f.device.As(&info)))
     for (UINT64 i = 0; i < info->GetNumStoredMessages(); ++i) {

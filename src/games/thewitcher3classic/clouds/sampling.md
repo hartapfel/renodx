@@ -33,6 +33,11 @@ immutable R8_UNORM, 512 KiB, no mip chain. Frame-major decoded SHA256:
   covers neighborhood/variance history validation and HDR filtering tradeoffs.
   [AMD's reversible resolve discussion](https://gpuopen.com/learn/optimized-reversible-tonemapper-for-resolve/)
   explicitly identifies brightness bias from nonlinear HDR weighting.
+- [An Excursion in Temporal Supersampling, Salvi/NVIDIA, GDC 2016](https://developer.download.nvidia.com/gameworks/events/GDC2016/msalvi_temporal_supersampling.pdf)
+  uses local moments to validate history and discusses stochastic transparency,
+  lost accumulation from undersampling, and temporal stability versus ghosting.
+  Our transmission noise allowance adapts that statistical-validation principle;
+  it is not a verbatim implementation of Salvi's variance-clipping algorithm.
 
 These establish the techniques, not a uniquely correct set of Witcher-specific
 constants. The implementation is an adaptation, not EA's complete renderer.
@@ -62,6 +67,22 @@ targets an EMA with alpha 0.1; adaptive weights and reprojection mean this is
 only an approximate filter match. RGB stays linear with scalar blend weights;
 no inverse-luminance energy bias, display noise, HDR cap, or sun-disc blur is added.
 Existing depth, camera-cut, clock and weather history rejection remains active.
+
+Bright-gap revision (2026-11-02): transparency receives its own neighborhood
+variance estimate. History rejection subtracts a two-standard-deviation noise
+allowance before applying the existing opacity-change threshold. This fixes
+rejection of stochastic transmission through thin clouds without increasing the
+base history weight or modifying ray positions. Min/max clipping still replaces
+stale history when a region becomes clear or opaque. The cloud motion field now
+exports resolved opacity and the same variance-aware confidence, so the upscaler
+does not reject that accumulated result based on a raw noisy opacity sample.
+
+`tests/cloud_reconstruction.cpp` now tests FAST transmission noise, resolved
+upscaler confidence, subpixel moving gaps, immediate opening/closing and cuts,
+in addition to RGB/HDR convergence. Its optional shader-file argument accepts
+HLSL for isolated iteration without replacing a loaded game addon; link
+`d3dcompiler.lib` as well as `d3d11.lib`. Use `--warp path.hlsl` for software or
+`--hardware path.hlsl` for the GPU. Live bright-rim/gap acceptance is still needed.
 
 HDR awareness belongs to history validation, not the random sample distribution:
 biasing ray positions by brightness would change the lighting integral. Dithering

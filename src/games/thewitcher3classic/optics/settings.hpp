@@ -2,7 +2,7 @@
 #pragma once
 namespace witcher3classic::optics {
 inline bool custom = true;
-inline float motion_mode = 0.f;  // Camera + Object, Object Only, Off.
+inline float motion_mode = 2.f;  // Camera + Object, Object Only, Off.
 inline float motion_strength = 1.f;
 inline float dof_mode = 1.f;  // Native, Custom, Off.
 inline float dof_strength = 1.f;

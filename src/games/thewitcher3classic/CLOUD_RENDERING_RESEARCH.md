@@ -483,3 +483,13 @@ loading. Clang x64 Release build passed. Cloud trace and shadow shader bytecode
 remain unchanged; the game-folder addon matches the build.
 SHA256: 9E6073D7BD7FBD09516166431A9EED2A38207D385D0ED66CE5B7B34DBD4586E8.
 Evidence: tmp/witcher3classic-investigation/cloud-rebase5-20261101/.
+
+
+### Cloud density baseline revision 6 (2026-11-02)
+
+Previous Cloud Density 30% is now 100% (physical density 0.18).
+The slider retains the physical range 0 to 4, now displayed as 0 to approximately
+2222%. Saved profiles migrate once to version 6: previous 30% becomes 100%,
+previous 100% becomes approximately 333%. All other appearance settings, including
+version-5 layer thickness, retain their saved physical values. Missing density
+settings and reset defaults use the new 100%. The rendering equations are unchanged.

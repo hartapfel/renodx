@@ -112,8 +112,8 @@ int main(int argc,char**) {
   ComPtr<ID3D11DeviceContext1> context;assert(SUCCEEDED(ctx.As(&context)));
   witcher3classic::water::ScreenReflections reflections;
   uint64_t frame_id=0;
-  for(const UINT active:{64u,48u,63u})for(float full:{0.f,1.f})for(float stable:{0.f,1.f}) {
-    witcher3classic::water::ssr_full_resolution=full;
+  for(const UINT active:{64u,48u,63u})for(float quality:{0.f,1.f,2.f})for(float stable:{0.f,1.f}) {
+    witcher3classic::water::ssr_quality=quality;
     witcher3classic::water::ssr_stabilization=stable;
     for(UINT repeat=0;repeat<3;++repeat,++frame_id) {
       const UINT q=std::max(1u,active/4);
@@ -121,7 +121,7 @@ int main(int argc,char**) {
       ctx->PSSetConstantBuffers(3,1,param_buffer.GetAddressOf());
       ctx->PSSetShaderResources(0,1,views[1].GetAddressOf());
       ctx->PSSetShaderResources(1,1,views[2].GetAddressOf());
-      if(!full &&!stable) {assert(!reflections.Prepare(context.Get(),active,active,frame_id,false));continue;}
+      if(!quality &&!stable) {assert(!reflections.Prepare(context.Get(),active,active,frame_id,false));continue;}
       assert(reflections.Prepare(context.Get(),active,active,frame_id,false));
       D3D11_VIEWPORT saved{};UINT count=1;ctx->RSGetViewports(&count,&saved);assert(saved.Width==q);
       for(UINT i=0;i<7;++i)ctx->PSSetShaderResources(i==6?23:i,1,views[i].GetAddressOf());
@@ -131,7 +131,7 @@ int main(int argc,char**) {
       ComPtr<ID3D11ShaderResourceView> selected;context->PSGetShaderResources(0,1,&selected);
       ComPtr<ID3D11Resource> resource;selected->GetResource(&resource);ComPtr<ID3D11Texture2D> result_texture;
       assert(SUCCEEDED(resource.As(&result_texture)));D3D11_TEXTURE2D_DESC result_desc;result_texture->GetDesc(&result_desc);
-      assert(result_desc.Width==(full?active:q) &&result_desc.Height==result_desc.Width &&result_desc.MipLevels>1);
+      assert(result_desc.Width==(quality==2.f?active:quality==1.f?(active+1)/2:q) &&result_desc.Height==result_desc.Width &&result_desc.MipLevels>1);
       result_desc.MipLevels=1;result_desc.Usage=D3D11_USAGE_STAGING;result_desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
       result_desc.BindFlags=result_desc.MiscFlags=0;ComPtr<ID3D11Texture2D> readback;
       assert(SUCCEEDED(device->CreateTexture2D(&result_desc,nullptr,&readback)));
@@ -149,5 +149,6 @@ int main(int argc,char**) {
       assert(!reflections.Composite(context.Get(),frame_id));
     }
   }
-  std::cout<<"PASS production SSR full/quarter dimensions, DLSS subrects, odd sizes, resize/toggle history, HDR, one composite per frame and native state restoration\n";
+  assert(witcher3classic::water::LegacySSRQuality(0.f)==0.f &&witcher3classic::water::LegacySSRQuality(1.f)==2.f);
+  std::cout<<"PASS production SSR full/half/quarter dimensions, DLSS subrects, odd sizes, resize/toggle history, HDR, guide reuse, legacy mapping, one composite per frame and native state restoration\n";
 }

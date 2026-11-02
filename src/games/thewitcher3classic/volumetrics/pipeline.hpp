@@ -1,5 +1,6 @@
 /* Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT */
 #pragma once
+#include "../graphics_profile.hpp"
 #include <embed/0xF3C30001.h>
 #include <embed/0xF3C30002.h>
 #include <embed/0xF3C30003.h>
@@ -40,7 +41,9 @@ class Pipeline {
         || parameters.grid[2]<1 || parameters.grid[3]<=parameters.options[1]) return false;
     if (!Initialize(context)) return false;
     ray_ready_=false;
-    if(ray_frame_.Capture(context,device_.Get(),frame,269*16)
+    // Grid consumers never enter the per-pixel path. Avoid copying the full
+    // native light list and frame snapshot solely for inactive ray bindings.
+    if(parameters.sky[2]>.5f &&ray_frame_.Capture(context,device_.Get(),frame,269*16)
         && ray_lighting_.Capture(context,device_.Get(),lighting,2*16)) {
       ray_sources_={local_lights.tiles,ray_frame_.view.Get(),ray_lighting_.view.Get(),shadow,
           local_lights.atlas,local_lights.cubes,cloud,terrain,interiors};
@@ -88,8 +91,11 @@ class Pipeline {
     context->CSSetShaderResources(7,1,samples_view_.GetAddressOf());
     ID3D11UnorderedAccessView* output=cells_.output.Get();
     context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
-    context->CSSetShader(scatter_.Get(),nullptr,0);
-    context->Dispatch((width+3)/4,(height+3)/4,(slices+3)/4);
+    {
+      profiling::Scope profile(context, "Fog scatter", width, height);
+      context->CSSetShader(scatter_.Get(),nullptr,0);
+      context->Dispatch((width+3)/4,(height+3)/4,(slices+3)/4);
+    }
     output=nullptr;
     context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
     inputs[0]=cells_.view.Get();
@@ -101,8 +107,11 @@ class Pipeline {
       context->CSSetShaderResources(8,3,history_inputs);
       output=history_[history_index_^1u].output.Get();
       context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
-      context->CSSetShader(resolve_.Get(),nullptr,0);
-      context->Dispatch((width+3)/4,(height+3)/4,(slices+3)/4);
+      {
+        profiling::Scope profile(context, "Fog history", width, height);
+        context->CSSetShader(resolve_.Get(),nullptr,0);
+        context->Dispatch((width+3)/4,(height+3)/4,(slices+3)/4);
+      }
       output=nullptr;context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
       std::fill(std::begin(history_inputs),std::end(history_inputs),nullptr);
       context->CSSetShaderResources(8,3,history_inputs);
@@ -112,8 +121,11 @@ class Pipeline {
     }
     output=volume_.output.Get();
     context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
-    context->CSSetShader(integrate_.Get(),nullptr,0);
-    context->Dispatch((width+7)/8,(height+7)/8,1);
+    {
+      profiling::Scope profile(context, "Fog integration", width, height);
+      context->CSSetShader(integrate_.Get(),nullptr,0);
+      context->Dispatch((width+7)/8,(height+7)/8,1);
+    }
     if(ray_ready_ && depth
         && parameters.sampling[0]>=1.f/8192 && parameters.sampling[0]<=1.f
         && parameters.sampling[1]>=1.f/8192 && parameters.sampling[1]<=1.f) {
@@ -143,8 +155,11 @@ class Pipeline {
         context->CSSetSamplers(11,1,linear_sampler_.GetAddressOf());
         ID3D11UnorderedAccessView* outputs[]={scattering_.output.Get(),endpoint_.output.Get()};
         context->CSSetUnorderedAccessViews(0,2,outputs,nullptr);
-        context->CSSetShader(pixel_.Get(),nullptr,0);
-        context->Dispatch((render_width+7)/8,(render_height+7)/8,1);
+        {
+          profiling::Scope profile(context, "Per-pixel fog", render_width, render_height);
+          context->CSSetShader(pixel_.Get(),nullptr,0);
+          context->Dispatch((render_width+7)/8,(render_height+7)/8,1);
+        }
         cache_ready_=true;
       }
     }

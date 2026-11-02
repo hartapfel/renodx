@@ -35,12 +35,14 @@ void main(uint3 id:SV_DispatchThreadID) {
   float4 lower=current,upper=current;
   const float3 luminance=float3(.2126f,.7152f,.0722f);
   float mean=0.f,second_moment=0.f,count=0.f;
+  float transmission_mean=0.f,transmission_second=0.f;
   [unroll]for(int y=-1;y<=1;++y)[unroll]for(int x=-1;x<=1;++x) {
     int2 pixel=clamp(int2(id.xy)+int2(x,y),0,int2(dimensions.xy)-1);
     if(current_depth.Load(int3(pixel,0))>0.f) {
       float4 value=current_cloud.Load(int3(pixel,0));lower=min(lower,value);upper=max(upper,value);
       float luma=dot(max(value.rgb,0.f),luminance);
       mean+=luma;second_moment+=luma*luma;count+=1.f;
+      transmission_mean+=value.a;transmission_second+=value.a*value.a;
     }
   }
   float4 old=ReconstructCloud(history_cloud,clamp_sampler,uv,dimensions.xy);
@@ -53,16 +55,27 @@ void main(uint3 id:SV_DispatchThreadID) {
   float difference=abs(current.a-old.a);
   mean/=max(count,1.f);
   float deviation=sqrt(max(0.f,second_moment/max(count,1.f)-mean*mean));
+  transmission_mean/=max(count,1.f);
+  float transmission_deviation=sqrt(max(0.f,transmission_second/max(count,1.f)-transmission_mean*transmission_mean));
   // Judge changes relative to the local HDR signal, allowing the neighborhood's
   // sampling variation to converge. A fixed RGB threshold rejected dark noise
   // and bright noise differently. Keep accumulation linear and hue preserving;
   // reciprocal-luminance weighting would bias steady cloud energy downward.
   float smooth_region=1.f-saturate(deviation/max(mean,1.e-4f)*10.f);
   float change=max(0.f,abs(dot(current.rgb-old.rgb,luminance))-2.f*deviation*smooth_region)/max(mean,1.e-4f);
+  // Transmission is stochastic too. Comparing one noisy sample against the
+  // converged history rejected precisely the thin gaps that expose bright HDR
+  // sky. Allow measured neighborhood variance, while the existing min/max
+  // clip removes stale history from genuinely opened/closed gaps immediately.
+  float transmission_change=max(0.f,difference-2.f*transmission_deviation);
   float2 motion=uv-(id.xy+.5f)/dimensions.xy
       -(previous[15].xy-frame[15].xy)*float2(.5f,-.5f);
-  float history_weight=lerp(.8f,.9f,smooth_region)*(1.f-saturate(difference*8.f))
+  float history_weight=lerp(.8f,.9f,smooth_region)*(1.f-saturate(transmission_change*8.f))
       /((1.f+2.f*change)*(1.f+.25f*length(motion*dimensions.xy)));
-  resolved[id.xy]=lerp(current,old,valid?history_weight:0.f);
-  cloud_motion[id.xy]=float4(valid ? motion : 0.f,1.f-current.a,valid &&difference<.025f ? 1.f : 0.f);
+  float4 filtered=lerp(current,old,valid?history_weight:0.f);
+  resolved[id.xy]=filtered;
+  // The upscaler must see the same opacity/confidence as the resolved cloud.
+  // Feeding raw noisy opacity here marked stable gaps responsive every frame,
+  // discarding the downstream history that should reconstruct their detail.
+  cloud_motion[id.xy]=float4(valid ? motion : 0.f,1.f-filtered.a,valid &&transmission_change<.025f ? 1.f : 0.f);
 }

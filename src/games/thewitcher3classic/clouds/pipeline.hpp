@@ -15,6 +15,7 @@
 #include "fast_noise.hpp"
 #include "../volumetrics/pipeline.hpp"
 #include "../temporal/context.hpp"
+#include "../graphics_profile.hpp"
 namespace witcher3classic::clouds {
 template<class T> using ComPtr=Microsoft::WRL::ComPtr<T>;
 class Pipeline {
@@ -28,6 +29,7 @@ class Pipeline {
   bool PrepareShadow(ID3D11DeviceContext1* context,ID3D11Buffer* frame,ID3D11Buffer* lighting,
       ID3D11ShaderResourceView* weather,uint64_t serial,float quality,bool cast) {
     if(shadow_frame_==serial)return true;
+    profiling::Scope profile(context, "Ground cloud shadows");
     if(!frame ||!lighting ||!weather)return false;
     D3D11_BUFFER_DESC buffer{};frame->GetDesc(&buffer);if(buffer.ByteWidth!=4304)return false;
     lighting->GetDesc(&buffer);if(buffer.ByteWidth<32)return false;
@@ -87,6 +89,7 @@ class Pipeline {
     if(texture_desc.Width<width ||texture_desc.Height<height ||texture_desc.SampleDesc.Count!=1
         ||(texture_desc.Format!=DXGI_FORMAT_R16G16B16A16_FLOAT &&texture_desc.Format!=DXGI_FORMAT_R32G32B32A32_FLOAT))return false;
     const auto samples=Quality(quality);
+    profiling::Scope profile(context, "Clouds total", width, height);
     const auto appearance=Appearance();
     const auto atmosphere=Atmosphere(volumetrics::sky_density);
     if(appearance_!=appearance ||atmosphere_!=atmosphere) {
@@ -135,7 +138,10 @@ class Pipeline {
     context->CSSetShaderResources(7,1,samples_view_.GetAddressOf());
     ID3D11UnorderedAccessView* outputs[]{buffers_[0].uav.Get(),buffers_[1].uav.Get(),nullptr};
     context->CSSetUnorderedAccessViews(0,2,outputs,nullptr);
-    context->CSSetShader(trace_.Get(),nullptr,0);context->Dispatch((low_width+7)/8,(low_height+7)/8,1);
+    {
+      profiling::Scope profile(context, "Cloud trace", low_width, low_height);
+      context->CSSetShader(trace_.Get(),nullptr,0);context->Dispatch((low_width+7)/8,(low_height+7)/8,1);
+    }
     outputs[0]=outputs[1]=nullptr;context->CSSetUnorderedAccessViews(0,2,outputs,nullptr);
     UINT write=history_index_==2 ? 4 : 2;
     ID3D11ShaderResourceView* temporal_inputs[]{buffers_[0].view.Get(),buffers_[1].view.Get(),
@@ -144,7 +150,10 @@ class Pipeline {
     outputs[0]=buffers_[write].uav.Get();outputs[1]=buffers_[write+1].uav.Get();
     outputs[2]=buffers_[6].uav.Get();
     context->CSSetUnorderedAccessViews(0,3,outputs,nullptr);
-    context->CSSetShader(resolve_.Get(),nullptr,0);context->Dispatch((low_width+7)/8,(low_height+7)/8,1);
+    {
+      profiling::Scope profile(context, "Cloud history", low_width, low_height);
+      context->CSSetShader(resolve_.Get(),nullptr,0);context->Dispatch((low_width+7)/8,(low_height+7)/8,1);
+    }
     outputs[0]=outputs[1]=outputs[2]=nullptr;context->CSSetUnorderedAccessViews(0,3,outputs,nullptr);
     std::array<ID3D11ShaderResourceView*,8> empty{};context->CSSetShaderResources(0,8,empty.data());
     context->CSSetShader(nullptr,nullptr,0);
@@ -160,7 +169,10 @@ class Pipeline {
     const D3D11_VIEWPORT viewport{0,0,float(width),float(height),0,1};context->RSSetViewports(1,&viewport);
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->VSSetShader(vertex_.Get(),nullptr,0);context->PSSetShader(composite_.Get(),nullptr,0);
-    context->Draw(3,0);
+    {
+      profiling::Scope profile(context, "Cloud composite", width, height);
+      context->Draw(3,0);
+    }
     context->CopyResource(previous_.Get(),frame);
     context->CopyResource(previous_clock_.Get(),clock.Get());
     history_index_=write;history_frame_=serial;
