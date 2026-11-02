@@ -376,6 +376,54 @@ int main(int argc,char**) {
     }
     std::cout<<"Moving radial shadow edge: normalized reference error="<<error<<", maximum quarter-metre step="<<jump<<std::endl;
     assert(error<.0015 && jump<.002);
+    // Exercise real perspective reprojection (the older transport fixtures
+    // deliberately leave projection matrices zero and therefore reject history).
+    a.f[0]={};a.f[20]={0,0,1,1};
+    a.f[1]={1,0,0,0};a.f[2]={0,1,0,0};a.f[3]={0,0,1,0};a.f[4]={0,0,0,1};
+    a.f[13]={1,0,0,0};a.f[14]={0,1,0,0};a.f[15]={0,0,1,1};a.f[16]={0,0,-.1f,0};
+    a.p.sampling[2]=1;
+    for(float scale:{.001f,1.f,1000.f}) {
+      a.l[1]={10*scale,6*scale,2*scale,0};
+      double raw_sum=0,raw_second=0,filtered_sum=0,filtered_second=0;
+      float transmittance=0;
+      for(int filtered=0;filtered<2;++filtered) {
+        a.pipeline.Invalidate();
+        for(int iteration=0;iteration<96;++iteration) {
+          if(!filtered)a.pipeline.Invalidate();
+          auto value=a.Run(false,true);
+          if(iteration==0 &&!filtered)transmittance=value[3];
+          assert(value[3]==transmittance);
+          if(iteration<32)continue;
+          double radiance=value[0]/scale;
+          if(filtered) {filtered_sum+=radiance;filtered_second+=radiance*radiance;}
+          else {raw_sum+=radiance;raw_second+=radiance*radiance;}
+          if(std::abs(value[1]/value[0]-.6f)>=.015f ||std::abs(value[2]/value[0]-.2f)>=.015f)
+            std::cout<<"Fog chromaticity failure scale="<<scale<<", filtered="<<filtered<<", RGB="<<value[0]<<','<<value[1]<<','<<value[2]<<std::endl;
+          assert(std::abs(value[1]/value[0]-.6f)<.015f &&std::abs(value[2]/value[0]-.2f)<.015f);
+        }
+      }
+      double raw_variance=raw_second/64-std::pow(raw_sum/64,2);
+      double filtered_variance=filtered_second/64-std::pow(filtered_sum/64,2);
+      std::cout<<"FAST fog scale="<<scale<<", raw/filtered variance="<<raw_variance<<'/'<<filtered_variance
+          <<", relative mean change="<<std::abs(filtered_sum-raw_sum)/raw_sum<<std::endl;
+      assert(raw_variance>0 &&filtered_variance<raw_variance*.5);
+      assert(std::abs(filtered_sum-raw_sum)/raw_sum<.01);
+      // Abrupt sun switch and frame gaps cannot reuse stale bright scattering.
+      a.l[1]={};auto dark=a.Run(false,true);assert(dark[0]==0 &&dark[3]==transmittance);
+      a.l[1]={10*scale,6*scale,2*scale,0};a.id+=3;
+      auto cut=a.Run(false,true);a.id-=1;a.pipeline.Invalidate();auto fresh=a.Run(false,true);
+      assert(cut==fresh);
+      // The same remains true when settings or the camera jump.
+      a.p.medium[0]=.8f;auto changed=a.Run(false,true);a.id-=1;a.pipeline.Invalidate();fresh=a.Run(false,true);
+      assert(changed==fresh);a.p.medium[0]=1;
+      a.f[0][2]=20;a.f[20][2]=21;a.f[4][2]=-20;
+      auto moved=a.Run(false,true);a.id-=1;a.pipeline.Invalidate();fresh=a.Run(false,true);assert(moved==fresh);
+      a.f[0][2]=0;a.f[20][2]=1;a.f[4][2]=0;
+    }
+    std::cout<<"PASS FAST fog temporal convergence, HDR chromaticity/energy, unchanged opacity, light/frame/settings/camera rejection\n";
+    // Resume the original independent cascade test without temporal history.
+    a.f[1]=a.f[2]=a.f[3]=a.f[4]=a.f[13]=a.f[14]=a.f[15]=a.f[16]={};
+    a.l[1]={10,10,10,0};a.p.sampling[2]=4;
     // Cross an intentionally disagreeing pair of cascades. Native transition
     // widths must blend visibility continuously rather than pop at the border.
     std::array<float,1024*4> black{},white;white.fill(1);
@@ -419,6 +467,7 @@ int main(int argc,char**) {
     assert(SUCCEEDED(a.device->CreateShaderResourceView(list.Get(),&list_view,&a.local_tiles)));
     auto off=a.Run();a.p.sampling[3]=1;
     auto point=a.Run();auto center=a.CenterEnd(point);
+    const auto point_frame=a.id;
     assert(center[0]>1.f && center[1]>center[2] && center[2]>0.f);
     for(size_t i=0;i<point.size();i+=4)assert(point[i+3]==off[i+3]);
     // Independent scalar transport along the center ray, including engine
@@ -429,9 +478,15 @@ int main(int argc,char**) {
       double midpoint=.1*std::pow(10000.,double(z+.5)/96.);
       double fade=std::clamp((midpoint-.2)/2.,0.,1.);fade=fade*fade*(3.-2.*fade);
       tau+=.002*fade*(end-begin);
-      double opacity=1.-std::exp(-tau),distance=std::abs(midpoint-10.);
-      double attenuation=distance<20?std::pow(1.-std::pow(distance/20.,4),2)/(1.+.25*distance*distance):0.;
-      reference+=2000.*attenuation*std::exp(-.002*distance)/(4.*3.141592653589793)*(opacity-previous_opacity);
+      double opacity=1.-std::exp(-tau),source=0;
+      // Dense quadrature of the cell's source, independent of FAST samples.
+      // The previous fixed midpoint reference encoded the old aliasing.
+      for(int sample=0;sample<256;++sample) {
+        double distance=std::abs(std::lerp(begin,end,(sample+.5)/256.)-10.);
+        double attenuation=distance<20?std::pow(1.-std::pow(distance/20.,4),2)/(1.+.25*distance*distance):0.;
+        source+=2000.*attenuation*std::exp(-.002*distance)/(4.*3.141592653589793*256.);
+      }
+      reference+=source*(opacity-previous_opacity);
       previous_opacity=opacity;begin=end;
     }
     assert(std::abs(center[0]-reference)<.015);
@@ -439,9 +494,15 @@ int main(int argc,char**) {
     // ambient reference. The previous mixed FP16 integral lost this signal.
     a.l[61]={1,.4f,.2f,0};a.f[40]={32,64,128,0};
     auto dim=a.CenterEnd(a.Run());
+    for(int sample=1;sample<32;++sample) {
+      auto value=a.Run(false,true);
+      for(int c=0;c<3;++c)dim[c]+=value[c];
+    }
+    for(int c=0;c<3;++c)dim[c]/=32.f;
     std::cout<<"Dim lamp under bright ambient: "<<dim[0]<<", reference="<<reference/2000.<<std::endl;
     assert(std::abs(dim[0]-reference/2000.)<2.e-6);
     a.l[61]={2000,400,200,0};a.f[40]={};
+    a.id=point_frame-1; // Compare strength using identical stochastic samples.
     a.p.sampling[3]=2;auto doubled=a.CenterEnd(a.Run());
     assert(std::abs(doubled[0]-2*center[0])<.01 && doubled[3]==center[3]);
     a.p.sampling[3]=1;

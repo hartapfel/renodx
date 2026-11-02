@@ -27,7 +27,8 @@ float FilterFogCascade(float3 p, float3 dx, float3 dy, float3 dz, uint cascade) 
   // Mirrored Hammersley samples: stratify the full radial cell interval and
   // distribute the other two coordinates without a regular planar PCF grid.
   // Spatial prefiltering of the source visibility prevents depth-slice aliasing
-  // before integration. No frame-varying noise or history is introduced.
+  // before integration. The grid path varies these strata with EA FAST and
+  // accumulates the result in reprojected world-space cells.
   static const float2 pattern[16] = {
     float2(0,0),float2(.5f,1.f/3.f),float2(.25f,2.f/3.f),float2(.75f,1.f/9.f),
     float2(.125f,4.f/9.f),float2(.625f,7.f/9.f),float2(.375f,2.f/9.f),float2(.875f,5.f/9.f),
@@ -44,6 +45,9 @@ float FilterFogCascade(float3 p, float3 dx, float3 dy, float3 dz, uint cascade) 
   float visibility = 0.f;
   [loop] for (uint i=0; i<pairs; ++i) {
     float3 offset = float3(pattern[i]-.5f,.5f*(i+.5f)/pairs);
+#ifdef CLASSIC_FOG_FAST
+    offset = float3(frac(pattern[i]+fog_jitter.xy)-.5f,.5f*(i+fog_jitter.z)/pairs);
+#endif
     float3 delta = dx*offset.x+dy*offset.y+dz*offset.z;
     [unroll] for (uint side=0; side<2; ++side) {
       float sign = side == 0 ? 1.f : -1.f;

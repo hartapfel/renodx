@@ -944,7 +944,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = witcher3classic::presets::Default(witcher3classic::presets::graphics, "GfxFogRenderer"),
         .label = "Fog Lighting Method",
         .section = "Fog Quality",
-        .tooltip = "Volume grid shares lighting across the fog and can show visible layers. Per-pixel gives smoother light shafts at a higher GPU cost.",
+        .tooltip = "Volume grid shares and smooths fog lighting over time to reduce visible layers. Per-pixel resolves finer light shafts at a higher GPU cost.",
         .labels = {"Volume grid", "Per-pixel"},
         .is_enabled = [] { return witcher3classic::volumetrics::mode != 0.f; },
     },

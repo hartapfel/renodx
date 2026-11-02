@@ -370,7 +370,10 @@ int main(int argc,char** argv) {
         if(opacity>.1f)++covered;
         for(UINT c=0;c<3;++c) {
           const double expected=black_cloud[i+c]+(blocked?0:opacity*source*(std::lround(night_gain*511.f)/511.)/(1u<<c));
-          assert(std::abs(composed[i+c]-expected)<.025f);
+          // Source and extinction are stored independently in FP16, followed
+          // by a second FP16 integrated field. Bound their combined rounding
+          // relatively: a fixed .025 is less than one ULP at HDR radiance 37.
+          assert(std::abs(composed[i+c]-expected)<.002f+.002f*std::abs(expected));
         }
       }
       assert(covered>100);

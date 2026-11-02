@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #include "math.hlsli"
 #include "interior.hlsli"
+#include "../clouds/fast_sample.hlsli"
 cbuffer Frame : register(b0) { float4 frame[269]; }
 cbuffer Lighting : register(b1) { float4 light[3323]; }
 cbuffer Parameters : register(b2) {
@@ -9,7 +10,11 @@ cbuffer Parameters : register(b2) {
   float4 options;     // height falloff, near distance, cloud available, terrain available
   float4 sampling;    // inverse render width/height, shadow quality, local light strength
   float4 sky_options; // native sky-haze density multiplier, smooth lighting reconstruction, reserved
+  float4 temporal;    // FAST frame index, history valid, reserved
 }
+Texture3D<float> fog_samples : register(t7);
+#define CLASSIC_FOG_FAST
+static float3 fog_jitter;
 Texture2DArray<float> shadows : register(t0);
 Texture2DArray<float> clouds : register(t1);
 Texture2DArray<float> terrain : register(t2);
@@ -84,6 +89,9 @@ void main(uint3 id : SV_DispatchThreadID) {
   // subtracting that ambient later cannot recover it. Native weather color
   // is composed in sample.hlsli at full shader precision.
   float3 source = 0.f;
+  fog_jitter=float3(FastSample(fog_samples,id.xy,(uint)temporal.x,id.z*3u),
+      FastSample(fog_samples,id.xy,(uint)temporal.x,id.z*3u+1u),
+      FastSample(fog_samples,id.xy,(uint)temporal.x,id.z*3u+2u));
   if (extinction > 0.f && medium.z > 0.f && sky_options.z < .5f) {
     float3 relative = world_h.xyz-frame[0].xyz*world_h.w;
     float inverse_length = rsqrt(max(dot(relative,relative),1.e-12f));
@@ -99,8 +107,17 @@ void main(uint3 id : SV_DispatchThreadID) {
         max(frame[43].x,0.f)*medium.x,falloff,grid.w);
     source += max(light[1].xyz,0.f)*PhaseHG(dot(ray,normalize(light[0].xyz)),medium.w)*visibility*medium.z;
   }
-  if (extinction > 0.f && sampling.w > 0.f && sky_options.z < .5f)
-    source += LocalScattering(uv,world,ray,falloff);
+  if (extinction > 0.f && sampling.w > 0.f && sky_options.z < .5f) {
+    // Four stratified, antithetic samples reduce local-light slice terraces without
+    // jittering the authored extinction or crossing screen-space light tiles.
+    float begin=SliceDistance(id.z,grid.z,options.y,far_distance);
+    float end=SliceDistance(id.z+1.f,grid.z,options.y,far_distance);
+    [unroll]for(uint stratum=0;stratum<2;++stratum) {
+      float offset=.25f*(stratum+fog_jitter.z);
+      source += .25f*(LocalScattering(uv,frame[0].xyz+ray*lerp(begin,end,.5f+offset),ray,falloff)
+          +LocalScattering(uv,frame[0].xyz+ray*lerp(begin,end,.5f-offset),ray,falloff));
+    }
+  }
   // Albedo is one for the water droplets represented by the atmospheric fog.
-  cells[id] = float4(min(source*extinction,60000.f),min(extinction,100.f));
+  cells[id] = float4(min(source*max(extinction,FogSourceFloor),60000.f),min(extinction,100.f));
 }

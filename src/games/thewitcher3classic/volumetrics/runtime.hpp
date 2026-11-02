@@ -101,6 +101,7 @@ inline bool OnFog(reshade::api::command_list* cmd) {
     data->reflections.Invalidate();
     data->water_pipeline.captured_frame=UINT64_MAX;
     data->pipeline.generated_frame=UINT64_MAX;
+    data->pipeline.Invalidate();
     data->context.Reset();
     if (FAILED(native->QueryInterface(IID_PPV_ARGS(&data->context)))) return false;
     data->native_handle=cmd->get_native();

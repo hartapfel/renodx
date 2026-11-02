@@ -1225,3 +1225,16 @@ actually alter GPU density. `cloud_shadows.cpp` retains explicit legacy inputs.
 Run WARP and hardware fixtures after the Release build. Research/provenance and
 synthetic timing limitations are in `../clouds/sampling.md` and
 `../CLOUD_RENDERING_RESEARCH.md`; gameplay acceptance remains manual.
+
+
+### FAST volume-grid fog regression (2026-11-02)
+
+`volumetrics.cpp` now exercises valid perspective history, FAST convergence at
+lighting scales 0.001/1/1000, HDR hue/energy, unchanged transmittance, and history
+rejection on frame gaps, camera jumps, setting changes and abrupt sunlight loss.
+Dim-lamp integration uses dense reference quadrature and a 32-frame mean;
+strength comparisons use identical stochastic samples. Run the existing WARP
+and hardware volumetrics runner against freshly generated Release embeds.
+`clouds.cpp` additionally checks fog composition with a relative FP16 rounding
+budget (0.2% plus 0.002). The per-pixel fog cache regression remains applicable.
+See `../volumetrics/sampling.md` for measured comparisons and live checks.

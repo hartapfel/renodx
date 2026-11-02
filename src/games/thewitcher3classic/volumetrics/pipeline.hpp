@@ -3,8 +3,11 @@
 #include <embed/0xF3C30001.h>
 #include <embed/0xF3C30002.h>
 #include <embed/0xF3C30003.h>
+#include <embed/0xF3C30004.h>
 #include <array>
 #include <algorithm>
+#include <chrono>
+#include "../clouds/fast_noise.hpp"
 #include "../temporal/context.hpp"
 #include "settings.hpp"
 namespace witcher3classic::volumetrics {
@@ -12,6 +15,7 @@ using Microsoft::WRL::ComPtr;
 struct Parameters {
   std::array<float,4> grid{}, medium{}, options{}, sampling{};
   std::array<float,4> sky{1.f,1.f,0.f,0.f};
+  std::array<float,4> temporal{};
 };
 struct LocalLightInputs {
   ID3D11ShaderResourceView* tiles = nullptr;
@@ -23,6 +27,7 @@ class Pipeline {
  public:
   HRESULT error = S_OK;
   uint64_t generated_frame = UINT64_MAX;
+  void Invalidate() { history_frame_=UINT64_MAX; }
   // Public input contract also used by the GPU regression fixture. No CPU
   // readbacks, scene geometry replay or per-object allocation is involved.
   bool Generate(ID3D11DeviceContext1* context, ID3D11Buffer* frame, ID3D11Buffer* lighting,
@@ -50,6 +55,18 @@ class Pipeline {
     if (width>512 || height>512 || slices>256) return false;
     if (!cells_.Ensure(device_.Get(),width,height,slices)
         || !volume_.Ensure(device_.Get(),width,height,slices+1)) return false;
+    const auto now=std::chrono::steady_clock::now();
+    effective.temporal={float(frame_id&31u),0,0,0};
+    if(ray_ready_)for(auto& history:history_)history={};
+    if(!ray_ready_) {
+      if(!history_[0].Ensure(device_.Get(),width,height,slices)
+          ||!history_[1].Ensure(device_.Get(),width,height,slices))return false;
+      effective.temporal[1]=history_frame_!=UINT64_MAX &&frame_id==history_frame_+1
+          &&std::chrono::duration<float>(now-history_time_).count()<.5f
+          &&effective.grid==previous_parameters_.grid &&effective.medium==previous_parameters_.medium
+          &&effective.options==previous_parameters_.options &&effective.sampling==previous_parameters_.sampling
+          &&effective.sky==previous_parameters_.sky ? 1.f:0.f;
+    }
     // The cloud transmission map is shared with native surface shaders. Carry
     // its reserved inputs into this effect's otherwise isolated compute state.
     ComPtr<ID3D11ShaderResourceView> cloud_shadow_map,cloud_shadow_data;
@@ -68,6 +85,7 @@ class Pipeline {
     context->CSSetSamplers(0,4,samplers);
     ID3D11ShaderResourceView* inputs[]={shadow,cloud,terrain,interiors,local_lights.tiles,local_lights.atlas,local_lights.cubes};
     context->CSSetShaderResources(0,7,inputs);
+    context->CSSetShaderResources(7,1,samples_view_.GetAddressOf());
     ID3D11UnorderedAccessView* output=cells_.output.Get();
     context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
     context->CSSetShader(scatter_.Get(),nullptr,0);
@@ -77,6 +95,21 @@ class Pipeline {
     inputs[0]=cells_.view.Get();
     std::fill(std::begin(inputs)+1,std::end(inputs),nullptr);
     context->CSSetShaderResources(0,7,inputs);
+    if(!ray_ready_) {
+      ID3D11ShaderResourceView* history_inputs[]{history_[history_index_].view.Get(),
+          previous_frame_.view.Get(),previous_lighting_.view.Get()};
+      context->CSSetShaderResources(8,3,history_inputs);
+      output=history_[history_index_^1u].output.Get();
+      context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
+      context->CSSetShader(resolve_.Get(),nullptr,0);
+      context->Dispatch((width+3)/4,(height+3)/4,(slices+3)/4);
+      output=nullptr;context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
+      std::fill(std::begin(history_inputs),std::end(history_inputs),nullptr);
+      context->CSSetShaderResources(8,3,history_inputs);
+      history_index_^=1u;
+      inputs[0]=history_[history_index_].view.Get();
+      context->CSSetShaderResources(0,1,inputs);
+    }
     output=volume_.output.Get();
     context->CSSetUnorderedAccessViews(0,1,&output,nullptr);
     context->CSSetShader(integrate_.Get(),nullptr,0);
@@ -114,6 +147,11 @@ class Pipeline {
         context->Dispatch((render_width+7)/8,(render_height+7)/8,1);
         cache_ready_=true;
       }
+    }
+    history_frame_=UINT64_MAX;
+    if(!ray_ready_ &&previous_frame_.Capture(context,device_.Get(),frame,269*16)
+        &&previous_lighting_.Capture(context,device_.Get(),lighting,2*16)) {
+      history_frame_=frame_id;history_time_=now;previous_parameters_=effective;
     }
     generated_frame=frame_id;
     return true;
@@ -220,7 +258,7 @@ class Pipeline {
       }
       context->CopyResource(buffer.Get(),source);return true;
     }
-  } ray_frame_,ray_lighting_;
+  } ray_frame_,ray_lighting_,previous_frame_,previous_lighting_;
   bool ray_ready_=false,ray_bound_=false;
   std::array<ComPtr<ID3D11ShaderResourceView>,9> ray_sources_,saved_ray_;
   struct Volume {
@@ -238,13 +276,23 @@ class Pipeline {
           || FAILED(device->CreateUnorderedAccessView(texture.Get(),nullptr,&output))) { texture.Reset(); return false; }
       width=w; height=h; depth=d; return true;
     }
-  } cells_,volume_;
+  } cells_,volume_,history_[2];
+  UINT history_index_=0;
+  uint64_t history_frame_=UINT64_MAX;
+  std::chrono::steady_clock::time_point history_time_{};
+  Parameters previous_parameters_{};
   bool Initialize(ID3D11DeviceContext1* context) {
     if (state_) return true;
     context->GetDevice(&device_);
     if (FAILED(error=device_->CreateComputeShader(__0xF3C30001.data(),__0xF3C30001.size(),nullptr,&scatter_))
         || FAILED(error=device_->CreateComputeShader(__0xF3C30002.data(),__0xF3C30002.size(),nullptr,&integrate_))
+        || FAILED(error=device_->CreateComputeShader(__0xF3C30004.data(),__0xF3C30004.size(),nullptr,&resolve_))
         || FAILED(error=device_->CreateComputeShader(__0xF3C30003.data(),__0xF3C30003.size(),nullptr,&pixel_))) return false;
+    const D3D11_TEXTURE3D_DESC samples{128,128,32,1,DXGI_FORMAT_R8_UNORM,D3D11_USAGE_IMMUTABLE,D3D11_BIND_SHADER_RESOURCE};
+    const D3D11_SUBRESOURCE_DATA sample_data{clouds::fast_noise,128,128*128};
+    samples_.Reset();samples_view_.Reset();
+    if(FAILED(error=device_->CreateTexture3D(&samples,&sample_data,&samples_))
+        ||FAILED(error=device_->CreateShaderResourceView(samples_.Get(),nullptr,&samples_view_)))return false;
     D3D11_BUFFER_DESC desc{sizeof(Parameters),D3D11_USAGE_DEFAULT,D3D11_BIND_CONSTANT_BUFFER};
     if (FAILED(error=device_->CreateBuffer(&desc,nullptr,&constants_))) return false;
     desc.ByteWidth=22*16;
@@ -267,7 +315,9 @@ class Pipeline {
   bool bound_=false,vertex_=false;
   ComPtr<ID3D11Device> device_;
   ComPtr<ID3DDeviceContextState> state_;
-  ComPtr<ID3D11ComputeShader> scatter_,integrate_,pixel_;
+  ComPtr<ID3D11ComputeShader> scatter_,integrate_,pixel_,resolve_;
+  ComPtr<ID3D11Texture3D> samples_;
+  ComPtr<ID3D11ShaderResourceView> samples_view_;
   ComPtr<ID3D11Buffer> constants_,parameters_;
   ComPtr<ID3D11ShaderResourceView> parameter_view_,saved_[2];
   ComPtr<ID3D11UnorderedAccessView> parameter_output_;

@@ -3573,3 +3573,19 @@ CloudAppearanceBaseline=5 divides saved thickness percentages by 1.3 and
 preserves version-4 density/shape percentages. Older profiles convert directly
 from their own units. Missing thickness values use the new default; version-5
 profiles are not converted again. Shader code and shadow integration are unchanged.
+
+
+### FAST sampling for volume-grid fog (2026-11-02)
+
+The Volume grid fog renderer now varies its lighting samples using the clouds'
+EA FAST mask and accumulates lighting in a reprojected 3D history. HDR-relative
+luminance validation reduces fixed shadow layers while keeping current fog
+opacity, weather density and interior exclusion. Local lamps use stratified
+radial samples, and sparse-fog lighting storage retains more dim-light precision.
+Per-pixel fog and existing user settings remain unchanged.
+
+See [volume-grid sampling](volumetrics/sampling.md) for primary research,
+implementation, resource cost and measured comparisons. Release GPU tests pass;
+the original affected scene still needs in-game comparison. Select Custom
+Atmospheric Fog and Volume grid, then inspect stationary shafts, slow pans,
+moving lights, interiors and weather transitions. No new setting is required.

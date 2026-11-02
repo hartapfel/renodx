@@ -32,7 +32,7 @@ void main(uint2 id : SV_DispatchThreadID) {
     // A vacuum/interior segment cannot add effective extinction merely
     // because the distance fade advances along it.
     float contribution = cell.w > 0.f ? max(0.f,opacity-weather_opacity) : 0.f;
-    scattering += cell.w > 0.f ? cell.xyz*(contribution/cell.w) : 0.f;
+    scattering += cell.w > 0.f ? cell.xyz*(contribution/max(cell.w,FogSourceFloor)) : 0.f;
     weather_opacity += contribution;
     transmittance = 1.f-weather_opacity;
     integrated[uint3(id,z+1)] = float4(min(scattering,60000.f),transmittance);

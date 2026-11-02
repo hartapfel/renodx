@@ -1,6 +1,9 @@
 // Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #ifndef WITCHER_CLASSIC_VOLUME_MATH
 #define WITCHER_CLASSIC_VOLUME_MATH
+// Keep dim lighting out of FP16 subnormals in sparse fog. The matching encode /
+// decode cancels before transport; denser cells retain the previous scaling.
+static const float FogSourceFloor=.25f;
 // Analytic homogeneous-segment solution of the single-scattering equation.
 // Accumulate scattering before updating transmittance (Hillaire, SIGGRAPH 2015).
 float SegmentOpacity(float optical_depth) {
