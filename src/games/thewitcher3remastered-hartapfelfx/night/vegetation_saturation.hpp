@@ -1,0 +1,380 @@
+/* Copyright (C) 2026 Hartapfel
+ * SPDX-License-Identifier: MIT
+ */
+#pragma once
+#include <algorithm>
+#include <atomic>
+#include <bit>
+#include <cstring>
+#include <cstdio>
+#include <memory>
+#include <mutex>
+#include <shared_mutex>
+#include <span>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+#include "../../../utils/data.hpp"
+#include "../../../utils/d3d12_resource_pool.hpp"
+#include "../../../utils/hash.hpp"
+#include "../raster.hpp"
+#include "../lighting/graphics/rendering/bindings.hpp"
+
+namespace witcher::night::vegetation {
+using namespace reshade::api;
+using renodx::utils::d3d12_resource_pool::Allocation;
+using renodx::utils::d3d12_resource_pool::Queue;
+using ResourcePool = renodx::utils::d3d12_resource_pool::ResourcePool<384ull << 20>;
+// Publish saturation delta and tint amount together, already night-faded.
+inline std::atomic<uint64_t> adjustments = 0;
+static_assert(std::atomic<uint64_t>::is_always_lock_free);
+
+// Only the seven audited native grades are recognized without an HDR binding.
+// Foreign RenoDX grades can change bytecode on every rebuild. Recognize their
+// fixed scene interface instead, including the injected b13,space50 binding.
+inline bool IsGradingShader(std::span<const uint8_t> code, bool* signed_transport = nullptr) {
+  if (signed_transport) *signed_transport = false;
+  switch (renodx::utils::hash::ComputeCRC32(code.data(), code.size())) {
+    case 0x16967617: case 0x9600E32A: case 0xAD02BAB3: case 0xC5AB358E:
+    case 0xF961D049: case 0x2BF760E2: case 0x6DDA5B7B: return true;
+  }
+  // Read container metadata only; no compiler, reflection DLL, disassembly or
+  // descriptor tracking is needed at runtime. All parsing happens at creation.
+  if (code.size() < 32 || std::memcmp(code.data(), "DXBC", 4) != 0) return false;
+  const auto word = [](std::span<const uint8_t> bytes, size_t offset) {
+    uint32_t value = 0;
+    std::memcpy(&value, bytes.data() + offset, sizeof(value));
+    return value;
+  };
+  if (word(code, 24) != code.size() || word(code, 28) > (code.size() - 32) / 4) return false;
+  std::span<const uint8_t> input, output, validation;
+  for (uint32_t i = 0; i < word(code, 28); ++i) {
+    const size_t offset = word(code, 32 + i * 4);
+    if (offset > code.size() - 8 || word(code, offset + 4) > code.size() - offset - 8) return false;
+    const auto part = code.subspan(offset + 8, word(code, offset + 4));
+    if (std::memcmp(code.data() + offset, "ISG1", 4) == 0) input = part;
+    else if (std::memcmp(code.data() + offset, "OSG1", 4) == 0) output = part;
+    else if (std::memcmp(code.data() + offset, "PSV0", 4) == 0) validation = part;
+  }
+  const auto signature_matches = [&word](std::span<const uint8_t> signature, bool is_output) {
+    if (signature.size() < 8 || word(signature, 4) != 8) return false;
+    const uint32_t count = word(signature, 0);
+    if ((is_output ? count != 1 : count != 2 && count != 3)
+        || count > (signature.size() - 8) / 32) return false;
+    for (uint32_t i = 0; i < count; ++i) {
+      const size_t offset = 8 + i * 32;
+      const size_t name_offset = word(signature, offset + 4);
+      const std::string_view name = is_output ? "SV_Target" : i == 0 ? "SV_Position" : "TEXCOORD";
+      if (name_offset >= signature.size() || name.size() >= signature.size() - name_offset
+          || std::memcmp(signature.data() + name_offset, name.data(), name.size()) != 0
+          || signature[name_offset + name.size()] != 0
+          || word(signature, offset) != 0  // stream
+          || word(signature, offset + 8) != (i == 2 ? 2u : 0u) // semantic index
+          || word(signature, offset + 12) != (is_output ? 64u : i == 0 ? 1u : 0u) // system value
+          || word(signature, offset + 16) != 3 // float32
+          || word(signature, offset + 20) != (is_output || i == 0 ? 0u : 1u) // register
+          || signature[offset + 24] != (is_output || i == 0 ? 15u : i == 1 ? 3u : 12u)
+          || word(signature, offset + 28) != 0) return false;
+      // Used-component masks are deliberately ignored: optimization changes
+      // their values without changing the scene transport or binding contract.
+    }
+    return true;
+  };
+  if (!signature_matches(input, false) || !signature_matches(output, true) || validation.size() < 4) return false;
+  const size_t runtime_size = word(validation, 0);
+  if (runtime_size < 36 || runtime_size > validation.size() - 4
+      || validation.size() - 4 - runtime_size < 8) return false;
+  // PSVRuntimeInfo1::ShaderStage: pixel, and no depth/sample-frequency outputs.
+  if (validation[4 + 24] != 0 || word(validation, 4) != 0 || word(validation, 8) != 0) return false;
+  const uint32_t count = word(validation, 4 + runtime_size);
+  const size_t stride = word(validation, 8 + runtime_size);
+  const size_t begin = 12 + runtime_size;
+  if ((count != 4 && count != 6) || stride < 24 || count > (validation.size() - begin) / stride) return false;
+  uint32_t bindings = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    const size_t offset = begin + i * stride;
+    const uint32_t type = word(validation, offset);
+    const uint32_t space = word(validation, offset + 4);
+    const uint32_t slot = word(validation, offset + 8);
+    const uint32_t kind = word(validation, offset + 16);
+    if (word(validation, offset + 12) != slot || word(validation, offset + 20) != 0) return false;
+    uint32_t bit = 0;
+    if (type == 2 && kind == 13 && space == 0 && slot == 3) bit = 1;
+    else if (type == 2 && kind == 13 && space == 50 && slot == 13) bit = 2;
+    else if (type == 1 && kind == 14 && space == 0 && slot <= 1) bit = 4;
+    else if (type == 3 && kind == 2 && space == 0 && slot == 0) bit = 8;
+    else if (type == 1 && kind == 14 && space == 0 && slot == 2) bit = 16;
+    else if (type == 3 && kind == 2 && space == 0 && slot == 2) bit = 32;
+    else return false;
+    if (bindings & bit) return false;
+    bindings |= bit;
+  }
+  // Reject bloom, LUT, output, UI and other passes (including t1 variants).
+  const bool matched = bindings == (count == 4 ? 15u : 63u);
+  if (signed_transport) *signed_transport = matched;
+  return matched;
+}
+
+struct __declspec(uuid("de38e5a3-7d83-4d7f-ae39-5db33a287076")) DeviceData {
+  std::mutex mutex;
+  pipeline_layout layout = {};
+  pipeline shader = {};
+  bool attempted = false;
+  std::shared_mutex grading_mutex;
+  std::unordered_map<uint64_t, bool> grading_pipelines;
+  ResourcePool pool;
+  std::unordered_map<command_queue*, std::shared_ptr<Queue>> queues;
+  uint64_t processed = 0, skipped = 0;
+};
+struct __declspec(uuid("1ae8a882-2869-4b54-8154-86ddfe49c32d")) CommandData {
+  resource pending = {};
+  resource scratch = {};
+  uint64_t scratch_size = 0;
+  std::vector<std::shared_ptr<Allocation>> recording;
+  std::vector<std::shared_ptr<Queue>> queues;
+  bool untracked_queue = false;
+  pipeline current_pipeline = {};
+  bool grading_pipeline = false;
+  bool current_signed_transport = false, pending_signed_transport = false;
+  pipeline_stage current_stages = pipeline_stage::all;
+
+};
+
+inline void OnInitDevice(device* d) {
+  if (d->get_api() == device_api::d3d12) renodx::utils::data::Create<DeviceData>(d);
+}
+inline void OnDestroyDevice(device* d) {
+  auto* state = renodx::utils::data::Get<DeviceData>(d);
+  if (!state) return;
+  if (state->shader.handle) d->destroy_pipeline(state->shader);
+  if (state->layout.handle) d->destroy_pipeline_layout(state->layout);
+  renodx::utils::data::Delete<DeviceData>(d);
+}
+inline void OnInitCommand(command_list* c) {
+  if (c->get_device()->get_api() == device_api::d3d12) renodx::utils::data::Create<CommandData>(c);
+}
+inline void OnResetCommand(command_list* c) {
+  auto* state = renodx::utils::data::Get<CommandData>(c);
+  if (!state) return;
+  if (!state->recording.empty()) {
+    auto* data = renodx::utils::data::Get<DeviceData>(c->get_device());
+    if (!data) return;
+    std::lock_guard lock(data->mutex);
+    data->pool.Retire(&state->recording, &state->queues, state->untracked_queue);
+  }
+  *state = CommandData{};
+}
+inline void OnDestroyCommand(command_list* c) {
+  OnResetCommand(c);
+  renodx::utils::data::Delete<CommandData>(c);
+}
+inline void OnInitQueue(command_queue* queue) {
+  auto* data = renodx::utils::data::Get<DeviceData>(queue->get_device());
+  if (!data) return;
+  auto q = std::make_shared<Queue>();
+  q->native = reinterpret_cast<ID3D12CommandQueue*>(queue->get_native());
+  if (FAILED(reinterpret_cast<ID3D12Device*>(queue->get_device()->get_native())->CreateFence(
+          0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&q->fence)))) return;
+  std::lock_guard lock(data->mutex);
+  data->queues[queue] = std::move(q);
+}
+inline void OnExecute(command_queue* queue, command_list* c) {
+  auto* state = renodx::utils::data::Get<CommandData>(c);
+  auto* data = renodx::utils::data::Get<DeviceData>(c->get_device());
+  if (!state || !data || state->recording.empty()) return;
+  std::lock_guard lock(data->mutex);
+  if (auto it = data->queues.find(queue); it != data->queues.end()) {
+    if (std::find(state->queues.begin(), state->queues.end(), it->second) == state->queues.end()) state->queues.push_back(it->second);
+  } else state->untracked_queue = true;
+}
+inline void OnDestroyQueue(command_queue* queue) {
+  auto* data = renodx::utils::data::Get<DeviceData>(queue->get_device());
+  if (!data) return;
+  std::lock_guard lock(data->mutex);
+  if (auto it = data->queues.find(queue); it != data->queues.end()) {
+    auto& q = *it->second;
+    if (FAILED(q.native->Signal(q.fence.Get(), ++q.serial))) q.serial = UINT64_MAX;
+    q.native = nullptr;
+    data->queues.erase(it);
+  }
+}
+inline void OnPresent(command_queue* queue, swapchain*, const rect*, const rect*, uint32_t, const rect*) {
+  auto* data = renodx::utils::data::Get<DeviceData>(queue->get_device());
+  if (!data) return;
+  std::lock_guard lock(data->mutex);
+  ++data->pool.frame;
+  data->pool.Collect();
+  if (data->pool.frame % 300 == 0) {
+    char message[224];
+    std::snprintf(message, sizeof(message), "Darker Nights: scratch %.2f MiB, peak %.2f MiB, %zu allocations, %llu colour passes, %llu skipped.",
+        data->pool.bytes / 1048576., data->pool.peak_bytes / 1048576., data->pool.allocations.size(),
+        static_cast<unsigned long long>(data->processed), static_cast<unsigned long long>(data->skipped));
+    reshade::log::message(reshade::log::level::info, message);
+  }
+}
+inline void OnBindPipeline(command_list* c, pipeline_stage stages, pipeline p) {
+  if (auto* state = renodx::utils::data::Get<CommandData>(c)) {
+    state->current_pipeline = p;
+    state->current_stages = stages;
+    state->grading_pipeline = false;
+    if (adjustments.load(std::memory_order_relaxed) == 0) return;
+    if ((uint32_t(stages) & uint32_t(pipeline_stage::pixel_shader)) == 0) return;
+    auto* device_state = renodx::utils::data::Get<DeviceData>(c->get_device());
+    if (device_state) {
+      std::shared_lock lock(device_state->grading_mutex);
+      const auto observed = device_state->grading_pipelines.find(p.handle);
+      state->grading_pipeline = observed != device_state->grading_pipelines.end();
+      state->current_signed_transport = state->grading_pipeline && observed->second;
+    }
+  }
+}
+inline void OnInitPipeline(device* d, pipeline_layout, uint32_t count,
+                           const pipeline_subobject* subobjects, pipeline p) {
+  auto* state = renodx::utils::data::Get<DeviceData>(d);
+  if (!state || d->get_api() != device_api::d3d12) return;
+  for (uint32_t i = 0; i < count; ++i) {
+    if (subobjects[i].type != pipeline_subobject_type::pixel_shader || subobjects[i].count != 1) continue;
+    const auto& code = *static_cast<const shader_desc*>(subobjects[i].data);
+    bool signed_transport = false;
+    if (!code.code || !IsGradingShader({static_cast<const uint8_t*>(code.code), code.code_size}, &signed_transport)) continue;
+    std::unique_lock lock(state->grading_mutex);
+    state->grading_pipelines.emplace(p.handle, signed_transport);
+    return;
+  }
+}
+inline void OnDestroyPipeline(device* d, pipeline p) {
+  if (auto* state = renodx::utils::data::Get<DeviceData>(d)) {
+    std::unique_lock lock(state->grading_mutex);
+    state->grading_pipelines.erase(p.handle);
+  }
+}
+inline bool Arm(command_list* c) {
+  if (adjustments.load(std::memory_order_relaxed) == 0) return true;
+  auto* state = renodx::utils::data::Get<CommandData>(c);
+  auto* targets = hartapfelfx::raster::Get(c);
+  if (!state || !state->grading_pipeline || !targets || targets->render_targets.size() != 1) return true;
+  auto* d = c->get_device();
+  const auto r = d->get_resource_from_view(targets->render_targets[0]);
+  const auto desc = d->get_resource_desc(r);
+  if (desc.type == resource_type::texture_2d && desc.texture.format == format::r16g16b16a16_float
+      && desc.texture.samples == 1 && desc.texture.levels == 1 && desc.texture.depth_or_layers == 1) {
+    state->pending = r;
+    state->pending_signed_transport = state->current_signed_transport;
+  }
+  return true;
+}
+inline bool OnDraw(command_list* c, uint32_t, uint32_t, uint32_t, uint32_t) { return !Arm(c); }
+inline bool OnDrawIndexed(command_list* c, uint32_t, uint32_t, uint32_t, int32_t, uint32_t) { return !Arm(c); }
+
+inline void OnBarrier(command_list* c, uint32_t count, const resource* resources,
+                      const resource_usage* old_states, const resource_usage* new_states) {
+  auto* state = renodx::utils::data::Get<CommandData>(c);
+  if (!state || !state->pending.handle) return;
+  for (uint32_t i = 0; i < count; ++i) {
+    if (resources[i] != state->pending || (uint32_t(old_states[i]) & uint32_t(resource_usage::render_target)) == 0) continue;
+    const auto target = std::exchange(state->pending, resource{});
+    uint32_t final_transition = i;
+    for (uint32_t next = i + 1; next < count; ++next) {
+      if (resources[next] == target) final_transition = next;
+    }
+    const uint64_t amounts = adjustments.load(std::memory_order_relaxed);
+    if (amounts == 0) return;
+    // ReShade's DX12 barrier event is AFTER the native transition. Restore
+    // its destination state after the in-place scene operation.
+    auto* d = c->get_device();
+    auto* device_state = renodx::utils::data::Get<DeviceData>(d);
+    if (!device_state || d->get_api() != device_api::d3d12) return;
+    {
+      std::lock_guard lock(device_state->mutex);
+      if (!device_state->attempted) {
+        device_state->attempted = true;
+        pipeline_layout_param params[2] = {};
+        params[0].type = pipeline_layout_param_type::push_descriptors;
+        params[0].push_descriptors.type = descriptor_type::buffer_unordered_access_view;
+        params[0].push_descriptors.count = 1;
+        params[0].push_descriptors.visibility = shader_stage::compute;
+        params[1].type = pipeline_layout_param_type::push_constants;
+        params[1].push_constants.count = 6;
+        params[1].push_constants.visibility = shader_stage::compute;
+        if (d->create_pipeline_layout(2, params, &device_state->layout)) {
+          shader_desc code = {__0xF3B20000.data(), __0xF3B20000.size()};
+          const pipeline_subobject shader_object = {pipeline_subobject_type::compute_shader, 1, &code};
+          d->create_pipeline(device_state->layout, 1, &shader_object, &device_state->shader);
+        }
+        if (!device_state->shader.handle) reshade::log::message(reshade::log::level::warning,
+            "[Darker Nights] Vegetation colour pass unavailable; scene preserved.");
+      }
+    }
+    if (!device_state->shader.handle) return;
+    const auto desc = d->get_resource_desc(target);
+    const uint32_t pitch = (desc.texture.width * 8u + 255u) & ~255u;
+    const uint64_t bytes = uint64_t(pitch) * desc.texture.height;
+    if (state->scratch_size < bytes) {
+      std::lock_guard lock(device_state->mutex);
+      auto allocation = device_state->pool.Acquire(reinterpret_cast<ID3D12Device*>(d->get_native()), bytes);
+      if (!allocation) { ++device_state->skipped; return; }
+      // Keep native PSO/root references alive until the recording's fences finish.
+      allocation->objects.emplace_back(reinterpret_cast<ID3D12PipelineState*>(device_state->shader.handle));
+      allocation->objects.emplace_back(reinterpret_cast<ID3D12RootSignature*>(device_state->layout.handle));
+      state->scratch = {reinterpret_cast<uint64_t>(allocation->scratch.Get())};
+      state->scratch_size = allocation->bytes;
+      state->recording.push_back(std::move(allocation));
+    }
+    {
+      std::lock_guard lock(device_state->mutex);
+      ++device_state->processed;
+    }
+    const resource objects[] = {target, state->scratch};
+    const resource_usage original[] = {new_states[final_transition], resource_usage::unordered_access};
+    const resource_usage copying[] = {resource_usage::copy_source, resource_usage::copy_dest};
+    c->barrier(2, objects, original, copying);
+    c->copy_texture_to_buffer(target, 0, nullptr, state->scratch, 0, pitch / 8, desc.texture.height);
+    c->barrier(state->scratch, resource_usage::copy_dest, resource_usage::unordered_access);
+    c->bind_pipeline(pipeline_stage::all_compute, device_state->shader);
+    const uint32_t constants[] = {desc.texture.width, desc.texture.height, pitch,
+                                 static_cast<uint32_t>(amounts), static_cast<uint32_t>(amounts >> 32),
+                                 state->pending_signed_transport ? 1u : 0u};
+    c->push_constants(shader_stage::compute, device_state->layout, 1, 0, 6, constants);
+    // Buffer view handles encode GPU addresses for DX12 root UAV bindings.
+    auto* native = reinterpret_cast<ID3D12GraphicsCommandList*>(c->get_native());
+    native->SetComputeRootUnorderedAccessView(0,
+        reinterpret_cast<ID3D12Resource*>(state->scratch.handle)->GetGPUVirtualAddress());
+    c->dispatch((desc.texture.width + 7) / 8, (desc.texture.height + 7) / 8, 1);
+    const resource_usage processed[] = {resource_usage::copy_source, resource_usage::unordered_access};
+    const resource_usage writing[] = {resource_usage::copy_dest, resource_usage::copy_source};
+    c->barrier(2, objects, processed, writing);
+    c->copy_buffer_to_texture(state->scratch, 0, pitch / 8, desc.texture.height, target, 0);
+    c->barrier(2, objects, writing, original);
+    // Reuse the integrated addon's root snapshot instead of tracking every
+    // native compute binding a second time for the colour pass.
+    if (const auto* roots = renodx::utils::data::Get<witcher3graphics::bindings::CommandData>(c)) {
+      roots->compute.Restore(c, shader_stage::compute);
+    }
+    if (state->current_pipeline.handle) c->bind_pipeline(state->current_stages, state->current_pipeline);
+    return;
+  }
+}
+
+inline void Use(DWORD reason) {
+#define WITCHER_VEGETATION_EVENT(ev, fn) \
+  if (reason == DLL_PROCESS_ATTACH) reshade::register_event<reshade::addon_event::ev>(fn); \
+  else if (reason == DLL_PROCESS_DETACH) reshade::unregister_event<reshade::addon_event::ev>(fn)
+  WITCHER_VEGETATION_EVENT(init_device, OnInitDevice);
+  WITCHER_VEGETATION_EVENT(destroy_device, OnDestroyDevice);
+  WITCHER_VEGETATION_EVENT(init_command_list, OnInitCommand);
+  WITCHER_VEGETATION_EVENT(destroy_command_list, OnDestroyCommand);
+  WITCHER_VEGETATION_EVENT(reset_command_list, OnResetCommand);
+  WITCHER_VEGETATION_EVENT(init_command_queue, OnInitQueue);
+  WITCHER_VEGETATION_EVENT(destroy_command_queue, OnDestroyQueue);
+  WITCHER_VEGETATION_EVENT(execute_command_list, OnExecute);
+  WITCHER_VEGETATION_EVENT(present, OnPresent);
+  WITCHER_VEGETATION_EVENT(init_pipeline, OnInitPipeline);
+  WITCHER_VEGETATION_EVENT(destroy_pipeline, OnDestroyPipeline);
+  WITCHER_VEGETATION_EVENT(bind_pipeline, OnBindPipeline);
+  WITCHER_VEGETATION_EVENT(draw, OnDraw);
+  WITCHER_VEGETATION_EVENT(draw_indexed, OnDrawIndexed);
+  WITCHER_VEGETATION_EVENT(barrier, OnBarrier);
+#undef WITCHER_VEGETATION_EVENT
+}
+}  // namespace witcher::night::vegetation

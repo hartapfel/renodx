@@ -1,0 +1,191 @@
+{
+  "clear_layer_mesh.w2p": [
+    0,
+    0,
+    0.35,
+    0,
+    0
+  ],
+  "clear_layer_mesh_thin.w2p": [
+    0,
+    0,
+    0.22,
+    0,
+    0
+  ],
+  "clear_layer_mesh_whole.w2p": [
+    0,
+    0.35,
+    0.35,
+    0,
+    0
+  ],
+  "cirrus_layer_mesh.w2p": [
+    0,
+    0,
+    0,
+    0,
+    0.65
+  ],
+  "cirrus_layer_mesh_2.w2p": [
+    0,
+    0,
+    0,
+    0,
+    0.8
+  ],
+  "altocumulus_layer_mesh.w2p": [
+    0,
+    0,
+    0,
+    0.65,
+    0
+  ],
+  "altocumulus_layer_mesh_2.w2p": [
+    0,
+    0,
+    0,
+    0.75,
+    0
+  ],
+  "altocumulus_layer_mesh_3.w2p": [
+    0,
+    0,
+    0,
+    0.85,
+    0
+  ],
+  "cumulus_layer_particles.w2p": [
+    0.85,
+    0,
+    0,
+    0,
+    0
+  ],
+  "cumulus_layer_particles_new.w2p": [
+    1,
+    0,
+    0,
+    0,
+    0
+  ],
+  "cumulus_layer_particles_new_high.w2p": [
+    0,
+    0,
+    0,
+    0.6,
+    0
+  ],
+  "cumulus_layer_particles_big_far.w2p": [
+    1,
+    0,
+    0,
+    0,
+    0
+  ],
+  "cumulus_particles_big.w2p": [
+    1,
+    0,
+    0,
+    0,
+    0
+  ],
+  "cumulus_particles_big_shafts.w2p": [
+    1,
+    0,
+    0,
+    0,
+    0
+  ],
+  "storm_layer_mesh.w2p": [
+    0,
+    1,
+    0,
+    0,
+    0
+  ],
+  "storm_layer_mesh_slow.w2p": [
+    0,
+    0.9,
+    0,
+    0,
+    0
+  ],
+  "storm_layer_mesh_softer.w2p": [
+    0,
+    0.85,
+    0,
+    0,
+    0
+  ],
+  "blizzard_layer_mesh.w2p": [
+    0,
+    1,
+    0,
+    0,
+    0
+  ],
+  "bob_light_clouds.w2p": [
+    0.45,
+    0,
+    0,
+    0.35,
+    0
+  ],
+  "bob_mid_clouds_small_1.w2p": [
+    0.5,
+    0,
+    0,
+    0.3,
+    0
+  ],
+  "bob_mid_clouds_small_2.w2p": [
+    0.8,
+    0,
+    0,
+    0.45,
+    0
+  ],
+  "bob_distant_heavy_clouds_1.w2p": [
+    1,
+    0.35,
+    0,
+    0,
+    0
+  ],
+  "bob_storm_clouds.w2p": [
+    1,
+    0,
+    0,
+    0,
+    0
+  ],
+  "bob_storm_layer.w2p": [
+    0,
+    1,
+    0,
+    0,
+    0
+  ],
+  "q704_storm_layer.w2p": [
+    0,
+    1,
+    0,
+    0,
+    0
+  ],
+  "q704_weather_clouds.w2p": [
+    1,
+    0.4,
+    0,
+    0,
+    0
+  ],
+  "q501_cloud_layer_storm.w2p": [
+    0,
+    1,
+    0,
+    0,
+    0
+  ]
+}
