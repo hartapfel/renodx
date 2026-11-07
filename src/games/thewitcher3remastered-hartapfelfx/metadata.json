@@ -1,0 +1,17 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/gh/clshortfuse/renodx/renodx-metadata-schema.json",
+  "id": "thewitcher3remastered-hartapfelfx",
+  "title": "The Witcher 3 Remastered - HartapfelFX",
+  "summary": "Volumetric clouds and fog, PBR lighting, contact shadows, player fill lights and Darker Nights for Raster, RT and PT.",
+  "status": "experimental",
+  "deploy": {
+    "steam_appid": 292030,
+    "game_exe": "bin/x64_dx12/witcher3.exe",
+    "process_name": "witcher3.exe",
+    "api": "d3d12",
+    "architecture": [
+      "x64"
+    ],
+    "reshade_preferred_name": "dxgi.dll"
+  }
+}

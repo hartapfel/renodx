@@ -1,0 +1,383 @@
+{
+  "02320E1A": {
+    "profile": "cs_6_6",
+    "sha256": "1488de47d8f4ecaeed956daa56d02f8a74049d0a1d9d5b5cf8a9d35b9fb39259",
+    "bytes": 27112,
+    "patches": [
+      {
+        "function": "define void @cs_main() {",
+        "assignment": "%2691 = fsub fast float 1.000000e+00, %2690",
+        "world": [
+          "%157",
+          "%158",
+          "%159"
+        ]
+      }
+    ],
+    "night_skylight": [
+      {
+        "assignment": "%315 = fmul fast float %244, %242"
+      },
+      {
+        "assignment": "%2769 = extractvalue %dx.types.CBufRet.f32 %2768, 1"
+      }
+    ]
+  },
+  "35E6FF87": {
+    "profile": "vs_6_3",
+    "sha256": "c227c112db167763043645fd47fa70476d80b3d5f81d80c0a049e014bad67368",
+    "bytes": 23844,
+    "patches": [
+      {
+        "function": "define void @vs_main() {",
+        "assignment": "%1052 = fsub fast float 1.000000e+00, %1051",
+        "world": [
+          "%385",
+          "%389",
+          "%393"
+        ]
+      }
+    ]
+  },
+  "365A4FCA": {
+    "profile": "ps_6_6",
+    "sha256": "57595d57cc8180978940ee81bee9098421859f539b2499c33ab29e43c304a741",
+    "bytes": 4456,
+    "patches": [
+      {
+        "function": "define void @ps_main() {",
+        "assignment": "%198 = fsub fast float 1.000000e+00, %197",
+        "world": [
+          "%66",
+          "%67",
+          "%68"
+        ]
+      }
+    ]
+  },
+  "4A7A44D6": {
+    "profile": "ps_6_6",
+    "sha256": "ddc3ef260e06a4fd8d3e684eeca6a67093a13249a27a3d1e6f6ae3c98e80304b",
+    "bytes": 17040,
+    "patches": [
+      {
+        "function": "define void @ps_main() {",
+        "assignment": "%1097 = fsub fast float 1.000000e+00, %1096",
+        "world": [
+          "%84",
+          "%85",
+          "%86"
+        ]
+      }
+    ]
+  },
+  "52A112DE": {
+    "profile": "vs_6_3",
+    "sha256": "25f2151d5813741ce7558781e736f020be11900574e01c5c0d3f7c18c7165593",
+    "bytes": 23536,
+    "patches": [
+      {
+        "function": "define void @vs_main() {",
+        "assignment": "%1048 = fsub fast float 1.000000e+00, %1047",
+        "world": [
+          "%381",
+          "%385",
+          "%389"
+        ]
+      }
+    ]
+  },
+  "806C62A8": {
+    "profile": "ps_6_6",
+    "sha256": "2ab52c06d198b1990bbffd570f7cc5c473de662f36eeb3b94eafbdb71d33922c",
+    "bytes": 36324,
+    "patches": [
+      {
+        "function": "define void @ps_main() {",
+        "assignment": "%2570 = fsub fast float 1.000000e+00, %2569",
+        "world": [
+          "%93",
+          "%94",
+          "%95"
+        ],
+        "mode": "neutralize"
+      },
+      {
+        "function": "define void @ps_main() {",
+        "assignment": "%3481 = fsub fast float 1.000000e+00, %3480",
+        "world": [
+          "%93",
+          "%94",
+          "%95"
+        ],
+        "mode": "neutralize"
+      },
+      {
+        "function": "define void @ps_main() {",
+        "assignment": "%3487 = phi float [ %3485, %3483 ], [ %2573, %2572 ]",
+        "world": [
+          "%93",
+          "%94",
+          "%95"
+        ],
+        "mode": "multiply"
+      }
+    ]
+  },
+  "9DF5AF93": {
+    "profile": "ps_6_6",
+    "sha256": "3d23cae2aa9830a9a6fd268bfba4d3a69daeb0b7376788273abcafa9b975f9d7",
+    "bytes": 48596,
+    "patches": [
+      {
+        "function": "define void @ps_main() {",
+        "assignment": "%2801 = fsub fast float 1.000000e+00, %2800",
+        "world": [
+          "%2645",
+          "%2646",
+          "%2647"
+        ]
+      }
+    ]
+  },
+  "D2C88922": {
+    "profile": "cs_6_6",
+    "sha256": "8f8be7f54ccc0fc5ff43063c9eb5ca6d4c84397d20021c34c8193f73ac98c387",
+    "bytes": 28620,
+    "patches": [
+      {
+        "function": "define void @cs_main() {",
+        "assignment": "%2442 = fsub fast float 1.000000e+00, %2441",
+        "world": [
+          "%275",
+          "%277",
+          "%279"
+        ]
+      }
+    ],
+    "night_skylight": [
+      {
+        "assignment": "%395 = fmul fast float %392, %324"
+      },
+      {
+        "assignment": "%396 = fmul fast float %393, %324"
+      },
+      {
+        "assignment": "%397 = fmul fast float %394, %324"
+      },
+      {
+        "assignment": "%3417 = extractvalue %dx.types.CBufRet.f32 %3416, 1"
+      }
+    ]
+  },
+  "EAAAC84D": {
+    "profile": "ps_6_6",
+    "sha256": "afb51ca1e51fc3f960c8d63d6f0f37c6d9728044e26161724bc6daac630ef86f",
+    "bytes": 36388,
+    "patches": [
+      {
+        "function": "define void @ps_main() {",
+        "assignment": "%2809 = fsub fast float 1.000000e+00, %2808",
+        "world": [
+          "%2653",
+          "%2654",
+          "%2655"
+        ]
+      }
+    ],
+    "night_skylight": [
+      {
+        "assignment": "%4077 = fmul fast float %4048, %4001",
+        "condition": "%451"
+      },
+      {
+        "assignment": "%4078 = fmul fast float %4048, %4002",
+        "condition": "%451"
+      },
+      {
+        "assignment": "%4079 = fmul fast float %4048, %4003",
+        "condition": "%451"
+      }
+    ]
+  },
+  "F751BDFE": {
+    "profile": "ps_6_6",
+    "sha256": "cb136e669403a6bb53ae724ec63a7bbc5bd01da8a3997e44dd423cdc0d45bf25",
+    "bytes": 42672,
+    "patches": [
+      {
+        "function": "define void @ps_main() {",
+        "assignment": "%2801 = fsub fast float 1.000000e+00, %2800",
+        "world": [
+          "%2645",
+          "%2646",
+          "%2647"
+        ]
+      }
+    ]
+  },
+  "47BC87E1": {
+    "path_materials": true,
+    "profile": "lib_6_6",
+    "sha256": "63828ae55a44ce1ab041065ba4e3169e0b33c277943b19545be7a810ae048121",
+    "bytes": 231144,
+    "patches": [
+      {
+        "function": "define void @\"\\01?PTRGSFinal@@YAXXZ\"() #0 {",
+        "assignment": "%6754 = fsub fast float 1.000000e+00, %6753",
+        "world": [
+          "%927",
+          "%928",
+          "%929"
+        ]
+      },
+      {
+        "function": "define void @\"\\01?PTRGSFinal@@YAXXZ\"() #0 {",
+        "assignment": "%7882 = fsub fast float 1.000000e+00, %7881",
+        "world": [
+          "%7140",
+          "%7141",
+          "%7142"
+        ]
+      },
+      {
+        "function": "define void @\"\\01?PTRGSFinal@@YAXXZ\"() #0 {",
+        "assignment": "%12794 = fsub fast float 1.000000e+00, %12793",
+        "world": [
+          "%12330",
+          "%12331",
+          "%12332"
+        ]
+      },
+      {
+        "function": "define void @\"\\01?PTRGSWithSERFinal@@YAXXZ\"() #0 {",
+        "assignment": "%6803 = fsub fast float 1.000000e+00, %6802",
+        "world": [
+          "%929",
+          "%930",
+          "%931"
+        ]
+      },
+      {
+        "function": "define void @\"\\01?PTRGSWithSERFinal@@YAXXZ\"() #0 {",
+        "assignment": "%7931 = fsub fast float 1.000000e+00, %7930",
+        "world": [
+          "%7189",
+          "%7190",
+          "%7191"
+        ]
+      },
+      {
+        "function": "define void @\"\\01?PTRGSWithSERFinal@@YAXXZ\"() #0 {",
+        "assignment": "%12843 = fsub fast float 1.000000e+00, %12842",
+        "world": [
+          "%12379",
+          "%12380",
+          "%12381"
+        ]
+      }
+    ]
+  },
+  "6D655BE6": {
+    "profile": "lib_6_6",
+    "sha256": "067ffa34742d34634e96fb6c3cf73a166e7d813e2f583d8a617733a6617bf721",
+    "bytes": 12016,
+    "patches": [
+      {
+        "function": "define void @\"\\01?CausticsTraceRGS@@YAXXZ\"() #0 {",
+        "assignment": "%770 = fsub fast float 1.000000e+00, %769",
+        "world": [
+          "%330",
+          "%331",
+          "%377"
+        ]
+      }
+    ]
+  },
+  "A3019513": {
+    "profile": "lib_6_6",
+    "sha256": "736d1986356e2bf49c38fea948bbc38101a6fc67cd9c96d9c9380fd51de30acf",
+    "bytes": 62232,
+    "patches": [
+      {
+        "function": "define void @\"\\01?PTHairPrepassRGS@@YAXXZ\"() #0 {",
+        "assignment": "%1136 = fsub fast float 1.000000e+00, %1135",
+        "world": [
+          "%286",
+          "%287",
+          "%288"
+        ]
+      }
+    ]
+  },
+  "AA89D644": {
+    "path_materials": true,
+    "profile": "lib_6_6",
+    "sha256": "62be9a5426e5101a42e119d4e209ea532ac02ca07cb08ddb9ab5e03941f529aa",
+    "bytes": 65220,
+    "patches": [
+      {
+        "function": "define void @\"\\01?PTRGS_SharcUpdateFinal@@YAXXZ\"() #0 {",
+        "assignment": "%1059 = fsub fast float 1.000000e+00, %1058",
+        "world": [
+          "%328",
+          "%329",
+          "%330"
+        ]
+      },
+      {
+        "function": "define void @\"\\01?PTRGS_SharcUpdateFinal@@YAXXZ\"() #0 {",
+        "assignment": "%4830 = fsub fast float 1.000000e+00, %4829",
+        "world": [
+          "%3818",
+          "%3819",
+          "%3820"
+        ]
+      },
+      {
+        "function": "define void @\"\\01?PTRGS_SharcUpdateFinal@@YAXXZ\"() #0 {",
+        "assignment": "%5558 = fsub fast float 1.000000e+00, %5557",
+        "world": [
+          "%4916",
+          "%4917",
+          "%4918"
+        ]
+      }
+    ]
+  },
+  "F2FA912E": {
+    "path_materials": true,
+    "profile": "lib_6_6",
+    "sha256": "7a33d9bd1e4571acc34f322f25d88581e06e06b56731b05e73973f652a0850ce",
+    "bytes": 112488,
+    "patches": [
+      {
+        "function": "define void @\"\\01?PTRGS_SharcQueryFinal@@YAXXZ\"() #0 {",
+        "assignment": "%5987 = fsub fast float 1.000000e+00, %5986",
+        "world": [
+          "%930",
+          "%931",
+          "%932"
+        ]
+      },
+      {
+        "function": "define void @\"\\01?PTRGS_SharcQueryFinal@@YAXXZ\"() #0 {",
+        "assignment": "%7365 = fsub fast float 1.000000e+00, %7364",
+        "world": [
+          "%6373",
+          "%6374",
+          "%6375"
+        ]
+      },
+      {
+        "function": "define void @\"\\01?PTRGS_SharcQueryFinal@@YAXXZ\"() #0 {",
+        "assignment": "%12277 = fsub fast float 1.000000e+00, %12276",
+        "world": [
+          "%11813",
+          "%11814",
+          "%11815"
+        ]
+      }
+    ]
+  }
+}
