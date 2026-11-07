@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #pragma once
 #include "bindings.hpp"
-#include "../../../../../utils/state.hpp"
+#include "../../../raster.hpp"
 #include <d3d12.h>
 
 namespace witcher3graphics::bindings {
@@ -9,7 +9,7 @@ namespace witcher3graphics::bindings {
 // consults an unrelated resource-lifetime cache and crashed this game earlier.
 class RestorePassState {
  public:
-  RestorePassState(reshade::api::command_list* cmd, const renodx::utils::state::CommandListState& state,
+  RestorePassState(reshade::api::command_list* cmd, const hartapfelfx::raster::State& state,
                    const CommandData& roots) : cmd_(cmd), state_(state), roots_(roots) {}
   RestorePassState(const RestorePassState&) = delete;
   RestorePassState& operator=(const RestorePassState&) = delete;
@@ -39,7 +39,7 @@ class RestorePassState {
 
  private:
   reshade::api::command_list* cmd_;
-  renodx::utils::state::CommandListState state_;
-  CommandData roots_;
+  const hartapfelfx::raster::State& state_;
+  const CommandData& roots_;
 };
 }  // namespace witcher3graphics::bindings

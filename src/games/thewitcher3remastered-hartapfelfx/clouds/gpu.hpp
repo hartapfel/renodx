@@ -21,7 +21,8 @@ struct UploadStorage {
   ComPtr<ID3D12Resource> object;
   void* mapped = nullptr;
   uint64_t bytes = 0;
-  ~UploadStorage() { if (mapped) object->Unmap(0, nullptr); }
+  // Persistent upload mappings end when the resource is released. Calling
+  // Unmap during device destruction re-enters already-torn-down addon hooks.
 };
 struct Resource {
   ComPtr<ID3D12Resource> object;

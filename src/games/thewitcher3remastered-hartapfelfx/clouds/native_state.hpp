@@ -3,7 +3,7 @@
 #include <d3d12.h>
 #include <wrl/client.h>
 #include "../fog/bindings.hpp"
-#include "../../../utils/state.hpp"
+#include "../raster.hpp"
 #include "heaps.hpp"
 
 namespace hartapfelfx::clouds {
@@ -17,7 +17,7 @@ class NativeState {
       : command_(command), native_(reinterpret_cast<ID3D12GraphicsCommandList*>(command->get_native())), pipeline_(pipeline), ray_pipeline_(ray_pipeline), active_compute_(compute) {
     const auto* bindings = renodx::utils::data::Get<fog::CommandData>(command);
     auto* layouts = renodx::utils::data::Get<fog::DeviceData>(command->get_device());
-    const auto* state = renodx::utils::state::GetCurrentState(command);
+    const auto* state = hartapfelfx::raster::Get(command);
     if (!bindings || !layouts || !state) return;
     graphics_ = bindings->graphics;
     compute_ = bindings->compute;
@@ -79,8 +79,8 @@ class NativeState {
       } else if (parameter.constant_count) {
         for (uint32_t word = 0; word < parameter.constant_count && word < 64; ++word) {
           const bool actual = native_arguments && (arguments.valid_words[index] & (uint64_t(1) << word));
-          if (!actual && (word >= bindings.constants[index].size() || !bindings.constants[index][word].has_value())) continue;
-          const uint32_t value = actual ? arguments.words[index][word] : *bindings.constants[index][word];
+          if (!actual) continue;
+          const uint32_t value = arguments.words[index][word];
           if (compute) native_->SetComputeRoot32BitConstant(index, value, word);
           else native_->SetGraphicsRoot32BitConstant(index, value, word);
         }
@@ -117,7 +117,7 @@ class NativeState {
   fog::BindingState graphics_, compute_;
   heaps::Arguments graphics_arguments_, compute_arguments_;
   fog::BindingLayout graphics_layout_, compute_layout_;
-  renodx::utils::state::CommandListState raster_;
+  hartapfelfx::raster::State raster_;
   Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> resource_heap_, sampler_heap_;
   bool valid_ = false, changed_ = false, active_compute_ = false;
   bool heaps_changed_ = false;

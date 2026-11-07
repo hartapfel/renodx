@@ -69,7 +69,7 @@ class Pipeline {
                          uint64_t frame_number, uint64_t view_identity,
                          const std::array<resource_view, 2>& motion = {}, const buffer_range& motion_camera = {}) {
     const auto* roots = renodx::utils::data::Get<bindings::CommandData>(cmd);
-    const auto* state = renodx::utils::state::GetCurrentState(cmd);
+    const auto* state = hartapfelfx::raster::Get(cmd);
     if (!initialized_ || !roots || roots->in_render_pass || roots->last_pipeline.handle == 0 || !state
         || width == 0 || height == 0 || width > 8192 || height > 8192) return {};
     // Never repeat a write into an allocation in the same frame, including an

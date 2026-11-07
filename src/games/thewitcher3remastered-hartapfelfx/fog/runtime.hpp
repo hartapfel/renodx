@@ -5,7 +5,7 @@
 #include <cstring>
 #include <deque>
 #include "../../../utils/d3d12_resource_pool.hpp"
-#include "../../../utils/state.hpp"
+#include "../raster.hpp"
 #include "../shared.h"
 #include "bindings.hpp"
 #include "fast_noise.hpp"
@@ -113,9 +113,13 @@ inline ID3D12PipelineState* Pipeline(api::command_list* cmd, DeviceData* data, a
 }
 inline bool DrawVolume(api::command_list* cmd, DeviceData* device_data, Job* job, bool compute, bool integrate, bool local_pass = false, bool raster = false, bool temporal = false, bool interior = false) {
   auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
-  auto* state = renodx::utils::state::GetCurrentState(cmd);
+  auto* state = hartapfelfx::raster::Get(cmd);
   auto* shaders = renodx::utils::shader::GetCurrentState(cmd);
   if (!bindings || !state || !shaders) return false;
+  const auto* native_stage = (compute ? renodx::utils::shader::GetCurrentComputeState(shaders)
+                                      : renodx::utils::shader::GetCurrentPixelState(shaders));
+  const api::pipeline native_pipeline = native_stage->pipeline;
+  if (!native_pipeline.handle) return false;
   auto layout = compute ? bindings->compute.layout : bindings->graphics.layout;
   int output = RootIndex(cmd, layout, api::descriptor_type::buffer_unordered_access_view, 0, 71);
   int parameters = RootIndex(cmd, layout, api::descriptor_type::constant_buffer, 3, 71);
@@ -177,7 +181,7 @@ inline bool DrawVolume(api::command_list* cmd, DeviceData* device_data, Job* job
     cmd->bind_pipeline_state(api::dynamic_state::primitive_topology, uint32_t(state->primitive_topology));
   }
   // Only private roots were touched; all native/HDR roots and heaps remain bound.
-  native->SetPipelineState(reinterpret_cast<ID3D12PipelineState*>(shaders->last_pipeline.handle));
+  native->SetPipelineState(reinterpret_cast<ID3D12PipelineState*>(native_pipeline.handle));
   {
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -313,7 +317,7 @@ inline void Generate(api::command_list* cmd, bool compute) {
   if (desc.type != api::resource_type::texture_2d || !desc.texture.width || !desc.texture.height) return;
   api::viewport viewport{0, 0, float(desc.texture.width), float(desc.texture.height), 0, 1};
   if (!compute) {
-    auto* state = renodx::utils::state::GetCurrentState(cmd);
+    auto* state = hartapfelfx::raster::Get(cmd);
     if (!state || state->viewports.empty()) return;
     viewport = state->viewports.front();
   }
@@ -379,7 +383,7 @@ inline bool Prepare(api::command_list* cmd) {
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
   auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
-  auto* state = renodx::utils::state::GetCurrentState(cmd);
+  auto* state = hartapfelfx::raster::Get(cmd);
   if (!data || !command || !bindings || !state || state->viewports.empty()) return false;
   const auto frame = Resolve(cmd, bindings->graphics, api::descriptor_type::constant_buffer, 12);
   if (frame.type != api::descriptor_type::constant_buffer) return false;
@@ -402,7 +406,7 @@ inline bool PrepareReceiver(api::command_list* cmd, uint64_t* address = nullptr)
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
   auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
-  auto* state = renodx::utils::state::GetCurrentState(cmd);
+  auto* state = hartapfelfx::raster::Get(cmd);
   if (!command || !bindings || !data || !state || state->viewports.empty()) return false;
   const auto frame = Resolve(cmd, bindings->graphics, api::descriptor_type::constant_buffer, 12);
   if (frame.type != api::descriptor_type::constant_buffer) return false;
@@ -487,8 +491,9 @@ inline void OnDestroyDevice(api::device* device) {
 }
 inline void OnInitCommandList(api::command_list* cmd) { renodx::utils::data::Create<CommandData>(cmd); }
 inline void OnResetCommandList(api::command_list* cmd) {
-  auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
+  if (!command || (command->recording.empty() && command->history_refs.empty())) return;
+  auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   if (!data || !command) return;
   std::lock_guard lock(data->mutex);
   ++data->allocations.frame;
@@ -550,8 +555,9 @@ inline void OnDestroyQueue(api::command_queue* queue) {
   renodx::utils::data::Delete<QueueData>(queue);
 }
 inline void OnExecute(api::command_queue* queue, api::command_list* cmd) {
-  auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
+  if (!command || (command->recording.empty() && command->history_refs.empty())) return;
+  auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* q = renodx::utils::data::Get<QueueData>(queue);
   if (!data || !command) return;
   std::lock_guard lock(data->mutex);
@@ -569,9 +575,10 @@ inline void OnDestroyLayout(api::device* device, api::pipeline_layout layout) {
 }
 inline void Use(DWORD reason, ShaderInjectData* injection) {
   settings = injection;
-  renodx::utils::state::Use(reason);
+  raster::Use(reason);
   if (reason == DLL_PROCESS_ATTACH) {
     on_sun = Generate;
+    sun_enabled = &injection->enabled;
     on_interior = CaptureInterior;
     on_local = ApplyLocal;
     reshade::register_event<reshade::addon_event::init_device>(OnInitDevice);
@@ -585,6 +592,7 @@ inline void Use(DWORD reason, ShaderInjectData* injection) {
     reshade::register_event<reshade::addon_event::destroy_pipeline_layout>(OnDestroyLayout);
   } else if (reason == DLL_PROCESS_DETACH) {
     on_sun = nullptr;
+    sun_enabled = nullptr;
     on_interior = nullptr;
     on_local = nullptr;
     reshade::unregister_event<reshade::addon_event::init_device>(OnInitDevice);

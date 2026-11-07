@@ -54,6 +54,10 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Binding regression test compilation failed.' }
   & (Join-Path $validationDirectory 'binding-layout.exe')
   if ($LASTEXITCODE -ne 0) { throw 'Binding regression test failed.' }
+  & clang-cl /nologo /EHsc /std:c++20 /O2 /DNDEBUG /DNOMINMAX /DWIN32=1 /Iexternal/reshade /Iexternal/gtl/include (Join-Path $PSScriptRoot 'tests/descriptor_cache.cpp') ('/Fe' + (Join-Path $validationDirectory 'descriptor-cache.exe')) ('/Fo' + (Join-Path $validationDirectory 'descriptor-cache.obj')) /link d3d12.lib dxgi.lib
+  if ($LASTEXITCODE -ne 0) { throw 'Descriptor concurrency test compilation failed.' }
+  & (Join-Path $validationDirectory 'descriptor-cache.exe')
+  if ($LASTEXITCODE -ne 0) { throw 'Descriptor concurrency test failed.' }
   & clang-cl /nologo /EHsc /std:c++20 /O2 /UNDEBUG /DNOMINMAX (Join-Path $PSScriptRoot 'tests/upload_pool.cpp') ('/Fe' + (Join-Path $validationDirectory 'upload-pool.exe')) ('/Fo' + (Join-Path $validationDirectory 'upload-pool.obj')) /link d3d12.lib dxgi.lib
   if ($LASTEXITCODE -ne 0) { throw 'Upload lifetime test compilation failed.' }
   & (Join-Path $validationDirectory 'upload-pool.exe')

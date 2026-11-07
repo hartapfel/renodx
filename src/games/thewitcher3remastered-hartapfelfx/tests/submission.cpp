@@ -26,6 +26,13 @@ int main(int argc, char** argv) {
     auto* owner = observed;
     if (!owner) return 2;
     Check(command->Reset(gpu.allocator.Get(), nullptr));
+    // An ordinary recording must not populate the producer registry or make
+    // the native submission hook acquire its locks.
+    if (submission::active_recordings.load() != 0) return 7;
+    {
+      std::lock_guard lock(submission::registry_mutex);
+      if (!submission::recordings.empty()) return 8;
+    }
     // Model an interface alias absent from the creation-time registry.
     // Admission must refresh it before native ExecuteCommandLists runs.
     {
@@ -44,10 +51,11 @@ int main(int argc, char** argv) {
     if (WaitForSingleObject(gpu.event, 10000) != WAIT_OBJECT_0) return 4;
     Check(command->Reset(gpu.allocator.Get(), nullptr));
     if (!lifetime->Ready() || !lifetime->Idle()) return 5;
+    if (submission::active_recordings.load() != 0) return 9;
     Check(command->Close());
   }
   reshade::unregister_event<reshade::addon_event::init_command_list>(Observe);
   submission::UseRuntime(DLL_PROCESS_DETACH);
   reshade::unregister_addon(GetModuleHandleW(nullptr));
-  std::cout << "PASS: closed native command list, refreshed aliases and completed producer lease\n";
+  std::cout << "PASS: idle submission bypass, closed native command list, refreshed aliases and completed producer lease\n";
 }

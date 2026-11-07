@@ -6,12 +6,14 @@
 #include "../../../utils/command_action.hpp"
 #include "../../../utils/descriptor.hpp"
 #include "binding_layout.hpp"
+#include "../descriptor_cache.hpp"
 
 namespace hartapfelfx::fog {
 namespace api = reshade::api;
 inline std::atomic_uint64_t sun_captures = 0, fog_matches = 0, fog_fallbacks = 0;
 inline std::atomic_uint64_t interior_captures = 0, interior_matches = 0;
 inline std::function<void(api::command_list*, bool)> on_sun;
+inline const float* sun_enabled = nullptr;
 inline std::function<void(api::command_list*, bool)> before_sun;
 inline std::function<void(api::command_list*, bool)> after_sun;
 inline std::function<uint64_t(api::command_list*, bool)> cloud_source;
@@ -26,14 +28,12 @@ struct BindingState {
   std::array<api::descriptor_table, 64> tables{};
   std::array<api::buffer_range, 64> buffers{};
   std::array<uint64_t, 64> addresses{};
-  std::array<std::vector<std::optional<uint32_t>>, 64> constants;
   void SetLayout(api::pipeline_layout value) {
     if (layout == value) return;
     layout = value;
     tables = {};
     buffers = {};
     addresses = {};
-    constants = {};
   }
 };
 struct Inputs {
@@ -58,8 +58,6 @@ inline bool OnCreateLayout(api::device* device, uint32_t& parameter_count, api::
 inline renodx::utils::descriptor::DescriptorHeapSlot Resolve(
     api::command_list* cmd, const BindingState& state, api::descriptor_type type, uint32_t slot, uint32_t space = 0) {
   renodx::utils::descriptor::DescriptorHeapSlot result;
-  auto* descriptors = renodx::utils::data::Get<renodx::utils::descriptor::DeviceData>(cmd->get_device());
-  if (!descriptors) return result;
   auto* device = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   if (!device) return result;
   std::shared_lock layout_lock(device->mutex);
@@ -77,13 +75,7 @@ inline renodx::utils::descriptor::DescriptorHeapSlot Resolve(
         return result;
       }
       if (!state.tables[p].handle) continue;
-      api::descriptor_heap heap{};
-      uint32_t offset = 0;
-      cmd->get_device()->get_descriptor_heap_offset(state.tables[p], range.binding + slot - range.dx_register_index, 0, &heap, &offset);
-      std::shared_lock lock(descriptors->mutex);
-      const auto found = descriptors->heaps.find(heap.handle);
-      if (found != descriptors->heaps.end() && offset < found->second.size()) result = found->second[offset];
-      return result;
+      return descriptors::Read(cmd->get_device(), state.tables[p], range.binding + slot - range.dx_register_index);
     }
   }
   return result;
@@ -133,19 +125,6 @@ inline void OnPushDescriptors(api::command_list* cmd, api::shader_stage stages, 
       state->addresses[parameter] = cmd->get_device()->get_resource_view_gpu_address(*static_cast<const api::resource_view*>(update.descriptors));
   }
 }
-inline void OnPushConstants(api::command_list* cmd, api::shader_stage stages, api::pipeline_layout layout,
-                            uint32_t parameter, uint32_t first, uint32_t count, const void* values) {
-  auto* data = renodx::utils::data::Get<CommandData>(cmd);
-  if (!data || parameter >= 64 || first >= 64 || count > 64 - first || !values) return;
-  for (auto [flag, state] : {std::pair{api::shader_stage::all_graphics, &data->graphics},
-                            std::pair{api::shader_stage::all_compute | api::shader_stage::all_ray_tracing, &data->compute}}) {
-    if ((stages & flag) == static_cast<api::shader_stage>(0)) continue;
-    state->SetLayout(layout);
-    auto& constants = state->constants[parameter];
-    if (constants.size() < first + count) constants.resize(first + count);
-    for (uint32_t i = 0; i < count; ++i) constants[first + i] = static_cast<const uint32_t*>(values)[i];
-  }
-}
 inline bool CaptureSun(api::command_list* cmd, bool compute) {
   auto* data = renodx::utils::data::Get<CommandData>(cmd);
   if (!data) return false;
@@ -182,7 +161,7 @@ inline void OnBarrier(api::command_list* cmd, uint32_t count, const api::resourc
 inline constexpr auto ObserveSun = []<typename Context>(Context& context)
     -> renodx::utils::command_action::CallbackResult<Context> {
   if (before_sun) before_sun(context.cmd_list, context.IsDispatch());
-  if (CaptureSun(context.cmd_list, context.IsDispatch())) {
+  if (sun_enabled && *sun_enabled > .5f && CaptureSun(context.cmd_list, context.IsDispatch())) {
     if (on_sun) on_sun(context.cmd_list, context.IsDispatch());
   }
   if (after_sun) after_sun(context.cmd_list, context.IsDispatch());
@@ -210,7 +189,6 @@ inline void Use(DWORD reason) {
     reshade::register_event<reshade::addon_event::reset_command_list>(OnResetCommandList);
     reshade::register_event<reshade::addon_event::bind_descriptor_tables>(OnBindTables);
     reshade::register_event<reshade::addon_event::push_descriptors>(OnPushDescriptors);
-    reshade::register_event<reshade::addon_event::push_constants>(OnPushConstants);
     reshade::register_event<reshade::addon_event::barrier>(OnBarrier);
     renodx::utils::command_action::RegisterCallback(ObserveInterior, {.shader_hash = 0x8BDE805Bu});
     // Observers must not participate in settings injection or replacement PSOs.
@@ -232,7 +210,6 @@ inline void Use(DWORD reason) {
     reshade::unregister_event<reshade::addon_event::reset_command_list>(OnResetCommandList);
     reshade::unregister_event<reshade::addon_event::bind_descriptor_tables>(OnBindTables);
     reshade::unregister_event<reshade::addon_event::push_descriptors>(OnPushDescriptors);
-    reshade::unregister_event<reshade::addon_event::push_constants>(OnPushConstants);
     reshade::unregister_event<reshade::addon_event::barrier>(OnBarrier);
   }
 }

@@ -13,6 +13,7 @@
 #include "night/settings.hpp"
 #include "lighting/graphics/lighting/native.hpp"
 #include "lighting/runtime.hpp"
+#include "state_namespace.hpp"
 
 namespace {
 ShaderInjectData injection = {1.f, 1.f, 1.f, .5f, 0.f, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, 0.f};
@@ -301,13 +302,11 @@ bool BindReceiver(reshade::api::command_list* cmd, bool night = false) {
     const bool cloud_ready = clouds::runtime::PrepareReceiver(cmd, fog_ready, night);
     if (fog_ready || cloud_ready) return true;
   }
-  cmd->bind_pipeline(state->applied_stage, state->pipeline);
   return false;
 }
 bool BindCloudShadow(reshade::api::command_list* cmd, const renodx::utils::shader::StageState& state, bool compute, bool night = false) {
   if ((clouds::mode > .5f || night) && state.pipeline_details && state.pipeline_details->initialized_replacement
       && state.pipeline_details->replacement_pipeline.handle != 0 && clouds::runtime::PrepareShadowReceiver(cmd, compute)) return true;
-  cmd->bind_pipeline(state.applied_stage, state.pipeline);
   return false;
 }
 bool BindCloudGraphics(reshade::api::command_list* cmd) {
@@ -320,7 +319,6 @@ bool BindCloudMotion(reshade::api::command_list* cmd) {
   auto* state = renodx::utils::shader::GetCurrentComputeState(renodx::utils::shader::GetCurrentState(cmd));
   if (state->pipeline_details && state->pipeline_details->initialized_replacement
       && state->pipeline_details->replacement_pipeline.handle != 0 && clouds::runtime::PrepareMotion(cmd)) return true;
-  cmd->bind_pipeline(state->applied_stage, state->pipeline);
   return false;
 }
 renodx::mods::shader::CustomShaders shaders = {
@@ -360,7 +358,6 @@ renodx::mods::shader::CustomShaders shaders = {
                        if (injection.enabled <= .5f || !ready) {
                          // The engine may omit a redundant SetPipelineState between repeated
                          // fog draws. Explicitly undo any preceding replacement on fallback.
-                         cmd->bind_pipeline(state->applied_stage, state->pipeline);
                          return false;
                        }
                        return injection.enabled > .5f && ready;
@@ -507,10 +504,30 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     };
     ConfigureNightShaders();
     lighting::ConfigureShaders(&shaders);
+    for (auto& [hash, shader] : shaders) {
+      if (!shader.on_replace) continue;
+      shader.on_replace = [replace = std::move(shader.on_replace)](auto* cmd) {
+        const bool active = replace(cmd);
+        auto* command = renodx::utils::data::Get<clouds::runtime::CommandData>(cmd);
+        if (!command) return active;
+        if (active) {
+          command->replacement_bound = true;
+        } else if (command->replacement_bound) {
+          // Native draws often omit a redundant PSO bind. Restore once when
+          // leaving a replacement; inactive draws need no driver call.
+          if (const auto* native = renodx::utils::data::Get<lighting::bindings::CommandData>(cmd);
+              native && native->last_pipeline.handle) {
+            cmd->bind_pipeline(native->last_stages, native->last_pipeline);
+          }
+          command->replacement_bound = false;
+        }
+        return active;
+      };
+    }
     reshade::register_event<reshade::addon_event::present>(OnPresent);
     renodx::mods::shader::use_root_signature_cbv = false;
     renodx::mods::shader::force_pipeline_cloning = true;
-    renodx::utils::descriptor::trace_descriptor_tables = true;
+    renodx::utils::descriptor::trace_descriptor_tables = false;
   }
   if (reason == DLL_PROCESS_DETACH) {
     reshade::unregister_event<reshade::addon_event::present>(OnPresent);
@@ -537,12 +554,13 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     }
   }
   renodx::mods::shader::Use(reason, shaders);
+  hartapfelfx::state_namespace::Use(reason);
+  hartapfelfx::descriptors::Use(reason);
   fog::Use(reason);
   fog::runtime::Use(reason, &injection);
   lighting::Use(reason);
   clouds::runtime::Use(reason, &injection);
   lighting::ray::hits::UseDispatch(reason);
-  renodx::utils::swapchain::Use(reason);
   nights::vegetation::Use(reason);
   if (reason == DLL_PROCESS_DETACH) reshade::unregister_addon(module);
   return TRUE;

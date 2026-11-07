@@ -76,19 +76,24 @@ struct Use {
   std::shared_ptr<Lifetime> lifetime;
   bool write = false;
 };
+inline std::atomic_uint32_t active_recordings{0};
 struct Recording {
   std::mutex mutex;
   std::array<Use, 16> uses;
-  uint32_t count = 0;
+  std::atomic_uint32_t count{0};
   uint64_t observed = 0, submitted = 0;
   void Clear() {
+    if (count.load(std::memory_order_acquire) == 0) return;
     std::lock_guard lock(mutex);
     for (uint32_t i = 0; i < count; ++i) {
       if (observed != submitted) uses[i].lifetime->Poison();
       if (uses[i].write) uses[i].lifetime->Seal();
       uses[i] = {};
     }
-    count = 0; observed = submitted = 0;
+    if (count.exchange(0, std::memory_order_release) != 0) {
+      active_recordings.fetch_sub(1, std::memory_order_release);
+    }
+    observed = submitted = 0;
   }
 };
 struct Queue {
@@ -109,6 +114,10 @@ inline Execute execute = nullptr;
 inline void* target = nullptr;
 
 inline void STDMETHODCALLTYPE ExecuteHook(ID3D12CommandQueue* native, UINT count, ID3D12CommandList* const* lists) {
+  if (active_recordings.load(std::memory_order_acquire) == 0) {
+    execute(native, count, lists);
+    return;
+  }
   // Fixed storage keeps the submission callback free of heap allocation. The
   // water pool is bounded below this limit; overflow poisons its leases.
   std::array<Use, 16> uses;
@@ -183,18 +192,18 @@ inline void OnQueueDestroy(command_queue* api_queue) {
 inline void RefreshCommand(command_list* cmd, CommandData* data) {
   auto* native = reinterpret_cast<ID3D12CommandList*>(cmd->get_native());
   renodx::utils::directx::NativeFromReShadeProxy(&native);
+  if (data->native == native && data->recording->count.load(std::memory_order_acquire) != 0) return;
   std::lock_guard lock(registry_mutex);
   data->native = native;
   recordings[native] = data->recording;
 }
 inline void OnCommand(command_list* cmd) {
   if (cmd->get_device()->get_api() != device_api::d3d12) return;
-  RefreshCommand(cmd, renodx::utils::data::Create<CommandData>(cmd));
+  renodx::utils::data::Create<CommandData>(cmd);
 }
 inline void OnReset(command_list* cmd) {
   if (auto* data = renodx::utils::data::Get<CommandData>(cmd)) {
     data->recording->Clear();
-    RefreshCommand(cmd, data);
   }
 }
 inline void OnCommandDestroy(command_list* cmd) {
@@ -207,7 +216,7 @@ inline void OnCommandDestroy(command_list* cmd) {
 }
 inline void OnExecute(command_queue* api_queue, command_list* cmd) {
   auto* data = renodx::utils::data::Get<CommandData>(cmd);
-  if (!data) return;
+  if (!data || data->recording->count.load(std::memory_order_acquire) == 0) return;
   RefreshCommand(cmd, data);
   auto* native = reinterpret_cast<ID3D12CommandQueue*>(api_queue->get_native());
   renodx::utils::directx::NativeFromReShadeProxy(&native);
@@ -232,7 +241,12 @@ inline bool Track(command_list* cmd, const std::shared_ptr<Lifetime>& lifetime, 
     if (data->recording->uses[i].lifetime == lifetime) return data->recording->uses[i].write == write;
   if (data->recording->count == data->recording->uses.size()) return false;
   if (write ? !lifetime->RecordWrite() : !lifetime->Ready()) return false;
-  data->recording->uses[data->recording->count++] = {lifetime, write};
+  const uint32_t index = data->recording->count.load(std::memory_order_relaxed);
+  data->recording->uses[index] = {lifetime, write};
+  if (index == 0) {
+    active_recordings.fetch_add(1, std::memory_order_release);
+  }
+  data->recording->count.store(index + 1, std::memory_order_release);
   return true;
 }
 inline void UseRuntime(DWORD reason) {

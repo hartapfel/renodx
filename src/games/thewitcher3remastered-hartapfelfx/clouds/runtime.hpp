@@ -57,6 +57,7 @@ struct __declspec(uuid("66374d6d-8560-48fd-a617-75cf842e2649")) DeviceData {
   std::vector<std::shared_ptr<AtlasStorage>> atlas_allocations;
   std::shared_ptr<Entry> latest_environment;
   std::deque<Recording> retired;
+  std::atomic_bool retirement_pending{false};
   std::deque<Admission> admissions;
   std::map<uint64_t, gpu::ComPtr<ID3D12PipelineState>> clock_pipelines;
   std::set<uint64_t> ray_pipelines;
@@ -88,6 +89,7 @@ struct __declspec(uuid("1081dc05-ccbf-439a-b246-183511d53683")) CommandData {
   api::pipeline regular_pipeline{};
   api::pipeline ray_pipeline{};
   bool ray_ready = false;
+  bool replacement_bound = false;
   bool untracked = false;
 };
 struct __declspec(uuid("e2f08e7a-3152-4a9b-9c38-1aa3dd317f8e")) QueueData {
@@ -227,7 +229,7 @@ inline void CaptureClock(api::command_list* cmd) {
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
   auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
-  const auto* state = renodx::utils::state::GetCurrentState(cmd);
+  const auto* state = hartapfelfx::raster::Get(cmd);
   if (!data || !data->ready || !command || !bindings || !state || state->viewports.size() != 1) return;
   const auto viewport = state->viewports.front();
   if (viewport.x != 0 || viewport.y != 0 || viewport.width < 320 || viewport.height < 180) return;
@@ -374,7 +376,7 @@ inline bool PrepareMotion(api::command_list* cmd) {
   return true;
 }
 inline void PrepareShadow(api::command_list* cmd, bool compute) {
-  if (!MainCommand(cmd)) return;
+  if (mode < .5f || !MainCommand(cmd)) return;
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
@@ -464,7 +466,7 @@ inline void CaptureDisc(api::command_list* cmd, bool moon) {
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
   auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
-  const auto* state = renodx::utils::state::GetCurrentState(cmd);
+  const auto* state = hartapfelfx::raster::Get(cmd);
   if (!data || !data->ready || !command || !bindings || !state
       || state->render_targets.size() != 1 || state->viewports.size() != 1) return;
   const auto viewport = state->viewports.front();
@@ -517,7 +519,7 @@ inline bool Render(api::command_list* cmd, uint32_t card_hash) {
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
   auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
-  const auto* state = renodx::utils::state::GetCurrentState(cmd);
+  const auto* state = hartapfelfx::raster::Get(cmd);
   auto* shader = renodx::utils::shader::GetCurrentState(cmd);
   if (!data || !data->ready || !command || !bindings || !state || !shader || state->render_targets.size() != 1 || state->viewports.size() != 1) return false;
   if (!CardVertexMatches(card_hash, renodx::utils::shader::GetCurrentShaderHash(renodx::utils::shader::GetCurrentVertexState(shader)))) return false;
@@ -592,7 +594,7 @@ inline bool SuppressCard(api::command_list* cmd, uint32_t hash) {
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
   auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
-  const auto* state = renodx::utils::state::GetCurrentState(cmd);
+  const auto* state = hartapfelfx::raster::Get(cmd);
   auto* shaders = renodx::utils::shader::GetCurrentState(cmd);
   if (!data || !command || !bindings || !state || !shaders || state->render_targets.size() != 1) return false;
   if (!CardVertexMatches(hash, renodx::utils::shader::GetCurrentShaderHash(renodx::utils::shader::GetCurrentVertexState(shaders)))) return false;
@@ -612,7 +614,7 @@ inline void BeginAtlasFace(api::command_list* cmd, uint32_t sky_hash) {
   auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* command=renodx::utils::data::Get<CommandData>(cmd);
   auto* bindings=renodx::utils::data::Get<fog::CommandData>(cmd);
-  const auto* state=renodx::utils::state::GetCurrentState(cmd);
+  const auto* state=hartapfelfx::raster::Get(cmd);
   auto* shaders=renodx::utils::shader::GetCurrentState(cmd);
   if(!data||!data->ready||!command||!bindings||!state||!shaders
       ||state->viewports.size()!=1||state->render_targets.size()!=1
@@ -682,7 +684,7 @@ inline void CaptureAtlasClear(api::command_list* cmd,uint32_t hash) {
   auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* command=renodx::utils::data::Get<CommandData>(cmd);
   auto* bindings=renodx::utils::data::Get<fog::CommandData>(cmd);
-  const auto* state=renodx::utils::state::GetCurrentState(cmd);
+  const auto* state=hartapfelfx::raster::Get(cmd);
   auto* shaders=renodx::utils::shader::GetCurrentState(cmd);
   if(!data||!command||!bindings||!state||!shaders||state->viewports.size()!=1
       ||state->render_targets.size()!=1)return;
@@ -714,7 +716,7 @@ inline bool ConvertAtlas(api::command_list* cmd) {
   auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* command=renodx::utils::data::Get<CommandData>(cmd);
   auto* bindings=renodx::utils::data::Get<fog::CommandData>(cmd);
-  const auto* state=renodx::utils::state::GetCurrentState(cmd);
+  const auto* state=hartapfelfx::raster::Get(cmd);
   auto* shaders=renodx::utils::shader::GetCurrentState(cmd);
   if(!data||!data->ready||!command||!bindings||!state||!shaders
       ||state->viewports.size()!=1||state->render_targets.size()!=1
@@ -838,6 +840,7 @@ inline void PrepareRayShadow(api::command_list* cmd) {
   if (root < 0) return;
   auto* native_command = reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native());
   native_command->SetComputeRootShaderResourceView(root, data->assets.zero.object->GetGPUVirtualAddress());
+  if (mode < .5f) return;
   const auto camera = fog::Resolve(cmd, bindings->compute, api::descriptor_type::constant_buffer, 0, 1).buffer_range;
   const auto frame = fog::Resolve(cmd, bindings->compute, api::descriptor_type::constant_buffer, 12, 2).buffer_range;
   const auto weather = fog::Resolve(cmd, bindings->compute, api::descriptor_type::texture_shader_resource_view, 25, 1).resource_view;
@@ -913,6 +916,9 @@ inline void OnInitCommand(api::command_list* cmd) {
   heaps::Initialize(cmd);
 }
 inline void OnBindPipeline(api::command_list* cmd, api::pipeline_stage stages, api::pipeline pipeline) {
+  if (auto* command = renodx::utils::data::Get<CommandData>(cmd)) {
+    command->replacement_bound = false;
+  }
   if (stages == api::pipeline_stage::all_ray_tracing) {
     auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
     if (auto* command = renodx::utils::data::Get<CommandData>(cmd); data && command) {
@@ -934,6 +940,11 @@ inline void OnResetCommand(api::command_list* cmd) {
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
   if (!data || !command) return;
+  if (command->recording.views.empty() && command->recording.atlases.empty() && command->recording.lighting.empty()
+      && !data->retirement_pending.load(std::memory_order_relaxed)) {
+    *command = {};
+    return;
+  }
   std::lock_guard lock(data->mutex);
   if (!command->recording.views.empty() || !command->recording.atlases.empty() || !command->recording.lighting.empty()) {
     for (const auto& queue : command->queues) {
@@ -948,6 +959,7 @@ inline void OnResetCommand(api::command_list* cmd) {
   std::erase_if(data->retired, [](const auto& item) {
     return std::all_of(item.completion.begin(), item.completion.end(), [](const auto& point) { return point.fence && point.value != UINT64_MAX && point.fence->GetCompletedValue() >= point.value; });
   });
+  data->retirement_pending.store(!data->retired.empty(), std::memory_order_relaxed);
 }
 inline void OnDestroyCommand(api::command_list* cmd) {
   OnResetCommand(cmd);

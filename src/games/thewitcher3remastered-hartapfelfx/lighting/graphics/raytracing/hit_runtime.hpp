@@ -9,7 +9,7 @@ inline std::array<std::span<const uint8_t>, 2> probe_clear_code;
 
 inline bool BindConsumer(command_list* cmd, bool enabled, bool probe = false, bool allow_native_material = false) {
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
-  const auto* command = renodx::utils::data::Get<CommandData>(cmd);
+  auto* command = renodx::utils::data::Get<CommandData>(cmd);
   const auto* bindings = renodx::utils::data::Get<bindings::CommandData>(cmd);
   if (!data) return false;
   if (!enabled) { data->pool.Invalidate(); if (!allow_native_material) return false; }
@@ -36,7 +36,7 @@ inline bool OnHitRays(command_list* cmd, resource raygen, uint64_t raygen_offset
     resource callable, uint64_t callable_offset, uint64_t callable_size, uint64_t callable_stride,
     uint32_t width, uint32_t height, uint32_t depth) {
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
-  const auto* command = renodx::utils::data::Get<CommandData>(cmd);
+  auto* command = renodx::utils::data::Get<CommandData>(cmd);
   const auto* bindings = renodx::utils::data::Get<bindings::CommandData>(cmd);
   auto* control_data = renodx::utils::data::Get<ControlData>(cmd->get_device());
   const auto fallback = [&] { BoundWrites(cmd, shader_stage::raygen); return false; };
@@ -90,6 +90,7 @@ inline bool OnHitRays(command_list* cmd, resource raygen, uint64_t raygen_offset
     if (targets[i].Valid() && targets[j].Valid()) for (const auto resource : targets[i].resources)
       if (std::ranges::find(targets[j].resources, resource) != targets[j].resources.end()) return fallback();
   bool dispatched = false;
+  command->used = true;
   const auto issue = [&](auto&& next, uint32_t kind) -> void {
     if (kind == 3) {
       BindControls(cmd);

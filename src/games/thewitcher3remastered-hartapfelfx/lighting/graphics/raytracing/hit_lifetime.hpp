@@ -13,6 +13,7 @@ struct __declspec(uuid("050a0678-2072-4de8-b589-b81ba1ce6cc2")) DeviceData {
 };
 struct __declspec(uuid("039bde79-94cf-4894-b3b8-667ead2fe814")) CommandData {
   std::shared_ptr<HitRecording> recording = std::make_shared<HitRecording>();
+  bool used = false;
 };
 inline void OnDevice(device* dev) {
   if (dev->get_api() == device_api::d3d12) renodx::utils::data::Create<DeviceData>(dev, dev);
@@ -26,7 +27,10 @@ inline void OnCommand(command_list* cmd) {
   if (renodx::utils::data::Get<DeviceData>(cmd->get_device())) renodx::utils::data::Create<CommandData>(cmd);
 }
 inline void OnReset(command_list* cmd) {
-  if (auto* data = renodx::utils::data::Get<CommandData>(cmd)) data->recording = std::make_shared<HitRecording>();
+  if (auto* data = renodx::utils::data::Get<CommandData>(cmd); data && data->used) {
+    data->recording = std::make_shared<HitRecording>();
+    data->used = false;
+  }
 }
 inline void OnCommandDestroy(command_list* cmd) { renodx::utils::data::Delete<CommandData>(cmd); }
 inline void OnResource(device* dev, const resource_desc& desc, const subresource_data*, resource_usage, resource object) {
@@ -58,32 +62,40 @@ inline void BoundWrites(command_list* cmd, shader_stage stage) {
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   const auto* command = renodx::utils::data::Get<bindings::CommandData>(cmd);
   if (!data || !data->pool.Active() || !command) return;
-  // Copy register ranges while the layout cache is locked. Find takes that
-  // cache itself, so resolving descriptors inside its callback would recurse.
-  std::vector<descriptor_range> ranges;
-  renodx::utils::pipeline_layout::GetPipelineLayoutData(command->compute.layout, [&](const auto* layout) {
-    for (uint32_t i = 0; i < layout->params.size(); ++i) {
-      const auto inspect = [&](const descriptor_range& range) {
-        if (range.type == descriptor_type::texture_unordered_access_view
-            && (uint32_t(range.visibility) & uint32_t(stage)) != 0) ranges.push_back(range);
+  // Resolve each bound UAV once. Calling Find for every register repeatedly
+  // walked and locked the same root layout on every native dispatch.
+  const auto& roots = command->compute;
+  renodx::utils::pipeline_layout::GetPipelineLayoutData(roots.layout, [&](const auto* layout) {
+    for (uint32_t index = 0; index < layout->params.size() && index < 64; ++index) {
+      if (!(roots.valid_arguments & (uint64_t(1) << index))) continue;
+      const auto& argument = roots.arguments[index];
+      const auto inspect = [&](const descriptor_range& range, bool table) {
+        if (range.type != descriptor_type::texture_unordered_access_view
+            || (uint32_t(range.visibility) & uint32_t(stage)) == 0) return;
+        if (range.count > 256 || range.binding > UINT32_MAX - range.count) {
+          data->pool.Invalidate();
+          return;
+        }
+        for (uint32_t item = 0; item < range.count; ++item) {
+          renodx::utils::descriptor::DescriptorHeapSlot slot;
+          if (table && argument.table.handle) {
+            slot = hartapfelfx::descriptors::Read(cmd->get_device(), argument.table, range.binding + item);
+          } else if (!table && argument.descriptor_valid && range.binding + item == 0) {
+            slot = argument.descriptor;
+          }
+          if (slot.type == range.type && slot.resource_view.handle) {
+            Written(cmd->get_device(), cmd->get_device()->get_resource_from_view(slot.resource_view));
+          }
+        }
       };
-      if (const auto* range = bindings::RootDescriptor(layout->params[i])) inspect(*range);
-      else if (layout->params[i].type == pipeline_layout_param_type::descriptor_table
-          || layout->params[i].type == pipeline_layout_param_type::descriptor_table_with_static_samplers)
-        for (const auto& range : layout->ranges[i]) inspect(range);
+      if (const auto* range = bindings::RootDescriptor(layout->params[index])) {
+        inspect(*range, false);
+      } else if (layout->params[index].type == pipeline_layout_param_type::descriptor_table
+          || layout->params[index].type == pipeline_layout_param_type::descriptor_table_with_static_samplers) {
+        for (const auto& range : layout->ranges[index]) inspect(range, true);
+      }
     }
   });
-  for (const auto& range : ranges) {
-    // Unbounded/unsupported tables fail closed instead of scanning arbitrary
-    // heap addresses. Captured RT output tables contain 27 UAV descriptors.
-    if (range.count > 256 || range.dx_register_index > UINT32_MAX - range.count) {
-      data->pool.Invalidate(); return;
-    }
-    for (uint32_t i = 0; i < range.count; ++i) {
-      const auto slot = bindings::Find(cmd, stage, range.type, range.dx_register_index + i, range.dx_register_space);
-      if (slot.resource_view.handle) Written(cmd->get_device(), cmd->get_device()->get_resource_from_view(slot.resource_view));
-    }
-  }
 }
 inline bool OnDispatch(command_list* cmd, uint32_t, uint32_t, uint32_t) {
   const auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());

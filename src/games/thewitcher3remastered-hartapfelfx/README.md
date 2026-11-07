@@ -14,6 +14,12 @@ Graphics profiles into the corresponding HartapfelFX slots. Preset Off restores
 native lighting across both tabs. Use HartapfelFX in place of the standalone Darker Nights and Improved Graphics
 addons. It can run alongside the separate HDR addon.
 
+The [CPU pipeline notes](PERFORMANCE.md) document the disabled-feature overhead
+fix, retained native inputs, descriptor and submission lifetime rules, profiling
+evidence, and validation commands. Preset Off avoids feature preparation and
+unused submission locks; normal descriptor copies no longer serialize the
+engine's recording workers through a device-wide exclusive lock.
+
 Darker Nights and Player Fill Lights share the native common constants hook. The merged
 lighting shaders preserve HartapfelFX’s fog and cloud bindings, including the
 RT sky contributions. Cloud Brightness adjusts cloud radiance in both native

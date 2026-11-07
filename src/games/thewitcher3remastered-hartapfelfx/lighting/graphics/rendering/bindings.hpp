@@ -10,6 +10,7 @@
 #include "../../../../../utils/data.hpp"
 #include "../../../../../utils/descriptor.hpp"
 #include "../../../../../utils/pipeline_layout.hpp"
+#include "../../../descriptor_cache.hpp"
 
 namespace witcher3graphics::bindings {
 using namespace reshade::api;
@@ -41,35 +42,52 @@ inline void OnLayout(device*, uint32_t count, const pipeline_layout_param* param
 // No readback, frame capture, raw resource retention or cross-frame cache.
 struct RootArgument {
   descriptor_table table = {};
-  std::vector<uint32_t> constants;
-  std::vector<bool> constant_valid;
-  std::unordered_map<uint32_t, renodx::utils::descriptor::DescriptorHeapSlot> descriptors;
+  std::array<uint32_t, 64> constants{};
+  uint64_t constant_valid = 0;
+  renodx::utils::descriptor::DescriptorHeapSlot descriptor;
+  bool descriptor_valid = false;
 };
 struct RootState {
   pipeline_layout layout = {};
-  std::unordered_map<uint32_t, RootArgument> arguments;
+  std::array<RootArgument, 64> arguments;
+  uint64_t valid_arguments = 0;
 
   void Select(const pipeline_layout& value) {
-    if (layout != value) { arguments.clear(); layout = value; }
+    if (layout != value) { valid_arguments = 0; layout = value; }
+  }
+
+  RootArgument* Argument(uint32_t index) {
+    if (index >= arguments.size()) return nullptr;
+    auto& argument = arguments[index];
+    if (!(valid_arguments & (uint64_t(1) << index))) {
+      argument.table = {};
+      argument.constant_valid = 0;
+      argument.descriptor_valid = false;
+      valid_arguments |= uint64_t(1) << index;
+    }
+    return &argument;
   }
 
   void Restore(command_list* cmd, shader_stage stages) const {
     if (layout.handle == 0) return;
     cmd->bind_descriptor_tables(stages, layout, 0, 0, nullptr);
-    for (const auto& [index, argument] : arguments) {
+    for (uint32_t index = 0; index < arguments.size(); ++index) {
+      if (!(valid_arguments & (uint64_t(1) << index))) continue;
+      const auto& argument = arguments[index];
       if (argument.table.handle != 0) cmd->bind_descriptor_tables(stages, layout, index, 1, &argument.table);
       for (uint32_t begin = 0; begin < argument.constants.size();) {
-        if (!argument.constant_valid[begin]) { ++begin; continue; }
+        if (!(argument.constant_valid & (uint64_t(1) << begin))) { ++begin; continue; }
         uint32_t end = begin + 1;
-        while (end < argument.constants.size() && argument.constant_valid[end]) ++end;
+        while (end < argument.constants.size() && (argument.constant_valid & (uint64_t(1) << end))) ++end;
         cmd->push_constants(stages, layout, index, begin, end - begin, argument.constants.data() + begin);
         begin = end;
       }
-      for (const auto& [binding, descriptor] : argument.descriptors) {
+      if (argument.descriptor_valid) {
+        const auto& descriptor = argument.descriptor;
         const void* value = descriptor.type == descriptor_type::constant_buffer
                 || descriptor.type == descriptor_type::shader_storage_buffer
             ? static_cast<const void*>(&descriptor.buffer_range) : &descriptor.resource_view;
-        cmd->push_descriptors(stages, layout, index, {{0}, binding, 0, 1, descriptor.type, value});
+        cmd->push_descriptors(stages, layout, index, {{0}, 0, 0, 1, descriptor.type, value});
       }
     }
   }
@@ -85,7 +103,11 @@ struct __declspec(uuid("f907f28a-2572-4b0c-9c4c-4647ffb1ca19")) CommandData {
 inline void OnInit(command_list* cmd) { renodx::utils::data::Create<CommandData>(cmd); }
 inline void OnDestroy(command_list* cmd) { renodx::utils::data::Delete<CommandData>(cmd); }
 inline void OnReset(command_list* cmd) {
-  if (auto* data = renodx::utils::data::Get<CommandData>(cmd)) *data = {};
+  if (auto* data = renodx::utils::data::Get<CommandData>(cmd)) {
+    data->graphics.layout = {}; data->graphics.valid_arguments = 0;
+    data->compute.layout = {}; data->compute.valid_arguments = 0;
+    data->in_render_pass = false; data->last_pipeline = {}; data->last_stages = pipeline_stage::all;
+  }
 }
 inline void OnBeginPass(command_list* cmd, uint32_t, const render_pass_render_target_desc*, const render_pass_depth_stencil_desc*) {
   if (auto* data = renodx::utils::data::Get<CommandData>(cmd)) data->in_render_pass = true;
@@ -112,36 +134,37 @@ void Update(command_list* cmd, shader_stage stages, const pipeline_layout& layou
 }
 inline void OnTables(command_list* cmd, shader_stage stages, pipeline_layout layout,
                      uint32_t first, uint32_t count, const descriptor_table* tables) {
+  if (first >= 64 || count > 64 - first) return;
   Update(cmd, stages, layout, [&](RootState* state) {
-    for (uint32_t i = 0; i < count; ++i) state->arguments[first + i].table = tables[i];
+    for (uint32_t i = 0; i < count; ++i) state->Argument(first + i)->table = tables[i];
   });
 }
 inline void OnConstants(command_list* cmd, shader_stage stages, pipeline_layout layout,
                         uint32_t param, uint32_t first, uint32_t count, const void* values) {
-  if (first > 64 || count > 64 - first || (count != 0 && values == nullptr)) return;
+  if (param >= 64 || first > 64 || count > 64 - first || (count != 0 && values == nullptr)) return;
   Update(cmd, stages, layout, [&](RootState* state) {
-    auto& argument = state->arguments[param];
-    argument.constants.resize(std::max<size_t>(argument.constants.size(), first + count));
-    argument.constant_valid.resize(argument.constants.size());
+    auto& argument = *state->Argument(param);
     for (uint32_t i = 0; i < count; ++i) {
       argument.constants[first + i] = static_cast<const uint32_t*>(values)[i];
-      argument.constant_valid[first + i] = true;
+      argument.constant_valid |= uint64_t(1) << (first + i);
     }
   });
 }
 inline void OnDescriptors(command_list* cmd, shader_stage stages, pipeline_layout layout,
                           uint32_t param, const descriptor_table_update& update) {
-  if (update.array_offset != 0 || update.descriptors == nullptr) return;
+  if (param >= 64 || update.binding != 0 || update.array_offset != 0 || update.count != 1 || update.descriptors == nullptr) return;
   const bool buffer = update.type == descriptor_type::constant_buffer || update.type == descriptor_type::shader_storage_buffer;
   if (!buffer && !renodx::utils::descriptor::DescriptorHeapSlot::HasResourceViewType(update.type)) return;
   // D3D12 root descriptors never contain combined image/sampler descriptors.
   if (update.type == descriptor_type::sampler_with_resource_view) return;
   Update(cmd, stages, layout, [&](RootState* state) {
-    for (uint32_t i = 0; i < update.count; ++i) {
-      auto& slot = state->arguments[param].descriptors[update.binding + i];
+    {
+      auto* argument = state->Argument(param);
+      auto& slot = argument->descriptor;
       slot.type = update.type;
-      if (buffer) slot.buffer_range = static_cast<const buffer_range*>(update.descriptors)[i];
-      else slot.resource_view = static_cast<const resource_view*>(update.descriptors)[i];
+      if (buffer) slot.buffer_range = *static_cast<const buffer_range*>(update.descriptors);
+      else slot.resource_view = *static_cast<const resource_view*>(update.descriptors);
+      argument->descriptor_valid = true;
     }
   });
 }
@@ -156,31 +179,25 @@ inline renodx::utils::descriptor::DescriptorHeapSlot Find(command_list* cmd, sha
   if (mask == 0 || (mask & (mask - 1)) != 0
       || (mask & uint32_t(shader_stage::all_graphics | shader_stage::compute | shader_stage::all_ray_tracing)) == 0) return result;
   auto* state_data = renodx::utils::data::Get<CommandData>(cmd);
-  auto* heap_data = renodx::utils::data::Get<renodx::utils::descriptor::DeviceData>(cmd->get_device());
-  if (state_data == nullptr || heap_data == nullptr) return result;
+  if (state_data == nullptr) return result;
   const auto& state = (mask & uint32_t(shader_stage::all_compute | shader_stage::all_ray_tracing)) != 0
       ? state_data->compute : state_data->graphics;
   renodx::utils::pipeline_layout::GetPipelineLayoutData(state.layout, [&](const auto* layout) {
-    for (uint32_t param = 0; param < layout->params.size(); ++param) {
-      const auto argument = state.arguments.find(param);
-      if (argument == state.arguments.end()) continue;
+    for (uint32_t param = 0; param < layout->params.size() && param < 64; ++param) {
+      if (!(state.valid_arguments & (uint64_t(1) << param))) continue;
+      const auto& argument = state.arguments[param];
       const auto resolve = [&](const descriptor_range& range, bool table) {
         if ((uint32_t(range.visibility) & mask) == 0
             || range.type != type || range.dx_register_space != space || reg < range.dx_register_index
             || reg - range.dx_register_index >= range.count) return;
         const uint32_t binding = range.binding + reg - range.dx_register_index;
         if (!table) {
-          const auto descriptor = argument->second.descriptors.find(binding);
-          if (descriptor != argument->second.descriptors.end() && descriptor->second.type == type) result = descriptor->second;
+          if (binding == 0 && argument.descriptor_valid && argument.descriptor.type == type) result = argument.descriptor;
           return;
         }
-        if (argument->second.table.handle == 0) return;
-        descriptor_heap heap = {}; uint32_t offset = 0;
-        cmd->get_device()->get_descriptor_heap_offset(argument->second.table, binding, 0, &heap, &offset);
-        std::shared_lock lock(heap_data->mutex);
-        const auto found = heap_data->heaps.find(heap.handle);
-        if (found != heap_data->heaps.end() && offset < found->second.size() && found->second[offset].type == type)
-          result = found->second[offset];
+        if (argument.table.handle == 0) return;
+        const auto value = hartapfelfx::descriptors::Read(cmd->get_device(), argument.table, binding);
+        if (value.type == type) result = value;
       };
       const auto& definition = layout->params[param];
       if (definition.type == pipeline_layout_param_type::push_descriptors) resolve(definition.push_descriptors, false);
@@ -199,7 +216,7 @@ inline renodx::utils::descriptor::DescriptorHeapSlot Find(command_list* cmd, boo
 
 inline void Use(DWORD reason, bool use_shared_utils = true) {
   if (reason == DLL_PROCESS_ATTACH) {
-    renodx::utils::descriptor::trace_descriptor_tables = true;
+    renodx::utils::descriptor::trace_descriptor_tables = false;
     if (use_shared_utils) {
       renodx::utils::descriptor::Use(reason);
       renodx::utils::pipeline_layout::Use(reason);

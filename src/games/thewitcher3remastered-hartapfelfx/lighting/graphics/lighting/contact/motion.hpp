@@ -26,7 +26,7 @@ class MotionInputs {
     using namespace reshade::api;
     std::lock_guard lock(mutex_);
     recordings_.erase(cmd);
-    const auto* state = renodx::utils::state::GetCurrentState(cmd);
+    const auto* state = hartapfelfx::raster::Get(cmd);
     if (!state || state->render_targets.size() != 4 || !state->depth_stencil.handle) return;
     for (uint32_t i = 0; i < 3; ++i)
       if (!state->render_targets[i].handle || dev_->get_resource_view_desc(state->render_targets[i]).format != format::r8g8b8a8_unorm) return;

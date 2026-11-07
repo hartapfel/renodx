@@ -191,8 +191,6 @@ inline void ConfigureShaders(renodx::mods::shader::CustomShaders* shaders) {
         ++surface_fallbacks;
         last_fallback_hash.store(hash);
       }
-      // The native renderer can omit a repeated PSO bind between draws.
-      if (state->pipeline.handle) cmd->bind_pipeline(state->applied_stage, state->pipeline);
       return false;
     };
   }
@@ -244,6 +242,7 @@ inline HRESULT AdaptRayState(api::device* device, const D3D12_STATE_OBJECT_DESC*
 
 inline void Use(DWORD reason) {
   if (reason != DLL_PROCESS_ATTACH && reason != DLL_PROCESS_DETACH) return;
+  contact::active = (reason == DLL_PROCESS_ATTACH ? &contact_shadows : nullptr);
   clouds::runtime::bind_path_materials = reason == DLL_PROCESS_ATTACH ? &BindPathMaterials : nullptr;
   clouds::ray_hooks::adapt_lighting = reason == DLL_PROCESS_ATTACH ? &AdaptRayState : nullptr;
   bindings::Use(reason, false);  // The shader module already owns the shared caches.

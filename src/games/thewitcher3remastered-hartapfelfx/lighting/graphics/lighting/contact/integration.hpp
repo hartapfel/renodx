@@ -7,6 +7,7 @@
 #include "motion.hpp"
 
 namespace witcher3graphics::contact {
+inline const float* active = nullptr;
 inline std::array<std::span<const uint8_t>, 5> code;
 struct __declspec(uuid("b85e1bf5-456f-4513-a493-7f791d61b210")) DeviceData {
   std::mutex mutex;
@@ -179,6 +180,7 @@ inline void NextFrame(device* dev) {
   }
 }
 inline void OnResetCommandList(command_list* cmd) {
+  if (active && *active == 0.f) return;
   if (auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device())) {
     std::lock_guard lock(data->mutex);
     if (data->producer == cmd) { data->published = {}; data->producer = nullptr; }
@@ -186,10 +188,12 @@ inline void OnResetCommandList(command_list* cmd) {
   }
 }
 inline void ObserveMotion(command_list* cmd) {
+  if (active && *active == 0.f) return;
   if (auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device()); data && data->motion) data->motion->Observe(cmd);
 }
 inline void OnMotionBarrier(command_list* cmd, uint32_t count, const resource* resources,
     const resource_usage*, const resource_usage* states) {
+  if (active && *active == 0.f) return;
   if (auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device()); data && data->motion) data->motion->Barrier(cmd, count, resources, states);
 }
 inline void OnDestroyMotionResource(device* dev, resource value) {
