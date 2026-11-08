@@ -4,7 +4,6 @@
 // voxel reuses the transmission already integrated above it.
 #include "common.hlsli"
 #include "lighting.hlsli"
-#include "thin.hlsli"
 cbuffer Slice : register(b0,space73) { uint slice; }
 RWTexture3D<float> visibility : register(u0);
 Texture3D<float> previous_visibility : register(t13);
@@ -25,7 +24,6 @@ Texture3D<float> previous_visibility : register(t13);
   float3 p=float3(center+((float2(id.xy)+.5f)/float2(width,height)-.5f)*extent,
       bottom+(slice+.5f)*dz);
   float tau=CloudOpticalExtinction*CloudDensity(p,1u,1.f,cell)*dz/sun.z;
-  if(slice+1u==depth)tau+=CloudCirrusBeam(p,sun,cell);
   if(slice+1u<depth) {
     float2 previous=(p.xy+sun.xy*dz/sun.z-center)/extent+.5f;
     float2 texel=previous*float2(width,height)-.5f;

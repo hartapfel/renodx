@@ -90,6 +90,14 @@ bool CloudShadowReady() {
   return parameters.w == 1357.f && sun.w == 1.f && region.w > 0.f && all(size > 0u)
       && HartapfelCloudData.Load(64) >= size.x * 4u && HartapfelCloudData.Load(60) >= 240u;
 }
+// Only attenuate a sky emitter with the map traced toward that emitter.
+// A daytime sun map must not dim an independently visible moon lobe.
+float HartapfelCloudEmitterVisibility(float3 world, float3 emitter) {
+  float3 direction=asfloat(HartapfelCloudData.Load3(16));
+  if(!CloudShadowReady() ||!all(isfinite(emitter)) ||dot(emitter,emitter)<=.25f
+      ||dot(direction,normalize(emitter))<.999f)return 1.f;
+  return HartapfelCloudShadow(world,1.f);
+}
 float HartapfelCloudNeutralize(float native_visibility) {
   return CloudShadowReady() ? 1.f : native_visibility;
 }

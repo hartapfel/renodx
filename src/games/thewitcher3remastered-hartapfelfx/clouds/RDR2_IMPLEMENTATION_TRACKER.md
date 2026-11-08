@@ -2,18 +2,15 @@
 
 Source: `D:/Downloads/slides_public_release.pptx`, Fabian Bauer, *Creating the Atmospheric World of Red Dead Redemption 2*, SIGGRAPH 2019. The talk's primary references include Schneider and Vos (2015), Nubis (2017), Hillaire (2016), Wrenninge et al. (2013), and Annen et al. (2008). This tracks cloud features for the Witcher renderer, not Rockstar's unrelated art assets.
 
-7 November current revision: 17 static recipes cover 56 regional weather
-states. The main 3D march supports billows and flatter decks; high cirrus remains
-separate. The user rejected the added middle sheet's flat appearance and asked
-to remove it entirely. Its flat/altocumulus weights, atlas channels, view and
-shadow contributions and special reconstruction path are removed. The atlas is
-back to R16F. Native wind input now has a uniform 0.5 multiplier at the user's
-request, shared by shape, weather, shadows, cirrus and motion reconstruction.
-The stronger lower-cloud edge correction affects density below 0.55 and reuses
-existing filtered shape detail; dense cores remain unchanged. The latest
-Release and visual/performance validation is recorded in the handoff and
-[PERFORMANCE.md](../PERFORMANCE.md). Earlier entries and timing tables below
-are historical and do not override this scope or half-speed wind setting.
+8 November current revision: 16 static recipes cover 56 regional weather
+states. The main 3D march supports billows and flatter decks. At the user's
+request, the added middle/altocumulus and high cirrus sheets are removed entirely,
+including their atlas, shaders, view/reflection/shadow contributions and four
+cirrus controls. Twenty additional main-cloud controls remain. Native wind is
+uniformly 35% of the native broad-layer speed across shape, weather, shadows and
+motion reconstruction. Earlier high-layer research/results below are historical
+and do not override this removal. Latest validation is recorded in the handoff
+and [PERFORMANCE.md](../PERFORMANCE.md).
 
 Current cloud-layer sweep: a storm draw capture exposed 231 additional native `0x093DCC92` cloud-material draws, and Toussaint uses separate sky, sun, main-card, and background-card shaders. The candidate recognizes those verified shader/vertex pairs and reduces painted cubemap detail when a frame-matched volumetric field is active. Strict Release compilation, 92 cloud GPU cases, and the actual-addon compatibility host with captured storm/Toussaint pairs pass. The user rebuilt and relaunched the game-linked DLL and reports that the current Toussaint clouds look correct. That frame uses the regular sky path; the alternate Toussaint and storm materials still lack live visual acceptance, and the offline host does not establish that every weather-specific layer is gone.
 

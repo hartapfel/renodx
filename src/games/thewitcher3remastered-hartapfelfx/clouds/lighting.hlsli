@@ -5,17 +5,13 @@
 // beta = 3 LWC / (2 rho_water r_eff): 0.5 g/m^3 liquid water and
 // 10 micrometre effective droplets at unit procedural density.
 static const float CloudOpticalExtinction=3.f*.0005f/(2.f*1000.f*1.e-5f);
-// 0.01 g/m^3 ice-water content, 30 micrometre effective crystals, 300 m
-// geometric thickness: a thin high layer remains optically distinct.
-static const float CirrusOpticalDepth=3.f*.00001f*300.f/(2.f*1000.f*3.e-5f);
 static const float CloudScatteringAlbedo=.999f;
 // Rockstar's cloud phase reference uses g = 0.8. The narrower 0.85 lobe
 // turned under-sampled near-sun scattering into a conspicuous bright disc.
 static const float CloudForwardG=.8f;
 
 // Bauer 2019, slides 29-32: two phase octaves and an extinction-dependent
-// backscatter floor. Both the lower volume and cirrus use this scattering
-// law with their own material extinction and light optical depth.
+// backscatter floor, using the volume material extinction and light depth.
 float CloudDirectScattering(float cosine,float sigma,float tau,float forward_g=CloudForwardG) {
   float first=.9f*PhaseHG(cosine,forward_g)+.1f*PhaseHG(cosine,-.2f);
   float second=.5f*CloudScatteringAlbedo*(.9f*PhaseHG(cosine,forward_g*(2.f/3.f))

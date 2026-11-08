@@ -1,5 +1,7 @@
 # Native cloud weather and motion map
 
+8 November update: cloud wind uses 0.35x vanilla, superseding earlier 0.5x references.
+
 Audited 7 November 2026 against the running GOG DX12 game and its installed
 bundles. This is a control/resource map, not visual acceptance of every quest.
 The read-only bundle audit covered 64 bundles, 14 weather CSV paths and 15
@@ -23,7 +25,7 @@ listed separately; their presence does not establish that a current world uses t
 | Numbered effect fields | Separate authored cloud/rain/snow/lightning particles, priorities, probabilities and strengths. Main-view painted cloud cards are suppressed only after successful volumetric rendering; rain/snow and local mist retain their own paths. |
 | Frame b12[66].x | Native weather spatial scale. Broad period = `2000 * scale` world metres (10 km at scale 5). Independent of user Cloud Size. |
 | Frame b12[66].w | Evaluated source-to-target weather weight. Applied before the shared weather fade. |
-| Frame b12[67].xy | Integrated signed native weather wind offset, not directly metres of broad-layer motion. Native broad world offset = `20 * native_offset`; the user-requested 50% cloud speed uses `10 * native_offset`. Same conversion in weather, billows, cirrus, shadows, directional visibility and motion/history reprojection. |
+| Frame b12[67].xy | Integrated signed native weather wind offset, not directly metres of broad-layer motion. Native broad world offset = `20 * native_offset`; the user-requested 35% cloud speed uses `7 * native_offset`. Same conversion in weather, billows, shadows, directional visibility and motion/history reprojection. |
 | Frame b12[68].xy | Native source/target layer IDs. Clamped to the available array; the authored tables use 0–4. Never infer weather identity, speed or rainfall from this pair. |
 | Native b0[0].x | Retained native animation clock. Drives the existing slow billow evolution and delta-time fades. Paused time does not advance fading. |
 | Native b12[204].yzw | Solar direction used by the native sky lobe. Canonical daytime cloud-light/terrain-shadow projection. |
@@ -38,14 +40,14 @@ broad_uv = (world_xy + 20 * native_offset) * .01 / (20 * scale)
          = (world_xy + 20 * native_offset) * .0005 / scale
 ```
 
-The mod uses the **broad** spatial period with a user-requested **0.5 speed
-multiplier**: `(world_xy + 10 * native_offset) * .0005 / scale`. The old `1.2 * native_offset` kept its
+The mod uses the **broad** spatial period with a user-requested **0.35 speed
+multiplier**: `(world_xy + 7 * native_offset) * .0005 / scale`. The old `1.2 * native_offset` kept its
 10 km period but slowed its advection by 20/1.2. `20` is a native coordinate
 conversion, with no additional speed boost. A native offset decreasing in X
 moves cloud features toward positive world X, as required by the sampling sign.
 The live storm capture measured -0.60001 offset units/s over 120 frames and
 1.9934 seconds: approximately +12 m/s in the native broad projection, or +6 m/s
-with the current half-speed setting. Later bounded
+with the current 35%-speed setting. Later bounded
 samples remained at that slope. Previous notes calling these offset units
 metres, or using b12[66].z as a generally valid elapsed-time clock, are superseded.
 This is a broad cloud-wind signal; local foliage/cloth gust vectors are not
@@ -297,7 +299,7 @@ acceptance of motion and weather transitions remains pending.
 `family_effects.json` maps 27 recognized native cloud-effect filenames to mixtures
 of cumulus, flatter decks, broad thin sheets, altocumulus and cirrus. The offline
 `tools/generate_cloud_families.py <installed-cloud-weather.json>` emits
-`families.hpp`: 17 recipes including the legacy fallback, 56 regional weather
+`families.hpp`: 16 recipes including the legacy fallback, 56 regional weather
 entries and 30 weather names. It includes the six main/winter worlds' mapped
 quest states. Unknown names or unsupported worlds use recipe zero. Local fog,
 rain, snow, lightning and other non-sky effects retain their existing paths.
@@ -308,15 +310,15 @@ parameters. Optional effects contribute their expected probability-weighted
 appearance. The addon does not discover the engine's random per-emitter choices,
 read bundles at runtime, copy original textures or add a particle/resource tracker.
 Installed overrides require an offline catalog update if they change known cloud
-combinations. Wind uses half the native broad-layer speed described above;
+combinations. Wind uses 35% of the native broad-layer speed described above;
 no family contains a speed or direction override.
 
 The native area and actual source/target weather CNames choose recipes even when
 their fakeShadow IDs coincide, and independently of envBlend or night-normalization
 toggles. One present-thread snapshot feeds the existing parameter page. GPU
 publication fades the complete family vectors on native time in the existing
-history pass. The main volume forms billows or a flatter deck, with cirrus near
-8 km. The added mid-sheet/altocumulus layer was removed at the user's request;
-its authored weights remain in the evidence catalog but are zero in generated
-GPU recipes. Weather containing only those effects now produces clear sky.
-Cirrus does not require a nonzero fake-shadow mask.
+history pass. The main volume forms billows or a flatter deck. The added
+middle-sheet/altocumulus and high-cirrus sheets were removed at the user's request.
+Their authored weights remain in the evidence catalog but are zero in generated
+GPU recipes. Weather containing only those effects now produces clear sky and
+has no synthetic sheet shadows. No high-sheet atlas or lookup remains.

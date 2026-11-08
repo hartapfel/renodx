@@ -54,6 +54,10 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Binding regression test compilation failed.' }
   & (Join-Path $validationDirectory 'binding-layout.exe')
   if ($LASTEXITCODE -ne 0) { throw 'Binding regression test failed.' }
+  & clang-cl /nologo /EHsc /std:c++20 /O2 /DNDEBUG /DNOMINMAX /DWIN32=1 /DImTextureID=ImU64 /Iexternal/reshade (Join-Path $PSScriptRoot 'tests/settings_ui.cpp') external/reshade/deps/imgui/imgui.cpp external/reshade/deps/imgui/imgui_draw.cpp external/reshade/deps/imgui/imgui_tables.cpp external/reshade/deps/imgui/imgui_widgets.cpp ('/Fe' + (Join-Path $validationDirectory 'settings-ui.exe')) ('/Fo' + $validationDirectory + '/') /link user32.lib shell32.lib
+  if ($LASTEXITCODE -ne 0) { throw 'Settings UI regression test compilation failed.' }
+  & (Join-Path $validationDirectory 'settings-ui.exe')
+  if ($LASTEXITCODE -ne 0) { throw 'Settings UI regression test failed.' }
   & clang-cl /nologo /EHsc /std:c++20 /O2 /DNDEBUG /DNOMINMAX /DWIN32=1 /Iexternal/reshade /Iexternal/gtl/include (Join-Path $PSScriptRoot 'tests/descriptor_cache.cpp') ('/Fe' + (Join-Path $validationDirectory 'descriptor-cache.exe')) ('/Fo' + (Join-Path $validationDirectory 'descriptor-cache.obj')) /link d3d12.lib dxgi.lib
   if ($LASTEXITCODE -ne 0) { throw 'Descriptor concurrency test compilation failed.' }
   & (Join-Path $validationDirectory 'descriptor-cache.exe')

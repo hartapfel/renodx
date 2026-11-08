@@ -18,12 +18,11 @@ inline float billow_size=1.f, warp=1.f, shear=1.f, density_contrast=1.f;
 inline float erosion=1.f, wisp_bias=0.f, base_relief=1.f, top_relief=1.f;
 inline float edge_sharpness=1.f, edge_roughness=1.f, base_feather=1.f, top_feather=1.f;
 inline float sunlight=1.f, skylight=1.f, self_shadow=1.f, forward_scattering=.8f;
-inline float cirrus_amount=1.f, cirrus_coverage=1.f, cirrus_size=1.f, cirrus_height=8000.f;
 struct AuthoringParameters {
-  std::array<float,4> morphology, structure, microstructure, contour, illumination, high_layer;
+  std::array<float,4> morphology, structure, microstructure, contour, illumination;
   bool operator==(const AuthoringParameters&) const = default;
 };
-static_assert(sizeof(AuthoringParameters)==96);
+static_assert(sizeof(AuthoringParameters)==80);
 // One bounded snapshot feeds the view, shadow, reflection and history paths.
 inline AuthoringParameters Authoring() {
   return {
@@ -36,9 +35,7 @@ inline AuthoringParameters Authoring() {
       {std::clamp(edge_sharpness,0.f,4.f),std::clamp(edge_roughness,0.f,3.f),
           std::clamp(base_feather,.2f,4.f),std::clamp(top_feather,.25f,4.f)},
       {std::clamp(sunlight,0.f,3.f),std::clamp(skylight,0.f,3.f),
-          std::clamp(self_shadow,0.f,3.f),std::clamp(forward_scattering,0.f,.95f)},
-      {std::clamp(cirrus_amount,0.f,3.f),std::clamp(cirrus_coverage,0.f,2.f),
-          std::clamp(cirrus_size,.25f,4.f),std::clamp(cirrus_height,5000.f,16000.f)}};
+          std::clamp(self_shadow,0.f,3.f),std::clamp(forward_scattering,0.f,.95f)}};
 }
 // Packed with the independent sky-haze scale in the existing parameter row.
 inline std::array<float,4> Atmosphere(float sky_density) {

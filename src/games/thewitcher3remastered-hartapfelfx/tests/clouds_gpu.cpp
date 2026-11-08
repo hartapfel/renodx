@@ -9,6 +9,7 @@
 #include <string_view>
 #include "../clouds/pipeline.hpp"
 #include "../clouds/atlas.hpp"
+#include "cloud_camera.hpp"
 namespace clouds = hartapfelfx::clouds;
 namespace gpu = clouds::gpu;
 using gpu::ComPtr;
@@ -62,7 +63,7 @@ int main(int argc, char** argv) {
         shader("0xF7F00001.cso"), shader("0xF7C00001.cso"), shader("0xF7C00008.cso"),
         shader("0xF7C00002.cso"), shader("0xF7C00003.cso"), shader("0xF7C00004.cso"),
         shader("0xF7C00007.cso"), shader("0xF7C00006.cso"), shader("0xF7C00009.cso"),
-        shader("0xF7C0000A.cso"), shader("0xF7C0000B.cso"), shader("0xF7C0000C.cso"), shader("0xF7C0000E.cso"), shader("0xF7C0000F.cso"), shader("0xF7C00010.cso"), shader("0xF7C00011.cso"), shader("0xF7C00012.cso"), shader("0xF7C00013.cso"), shader("0xF7C00014.cso"), shader("0xF7C00015.cso"), shader("0xF7C00016.cso")});
+        shader("0xF7C0000A.cso"), shader("0xF7C0000B.cso"), shader("0xF7C0000C.cso"), shader("0xF7C0000E.cso"), shader("0xF7C0000F.cso"), shader("0xF7C00010.cso"), shader("0xF7C00013.cso"), shader("0xF7C00014.cso"), shader("0xF7C00015.cso"), shader("0xF7C00016.cso")});
     ComPtr<ID3D12CommandQueue> queue;
     const D3D12_COMMAND_QUEUE_DESC queue_desc{};
     gpu::Check(device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&queue)));
@@ -567,6 +568,34 @@ int main(int argc, char** argv) {
     }
     clear_inputs(1, 0);
     uint32_t cases = 0;
+    {
+      // Project production GPU rays back through the captured native camera.
+      // A stationary camera must close to the pixel even as TAA jitter changes.
+      const auto saved_frame=frame;
+      const auto saved_address=inputs.frame;
+      clouds::View camera_probe(&assets,width,height,clouds::quality,target_desc.Format);
+      double worst=0;
+      for(const auto& captured:cloud_camera_frames) {
+        for(uint32_t row=0;row<std::size(cloud_camera_rows);++row)
+          std::copy_n(captured[row],4,frame[cloud_camera_rows[row]].begin());
+        frame[340][0]=3.f;
+        const auto camera_upload=gpu::Upload(device.Get(),frame.data(),sizeof(frame));
+        inputs.frame=camera_upload.object->GetGPUVirtualAddress();
+        const auto rays=render(camera_probe,false,false,-1.f,false,true);
+        for(uint32_t y=0;y<height;++y)for(uint32_t x=0;x<width;++x) {
+          double view[3]{};
+          for(uint32_t axis=0;axis<3;++axis)for(uint32_t world=0;world<3;++world)
+            view[axis]+=double(rays[(y*width+x)*4+world])*frame[1+world][axis];
+          const double px=(view[0]/view[2]*frame[13][0]+frame[15][0])*.5+.5;
+          const double py=(view[1]/view[2]*frame[14][1]+frame[15][1])*-.5+.5;
+          worst=std::max({worst,std::abs(px*width-(x+.5)),std::abs(py*height-(y+.5))});
+        }
+        ++cases;
+      }
+      frame=saved_frame;inputs.frame=saved_address;
+      std::cout<<"Native jitter camera ray closure worst="<<worst<<" pixels\n";
+      Require(worst<.002,"Cloud rays shake relative to the native jittered camera");
+    }
     for (uint32_t level = 0; level < 6; ++level) {
       clouds::quality = float(level);
       clouds::View view(&assets, width, height, clouds::quality, target_desc.Format);
@@ -923,7 +952,7 @@ int main(int argc, char** argv) {
     // Compare the captured shadow field against that expected displacement,
     // rather than accepting any change (including a misplaced new pattern).
     const uint32_t sampled_size=(moving_shadow.ShadowSize()+7)/8;
-    const uint32_t expected_shift=uint32_t(std::round(108.f*10.f/32000.f*sampled_size));
+    const uint32_t expected_shift=uint32_t(std::round(108.f*7.f/32000.f*sampled_size));
     uint64_t stationary_error=0,advected_error=0,reverse_error=0;
     for(uint32_t y=0;y<sampled_size;++y)for(uint32_t x=expected_shift;x+expected_shift<sampled_size;++x) {
       const size_t index=size_t(y)*sampled_size+x;
@@ -956,6 +985,30 @@ int main(int argc, char** argv) {
     for(size_t i=0;i<before_wind.second.size();++i)
       disc_changed+=before_wind.second[i]!=disc_shadow.second[i];
     Require(disc_changed>100,"Terrain cloud shadow ignored the visible solar direction");
+    // Captured night scene: the solar lobe is below the horizon while
+    // the visible moon is above it. Both weather paths must retain the
+    // same lunar shadow/glow field and the daytime alignment above.
+    auto night_frame=frame;
+    night_frame[38]={-.962336f,.043840f,.268303f,1.f};
+    night_frame[204]={119.496605f,-.986885f,.044957f,-.155038f};
+    night_frame[205]={34.322464f,-.928320f,.042291f,.369369f};
+    const auto night_upload=gpu::Upload(device.Get(),night_frame.data(),sizeof(night_frame));
+    inputs.frame=night_upload.object->GetGPUVirtualAddress();++inputs.revision;
+    for(bool compute:{false,true}) {
+      ++inputs.revision;
+      render(moving_shadow,false,compute,501.f);
+      shadow_snapshot();
+      const float moon_length=std::sqrt(.928320f*.928320f+.042291f*.042291f+.369369f*.369369f);
+      for(uint32_t channel=0;channel<3u;++channel)
+        Require(std::abs(captured_shadow_sun[channel]-night_frame[205][channel+1u]/moon_length)<.00001f,
+            "Night cloud shadows did not use the visible lunar direction");
+      const auto lunar=probe(moving_shadow.Shared(),{0,0,0,1,-.928320f,.042291f,.369369f,0,0,0,1,10});
+      Require(lunar[0]<.99f &&std::abs(lunar[15]-lunar[0])<.00001f,
+          "Moon glow and ground moonlight did not share cloud attenuation");
+      const auto unrelated=probe(moving_shadow.Shared(),{0,0,0,1,0,0,1,0,0,0,1,10});
+      Require(unrelated[15]==1.f,"An unrelated emitter inherited the moon shadow map");
+      ++cases;
+    }
     inputs.frame=frame_buffer.object->GetGPUVirtualAddress();
     cases+=3;
     clear_inputs(0.f,0.f,1.f);
@@ -1024,8 +1077,8 @@ int main(int argc, char** argv) {
               "Native weather blend/profile popped or reinterpreted history at ID rollover");
           for(uint32_t channel=0;channel<4u;++channel)
             Require(std::abs(a[channel]-b[channel])<.00001f,"Graphics and compute weather disagree");
-          Require(std::abs(a[2]-3.7f)<.0001f &&std::abs(a[6]+2.1f)<.0001f,
-              "Weather identity changed the requested half-speed native wind conversion");
+          Require(std::abs(a[2]-2.59f)<.0001f &&std::abs(a[6]+1.47f)<.0001f,
+              "Weather identity changed the requested 35% native wind conversion");
         }
         cases+=1;
       }
@@ -1112,42 +1165,38 @@ int main(int argc, char** argv) {
         render(transition,false,(tick&1u)!=0u,1000.f+1.f/60.f+tick*.25f);
       const auto settled=family_state(transition);
       Require(settled[0]==0.f &&settled[1]==0.f,
-          "Settled cirrus-only weather retained unnecessary 3D raymarch work");
+          "Removed-sheet weather retained unnecessary 3D raymarch work");
       ++cases;
       cases+=2;
-      // Cirrus-only weather must survive an empty fake-shadow mask, but never
-      // draw through foreground terrain. Its map must shadow and clear by height.
+      // Former high-sheet-only weather must remain completely clear in the
+      // view and native receivers, including when fakeShadow is zero.
       clouds::View thin(&assets,width,height,clouds::quality,target_desc.Format);
       inputs.family=light_family;
       clear_inputs(0.f,0.f);
       const auto thin_sky=render(thin,false,false,2000.f);
-      uint32_t occupied=0;
-      for(size_t pixel=0;pixel<thin_sky.size();pixel+=4)
-        occupied+=std::abs(thin_sky[pixel]-background[0])>.001f;
-      Require(occupied>100u,"Native thin cloud effects incorrectly depended on the fake-shadow layer");
-      float darkest=1.f;
-      for(float x:{-2500.f,0.f,2500.f})for(float y:{-2500.f,0.f,2500.f}) {
-        darkest=std::min(darkest,probe(thin.Shared(),{x,y,0,1,0,0,0,0,0,0,1,10})[0]);
-        Require(probe(thin.Shared(),{x,y,9000.f,1,0,0,0,0,0,0,1,10})[0]>.999f,
-            "Thin cloud shadows affected a receiver above every layer");
-      }
-      Require(darkest<.99f,"Thin cloud decks did not contribute terrain sunlight attenuation");
+      for(size_t channel=0;channel<thin_sky.size();++channel)
+        Require(std::abs(thin_sky[channel]-background[channel%4u])<.00001f,
+            "Removed high sheet still contributed sky radiance or opacity");
+      for(float x:{-2500.f,0.f,2500.f})for(float y:{-2500.f,0.f,2500.f})
+        for(float altitude:{0.f,9000.f})
+          Require(probe(thin.Shared(),{x,y,altitude,1,0,0,0,0,0,0,1,10})[0]>.999f,
+              "Removed high sheet retained a native terrain shadow");
       clouds::coverage=0.f;++inputs.revision;
       const auto coverage_off=render(thin,false,true,2000.5f);
       for(size_t channel=0;channel<coverage_off.size();++channel)
         Require(std::abs(coverage_off[channel]-background[channel%4u])<.00001f,
-            "Coverage zero retained a known native thin/cirrus family");
+            "Coverage zero retained a removed cloud sheet");
       clouds::coverage=1.f;++inputs.revision;
       ++cases;
       clear_inputs(0.f,.5f);++inputs.revision;
       const auto foreground=render(thin,false,true,2001.f);
       for(size_t channel=0;channel<foreground.size();++channel)
         Require(std::abs(foreground[channel]-background[channel%4u])<.00001f,
-            "Thin cloud sheets drew through foreground terrain");
+            "Removed cloud sheets drew through foreground terrain");
       cases+=3;
       inputs.family=0;inputs.frame=frame_buffer.object->GetGPUVirtualAddress();++inputs.revision;
       clear_inputs(1.f,0.f);
-      std::cout<<"PASS all native family recipes, removed middle sheets, GPU publication, paused/interrupted blending, cirrus-only sky, foreground clipping and terrain shadows\n";
+      std::cout<<"PASS all native family recipes, removed middle/high sheets, GPU publication, paused/interrupted blending, clear former-sheet sky, foreground clipping and terrain shadows\n";
     }
     clouds::quality = 1;
     {
@@ -1162,20 +1211,18 @@ int main(int argc, char** argv) {
           {&clouds::edge_sharpness,0,4,"edge sharpness"},{&clouds::edge_roughness,0,3,"edge irregularity"},
           {&clouds::base_feather,.2f,4,"base feather"},{&clouds::top_feather,.25f,4,"top feather"},
           {&clouds::sunlight,0,3,"direct light"},{&clouds::skylight,0,3,"sky light"},
-          {&clouds::self_shadow,0,3,"self shadow"},{&clouds::forward_scattering,0,.95f,"forward scattering"},
-          {&clouds::cirrus_amount,0,3,"cirrus amount"},{&clouds::cirrus_coverage,0,2,"cirrus coverage"},
-          {&clouds::cirrus_size,.25f,4,"cirrus size"},{&clouds::cirrus_height,5000,16000,"cirrus altitude"}};
-      std::array<float,24> defaults{};
+          {&clouds::self_shadow,0,3,"self shadow"},{&clouds::forward_scattering,0,.95f,"forward scattering"}};
+      std::array<float,20> defaults{};
       for(uint32_t i=0;i<std::size(controls);++i) {
         defaults[i]=*controls[i].value;
-        *controls[i].value=controls[i].minimum+(controls[i].maximum-controls[i].minimum)*(i+1.f)/25.f;
+        *controls[i].value=controls[i].minimum+(controls[i].maximum-controls[i].minimum)*(i+1.f)/21.f;
       }
       clouds::View authoring(&assets,width,height,clouds::quality,target_desc.Format);
       auto authoring_frame=frame;authoring_frame[340][0]=2.f;
       const auto authoring_upload=gpu::Upload(device.Get(),authoring_frame.data(),sizeof(authoring_frame));
       inputs.frame=authoring_upload.object->GetGPUVirtualAddress();++inputs.revision;
       const auto packed=render(authoring,false,false,6000.f,false,true);
-      const auto snapshot=clouds::Authoring();std::array<float,24> expected{};
+      const auto snapshot=clouds::Authoring();std::array<float,20> expected{};
       std::memcpy(expected.data(),&snapshot,sizeof(snapshot));
       for(uint32_t i=0;i<expected.size();++i)
         Require(std::abs(packed[i*4]-expected[i])<.00001f,"Authoring GPU parameter layout differs from its CPU snapshot");
@@ -1183,24 +1230,15 @@ int main(int argc, char** argv) {
       inputs.frame=frame_buffer.object->GetGPUVirtualAddress();++inputs.revision;
       ++cases;
       const auto reference=render(authoring,false,false,6001.f);
-      inputs.family=family_selection(1,"WT_Light_Clouds");++inputs.revision;
-      const auto high_reference=render(authoring,false,false,6001.f);
       for(uint32_t i=0;i<std::size(controls);++i) {
-        inputs.family=i>=20u ? family_selection(1,"WT_Light_Clouds") : 0;
+        inputs.family=0;
         double maximum_change=0;
         for(float endpoint:{controls[i].minimum,controls[i].maximum}) {
           *controls[i].value=endpoint;++inputs.revision;
           const auto image=render(authoring,false,false,6001.f);
-          if((i==20u ||i==21u) &&endpoint==0.f) {
-            for(size_t channel=0;channel<image.size();++channel)
-              Require(std::abs(image[channel]-background[channel%4u])<.00001f,"Disabled cirrus still rendered");
-            Require(probe(authoring.Shared(),{0,0,0,1,0,0,0,0,0,0,1,10})[0]>.999f,
-                "Disabled cirrus retained a terrain shadow");
-          }
-          const auto& before=i>=20u?high_reference:reference;
           double difference=0;
           for(size_t pixel=0;pixel<image.size();pixel+=4)
-            for(uint32_t channel=0;channel<3u;++channel)difference+=std::abs(image[pixel+channel]-before[pixel+channel]);
+            for(uint32_t channel=0;channel<3u;++channel)difference+=std::abs(image[pixel+channel]-reference[pixel+channel]);
           maximum_change=std::max(maximum_change,difference);
           ++cases;
         }
@@ -1234,7 +1272,7 @@ int main(int argc, char** argv) {
         ++cases;
       }
       clouds::base_height=defaults[0];++inputs.revision;
-      std::cout<<"PASS 24 authoring controls: GPU layout, both endpoints, visible response and coupled extremes\n";
+      std::cout<<"PASS 20 authoring controls: GPU layout, both endpoints, visible response and coupled extremes\n";
     }
     {
       // A persistent GlobalCB address can hold a new native time next frame.

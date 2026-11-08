@@ -15,7 +15,7 @@ cbuffer Parameters : register(b2) {
   uint4 identity; // settings revision, immutable native b0 GPU address, reserved
   uint4 storage; // packed motion row pitch/offset, shadow row pitch/offset
   float4 family_from, family_to, family_transition;
-  float4 morphology, structure, microstructure, contour, illumination, high_layer;
+  float4 morphology, structure, microstructure, contour, illumination;
 }
 cbuffer Previous : register(b3) { float4 previous[341]; }
 cbuffer PreviousParameters : register(b4) {
@@ -57,29 +57,34 @@ static const float CloudFormationScale = 7200.f;
 // Native sky 0x449D3390 places its solar lobe at b12[204].yzw. b12[38]
 // drives atmospheric attenuation instead; in the live scene they differ by
 // 4.48 degrees (~460 m at the cloud base). Do not cast through that other gap.
-float3 CloudShadowSun() {
+float3 CloudLightingDirection() {
   float3 native_sun=frame[204].yzw;
   if(!all(isfinite(native_sun)) ||dot(native_sun,native_sun)<=.25f)native_sun=frame[38].xyz;
-  return normalize(dot(native_sun,native_sun)>.25f ? native_sun : light[0].xyz+float3(0,0,1.e-8f));
-}
-float3 CloudLightingDirection() {
-  float3 sun=CloudShadowSun();
-  // Keep the native dominant light (e.g. moonlight) when the sun is down.
-  return sun.z>.015f ? sun : normalize(light[0].xyz+1.e-8f);
+  if(all(isfinite(native_sun)) &&dot(native_sun,native_sun)>.25f &&native_sun.z>.015f)
+    return normalize(native_sun);
+  // The same native sky places the visible lunar lobe at b12[205].yzw.
+  // Keeping the below-horizon sun here invalidated the entire night shadow
+  // map even while cloud lighting used an above-horizon moon.
+  float3 moon=frame[205].yzw;
+  if(all(isfinite(moon)) &&dot(moon,moon)>.25f &&moon.z>.015f)return normalize(moon);
+  return normalize(light[0].xyz+float3(0,0,1.e-8f));
 }
 // The native disc is much brighter than the cloud body at the user's low
 // Density setting. Use one calibrated direct-beam column for the visible disc
 // and the sunlight reaching terrain; otherwise one can vanish without the other.
 float CloudDirectBeamScale() { return max(1.f,1.f/max(appearance.y,.125f)); }
 float CloudThickness() {return 1200.f*appearance.w;}
-float CloudCirrusHeight() {return max(high_layer.w,CloudBase+CloudThickness()+500.f);}
 float CloudDetailScale() {return 1200.f*max(atmosphere.z,.2f);}
 float CloudBaseReliefScale() {return CloudDetailScale()*saturate(atmosphere.y)*lerp(.25f,1.f,atmosphere.w);}
 float CloudMinimum() {return CloudBase-.16f*CloudBaseReliefScale()*microstructure.z;}
 float3 CloudRay(float2 uv) {
   float2 ndc=uv*float2(2,-2)+float2(-1,1);
-  float4 p=ndc.x*frame[17]+ndc.y*frame[18]+.5f*frame[19]+frame[20];
-  return normalize(p.xyz-frame[0].xyz*p.w);
+  // The native inverse VP contains rounded camera translations. Subtracting
+  // them again made a stationary ray wander with TAA jitter (~2 render pixels
+  // in the captured scene). Invert the perspective and rigid rotation directly,
+  // preserving native jitter without introducing world-space cancellation.
+  float3 view=float3((ndc-frame[15].xy)/float2(frame[13].x,frame[14].y),1.f);
+  return normalize(float3(dot(view,frame[1].xyz),dot(view,frame[2].xyz),dot(view,frame[3].xyz)));
 }
 float CloudAltitude(float3 p) {
   // Stable evaluation of length(p + planet_center) - planet_radius.

@@ -646,6 +646,7 @@ float4 main(
   float _505 = _502 + _478;
   float _506 = _503 + _479;
   float _507 = _504 + _480;
+  bool volumetric_sky = CloudShadowMatches(float3(cb12_000x, cb12_000y, cb12_000z), asuint(cb12_286));
   float _509 = cb12_205x / _366;
   float _510 = saturate(_394);
   float _511 = log2(_510);
@@ -667,6 +668,9 @@ float4 main(
   } else {
     _530 = _516;
   }
+  if (volumetric_sky)
+    _530 *= HartapfelCloudEmitterVisibility(float3(cb12_000x, cb12_000y, cb12_000z),
+        float3(cb12_205y, cb12_205z, cb12_205w));
   float _531 = max(1.0f, _365);
   float _536 = cb12_202x * _531;
   float _537 = cb12_202y * _531;
@@ -681,7 +685,6 @@ float4 main(
   float _546 = _543 + _506;
   float _547 = _544 + _507;
   float _549 = cb12_204x / _366;
-  bool volumetric_sky = CloudShadowMatches(float3(cb12_000x, cb12_000y, cb12_000z), asuint(cb12_286));
   float _550 = saturate(_400);
   float _551 = min(1.0f, _364);
   if (_346) {

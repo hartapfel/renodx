@@ -39,10 +39,10 @@ for table in sorted(audit["tables"],key=lambda t:t["bundle"].lower().startswith(
                 weights[i]=max(weights[i],value*min(strength,1)*probability)
         if not matched:continue
         cover=.65 if row.get("fakeShadow")=="0" and max(weights[:2])>0 else 0.
-        # Native flat/alto effects remain catalogued as evidence, but the
-        # added middle sheet was rejected visually and is not rendered.
-        rows[(region,name)]={"low":weights[:2]+[0.,0.],"high":[weights[4],1.,cover,0.]}
-profiles=[{"low":[1,0,0,0],"high":[1,0,0,0]}]
+        # Native flat/alto/cirrus effects remain catalogued as evidence,
+        # but all added 2D sheets were rejected and are not rendered.
+        rows[(region,name)]={"low":weights[:2]+[0.,0.],"high":[0.,1.,cover,0.]}
+profiles=[{"low":[1,0,0,0],"high":[0,0,0,0]}]
 names=sorted({name for _,name in rows})
 entries=[]
 for (region,name),profile in sorted(rows.items()):
@@ -62,7 +62,7 @@ lines=["""// Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #include <cstdint>
 namespace hartapfelfx::clouds::families {
 struct Profile { std::array<float,4> low, high; };
-// low: cumulus, stratus deck, reserved, reserved; high: cirrus, known, fallback cover, reserved.
+// low: cumulus, stratus deck, reserved, reserved; high: reserved, known, fallback cover, reserved.
 inline constexpr Profile profiles[] = {
 """]
 for profile in profiles:

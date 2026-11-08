@@ -16,11 +16,11 @@ struct Parameters {
   std::array<float,4> family_from{}, family_to{}, family_transition{};
   AuthoringParameters authoring{};
 };
-static_assert(sizeof(Parameters) == 256);
+static_assert(sizeof(Parameters) == 240);
 static_assert(offsetof(Parameters,authoring)==160);
 struct Shaders {
   D3D12_SHADER_BYTECODE vertex, noise, mips, trace, resolve, composite, weather, shadow, publish;
-  D3D12_SHADER_BYTECODE weather_compute, shadow_compute, publish_compute, shadow_filter, profile, visibility, cirrus, cirrus_mips, environment, atlas_capture, atlas_convert;
+  D3D12_SHADER_BYTECODE weather_compute, shadow_compute, publish_compute, shadow_filter, profile, visibility, environment, atlas_capture, atlas_convert;
   D3D12_SHADER_BYTECODE sky_air;
 };
 struct Inputs {
@@ -72,8 +72,6 @@ class Assets {
     noise_pipeline_ = gpu::Compute(device, root.Get(), shaders.noise);
     mip_pipeline_ = gpu::Compute(device, root.Get(), shaders.mips);
     profile_pipeline_ = gpu::Compute(device, root.Get(), shaders.profile);
-    cirrus_pipeline_ = gpu::Compute(device, root.Get(), shaders.cirrus);
-    cirrus_mip_pipeline_ = gpu::Compute(device, root.Get(), shaders.cirrus_mips);
     const std::array<uint8_t, gpu::HistoryBytes> empty{};
     zero = gpu::Upload(device, empty.data(), empty.size());
     D3D12_COMMAND_QUEUE_DESC queue_desc{};
@@ -118,28 +116,6 @@ class Assets {
       noise[variant].state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
       gpu::Transition(initialization_commands_.Get(), &noise[variant], gpu::TextureRead);
     }
-    // One immutable scalar atlas carries the retained high cirrus material.
-    // The removed middle sheet needs no channels or runtime shading.
-    cirrus= gpu::Image(device,512,512,DXGI_FORMAT_R16_FLOAT,1,10);
-    gpu::Transition(initialization_commands_.Get(),&cirrus,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    for(uint32_t mip=0;mip<10;++mip) {
-      auto bank=std::make_shared<gpu::Bank>(device);
-      gpu::Uav(device,*bank,0,cirrus.object.Get(),mip);
-      if(mip)gpu::Srv(device,*bank,3,cirrus.object.Get(),D3D12_SRV_DIMENSION_TEXTURE2D,mip-1u,1u);
-      ID3D12DescriptorHeap* heaps[]={bank->heap.Get()};
-      initialization_commands_->SetDescriptorHeaps(1,heaps);
-      initialization_commands_->SetComputeRootDescriptorTable(7,bank->Gpu());
-      initialization_commands_->SetComputeRootDescriptorTable(8,bank->Gpu(16));
-      initialization_commands_->SetPipelineState(mip?cirrus_mip_pipeline_.Get():cirrus_pipeline_.Get());
-      initialization_commands_->Dispatch(((512u>>mip)+7u)/8u,((512u>>mip)+7u)/8u,1);
-      D3D12_RESOURCE_BARRIER barrier{};
-      barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      barrier.Transition={cirrus.object.Get(),mip,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
-      initialization_commands_->ResourceBarrier(1,&barrier);
-      initialization_banks_.push_back(std::move(bank));
-    }
-    cirrus.state=D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-    gpu::Transition(initialization_commands_.Get(),&cirrus,gpu::TextureRead);
     fast = gpu::Image(device, 128, 128, DXGI_FORMAT_R8_UNORM, 32, 1, true);
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
     uint64_t bytes = 0;
@@ -169,7 +145,7 @@ class Assets {
   gpu::ComPtr<ID3D12PipelineState> weather_compute, shadow_compute, publish_compute, shadow_filter, visibility_pipeline, sky_air_pipeline, environment_pipeline, atlas_capture_pipeline;
   gpu::ComPtr<ID3D12PipelineState> atlas_convert11, atlas_convert16, atlas_convert32;
   std::array<gpu::Resource, 2> noise;
-  gpu::Resource fast, zero, profile, cirrus;
+  gpu::Resource fast, zero, profile;
   gpu::ComPtr<ID3D12Fence> ready;
 
  private:
@@ -177,7 +153,7 @@ class Assets {
   gpu::ComPtr<ID3D12CommandQueue> initialization_queue_;
   gpu::ComPtr<ID3D12CommandAllocator> initialization_allocator_;
   gpu::ComPtr<ID3D12GraphicsCommandList> initialization_commands_;
-  gpu::ComPtr<ID3D12PipelineState> noise_pipeline_, mip_pipeline_, profile_pipeline_, cirrus_pipeline_, cirrus_mip_pipeline_;
+  gpu::ComPtr<ID3D12PipelineState> noise_pipeline_, mip_pipeline_, profile_pipeline_;
   gpu::Resource fast_upload_;
   std::vector<std::shared_ptr<gpu::Bank>> initialization_banks_;
 };
@@ -292,7 +268,6 @@ class View {
       gpu::Srv(device, *bank, 11, assets_->profile.object.Get(), D3D12_SRV_DIMENSION_TEXTURE2DARRAY);
       gpu::Srv(device, *bank, 12, visibility_.object.Get(), D3D12_SRV_DIMENSION_TEXTURE3D);
       gpu::Srv(device, *bank, 13, visibility_history_.object.Get(), D3D12_SRV_DIMENSION_TEXTURE3D);
-      gpu::Srv(device, *bank, 14, assets_->cirrus.object.Get(), D3D12_SRV_DIMENSION_TEXTURE2D);
       gpu::Srv(device, *bank, 15, sky_air_.object.Get(), D3D12_SRV_DIMENSION_TEXTURE3D);
       gpu::Uav(device, *bank, 2, shared_.object.Get());
       gpu::Uav(device, *bank, 3, history->object.Get());

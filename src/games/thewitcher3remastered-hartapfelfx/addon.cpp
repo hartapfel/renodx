@@ -11,6 +11,7 @@
 #include "clouds/runtime.hpp"
 #include "shared.h"
 #include "night/settings.hpp"
+#include "settings_ui.hpp"
 #include "lighting/graphics/lighting/native.hpp"
 #include "lighting/runtime.hpp"
 
@@ -26,7 +27,6 @@ float player_lighting = 1.f;
 float gameplay_strength = .2f;
 float cutscene_strength = .2f;
 float match_world = 1.f;
-bool draw_nights = false;
 using Setting = renodx::utils::settings::Setting;
 renodx::utils::settings::Settings settings = {
     new Setting{
@@ -34,18 +34,18 @@ renodx::utils::settings::Settings settings = {
         .binding = &player_lighting,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .label = "Player Fill Light",
-        .section = "Player Fill Lights",
-        .tooltip = "Controls the extra light that follows the camera during gameplay, dialogue and cutscenes.",
-        .labels = {"Native", "Improved"},
+        .label = "Character Fill Light",
+        .section = "Character Lighting",
+        .tooltip = "Adds gentle light to characters during play and dialogue.",
+        .labels = {"Original", "Improved"},
     },
     new Setting{
         .key = "GameplayLightStrength",
         .binding = &gameplay_strength,
         .default_value = .2f,
-        .label = "Gameplay Strength",
-        .section = "Player Fill Lights",
-        .tooltip = "Brightness of the camera-following light during gameplay. 0 removes it; 1 keeps its original strength before environment matching.",
+        .label = "Gameplay Brightness",
+        .section = "Character Lighting",
+        .tooltip = "Raises the brightness of the light following your camera.",
         .min = 0.f,
         .max = 1.f,
         .format = "%.2f",
@@ -55,9 +55,9 @@ renodx::utils::settings::Settings settings = {
         .key = "CutsceneLightStrength",
         .binding = &cutscene_strength,
         .default_value = .2f,
-        .label = "Dialogue & Cutscene Strength",
-        .section = "Player Fill Lights",
-        .tooltip = "Brightness of camera fill during dialogue, cutscenes and interior scenes. Ordinary lamps are unaffected.",
+        .label = "Dialogue & Cutscene Brightness",
+        .section = "Character Lighting",
+        .tooltip = "Raises character fill light during conversations and cutscenes.",
         .min = 0.f,
         .max = 1.f,
         .format = "%.2f",
@@ -68,9 +68,9 @@ renodx::utils::settings::Settings settings = {
         .binding = &match_world,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .label = "Match Environment Lighting",
-        .section = "Player Fill Lights",
-        .tooltip = "Makes player fill respond to the environment lighting, helping characters blend into their surroundings.",
+        .label = "Match the Environment",
+        .section = "Character Lighting",
+        .tooltip = "Makes character fill light respond to the surrounding light.",
         .labels = {"Off", "On"},
         .is_enabled = [] { return player_lighting != 0.f; },
     },
@@ -79,10 +79,10 @@ renodx::utils::settings::Settings settings = {
         .binding = &lighting::pbr,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .label = "PBR Lighting",
-        .section = "Lighting & Shadows",
-        .tooltip = "Improves sunlight, lamp shading and rough highlights. Also improves reflected and bounced lighting in RT and PT.",
-        .labels = {"Native", "Improved"},
+        .label = "Surface Lighting",
+        .section = "World Lighting & Shadows",
+        .tooltip = "Improves how world surfaces reflect sunlight and lamps.",
+        .labels = {"Original", "Improved"},
     },
 
     new Setting{
@@ -91,18 +91,18 @@ renodx::utils::settings::Settings settings = {
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
         .label = "Sun & Moon Shadows",
-        .section = "Lighting & Shadows",
-        .tooltip = "Improves directional shadow softness. Raster uses distance-aware filtering; RT and PT use the native light size for traced lighting.",
-        .labels = {"Native", "Improved"},
+        .section = "World Lighting & Shadows",
+        .tooltip = "Improves the softness of shadows from the sun and moon.",
+        .labels = {"Original", "Improved"},
     },
 
     new Setting{
         .key = "SunDiameter",
         .binding = &lighting::diameter,
-        .default_value = .35f,
-        .label = "Light Size",
-        .section = "Lighting & Shadows",
-        .tooltip = "Larger values produce softer shadows. Measured in degrees. RT and PT also use this size when sampling the light in reflections. The main sky's sun and moon artwork is unchanged.",
+        .default_value = 1.3f,
+        .label = "Shadow Softness",
+        .section = "World Lighting & Shadows",
+        .tooltip = "Larger values soften shadows from the sun and moon.",
         .min = .05f, .max = 2.f, .format = "%.3f degrees",
         .is_enabled = [] { return lighting::soft != 0.f; },
     },
@@ -112,19 +112,19 @@ renodx::utils::settings::Settings settings = {
         .binding = &lighting::contact_shadows,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .label = "Contact Shadows",
-        .section = "Lighting & Shadows",
-        .tooltip = "Adds short sun and moon shadows around visible geometry in Raster, RT and PT. Supplements native shadows; off-screen casters still use the game's visibility.",
-        .labels = {"Native", "Improved"},
+        .label = "Small Object Shadows",
+        .section = "World Lighting & Shadows",
+        .tooltip = "Adds nearby shadows around feet, grass and small objects.",
+        .labels = {"Original", "Improved"},
     },
 
     new Setting{
         .key = "ContactShadowLength",
         .binding = &lighting::reach,
-        .default_value = .3f,
-        .label = "Contact Shadow Reach",
-        .section = "Lighting & Shadows",
-        .tooltip = "Maximum distance searched for nearby sun and moon shadow casters. Longer distances can reveal missing off-screen geometry.",
+        .default_value = 1.f,
+        .label = "Small Shadow Reach",
+        .section = "World Lighting & Shadows",
+        .tooltip = "Extends how far nearby objects can cast these shadows.",
         .min = .05f, .max = 1.f, .format = "%.2f m",
         .is_enabled = [] { return lighting::contact_shadows != 0.f; },
     },
@@ -132,254 +132,216 @@ renodx::utils::settings::Settings settings = {
     new Setting{
         .key = "CloudModeV2", .binding = &clouds::mode,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f, .label = "Clouds", .section = "Volumetric Clouds",
-        .labels = {"Native", "Volumetric"}},
+        .default_value = 1.f, .label = "Cloud Rendering", .section = "Clouds & Performance", .tooltip = "Choose the original clouds or HartapfelFX volumetric clouds.",
+        .labels = {"Original", "Volumetric"}},
     new Setting{
         .key = "CloudQualityV2", .binding = &clouds::quality,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f, .label = "Cloud Quality", .section = "Volumetric Clouds",
-        .tooltip = "Controls ray steps, lighting, erosion, atmospheric integration and shadow-map quality.",
+        .default_value = 1.f, .label = "Quality", .section = "Clouds & Performance",
+        .tooltip = "Higher quality improves cloud detail and costs more performance.",
         .labels = {"Low", "Medium", "High", "Ultra", "Cinematic", "Maximum"}},
     new Setting{
         .key = "CloudStepSizeV2", .binding = &clouds::step_size,
-        .default_value = 75.f, .label = "Cloud Step Size", .section = "Volumetric Clouds",
+        .default_value = 50.f, .label = "Sample Spacing", .section = "Clouds & Performance", .tooltip = "Lower values smooth clouds; higher values improve performance.",
         .min = 50.f, .max = 200.f, .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudShadowsV2", .binding = &clouds::shadows,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f, .label = "Cloud Shadows", .section = "Volumetric Clouds",
+        .default_value = 1.f, .label = "Cloud Shadows", .section = "Clouds & Performance", .tooltip = "Lets clouds shade the world under sunlight and moonlight.",
         .labels = {"Off", "On"}},
     new Setting{
-        .key = "CloudAppearanceReset",
-        .value_type = renodx::utils::settings::SettingValueType::BUTTON,
-        .label = "Reset Cloud Appearance", .section = "Cloud Appearance",
-        .tooltip = "Restores the cloud appearance, shape, lighting and cirrus controls to their defaults.",
-        .on_change = [] {
-          for(auto* setting:settings)
-            if(setting->value_type==renodx::utils::settings::SettingValueType::FLOAT
-                &&(setting->section.starts_with("Cloud ") ||setting->section=="High Cirrus"))
-              renodx::utils::settings::UpdateSetting(setting->key,setting->default_value);
-        }},
-    new Setting{
         .key = "CloudCoverageV2", .binding = &clouds::coverage,
-        .default_value = 100.f, .label = "Cloud Coverage", .section = "Cloud Appearance",
-        .tooltip = "100% uses the game's weather coverage without scaling it.",
+        .default_value = 100.f, .label = "Coverage", .section = "Cloud Appearance",
+        .tooltip = "Fills more or less of the sky with clouds.",
         .min = 0.f, .max = 200.f, .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudDensityV3", .binding = &clouds::density,
-        .default_value = 20.f, .label = "Cloud Density", .section = "Cloud Appearance",
-        .tooltip = "100% uses the cloud material's optical density.",
+        .default_value = 20.f, .label = "Density", .section = "Cloud Appearance",
+        .tooltip = "Makes cloud bodies more opaque and solid-looking.",
         .min = 0.f, .max = 400.f,
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudSizeV2", .binding = &clouds::size,
-        .default_value = 100.f, .label = "Cloud Size", .section = "Cloud Appearance",
-        .tooltip = "Changes formation scale without moving the game's weather fronts.",
+        .default_value = 100.f, .label = "Formation Size", .section = "Cloud Appearance",
+        .tooltip = "Makes whole cloud formations larger or smaller.",
         .min = 25.f, .max = 400.f, .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudThicknessV2", .binding = &clouds::thickness,
-        .default_value = 100.f, .label = "Cloud Layer Thickness", .section = "Cloud Appearance",
-        .tooltip = "100% uses the cloud material's layer thickness.",
+        .default_value = 100.f, .label = "Layer Thickness", .section = "Cloud Appearance",
+        .tooltip = "Makes the main cloud layer deeper from base to top.",
         .min = 50.f, .max = 300.f,
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudDetailV2", .binding = &clouds::detail,
-        .default_value = 130.f, .label = "Cloud Surface Detail", .section = "Cloud Shape",
-        .tooltip = "100% uses the cloud material's surface detail strength.",
+        .default_value = 130.f, .label = "Surface Detail", .section = "Cloud Detail (Advanced)",
+        .tooltip = "Adds smaller structures and irregularity inside cloud formations.",
         .min = 0.f, .max = 800.f,
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudDetailSizeV2", .binding = &clouds::detail_size,
-        .default_value = 45.f, .label = "Cloud Detail Size", .section = "Cloud Shape",
-        .tooltip = "100% uses the cloud material's detail size.",
+        .default_value = 60.f, .label = "Detail Size", .section = "Cloud Detail (Advanced)",
+        .tooltip = "Sets the size of the smaller surface features.",
         .min = 20.f, .max = 200.f,
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudBaseSoftnessV2", .binding = &clouds::base_softness,
-        .default_value = 0.f, .label = "Cloud Base Softness", .section = "Cloud Shape",
+        .default_value = 0.f, .label = "Underside Softness", .section = "Cloud Detail (Advanced)", .tooltip = "Softens the density transition along the cloud underside.",
         .min = 0.f, .max = 100.f, .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudBaseAltitudeV1", .binding = &clouds::base_height,
-        .default_value = 1200.f, .label = "Base Altitude", .section = "Cloud Formation",
-        .tooltip = "Altitude of the main cloud base. Lower values bring clouds closer to the landscape.",
+        .default_value = 1650.f, .label = "Base Height", .section = "Cloud Formation",
+        .tooltip = "Raises or lowers the cloud layer above the landscape.",
         .min = 300.f, .max = 5000.f, .format = "%.0f m",
         .is_enabled = [] { return clouds::mode > .5f; }},
     new Setting{
         .key = "CloudRoundnessV1", .binding = &clouds::roundness,
-        .default_value = 0.f, .label = "Roundness", .section = "Cloud Formation",
-        .tooltip = "Negative values flatten the profile; positive values favor taller, rounded formations.",
+        .default_value = 87.f, .label = "Roundness", .section = "Cloud Formation",
+        .tooltip = "Higher values make taller clouds; lower values flatten them.",
         .min = -100.f, .max = 100.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudHeightVariationV1", .binding = &clouds::height_variation,
-        .default_value = 100.f, .label = "Height Variation", .section = "Cloud Formation",
-        .tooltip = "Variation in cloud-top height. Zero creates a more even deck.",
+        .default_value = 174.f, .label = "Height Variation", .section = "Cloud Formation",
+        .tooltip = "Varies the heights of neighbouring cloud tops.",
         .min = 0.f, .max = 200.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudCoverageBreakupV1", .binding = &clouds::coverage_breakup,
-        .default_value = 100.f, .label = "Formation Gaps", .section = "Cloud Formation",
-        .tooltip = "Coherent gaps within cloudy weather. Zero joins formations into a more continuous deck.",
+        .default_value = 100.f, .label = "Gaps Between Formations", .section = "Cloud Formation",
+        .tooltip = "Opens coherent gaps within otherwise cloudy weather.",
         .min = 0.f, .max = 200.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudBillowSizeV1", .binding = &clouds::billow_size,
-        .default_value = 100.f, .label = "Billow Size", .section = "Cloud Billows",
-        .tooltip = "Size of rounded structures inside the larger cloud formations.",
+        .default_value = 158.f, .label = "Billow Size", .section = "Cloud Structure (Advanced)",
+        .tooltip = "Changes the size of rounded shapes within each formation.",
         .min = 25.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudWarpV1", .binding = &clouds::warp,
-        .default_value = 100.f, .label = "Contour Warping", .section = "Cloud Billows",
-        .tooltip = "Distorts billows coherently. Lower values produce more regular shapes.",
+        .default_value = 100.f, .label = "Shape Irregularity", .section = "Cloud Structure (Advanced)",
+        .tooltip = "Bends regular rounded shapes into more varied cloud forms.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudShearV1", .binding = &clouds::shear,
-        .default_value = 100.f, .label = "Vertical Shear", .section = "Cloud Billows",
+        .default_value = 100.f, .label = "Upper Cloud Lean", .section = "Cloud Structure (Advanced)",
         .tooltip = "Bends upper cloud material sideways relative to its base.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudDensityContrastV1", .binding = &clouds::density_contrast,
-        .default_value = 100.f, .label = "Density Contrast", .section = "Cloud Billows",
-        .tooltip = "Higher values concentrate material in dense cores; lower values fill softer edges.",
+        .default_value = 100.f, .label = "Core Contrast", .section = "Cloud Structure (Advanced)",
+        .tooltip = "Concentrates material into dense cores with thinner edges.",
         .min = 25.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudErosionV1", .binding = &clouds::erosion,
-        .default_value = 100.f, .label = "Erosion Strength", .section = "Cloud Erosion",
-        .tooltip = "Carves small gaps and wisps into the body. Surface Detail controls the overall detail strength.",
+        .default_value = 160.f, .label = "Erosion Strength", .section = "Cloud Erosion (Advanced)",
+        .tooltip = "Carves small gaps and wisps into the cloud body.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudWispBiasV1", .binding = &clouds::wisp_bias,
-        .default_value = 0.f, .label = "Wispy / Billowy Balance", .section = "Cloud Erosion",
-        .tooltip = "Negative values favor rounded billows; positive values favor wispy erosion.",
+        .default_value = 55.f, .label = "Wispy / Rounded Balance", .section = "Cloud Erosion (Advanced)",
+        .tooltip = "Higher values favour wisps; lower values favour rounded billows.",
         .min = -100.f, .max = 100.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudBaseReliefV1", .binding = &clouds::base_relief,
-        .default_value = 100.f, .label = "Underside Relief", .section = "Cloud Erosion",
-        .tooltip = "Strength of hanging lobes and cavities along the cloud underside.",
+        .default_value = 41.f, .label = "Underside Relief", .section = "Cloud Erosion (Advanced)",
+        .tooltip = "Adds hanging lobes and cavities along the cloud base.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudTopReliefV1", .binding = &clouds::top_relief,
-        .default_value = 100.f, .label = "Top Relief", .section = "Cloud Erosion",
-        .tooltip = "Breaks up cloud tops with smaller billows.",
+        .default_value = 171.f, .label = "Top Relief", .section = "Cloud Erosion (Advanced)",
+        .tooltip = "Adds smaller rounded structures along cloud tops.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudEdgeSharpnessV1", .binding = &clouds::edge_sharpness,
-        .default_value = 100.f, .label = "Edge Sharpness", .section = "Cloud Edges",
-        .tooltip = "Tightens low-density edges while retaining dense cores. High values create harder silhouettes.",
+        .default_value = 56.f, .label = "Edge Sharpness", .section = "Cloud Edges",
+        .tooltip = "Tightens soft outlines while keeping the dense cloud cores.",
         .min = 0.f, .max = 400.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudEdgeRoughnessV1", .binding = &clouds::edge_roughness,
         .default_value = 100.f, .label = "Edge Irregularity", .section = "Cloud Edges",
-        .tooltip = "Adds coherent irregularity to cloud contours.",
+        .tooltip = "Breaks smooth outlines into more varied cloud contours.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudBaseFeatherV1", .binding = &clouds::base_feather,
-        .default_value = 100.f, .label = "Base Feathering", .section = "Cloud Edges",
-        .tooltip = "Width of the underside transition. Lower values give a firmer cloud base.",
+        .default_value = 400.f, .label = "Base Fade Width", .section = "Cloud Edges",
+        .tooltip = "Higher values soften the transition along cloud bases.",
         .min = 20.f, .max = 400.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudTopFeatherV1", .binding = &clouds::top_feather,
-        .default_value = 100.f, .label = "Top Feathering", .section = "Cloud Edges",
-        .tooltip = "How gradually cloud-top density tapers. Larger values thin the upper cap.",
+        .default_value = 31.f, .label = "Top Fade", .section = "Cloud Edges",
+        .tooltip = "Higher values thin out the upper cloud cap.",
         .min = 25.f, .max = 400.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudDirectLightV1", .binding = &clouds::sunlight,
-        .default_value = 100.f, .label = "Direct Light", .section = "Cloud Lighting",
-        .tooltip = "Brightness of sunlight and moonlight scattered by the clouds.",
+        .default_value = 200.f, .label = "Sun & Moon Brightness", .section = "Cloud Lighting",
+        .tooltip = "Brightens the cloud faces lit by the sun or moon.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudSkyLightV1", .binding = &clouds::skylight,
-        .default_value = 100.f, .label = "Sky Light", .section = "Cloud Lighting",
-        .tooltip = "Brightness of ambient sky illumination inside the clouds.",
+        .default_value = 100.f, .label = "Ambient Brightness", .section = "Cloud Lighting",
+        .tooltip = "Brightens cloud areas lit by the surrounding sky.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudSelfShadowV1", .binding = &clouds::self_shadow,
-        .default_value = 100.f, .label = "Self-Shadow Strength", .section = "Cloud Lighting",
-        .tooltip = "Darkness of the cloud body under its own cover. Density still controls sunlight reaching the ground.",
+        .default_value = 40.f, .label = "Internal Shadows", .section = "Cloud Lighting",
+        .tooltip = "Deepens shadows inside the cloud body.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudForwardScatteringV1", .binding = &clouds::forward_scattering,
-        .default_value = 80.f, .label = "Forward Scattering", .section = "Cloud Lighting",
-        .tooltip = "Concentrates scattered light toward the sun, strengthening silver linings.",
+        .default_value = 60.f, .label = "Bright Rim Strength", .section = "Cloud Lighting",
+        .tooltip = "Concentrates brighter cloud lighting toward the sun or moon.",
         .min = 0.f, .max = 95.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
-    new Setting{
-        .key = "CloudCirrusAmountV1", .binding = &clouds::cirrus_amount,
-        .default_value = 100.f, .label = "Cirrus Amount", .section = "High Cirrus",
-        .tooltip = "Optical strength of high clouds selected by the weather. Zero removes their appearance and shadows.",
-        .min = 0.f, .max = 300.f,
-        .is_enabled = [] { return clouds::mode > .5f; },
-        .parse = [](float value) { return value * .01f; }},
-    new Setting{
-        .key = "CloudCirrusCoverageV1", .binding = &clouds::cirrus_coverage,
-        .default_value = 100.f, .label = "Cirrus Coverage", .section = "High Cirrus",
-        .tooltip = "Shrinks or expands wisps within the high weather layer.",
-        .min = 0.f, .max = 200.f,
-        .is_enabled = [] { return clouds::mode > .5f; },
-        .parse = [](float value) { return value * .01f; }},
-    new Setting{
-        .key = "CloudCirrusSizeV1", .binding = &clouds::cirrus_size,
-        .default_value = 100.f, .label = "Cirrus Size", .section = "High Cirrus",
-        .tooltip = "World scale of the high-cloud pattern.",
-        .min = 25.f, .max = 400.f,
-        .is_enabled = [] { return clouds::mode > .5f; },
-        .parse = [](float value) { return value * .01f; }},
-    new Setting{
-        .key = "CloudCirrusAltitudeV1", .binding = &clouds::cirrus_height,
-        .default_value = 8000.f, .label = "Cirrus Altitude", .section = "High Cirrus",
-        .tooltip = "Height of the high layer. It stays above the main cloud deck.",
-        .min = 5000.f, .max = 16000.f, .format = "%.0f m",
-        .is_enabled = [] { return clouds::mode > .5f; }},
     new Setting{
         .key = "FogEnabled",
         .binding = &injection.enabled,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .label = "Atmospheric Fog",
-        .section = "HartapfelFX",
-        .tooltip = "Weather-driven fog with shadowed sunlight, moonlight and local lights. FAST sampling and temporal reconstruction run at both quality levels.",
-        .labels = {"Native", "Volume Grid"}},
+        .label = "Fog Rendering",
+        .section = "Fog & Performance",
+        .tooltip = "Choose the original fog or HartapfelFX volumetric fog.",
+        .labels = {"Original", "Volumetric"}},
     new Setting{
         .key = "FogQuality",
         .binding = &injection.quality,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .label = "Fog Quality",
-        .section = "HartapfelFX",
+        .label = "Quality",
+        .section = "Fog & Performance", .tooltip = "High quality refines fog detail at a greater performance cost.",
         .labels = {"Balanced", "High"},
         .parse = [](float value) { return value + 1.f; }},
     new Setting{
@@ -387,7 +349,7 @@ renodx::utils::settings::Settings settings = {
         .binding = &injection.density,
         .default_value = 100.f,
         .label = "Fog Density",
-        .section = "HartapfelFX",
+        .section = "Fog Appearance", .tooltip = "Adds more or less mist to the game weather.",
         .min = 0.f,
         .max = 300.f,
         .parse = [](float value) { return value * .01f; }},
@@ -395,8 +357,8 @@ renodx::utils::settings::Settings settings = {
         .key = "FogSunlight",
         .binding = &injection.sunlight,
         .default_value = 35.f,
-        .label = "Sun and Moon Scattering",
-        .section = "HartapfelFX",
+        .label = "Sun & Moon Light",
+        .section = "Light in Fog", .tooltip = "Brightens sunlight and moonlight scattered through fog.",
         .min = 0.f,
         .max = 200.f,
         .parse = [](float value) { return value * .01f; }},
@@ -404,8 +366,8 @@ renodx::utils::settings::Settings settings = {
         .key = "FogAnisotropy",
         .binding = &injection.anisotropy,
         .default_value = 0.75f,
-        .label = "Scattering Anisotropy",
-        .section = "HartapfelFX",
+        .label = "Light Focus",
+        .section = "Light in Fog", .tooltip = "Concentrates the glow and shafts toward the light source.",
         .min = 0.f,
         .max = .85f,
         .format = "%.2f"},
@@ -413,8 +375,8 @@ renodx::utils::settings::Settings settings = {
         .key = "FogLocalLight",
         .binding = &injection.local_strength,
         .default_value = 100.f,
-        .label = "Local Light Scattering",
-        .section = "HartapfelFX",
+        .label = "Lamp & Fire Light",
+        .section = "Light in Fog", .tooltip = "Brightens the glow of local lights inside fog.",
         .min = 0.f,
         .max = 200.f,
         .parse = [](float value) { return value * .01f; }},
@@ -422,16 +384,16 @@ renodx::utils::settings::Settings settings = {
         .key = "FogStart",
         .binding = &injection.start_distance,
         .default_value = 0.f,
-        .label = "Fog Start Distance",
-        .section = "HartapfelFX",
+        .label = "Clear Distance",
+        .section = "Fog Placement", .tooltip = "Leaves a clearer space around the camera before fog starts.",
         .min = 0.f,
         .max = 100.f},
     new Setting{
         .key = "FogHeight",
         .binding = &injection.height_falloff,
         .default_value = 100.f,
-        .label = "Height Falloff",
-        .section = "HartapfelFX",
+        .label = "Fade With Height",
+        .section = "Fog Placement", .tooltip = "Higher values keep more fog near the ground.",
         .min = 0.f,
         .max = 300.f,
         .parse = [](float value) { return value * .01f; }},
@@ -439,8 +401,8 @@ renodx::utils::settings::Settings settings = {
         .key = "FogSkyDensity",
         .binding = &injection.sky_density,
         .default_value = 200.f,
-        .label = "Sky Haze Density",
-        .section = "HartapfelFX",
+        .label = "Distant Sky Haze",
+        .section = "Fog Appearance", .tooltip = "Fades distant clouds and sky into the atmosphere.",
         .min = 0.f,
         .max = 300.f,
         .parse = [](float value) { return value * .01f; }},
@@ -449,15 +411,15 @@ renodx::utils::settings::Settings settings = {
         .binding = &injection.reconstruction,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .label = "Smooth Lighting Reconstruction",
-        .section = "HartapfelFX",
-        .tooltip = "Cubic filtering softens lighting transitions with additional buffer reads. Opacity retains the current trilinear result.",
+        .label = "Smooth Fog Lighting",
+        .section = "Fog & Performance",
+        .tooltip = "Softens lighting transitions in fog with a small performance cost.",
         .labels = {"Off", "On"}},
     new Setting{
         .key = "FogStatus",
         .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
         .label = "Integration Status",
-        .section = "HartapfelFX",
+        .section = "Diagnostics (Advanced)",
         .on_draw = []() {
           ImGui::Text("Sun inputs: %llu | Fog matches: %llu | Native fallbacks: %llu",
                       static_cast<unsigned long long>(fog::sun_captures.load()),
@@ -599,22 +561,15 @@ void OnPresent(reshade::api::command_queue* queue, reshade::api::swapchain* swap
 }
 
 void DrawAddon(reshade::api::effect_runtime* runtime) {
-  if (!ImGui::BeginTabBar("HartapfelFXTabs")) return;
-  if (ImGui::BeginTabItem("HartapfelFX")) {
-    draw_nights = false;
-    renodx::utils::settings::OnRegisterOverlay(runtime);
-    if (lighting::soft != 0.f && lighting::sun::attempted && !lighting::sun::native_value)
-      ImGui::TextDisabled("Traced light size is unavailable for this game version.");
-    if (fill_native::attempted && !fill_native::installed) ImGui::TextDisabled("Player Fill Lights are unavailable for this game version.");
-    ImGui::EndTabItem();
+  hartapfelfx::ui::Draw(settings,runtime);
+  if(hartapfelfx::ui::selected==hartapfelfx::ui::Tab::Lighting) {
+    if(lighting::soft!=0.f &&lighting::sun::attempted &&!lighting::sun::native_value)
+      ImGui::TextWrapped("Shadow softness is unavailable for this game version.");
+    if(fill_native::attempted &&!fill_native::installed)
+      ImGui::TextWrapped("Character fill light is unavailable for this game version.");
   }
-  if (ImGui::BeginTabItem("Darker Nights")) {
-    draw_nights = true;
-    renodx::utils::settings::OnRegisterOverlay(runtime);
-    if (!nights::Supported()) ImGui::TextDisabled("Darker Nights is unavailable for this game version.");
-    ImGui::EndTabItem();
-  }
-  ImGui::EndTabBar();
+  if(hartapfelfx::ui::selected==hartapfelfx::ui::Tab::Nights &&!nights::Supported())
+    ImGui::TextWrapped("Night lighting is unavailable for this game version.");
 }
 
 void ImportStandaloneSettings() {
@@ -628,8 +583,8 @@ void ImportStandaloneSettings() {
     const auto legacy_fill = fill_config + suffix;
     for (auto* setting : settings) {
       if (setting->key.empty() || !setting->binding || setting->is_global) continue;
-      const bool graphics = setting->section == "Player Fill Lights" || setting->section == "Lighting & Shadows";
       const bool night = std::find(nights::ui::settings.begin(), nights::ui::settings.end(), setting) != nights::ui::settings.end();
+      const bool graphics = !night &&hartapfelfx::ui::TabForKey(setting->key)==hartapfelfx::ui::Tab::Lighting;
       if (!graphics && !night) continue;
       const char* key = setting->key.c_str();
       char value[64]{};
@@ -665,14 +620,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
   if (reason == DLL_PROCESS_ATTACH) {
     if (!reshade::register_addon(module)) return FALSE;
     renodx::utils::settings::global_name = "thewitcher3remastered-hartapfelfx";
-    for (auto* setting : settings) setting->is_visible = [] { return !draw_nights; };
-    for (auto* setting : nights::ui::settings) {
-      setting->is_visible = [visible = std::move(setting->is_visible)] {
-        return draw_nights && (!visible || visible());
-      };
-      settings.push_back(setting);
-    }
+    settings.insert(settings.end(),nights::ui::settings.begin(),nights::ui::settings.end());
     ImportStandaloneSettings();
+    hartapfelfx::ui::Configure(&settings);
     nights::edit_shared_common_constants = [](void* output) {
       const auto controls = player_fill::GetControls();
       if (controls.enabled && fill_native::layout.common == nights::detected_layout.common) {

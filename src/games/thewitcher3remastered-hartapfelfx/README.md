@@ -4,14 +4,15 @@ Standalone DX12 volumetric clouds, fog and lighting, ported from the working Cla
 implementation using original Remastered captures to decode the native inputs.
 The Night controls and graphics support code are bundled under `night/` and
 `lighting/graphics/`; building this addon does not require the standalone mods.
-The overlay has two tabs. **HartapfelFX** starts with **Player Fill Lights**,
-with gameplay and dialogue/cutscene strength and optional environment matching.
-**Darker Nights** contains the remaster’s night presets, schedule, illumination,
-atmosphere, grading, exposure, and celestial controls.
+The overlay has four tabs: **Clouds**, **Fog**, **Lighting** and **Nights**.
+A shared preset slider sits above the tabs; a short Help & About section appears
+below every tab.
+Lighting includes independent sun/moon size and character fill; Nights contains
+the night look, schedule, brightness, atmosphere, colour and exposure.
 
 The addon imports missing values from the standalone Darker Nights and Improved
 Graphics profiles into the corresponding HartapfelFX slots. Preset Off restores
-native lighting across both tabs. Use HartapfelFX in place of the standalone Darker Nights and Improved Graphics
+native lighting across all tabs. Use HartapfelFX in place of the standalone Darker Nights and Improved Graphics
 addons. It can run alongside the separate HDR addon.
 
 The [CPU pipeline notes](PERFORMANCE.md) document the disabled-feature overhead
@@ -27,15 +28,15 @@ and volumetric clouds.
 
 ## Lighting & Shadows
 
-On the **HartapfelFX** tab, below **Player Fill Lights**:
+On the **Lighting** tab, under **World Lighting & Shadows**:
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| PBR Lighting | Improved | Diffuse and specular lighting for deferred and forward materials, RT reflection and probe hits, and PT paths. |
+| Surface Lighting | Improved | Diffuse and specular lighting for deferred and forward materials, RT reflection and probe hits, and PT paths. |
 | Sun & Moon Shadows | Improved | Distance-aware shadow filtering in Raster and adjustable light size in RT and PT. |
-| Light Size | 0.35 degrees | Angular size for directional shadow softness, from 0.05 to 2 degrees. |
-| Contact Shadows | Improved | Adds short directional shadows to visible geometry, including HairWorks, in Raster, RT and PT. |
-| Contact Shadow Reach | 0.30 m | Maximum distance searched for nearby occluders, from 0.05 to 1 m. |
+| Shadow Softness | 1.30 degrees | Angular size for directional shadow softness, from 0.05 to 2 degrees. |
+| Small Object Shadows | Improved | Adds short directional shadows to visible geometry, including HairWorks, in Raster, RT and PT. |
+| Small Shadow Reach | 1.00 m | Maximum distance searched for nearby occluders, from 0.05 to 1 m. |
 
 Each mode can be switched back to Native separately. Preset Off restores all
 three to Native. Matching saved controls from the standalone Graphics addon
@@ -58,7 +59,10 @@ GPU work after cache eviction. Terrain cloud visibility enters at the native
 lighting shader's cloud-shadow factor; geometry shadow visibility is preserved.
 
 Cloud rays stop at scene geometry, including mountain surfaces inside the
-layer. Temporal support and the high cirrus layer respect the same occlusion.
+layer. Temporal support respects the same occlusion.
+Cloud view rays reconstruct the native jittered perspective from camera rotation,
+avoiding precision loss from translated inverse matrices that made stationary
+clouds shake. Wind remains at 0.35x native speed.
 Large oriented mist particles use a local density volume within their native
 bounds. The engine still supplies their centres, sizes, material animation,
 colour, fades and flow; the GPU integrates the visible column. Small particles
@@ -97,61 +101,119 @@ not measure gameplay frame-time improvement.
 - Optional positive-weight cubic lighting reconstruction. Its opacity uses
   the original trilinear sample, preserving the current extinction silhouette.
 
+## Settings menu
+
+The shared preset slider applies to the whole mod. Choose **Clouds**, **Fog**,
+**Lighting** or **Nights** to adjust one area. Controls have brief hover tooltips without extra hints underneath. Advanced cloud shaping and exposure tuning start
+collapsed; open their named sections when needed. Edits apply immediately and
+save to the selected preset.
+
+**Reset All** on each tab restores only that tab's settings in the selected
+preset, after a scope-specific confirmation. Hidden exposure options reset too.
+Sun and moon size belong to Lighting and remain independent of night brightness.
+Night look buttons affect Nights only. All 81 active control keys are retained, and this menu revision keeps the
+existing defaults and saved presets.
+
+**Help & About** is a shared section below every tab, including with Preset Off. It
+covers the whole mod and includes the Classic mod's RenoDX/HDR Den Discord,
+GitHub and both creator Ko-Fi links, credits and build date. Original game effects
+are restored by Preset Off; this does not disable the help panel.
+
+### Design rationale and research
+
+The design is informed by the public scope of
+[ISO 9241-110:2020 interaction principles](https://www.iso.org/standard/75258.html)
+and [ISO 9241-210:2019 human-centred design](https://www.iso.org/standard/77520.html).
+It is a task-focused application of published guidance, not a certification claim.
+The user tasks here are changing a cloud shape, tuning atmosphere, adjusting world
+lighting, choosing a night look, and recovering the chosen defaults.
+
+[Nielsen Norman Group's usability heuristics](https://www.nngroup.com/articles/ten-usability-heuristics/)
+inform familiar labels, contextual hover help, immediate saving and
+recoverable actions. The reset confirmation names the affected tab and preset.
+Persistent control keys and values are preserved, so changing the presentation
+cannot silently reinterpret saved presets. Numeric hints explain the direction
+of an effect; units distinguish percentages, metres, hours and angular light size.
+
+[Progressive disclosure](https://www.nngroup.com/articles/progressive-disclosure/)
+informs the single level of Advanced sections. Common coverage, density, edges
+and lighting stay directly available. Detailed structure, erosion and custom
+exposure remain reachable without another page hierarchy. This split reflects
+this chat's repeated appearance adjustments, rather than assuming all controls
+are equally important. Conditional exposure visibility remains intact.
+
+[Microsoft XAG 112](https://learn.microsoft.com/en-us/xbox/accessibility/xbox-accessibility-guidelines/112)
+informs consistent locations for repeated controls: one shared preset slider
+and Help & About section, the same tab order, and a Reset All action in each tab. The menu
+uses normal ReShade/ImGui controls and inherited sizing/theme. Availability hints
+explain disabled options; the help panel is independent of effect enablement.
+This applies navigation principles and does not claim screen-reader support.
+
+The user's live review preferred a compact menu. The final presentation keeps
+hover tooltips, removes the repeated inline hint rows, restores the RenoDX preset
+slider and uses a short standard Help & About section with the Classic support
+links. Tab flow, conditional controls and per-tab resets stay as reviewed.
+
+Validation includes all-key/default/description auditing and four-tab reset tests
+covering hidden controls, parsing, independent sun/moon ownership and global
+exclusion. In-game review checks readability, navigation, saving and reset scope.
+
 ## Volumetric clouds
 
-Native weather selects billowing clouds, flatter volumetric decks and high
-cirrus. The catalog covers 56 regional weather states in Novigrad/Velen,
-Skellige, Kaer Morhen, White Orchard, its winter variant and Toussaint,
-including mapped quest weather. It derives 17 recipes (including the generic
-fallback) from 27 recognized native cloud effects. Unknown weather/worlds
-retain the generic fallback. The added middle sheet and altocumulus patches
-were removed after visual testing; their atlas channels and shading/shadow
-work are gone. Weather containing only those effects now produces clear sky.
-The main volume handles billows/decks; the retained high cirrus sits near 8 km.
+Native weather selects billowing clouds and flatter volumetric decks. The catalog
+covers 56 regional weather states in Novigrad/Velen, Skellige, Kaer Morhen,
+White Orchard, its winter variant and Toussaint, including mapped quest weather.
+It derives 16 recipes (including the generic fallback) from 27 recognized native
+cloud effects. Unknown weather/worlds retain the generic fallback.
+
+The added middle sheet, altocumulus patches and high cirrus sheet have all been
+removed at the user's request. Their textures, setup and shading/shadow work are
+gone. Weather containing only those effects now produces clear sky. The main
+volumetric billows/decks retain their existing shapes and realtime controls.
 
 Native source/target weather and its blend drive the remaining families.
 The existing 0.8-second GPU fade prevents recipe changes from popping.
-Cloud advection uses **50% of the native broad-layer wind speed**, as requested
+Cloud advection uses **35% of the native broad-layer wind speed**, as requested
 after live testing. Direction, changing wind strength and calm weather still
-come from the game. The same scale applies to weather, formations, cirrus,
+come from the game. The same scale applies to weather, formations,
 shadows, directional visibility and motion/history reconstruction.
 
 The catalog approximates native silhouettes; it does not copy native textures
 or track individual particles. Optional effect probabilities become expected
 appearance weights. `clouds/family_effects.json` retains the authored effect
 catalog; the offline `tools/generate_cloud_families.py` emits static tables
-with the removed middle-sheet weights forced to zero.
+with all removed 2D-sheet weights forced to zero.
 See [the weather map](clouds/WEATHER_MAP.md) for input and fallback boundaries.
 
 Edge shaping tightens the lower-density region, retaining dense interiors.
 It reuses already sampled, mip-filtered shape detail for coherent contour
-variation. The cirrus atlas uses a narrower filtered contour. No new scrolling
+variation. No new scrolling
 noise, runtime noise fetch or image-sharpening pass is added.
 
 ### Realtime cloud authoring
 
-The new controls apply while the game is running. They are saved with the
-selected addon preset. **Reset Cloud Appearance** restores these controls and
-the existing appearance/shape sliders to their defaults.
+The 20 additional controls apply while the game is running. They are saved with the
+selected addon preset. The Clouds tab's **Reset All** restores its rendering, performance and appearance controls.
 
 | Group | Controls |
 | --- | --- |
-| Cloud Formation | Base Altitude, Roundness, Height Variation, Formation Gaps |
-| Cloud Billows | Billow Size, Contour Warping, Vertical Shear, Density Contrast |
-| Cloud Erosion | Erosion Strength, Wispy / Billowy Balance, Underside Relief, Top Relief |
-| Cloud Edges | Edge Sharpness, Edge Irregularity, Base Feathering, Top Feathering |
-| Cloud Lighting | Direct Light, Sky Light, Self-Shadow Strength, Forward Scattering |
-| High Cirrus | Cirrus Amount, Cirrus Coverage, Cirrus Size, Cirrus Altitude |
+| Cloud Formation | Base Height, Roundness, Height Variation, Gaps Between Formations |
+| Cloud Structure (Advanced) | Billow Size, Shape Irregularity, Upper Cloud Lean, Core Contrast |
+| Cloud Erosion (Advanced) | Erosion Strength, Wispy / Rounded Balance, Underside Relief, Top Relief |
+| Cloud Edges | Edge Sharpness, Edge Irregularity, Base Fade Width, Top Fade |
+| Cloud Lighting | Sun & Moon Brightness, Ambient Brightness, Internal Shadows, Bright Rim Strength |
 
-New multiplier controls default to 100%. Roundness and the wispy/billowy bias
-start at zero; base/cirrus altitudes start at 1200/8000 m and forward scattering
-at 80. These defaults preserve the established appearance. Cirrus is kept above
-the top of the main deck. Cirrus amount and coverage scale weather-selected
-high clouds; they do not bring back the removed middle sheet.
+Mod defaults use the user's saved Preset #1 from 8 November 2026 across all
+81 active settings. For example, the main cloud base starts at 1650 m, Roundness
+at 87, Height Variation at 174%, Billow Size at 158% and Sun & Moon Brightness at 200%.
+Reset All on Clouds uses these authored values. The four cirrus controls
+were removed with the high sheet; older saved values are unused. The underlying
+material scales still use 100% as their reference, independently of the chosen
+starting values.
 
-For firmer silhouettes, start with Edge Sharpness and Base Feathering. Use
+For firmer silhouettes, start with Edge Sharpness and Base Fade Width. Use
 Edge Irregularity for coherent contour breakup. Roundness, Billow Size and
-Formation Gaps change the larger forms; Underside Relief shapes hanging lobes.
+Gaps Between Formations change the larger forms; Underside Relief shapes hanging lobes.
 Lighting controls change the cloud body's shading. Density and shape continue
 to determine sun-disc and terrain-shadow attenuation together.
 
@@ -169,12 +231,9 @@ mode retains the original sky and cards. The native source and target weather
 fields, blend weight, wind and
 weather-selected height profile control 3D shape noise, underside relief and
 erosion. Two direct-scattering phase octaves, sky light and Beer extinction
-run in scene-linear HDR. A separate weather-driven 2D cirrus material sits at
-8 km. Its square texture maps to a square 24 km world period; the earlier
-24×8 km mapping stretched thin high-cloud features into repeated horizon
-stripes. The lower view ray, directional visibility volume and ground-shadow map
-use the same optical extinction.
-Native b12[67] wind offsets drive weather, lower formations, cirrus, shadows
+run in scene-linear HDR. The view ray, directional visibility volume and
+ground-shadow map use the same optical extinction.
+Native b12[67] wind offsets drive weather, formations, shadows
 and their histories. Native DXIL uses `20 * offset` in the broad projection;
 the current user-requested speed is half of that (`10 * offset`). The recorded
 storm's 0.6 offset units/s therefore produces about 6 m/s of cloud advection
@@ -219,12 +278,11 @@ neutralizes the two native painted-cloud terms and multiplies the procedural
 cloud factor into the merged visibility, preserving geometry visibility. This
 revision passes Release compilation, GPU receiver/geometry-factor probes and
 isolated addon startup; the barn scene still needs a live check.
-The lower and high layers reach their spherical horizon and exclude the far
-side of the planet. The lower layer no longer ends at the former fixed 80 km
-ray limit. Foreground-air transmission attenuates their premultiplied radiance
-and opacity before blending with the Witcher's existing atmospheric sky. It
-does not uncover high cirrus behind an opaque lower cloud: the high layer uses
-the lower cloud's un-hazed Beer transmission for occlusion.
+The cloud volume reaches its spherical horizon and excludes the far side of
+the planet. It no longer ends at the former fixed 80 km ray limit. Foreground-air
+transmission attenuates its premultiplied radiance and opacity before blending
+with the Witcher's existing atmospheric sky. The rejected high sheet contributes
+neither view opacity nor shadows.
 This air attenuation
 follows the native sky shader's 16-sample rational-height attenuation over the
 game's sky distance. The supplied coastal dusk scene still needs a matched

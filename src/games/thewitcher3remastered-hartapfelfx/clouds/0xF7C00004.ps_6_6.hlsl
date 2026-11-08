@@ -1,7 +1,6 @@
 
 // Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #include "integration.hlsli"
-#include "cirrus.hlsli"
 #include "storage.hlsli"
 #include "../fog/volume_sample.hlsli"
 bool CloudFogReady() {
@@ -38,7 +37,6 @@ float4 main(float4 position:SV_Position):SV_Target {
           : scene_before.Load(int3(pixel,0)).rgb)-scene_without_moon.Load(int3(pixel,0)).rgb,0.f)
       :0.f;
   float4 value=distance>0.f?CloudDecode(cloud.Load(int3(pixel,0))):float4(0,0,0,1);
-  float view_transmission=value.a;
   // Resolve the native emitter through the cloud column independently of the
   // temporally reconstructed view ray. Correct only measured disc radiance:
   // changing cloud opacity inside the sun's angular mask prints a circular edge.
@@ -61,20 +59,8 @@ float4 main(float4 position:SV_Position):SV_Target {
     beam_transmission=exp(-optical_depth);
   }
   // Merge foreground air only after cloud history and the disc beam are
-  // resolved, using the lower layer's weighted depth. The high layer below
-  // samples its own air at its separate depth.
+  // resolved, using the volume's weighted depth.
   if(distance>0.f)value=CloudAerialPerspective(uv,distance,value);
-  // The reference high layer is a single 2D material lookup near 8 km. Its
-  // premultiplied result sits behind the lower volume and shares native
-  // weather/wind, while its authored spectrum is kept separate from billows.
-  float high_sun_transmission=1.f;
-  if(value.a>.001f &&appearance.y>0.f) {
-    float cone=max(length(CloudRay(uv+float2(1.f/dimensions.z,0.f))-ray),
-        length(CloudRay(uv+float2(0.f,1.f/dimensions.w))-ray));
-    float high_t=0.f;
-    value=CloudCirrus(frame[0].xyz,ray,uv,cone,value,view_transmission,true,high_t,high_sun_transmission,surface_distance);
-    if(distance<=0.f)distance=high_t;
-  }
   // Aerial perspective fades cloud opacity, which would let the native discs
   // appear in front of dense distant clouds. Density is also a visual
   // control: at its authored 12% default the very bright HDR emitter needs
@@ -82,11 +68,12 @@ float4 main(float4 position:SV_Position):SV_Target {
   // This remains Beer attenuation, exp(-tau), with calibrated emitter tau.
   // The measured emitter uses the finer beam at every pixel it contributes.
   float emitter_scale=CloudDirectBeamScale();
-  float native_sun_transmission=pow(saturate(beam_transmission*high_sun_transmission),emitter_scale);
+  float native_sun_transmission=pow(saturate(beam_transmission),emitter_scale);
+  float native_moon_transmission=native_sun_transmission;
   // The terrain receiver uses a world-anchored, finite-beam solar column.
   // A bright native disc must not remain visible through the same column
   // while the ground below has lost direct light.
-  if(any(sun_excess>0.f) &&asfloat(cloud_status.Load(44))==1357.f
+  if((any(sun_excess>0.f)||any(moon_excess>0.f)) &&asfloat(cloud_status.Load(44))==1357.f
       &&all(asfloat(cloud_status.Load3(48))==frame[0].xyz)
       &&all(cloud_status.Load4(80)==asuint(frame[286]))) {
     float4 region=asfloat(cloud_status.Load4(0));
@@ -108,10 +95,12 @@ float4 main(float4 position:SV_Position):SV_Target {
         float terrain_beam=lerp(lerp(beam.x,beam.y,weight.x),
             lerp(beam.z,beam.w,weight.x),weight.y);
         native_sun_transmission=min(native_sun_transmission,saturate(terrain_beam));
+        if(dot(frame[205].yzw,frame[205].yzw)>.25f
+            &&dot(sun.xyz,normalize(frame[205].yzw))>.999f)
+          native_moon_transmission=min(native_moon_transmission,saturate(terrain_beam));
       }
     }
   }
-  float native_moon_transmission=pow(saturate(beam_transmission*high_sun_transmission),emitter_scale);
   float3 disc_correction=(value.a-native_sun_transmission)*sun_excess
       +(value.a-native_moon_transmission)*moon_excess;
   if(distance<=0.f &&all(disc_correction==0.f))discard;

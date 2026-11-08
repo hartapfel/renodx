@@ -559,8 +559,10 @@ inline void CloudRuntime(ID3D12Device* device, const std::filesystem::path& orig
       || !std::isfinite(indirect_values[1]) || indirect_values[1] < 0.f || indirect_values[1] > 1.f)
     throw std::runtime_error("RTGI cloud source used stale frame data or its lighting controls as the weather clock");
   const auto* surface_controls = reinterpret_cast<const float*>(static_cast<const uint8_t*>(mapped) + indirect_bytes);
+  std::cout << "PBR/contact/soft/diameter controls=" << surface_controls[0] << "/" << surface_controls[1]
+            << "/" << surface_controls[2] << "/" << surface_controls[3] << std::endl;
   if (surface_controls[0] != 1.f || surface_controls[1] != 1.f || surface_controls[2] != 1.f
-      || std::abs(surface_controls[3] - .35f) > .000001f)
+      || std::abs(surface_controls[3] - 1.3f) > .000001f)
     throw std::runtime_error("PBR/contact controls depend on ray-material submission tracking");
   std::cout << "PASS: actual deferred PBR/contact controls without a ray-material producer tracker" << std::endl;
   indirect_readback->Unmap(0, nullptr);

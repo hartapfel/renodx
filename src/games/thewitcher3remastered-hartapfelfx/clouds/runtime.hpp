@@ -910,7 +910,7 @@ inline void OnInitDevice(api::device* device) {
     auto code = [](const auto& shader) { return D3D12_SHADER_BYTECODE{shader.data(), shader.size()}; };
     data->assets.Initialize(reinterpret_cast<ID3D12Device*>(device->get_native()), {
         code(__0xF7F00001), code(__0xF7C00001), code(__0xF7C00008), code(__0xF7C00002), code(__0xF7C00003), code(__0xF7C00004),
-        code(__0xF7C00007), code(__0xF7C00006), code(__0xF7C00009), code(__0xF7C0000A), code(__0xF7C0000B), code(__0xF7C0000C), code(__0xF7C0000E), code(__0xF7C0000F), code(__0xF7C00010), code(__0xF7C00011), code(__0xF7C00012), code(__0xF7C00013), code(__0xF7C00014), code(__0xF7C00015), code(__0xF7C00016)});
+        code(__0xF7C00007), code(__0xF7C00006), code(__0xF7C00009), code(__0xF7C0000A), code(__0xF7C0000B), code(__0xF7C0000C), code(__0xF7C0000E), code(__0xF7C0000F), code(__0xF7C00010), code(__0xF7C00013), code(__0xF7C00014), code(__0xF7C00015), code(__0xF7C00016)});
     data->ready = true;
     ray_hooks::Attach(device);
   } catch (const std::exception& error) {

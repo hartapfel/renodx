@@ -4,7 +4,6 @@
 #include "common.hlsli"
 #include "air.hlsli"
 #include "lighting.hlsli"
-#include "thin.hlsli"
 #include "fast_sample.hlsli"
 #include "../night/lighting/common.hlsli"
 Texture3D<float> cloud_samples : register(t7);
@@ -85,7 +84,7 @@ float4 TraceCloud(float3 origin,float3 ray,float2 interval,float cone,uint2 id,
           float light_distance=max(light_interval.y,0.f);
           float light_scale=log2(1.f+light_distance/24.f);
           uint light_pairs=max(2u,((uint)integration.y+1u)/2u);
-          float fallback_tau=CloudCirrusBeam(p,direction,footprint);
+          float fallback_tau=0.f;
           [loop]for(uint j=0;j<light_pairs;++j) {
             float begin=24.f*(exp2(light_scale*j/light_pairs)-1.f);
             float end=24.f*(exp2(light_scale*(j+1.f)/light_pairs)-1.f);

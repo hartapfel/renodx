@@ -14,5 +14,6 @@ RWStructuredBuffer<float4> output : register(u0, space73);
   output[2] = float4(CloudDiffuseTransport(pixel_depth_tau.w), exp(-pixel_depth_tau.w), CloudOpticalExtinction);
   output[3] = float4(HartapfelCloudNeutralize(point_native.w),
       HartapfelCloudShadowMultiply(point_native.xyz, point_native.w),
-      HartapfelCloudShadowMultiply(point_native.xyz, 0.f), 0.f);
+      HartapfelCloudShadowMultiply(point_native.xyz, 0.f),
+      HartapfelCloudEmitterVisibility(point_native.xyz,native_motion.xyz));
 }

@@ -359,3 +359,93 @@ cirrus removal also clears its shadows, test paired extremes and validate native
 base-altitude metadata/above-layer exclusion at 300 and 5000 m. Together with
 the previous suite, 203 production GPU cases pass. Actual-addon compatibility,
 neutral-image comparison, timing and live UI status are recorded in the handoff.
+
+## High-sheet removal, 8 November
+
+The user rejected the remaining background streaks and explicitly selected full
+removal of the high sheet. The cirrus atlas, ten startup generation/mip dispatches,
+two setup PSOs, view/reflection sampling and all beam/terrain/volume shadow terms
+are removed. Four high-cirrus sliders are removed; the 20 main-cloud authoring
+controls remain. Authoring storage is now 80 bytes and Parameters is 240 bytes,
+within the same 512-byte upload page and fog offset256. Shared receiver metadata
+and native adapters retain their existing layout. No new tracking or GPU work.
+
+Static recipes keep the authored effects as evidence, but emit zero high-sheet
+strength; 16 recipes cover the same 56 regional states/30 names. Former high-only
+weather is checked for clear sky and no native terrain shadow. Earlier sections
+describing a retained cirrus sheet or 24 controls refer to the checkpoint state.
+Final build/capture/startup results are recorded in the handoff.
+
+Strict Release and 194 production GPU cases pass, including the 20 retained
+controls. All four actual-addon HDR/RT/PT configurations pass. A 1920x1080
+former-high-only capture matches clear RGBA exactly; main-only RGB mean absolute
+error against the checkpoint is 4.98e-11 (maximum0.000125). No closed-game GPU
+timing has been recorded for this removal; this is not a quantified FPS claim.
+
+## Preset #1 defaults and wind, 8 November
+
+All 81 active setting defaults match the saved mod Preset #1 snapshot; 20 numeric
+defaults changed. These are initial/reset values using the existing UI parser.
+The user's chosen sampling step and shapes retain their ordinary cost. No new
+resource, tracking path or pass is introduced. The shared native wind conversion
+is now `20 * 0.35`, retaining game direction/calm/strength across every weather
+state and the same weather/body/shadow/reprojection field. Release and 194 GPU
+cases pass, including all 25 weather-pair wind cases and signed shadow translation.
+Earlier 0.5x/half-speed references describe the previous setting.
+
+All four actual-addon HDR/RT/PT configurations pass with the new defaults.
+The lighting-controls fixture now expects the authored1.3 light diameter; its
+GPU readback confirms1/1/1/1.3 for PBR/contact/soft/diameter.
+
+## Moon occlusion and settings layout, 8 November
+
+Live b12 sky constants put the sun below the horizon and the moon above it.
+The old terrain pass selected that below-horizon sun and invalidated night cloud
+shadows, while body shading used a different fallback. One shared light selector
+now chooses the visible sun/moon direction. The native lunar sky lobe receives
+the same camera-to-moon cloud transmission when the map matches that emitter.
+The measured moon disc also respects that field. Broad sky and the daytime solar
+profile remain separate. The existing shadow map and bindings are reused; no
+new GPU resource, pass, readback, tracker or per-frame allocation is introduced.
+Working moon shadows necessarily perform their existing enabled shadow work.
+
+Menu ownership, sorting and description allocation happen once at addon startup.
+The overlay uses existing settings and save/load APIs; its UI work runs only when
+drawn. Per-tab resets alter only typed settings owned by that tab, including
+conditionally hidden values. Support links open only on a user's button click.
+Release and196 cloud GPU cases pass, including two captured-night direction/
+ground/glow regressions; the menu tests verify four reset scopes and filtering.
+Final compatibility and live acceptance are recorded in the handoff.
+
+## Compact menu revision after live review, 8 November
+
+The user confirmed that clouds now correctly shadow both moonlit ground and
+lunar sky glow. Their menu review requested hover-only help, the standard preset
+slider, and a short shared Help & About section instead of a popup. The revision
+removes all generated inline description settings and their startup allocations.
+The footer uses the Classic support destinations and framework-style tinted
+buttons. Four tab ownership and reset behavior are preserved. Engine shaders
+and GPU bindings are unchanged; targeted menu/rendering and profile-integration
+checks validate this presentation change. Previous descriptions of inline hints
+and the modal Help panel refer to the superseded menu candidate.
+
+## Cloud camera stability, 8 November
+
+A bounded 120-frame native capture showed a stationary camera, one unchanged
+frame-buffer address and steady wind (-5 native units/s, within 0.4% after FP32
+quantization). The translated inverse view-projection matrices changed their
+rounding with native rendering jitter. Reconstructing a world point and then
+subtracting the camera amplified that rounding into visible cloud-ray movement.
+
+CloudRay now inverts the native perspective and rigid camera rotation directly,
+including the game's projection jitter. It does not subtract large translated
+coordinates. Four consecutive captured cameras reproduce the defect on the GPU:
+maximum ray-to-native-pixel error falls from 0.154338 to 0.0000231876 pixels at
+160x90. This is a numerical accuracy measurement, not an FPS claim. The change
+adds no resources, passes, tracking, readbacks or per-frame allocations. Shared
+wind/body/shadow advection remains 0.35x native speed. The Release GPU suite
+includes the four captured-camera regressions; live visual acceptance is separate.
+
+Strict Release, all 200 production cloud GPU cases and HDR sun/moon capture
+checks pass after rebuilding every affected shader. The previous compiled
+shader set failed the new camera test before the correction.

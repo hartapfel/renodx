@@ -2,7 +2,6 @@
 #include "common.hlsli"
 #include "lighting.hlsli"
 #include "sky_ambient.hlsli"
-#include "thin.hlsli"
 RWTexture2D<float2> transmission : register(u0);
 RWStructuredBuffer<float4> shadow_data : register(u1);
 #define previous_shadow cloud_shared
@@ -22,7 +21,7 @@ groupshared float3 sky_samples[64];
   if(all(id.xy==0)) {
     shadow_data[6]=light[0];shadow_data[7]=light[1];
   }
-  float3 sun=CloudShadowSun();
+  float3 sun=CloudLightingDirection();
   bool valid=sun.z>.015f &&frame[66].x>0.f &&CloudAltitude(frame[0].xyz)<CloudBase-50.f;
   bool clock_valid = (identity.w & 256u) == 0 || (clock_identity.w == 0xF7C0000Du
       && all(clock_camera.xyz == frame[0].xyz) && all(clock_jitter == asuint(frame[286])));
@@ -42,9 +41,6 @@ groupshared float3 sky_samples[64];
   float2 center=frame[0].xy-frame[0].z*sun.xy/max(sun.z,.015f);
   center=floor(center/texel+.5f)*texel;
   float map_top=CloudBase+CloudThickness();
-  if(cloud_family_high.y>0.f) {
-    if(cloud_family_high.x>0.f &&high_layer.x>0.f &&high_layer.y>0.f)map_top=max(map_top,CloudCirrusHeight());
-  }
   if(all(id.xy==0)) {
     // The map is traced from z=0. Publish the maximum cloud altitude so
     // receivers above the entire layer cannot inherit a ground shadow.
@@ -83,12 +79,6 @@ groupshared float3 sky_samples[64];
   }
   }
   float blocker=CloudBase+CloudThickness()*(1.f-weighted_depth);
-  if(cloud_family_high.y>0.f) {
-    float high_tau=CloudDirectBeamScale()*CloudCirrusBeam(origin,sun,texel);
-    float total=optical_depth+high_tau;
-    if(total>1.e-5f)blocker=(blocker*optical_depth+CloudCirrusHeight()*high_tau)/total;
-    optical_depth=total;
-  }
   // A half-float ESM needs a smaller exponent than Annen's 32-bit ESM80.
   // Normalizing the depth to the 1.2 km layer keeps this filtered value in
   // [exp(-12),1] and prevents FP16 underflow.

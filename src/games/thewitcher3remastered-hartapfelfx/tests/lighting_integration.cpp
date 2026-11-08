@@ -25,14 +25,15 @@ int main() {
   const auto* player = FindSetting("PlayerLighting");
   const auto* cloud = FindSetting("CloudModeV2");
   const auto* sky_haze = FindSetting("NightSkyHazeStrength");
-  if (!player || !cloud || !sky_haze || (*renodx::utils::settings::settings)[0] != player
-      || player->section != "Player Fill Lights") return 3;
-  draw_nights = false;
-  if (!player->is_visible() || !cloud->is_visible() || sky_haze->is_visible()) return 4;
-  draw_nights = true;
+  if (!player || !cloud || !sky_haze || player->section != "Character Lighting") return 3;
+  hartapfelfx::ui::selected=hartapfelfx::ui::Tab::Lighting;
+  if (!player->is_visible() || cloud->is_visible() || sky_haze->is_visible()) return 4;
+  hartapfelfx::ui::selected=hartapfelfx::ui::Tab::Clouds;
+  if (player->is_visible() || !cloud->is_visible() || sky_haze->is_visible()) return 4;
+  hartapfelfx::ui::selected=hartapfelfx::ui::Tab::Nights;
   if (player->is_visible() || cloud->is_visible() || !sky_haze->is_visible()) return 5;
   UpdateSetting("CloudModeV2", 0.f);
-  nights::ui::ResetSettings();
+  hartapfelfx::ui::ResetTab(*renodx::utils::settings::settings,hartapfelfx::ui::Tab::Nights);
   if (clouds::mode != 0.f || gameplay_strength != .35f || nights::sky_haze_strength != 15.f) return 6;
 
   // Exercise the actual composed hook against fresh common constants. The

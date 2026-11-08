@@ -1,7 +1,6 @@
 // Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #include "integration.hlsli"
 #include "environment.hlsli"
-#include "cirrus.hlsli"
 RWTexture2D<float4> environment : register(u0);
 RWTexture2D<float> environment_depth : register(u1);
 RWByteAddressBuffer environment_header : register(u2);
@@ -31,9 +30,6 @@ RWByteAddressBuffer environment_header : register(u2);
         6.28318530718f*sqrt(max(0.f,1.f-ray.z*ray.z))/extent.x);
     if(interval.y>interval.x &&any(cloud_family_low.xy>0.f))
       value=TraceCloud(frame[0].xyz,ray,interval,cone,id.xy,128u,400.f,depth);
-    float high_t=0.f,high_sun_transmission=1.f;
-    value=CloudCirrus(frame[0].xyz,ray,0.f,cone,value,value.a,false,high_t,high_sun_transmission);
-    if(depth<=0.f)depth=high_t;
     if(value.a>=.999999f)depth=0.f;
   }
   environment[id.xy]=value;

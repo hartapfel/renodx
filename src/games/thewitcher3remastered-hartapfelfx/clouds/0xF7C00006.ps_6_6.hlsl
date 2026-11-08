@@ -2,7 +2,6 @@
 #include "common.hlsli"
 #include "lighting.hlsli"
 #include "sky_ambient.hlsli"
-#include "thin.hlsli"
 RWTexture2D<float> transmission : register(u0);
 RWStructuredBuffer<float4> shadow_data : register(u1);
 #define previous_shadow cloud_shared
@@ -13,7 +12,7 @@ void main(float4 position : SV_Position) {
     shadow_data[6]=light[0];shadow_data[7]=light[1];
     shadow_data[8]=float4(CloudSkyAmbient(),1.f);
   }
-  float3 sun=CloudShadowSun();
+  float3 sun=CloudLightingDirection();
   bool valid=sun.z>.015f &&frame[66].x>0.f &&CloudAltitude(frame[0].xyz)<CloudBase-50.f;
   bool clock_valid = (identity.w & 256u) == 0 || (clock_identity.w == 0xF7C0000Du
       && all(clock_camera.xyz == frame[0].xyz) && all(clock_jitter == asuint(frame[286])));
@@ -33,9 +32,6 @@ void main(float4 position : SV_Position) {
   float2 center=frame[0].xy-frame[0].z*sun.xy/max(sun.z,.015f);
   center=floor(center/texel+.5f)*texel;
   float map_top=CloudBase+CloudThickness();
-  if(cloud_family_high.y>0.f) {
-    if(cloud_family_high.x>0.f &&high_layer.x>0.f &&high_layer.y>0.f)map_top=max(map_top,CloudCirrusHeight());
-  }
   if(all(id.xy==0)) {
     shadow_data[0]=float4(center,map_top,dimensions.z);
     shadow_data[13]=float4(CloudBase,0,0,0);
@@ -65,6 +61,5 @@ void main(float4 position : SV_Position) {
     optical_depth+=CloudDirectBeamScale()*CloudOpticalExtinction*CloudDensity(p,1u,lod,texel)*ds;
   }
   }
-  optical_depth+=CloudDirectBeamScale()*CloudCirrusBeam(origin,sun,texel);
   transmission[id.xy]=exp(-optical_depth);
 }
