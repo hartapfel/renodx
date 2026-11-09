@@ -1,3 +1,5 @@
+#define HARTAPFEL_SKY_VIEW
+#include "shared.h"
 #include "night/shared.h"
 #include "clouds/shadow_inputs.hlsli"
 #include "clouds/sky_glow.hlsli"
@@ -86,107 +88,117 @@ cbuffer cb2 : register(b2) {
   float4 FrequentPixelConsts_288 : packoffset(c018.x);
 };
 
-cbuffer cb12 : register(b12) {
-  float cb12_000x : packoffset(c000.x);
-  float cb12_000y : packoffset(c000.y);
-  float cb12_000z : packoffset(c000.z);
-  float4 cb12_286 : packoffset(c286.x);
-  float cb12_022z : packoffset(c022.z);
-  float cb12_038x : packoffset(c038.x);
-  float cb12_038y : packoffset(c038.y);
-  float cb12_038z : packoffset(c038.z);
-  float cb12_039x : packoffset(c039.x);
-  float cb12_039y : packoffset(c039.y);
-  float cb12_039z : packoffset(c039.z);
-  float cb12_040x : packoffset(c040.x);
-  float cb12_040y : packoffset(c040.y);
-  float cb12_040z : packoffset(c040.z);
-  float cb12_041x : packoffset(c041.x);
-  float cb12_041y : packoffset(c041.y);
-  float cb12_041z : packoffset(c041.z);
-  float cb12_042x : packoffset(c042.x);
-  float cb12_042y : packoffset(c042.y);
-  float cb12_042z : packoffset(c042.z);
-  float cb12_042w : packoffset(c042.w);
-  float cb12_044x : packoffset(c044.x);
-  float cb12_044y : packoffset(c044.y);
-  float cb12_044z : packoffset(c044.z);
-  float cb12_048y : packoffset(c048.y);
-  float cb12_048z : packoffset(c048.z);
-  float cb12_189x : packoffset(c189.x);
-  float cb12_189y : packoffset(c189.y);
-  float cb12_189z : packoffset(c189.z);
-  float cb12_189w : packoffset(c189.w);
-  float cb12_190x : packoffset(c190.x);
-  float cb12_190y : packoffset(c190.y);
-  float cb12_190z : packoffset(c190.z);
-  float cb12_190w : packoffset(c190.w);
-  float cb12_191x : packoffset(c191.x);
-  float cb12_191y : packoffset(c191.y);
-  float cb12_191z : packoffset(c191.z);
-  float cb12_191w : packoffset(c191.w);
-  float cb12_192x : packoffset(c192.x);
-  float cb12_192y : packoffset(c192.y);
-  float cb12_192z : packoffset(c192.z);
-  float cb12_192w : packoffset(c192.w);
-  float cb12_193x : packoffset(c193.x);
-  float cb12_195x : packoffset(c195.x);
-  float cb12_195y : packoffset(c195.y);
-  float cb12_195z : packoffset(c195.z);
-  float cb12_196x : packoffset(c196.x);
-  float cb12_196y : packoffset(c196.y);
-  float cb12_196z : packoffset(c196.z);
-  float cb12_197x : packoffset(c197.x);
-  float cb12_197y : packoffset(c197.y);
-  float cb12_197z : packoffset(c197.z);
-  float cb12_198x : packoffset(c198.x);
-  float cb12_198y : packoffset(c198.y);
-  float cb12_198z : packoffset(c198.z);
-  float cb12_199x : packoffset(c199.x);
-  float cb12_199y : packoffset(c199.y);
-  float cb12_199z : packoffset(c199.z);
-  float cb12_200x : packoffset(c200.x);
-  float cb12_200y : packoffset(c200.y);
-  float cb12_200z : packoffset(c200.z);
-  float cb12_201x : packoffset(c201.x);
-  float cb12_201y : packoffset(c201.y);
-  float cb12_201z : packoffset(c201.z);
-  float cb12_202x : packoffset(c202.x);
-  float cb12_202y : packoffset(c202.y);
-  float cb12_202z : packoffset(c202.z);
-  float cb12_203x : packoffset(c203.x);
-  float cb12_203y : packoffset(c203.y);
-  float cb12_203z : packoffset(c203.z);
-  float cb12_203w : packoffset(c203.w);
-  float cb12_204x : packoffset(c204.x);
-  float cb12_204y : packoffset(c204.y);
-  float cb12_204z : packoffset(c204.z);
-  float cb12_204w : packoffset(c204.w);
-  float cb12_205x : packoffset(c205.x);
-  float cb12_205y : packoffset(c205.y);
-  float cb12_205z : packoffset(c205.z);
-  float cb12_205w : packoffset(c205.w);
-  float cb12_206x : packoffset(c206.x);
-  float cb12_206y : packoffset(c206.y);
-  uint night_sky_tag : packoffset(c206.w);
-  float cb12_227x : packoffset(c227.x);
-  float cb12_227y : packoffset(c227.y);
-  float cb12_227z : packoffset(c227.z);
-  float cb12_227w : packoffset(c227.w);
-  float cb12_228x : packoffset(c228.x);
-  float cb12_228y : packoffset(c228.y);
-  float cb12_228z : packoffset(c228.z);
-  float cb12_228w : packoffset(c228.w);
-  float cb12_249x : packoffset(c249.x);
-  float cb12_249y : packoffset(c249.y);
-  float cb12_249z : packoffset(c249.z);
-  float cb12_278x : packoffset(c278.x);
-  float cb12_278y : packoffset(c278.y);
-  float cb12_278z : packoffset(c278.z);
-  int cb12_287z : packoffset(c287.z);
-  uint cb12_padding : packoffset(c340.w);
-};
+cbuffer cb12 : register(b12) { float4 cb12_raw[341]; }
+#define cb12_000x cb12_raw[0].x
+#define cb12_000y cb12_raw[0].y
+#define cb12_000z cb12_raw[0].z
+#define cb12_286 cb12_raw[286]
+#define cb12_022z cb12_raw[22].z
+#define cb12_038x cb12_raw[38].x
+#define cb12_038y cb12_raw[38].y
+#define cb12_038z cb12_raw[38].z
+#define cb12_039x cb12_raw[39].x
+#define cb12_039y cb12_raw[39].y
+#define cb12_039z cb12_raw[39].z
+#define cb12_040x cb12_raw[40].x
+#define cb12_040y cb12_raw[40].y
+#define cb12_040z cb12_raw[40].z
+#define cb12_041x cb12_raw[41].x
+#define cb12_041y cb12_raw[41].y
+#define cb12_041z cb12_raw[41].z
+#define cb12_042x cb12_raw[42].x
+#define cb12_042y cb12_raw[42].y
+#define cb12_042z cb12_raw[42].z
+#define cb12_042w cb12_raw[42].w
+#define cb12_044x cb12_raw[44].x
+#define cb12_044y cb12_raw[44].y
+#define cb12_044z cb12_raw[44].z
+#define cb12_048y cb12_raw[48].y
+#define cb12_048z cb12_raw[48].z
+#define cb12_189x cb12_raw[189].x
+#define cb12_189y cb12_raw[189].y
+#define cb12_189z cb12_raw[189].z
+#define cb12_189w cb12_raw[189].w
+#define cb12_190x cb12_raw[190].x
+#define cb12_190y cb12_raw[190].y
+#define cb12_190z cb12_raw[190].z
+#define cb12_190w cb12_raw[190].w
+#define cb12_191x cb12_raw[191].x
+#define cb12_191y cb12_raw[191].y
+#define cb12_191z cb12_raw[191].z
+#define cb12_191w cb12_raw[191].w
+#define cb12_192x cb12_raw[192].x
+#define cb12_192y cb12_raw[192].y
+#define cb12_192z cb12_raw[192].z
+#define cb12_192w cb12_raw[192].w
+#define cb12_193x cb12_raw[193].x
+#define cb12_195x cb12_raw[195].x
+#define cb12_195y cb12_raw[195].y
+#define cb12_195z cb12_raw[195].z
+#define cb12_196x cb12_raw[196].x
+#define cb12_196y cb12_raw[196].y
+#define cb12_196z cb12_raw[196].z
+#define cb12_197x cb12_raw[197].x
+#define cb12_197y cb12_raw[197].y
+#define cb12_197z cb12_raw[197].z
+#define cb12_198x cb12_raw[198].x
+#define cb12_198y cb12_raw[198].y
+#define cb12_198z cb12_raw[198].z
+#define cb12_199x cb12_raw[199].x
+#define cb12_199y cb12_raw[199].y
+#define cb12_199z cb12_raw[199].z
+#define cb12_200x cb12_raw[200].x
+#define cb12_200y cb12_raw[200].y
+#define cb12_200z cb12_raw[200].z
+#define cb12_201x cb12_raw[201].x
+#define cb12_201y cb12_raw[201].y
+#define cb12_201z cb12_raw[201].z
+#define cb12_202x cb12_raw[202].x
+#define cb12_202y cb12_raw[202].y
+#define cb12_202z cb12_raw[202].z
+#define cb12_203x cb12_raw[203].x
+#define cb12_203y cb12_raw[203].y
+#define cb12_203z cb12_raw[203].z
+#define cb12_203w cb12_raw[203].w
+#define cb12_204x cb12_raw[204].x
+#define cb12_204y cb12_raw[204].y
+#define cb12_204z cb12_raw[204].z
+#define cb12_204w cb12_raw[204].w
+#define cb12_205x cb12_raw[205].x
+#define cb12_205y cb12_raw[205].y
+#define cb12_205z cb12_raw[205].z
+#define cb12_205w cb12_raw[205].w
+#define cb12_206x cb12_raw[206].x
+#define cb12_206y cb12_raw[206].y
+#define night_sky_tag asuint(cb12_raw[206].w)
+#define cb12_227x cb12_raw[227].x
+#define cb12_227y cb12_raw[227].y
+#define cb12_227z cb12_raw[227].z
+#define cb12_227w cb12_raw[227].w
+#define cb12_228x cb12_raw[228].x
+#define cb12_228y cb12_raw[228].y
+#define cb12_228z cb12_raw[228].z
+#define cb12_228w cb12_raw[228].w
+#define cb12_249x cb12_raw[249].x
+#define cb12_249y cb12_raw[249].y
+#define cb12_249z cb12_raw[249].z
+#define cb12_278x cb12_raw[278].x
+#define cb12_278y cb12_raw[278].y
+#define cb12_278z cb12_raw[278].z
+#define cb12_287z asint(cb12_raw[287].z)
+#define cb12_padding asuint(cb12_raw[340].w)
 
+#define SKY_FRAME cb12_raw
+#define SKY_DATA HartapfelCloudData
+#define SKY_MOON_MATERIAL sky_moon_material
+#define SKY_SOLAR_MATERIAL sky_sun_material
+#define SKY_SOLAR_GLOW_SIZE sky_sun_glow_size
+#define SKY_GLOW_EXPOSURE sky_glow_exposure
+#define SKY_CLOCK GlobalShaderConsts_000
+#define SKY_NATIVE_RADIUS sky_native_radius
+#define SKY_SUN_EMISSION sky_sun_emission
+#define SKY_MOON_EMISSION sky_moon_emission
+#include "sky/celestial.hlsli"
 SamplerState s0 : register(s0);
 
 static const float _global_0[16] = { 0.0f, 0.9492539763450623f, 0.8355280160903931f, 0.8514009714126587f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
@@ -197,6 +209,7 @@ float4 main(
   linear float4 TEXCOORD_1 : TEXCOORD1,
   noperspective float4 SV_Position : SV_Position
 ) : SV_Target {
+  bool enhanced_sky=SkyReady();
   float4 SV_Target = 0;
   const float horizon_brightness = (night_sky_tag & WITCHER_SKY_TAG_MASK) == WITCHER_SKY_TAG
       ? float((night_sky_tag >> WITCHER_HORIZON_SHIFT) & WITCHER_HORIZON_MASK) / WITCHER_HORIZON_SCALE
@@ -228,7 +241,7 @@ float4 main(
   float _46 = cb12_042z * 0.0625f;
   float _47 = _44 * _46;
   float _48 = _46 * cb12_044x;
-  float _53 = dot(float3(cb12_038x, cb12_038y, cb12_038z), float3(_42, _43, _44));
+  float _53 = dot(enhanced_sky ? SkyAtmosphereLight(cb12_raw[204].yzw,cb12_raw[205].yzw,cb12_raw[38].xyz) : cb12_raw[38].xyz,float3(_42,_43,_44));
   float _55 = _53 + cb12_042x;
   float _56 = cb12_042x + 1.0f;
   float _57 = _55 / _56;
@@ -566,7 +579,9 @@ float4 main(
   float _399 = dot(float2(_397, _398), float2(_387, _388));
   float _400 = dot(float3(cb12_204y, cb12_204z, cb12_204w), float3(_382, _383, _384));
   float _405 = _393 * 0.5f;
-  float _406 = _405 + 0.5f;
+  // Remove the azimuth-only lunar hotspot on the horizon; the centered
+  // phase-consistent aureole is composited with the actual Moon below.
+  float _406 = enhanced_sky ? 0.f : _405 + 0.5f;
   float _415 = cb12_200x - cb12_201x;
   float _416 = cb12_200y - cb12_201y;
   float _417 = cb12_200z - cb12_201z;
@@ -647,6 +662,8 @@ float4 main(
   float _506 = _503 + _479;
   float _507 = _504 + _480;
   bool volumetric_sky = CloudShadowMatches(float3(cb12_000x, cb12_000y, cb12_000z), asuint(cb12_286));
+  float3 celestial_ray=SkyDirection(float3(TEXCOORD.z,TEXCOORD.w,TEXCOORD_1.w)-cb12_raw[0].xyz);
+  float celestial_footprint=max(length(ddx(celestial_ray)),length(ddy(celestial_ray)));
   float _509 = cb12_205x / _366;
   float _510 = saturate(_394);
   float _511 = log2(_510);
@@ -671,6 +688,7 @@ float4 main(
   if (volumetric_sky)
     _530 *= HartapfelCloudEmitterVisibility(float3(cb12_000x, cb12_000y, cb12_000z),
         float3(cb12_205y, cb12_205z, cb12_205w));
+  if(enhanced_sky) _530=0.f;
   float _531 = max(1.0f, _365);
   float _536 = cb12_202x * _531;
   float _537 = cb12_202y * _531;
@@ -717,6 +735,7 @@ float4 main(
   if (volumetric_sky) {
     _581 *= CloudSolarGlowScale(_549, _346 ? cb12_228w : 0.f);
   }
+  if(enhanced_sky) _581=0.f;
   float _582 = max(1.0f, _364);
   float _587 = cb12_199x * _582;
   float _588 = cb12_199y * _582;
@@ -761,16 +780,16 @@ float4 main(
   float _634 = _631 * _629;
   // This sky variant uses two painted cubemaps. Keep their broad color while
   // discarding the cloud-shaped detail when the volumetric field is current.
-  float4 _637 = volumetric_sky ? t0.SampleLevel(s0, float3(_632, _633, _634), 9.f)
-                               : t0.Sample(s0, float3(_632, _633, _634));
+  float4 _637 = enhanced_sky ? float4(1.f,1.f,1.f,1.f) : (volumetric_sky ? t0.SampleLevel(s0, float3(_632, _633, _634), 9.f)
+                               : t0.Sample(s0, float3(_632, _633, _634)));
   float _641 = _637.x * _637.x;
   _642 = _641 * 3.0f;
   float _643 = _637.y * _637.y;
   _644 = _643 * 3.0f;
   float _645 = _637.z * _637.z;
   _646 = _645 * 3.0f;
-  float4 _649 = volumetric_sky ? t1.SampleLevel(s0, float3(_632, _633, _634), 8.f)
-                               : t1.Sample(s0, float3(_632, _633, _634));
+  float4 _649 = enhanced_sky ? float4(1.f,1.f,1.f,1.f) : (volumetric_sky ? t1.SampleLevel(s0, float3(_632, _633, _634), 8.f)
+                               : t1.Sample(s0, float3(_632, _633, _634)));
   float _651 = _649.x * 0.20000000298023224f;
   float _652 = dot(float3(TEXCOORD_1.x, TEXCOORD_1.y, TEXCOORD_1.z), float3(TEXCOORD_1.x, TEXCOORD_1.y, TEXCOORD_1.z));
   float _653 = rsqrt(_652);
@@ -912,9 +931,9 @@ float4 main(
       float _784 = saturate(_781);
       float _787 = 1.0f - GlobalShaderConsts_144.w;
       float _788 = _787 * 2.0f;
-      float _789 = _788 * _782;
-      float _790 = _788 * _783;
-      float _791 = _788 * _784;
+      float _789 = enhanced_sky ? 0.f : (_788 * _782);
+      float _790 = enhanced_sky ? 0.f : (_788 * _783);
+      float _791 = enhanced_sky ? 0.f : (_788 * _784);
       float _792 = _789 + _605;
       float _793 = _790 + _606;
       float _794 = _791 + _607;
@@ -1126,9 +1145,9 @@ float4 main(
   float _784 = saturate(_781);
   float _787 = 1.0f - GlobalShaderConsts_144.w;
   float _788 = _787 * 2.0f;
-  float _789 = _788 * _782;
-  float _790 = _788 * _783;
-  float _791 = _788 * _784;
+  float _789 = enhanced_sky ? 0.f : (_788 * _782);
+  float _790 = enhanced_sky ? 0.f : (_788 * _783);
+  float _791 = enhanced_sky ? 0.f : (_788 * _784);
   float _792 = _789 + _605;
   float _793 = _790 + _606;
   float _794 = _791 + _607;
@@ -1271,5 +1290,12 @@ float4 main(
   SV_Target.y = _938;
   SV_Target.z = _939;
   SV_Target.w = 1.0f;
+  if(enhanced_sky) {
+    float3 solar,lunar;float moon_mask;
+    float air=SkyFogTransmission(celestial_ray);
+    SkyDiscs(celestial_ray,celestial_footprint,air,solar,lunar,moon_mask);
+    SV_Target.rgb+=SkyStars(celestial_ray,celestial_footprint,air,moon_mask);
+    if(sky_deferred!=0x534B5943u)SV_Target.rgb+=solar+lunar+SkyGlow(celestial_ray,air);
+  }
   return SV_Target;
 }

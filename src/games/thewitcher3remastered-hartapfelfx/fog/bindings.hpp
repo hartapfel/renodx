@@ -56,7 +56,8 @@ inline bool OnCreateLayout(api::device* device, uint32_t& parameter_count, api::
 // Resolve the native register through its actual root signature. Root CBVs and
 // tables have different representations, and compute/graphics state is separate.
 inline renodx::utils::descriptor::DescriptorHeapSlot Resolve(
-    api::command_list* cmd, const BindingState& state, api::descriptor_type type, uint32_t slot, uint32_t space = 0) {
+    api::command_list* cmd, const BindingState& state, api::descriptor_type type, uint32_t slot, uint32_t space = 0,
+    api::shader_stage stage=api::shader_stage::all) {
   renodx::utils::descriptor::DescriptorHeapSlot result;
   auto* device = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   if (!device) return result;
@@ -66,6 +67,7 @@ inline renodx::utils::descriptor::DescriptorHeapSlot Resolve(
   for (uint32_t p = 0; p < layout->second.parameters.size() && p < 64; ++p) {
     const auto& param = layout->second.parameters[p];
     for (const auto& range : param.ranges) {
+      if((range.visibility&stage)==static_cast<api::shader_stage>(0))continue;
       if (range.type != type || range.dx_register_space != space || slot < range.dx_register_index
           || slot - range.dx_register_index >= range.count) continue;
       if (!param.table) {

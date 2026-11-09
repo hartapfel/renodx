@@ -49,10 +49,11 @@ inline void Configure(Settings* settings) {
     if(setting->key=="FogEnabled")fog_mode=setting;
   }
   // Keep sections contiguous, including Sun/Moon Appearance moved from Nights.
-  constexpr std::array<std::string_view,23> order{
-      "Clouds & Performance","Cloud Appearance","Cloud Formation","Cloud Edges","Cloud Lighting",
+  constexpr std::array<std::string_view,26> order{
+      "Clouds & Performance","Cloud Quality (Advanced)","Cloud Appearance","Cloud Formation","Cloud Edges","Cloud Lighting",
       "Cloud Structure (Advanced)","Cloud Detail (Advanced)","Cloud Erosion (Advanced)",
-      "Fog & Performance","Fog Appearance","Light in Fog","Fog Placement","Diagnostics (Advanced)",
+      "Fog & Performance","Fog Appearance","Volumetric Light","Fog Placement",
+      "Fog Quality (Advanced)","Fog Medium (Advanced)","Diagnostics (Advanced)",
       "World Lighting & Shadows","Sun & Moon Appearance","Character Lighting",
       "Night Lighting","Night Brightness","Night Atmosphere","Night Colour","Night Schedule",
       "Exposure","Exposure Tuning (Advanced)"};
@@ -70,7 +71,7 @@ inline void Configure(Settings* settings) {
     if(setting->value_type==ValueType::FLOAT
         &&((tab==Tab::Clouds &&setting->key!="CloudBaseAltitudeV1"
                 &&setting->key!="CloudRoundnessV1" &&setting->key!="CloudWispBiasV1")
-            ||setting->key=="FogDensity" ||setting->key=="FogSunlight"
+            ||setting->key=="FogAmountV1" ||setting->key=="FogDensity" ||setting->key=="FogSunlight"
             ||setting->key=="FogLocalLight" ||setting->key=="FogHeight" ||setting->key=="FogSkyDensity"))
       setting->format="%.0f%%";
     setting->is_visible=[tab,visible=std::move(setting->is_visible)] {

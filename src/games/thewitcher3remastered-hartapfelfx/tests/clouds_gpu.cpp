@@ -9,7 +9,9 @@
 #include <string_view>
 #include "../clouds/pipeline.hpp"
 #include "../clouds/atlas.hpp"
+#include "../sky/native_size.hpp"
 #include "cloud_camera.hpp"
+#include "sky_night.hpp"
 namespace clouds = hartapfelfx::clouds;
 namespace gpu = clouds::gpu;
 using gpu::ComPtr;
@@ -26,16 +28,21 @@ int main(int argc, char** argv) {
     const std::string_view operation=argc>=3?std::string_view(argv[2]):std::string_view{};
     const bool benchmark=argc==3 && operation.starts_with("benchmark");
     const bool capture=argc==4 && operation.starts_with("capture");
-    const bool sun_probe=(benchmark || capture) && operation.find("sun")!=std::string_view::npos;
-    const bool moon_probe=(benchmark || capture) && operation.find("moon")!=std::string_view::npos;
+    const bool celestial_probe=operation.find("celestial")!=std::string_view::npos;
+    const bool clear_sky_probe=operation.find("clear")!=std::string_view::npos
+        &&operation.find("noclearing")==std::string_view::npos;
+    const bool sun_probe=!celestial_probe &&(benchmark || capture) && operation.find("sun")!=std::string_view::npos;
+    const bool moon_probe=!celestial_probe &&(benchmark || capture) && operation.find("moon")!=std::string_view::npos;
     const bool sparse_probe=(benchmark || capture) && operation.find("sparse")!=std::string_view::npos;
     const bool soft_probe=(benchmark || capture) && operation.find("soft")!=std::string_view::npos;
     const float sky_density=operation.find("haze200")!=std::string_view::npos ? 2.f : 1.f;
-    Require(argc==2 || benchmark || capture,"Expected compiled shader directory, optional benchmark/capture with sun or sparse suffix");
+    Require(argc==2 || benchmark || capture ||(argc==4&&operation=="reference-stars"),
+        "Expected compiled shader directory, optional benchmark/capture or reference-stars plus reference CSO");
     Require(clouds::Appearance()==std::array<float,4>{1.f,1.f,1.f,1.f},
         "Cloud appearance defaults must be neutral multipliers");
     Require(clouds::Atmosphere(1.f)==std::array<float,4>{1.f,1.f,1.f,0.f},
         "Cloud detail defaults must be neutral multipliers");
+    if(operation.find("noclearing")!=std::string_view::npos)clouds::clear_low_sun=0.f;
     const bool screenshot_settings=operation.find("user")!=std::string_view::npos;
     if(screenshot_settings) {
       clouds::coverage=1.3f; clouds::density=.12f; clouds::size=.6f;
@@ -105,9 +112,11 @@ int main(int argc, char** argv) {
     ComPtr<ID3D12RootSignature> feature_root;
     gpu::Check(device->CreateRootSignature(0, feature_blob->GetBufferPointer(), feature_blob->GetBufferSize(), IID_PPV_ARGS(&feature_root)));
     const auto feature_pipeline = gpu::Compute(device.Get(), feature_root.Get(), {feature_code.data(), feature_code.size()});
+    auto* selected_feature=feature_pipeline.Get();
     auto feature_output = gpu::Buffer(device.Get(), 256, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     auto feature_readback = gpu::Buffer(device.Get(), 256, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_HEAP_TYPE_READBACK);
-    const uint32_t width = benchmark || capture ? 1920u : 160u, height = benchmark || capture ? 1080u : 90u;
+    const uint32_t width = operation.find("preview")!=std::string_view::npos?640u:benchmark || capture ? (operation.find("4k")!=std::string_view::npos?3840u:1920u) : 161u;
+    const uint32_t height = operation.find("preview")!=std::string_view::npos?360u:benchmark || capture ? (operation.find("4k")!=std::string_view::npos?2160u:1080u) : 91u;
     std::array<std::array<float, 4>, 352> frame{};
     frame[1] = {1, 0, 0, 0}; frame[2] = {0, -.4472136f, .8944272f, 0};
     frame[3] = {0, .8944272f, .4472136f, 0}; frame[4] = {0, 0, 0, 1};
@@ -118,7 +127,8 @@ int main(int argc, char** argv) {
     frame[22] = {-1, 1, .2f, 5000}; frame[23] = {float(width), float(height), 1.f / width, 1.f / height};
     frame[66] = {5, 0, 0, 0}; frame[68] = {0, 1, 0, 0};
     for (uint32_t index : {195u, 196u, 197u, 198u}) frame[index] = {.1f, .2f, .4f, 0};
-    frame[203] = {1, 1, 1, 0}; frame[204] = {1, 0, 1, 1};
+    frame[199]={1.f,.96f,.9f,120.f};
+    frame[203] = {1, 1, 1, 1}; frame[204] = {1, 0, 1, 1};
     frame[205] = {1, 0, -1, -1}; frame[206] = {1, 0, 0, 0};
     if(operation.find("mountain")!=std::string_view::npos) {
       // Keep the view direction unchanged while lifting the camera above
@@ -187,17 +197,54 @@ int main(int argc, char** argv) {
       frame[205]={33.841206f,-.420951f,.902905f,-.086962f};
       frame[206]={1.f,0.f,0.f,0.f};
     }
+    frame[277]={.6971766f,.6685617f,.7664835f,1.f};
     const std::array<std::array<float, 4>, 16> light{{{sun_probe ? 0.f : .1f,
         sun_probe ? .8944272f : .4f,sun_probe ? .4472136f : .91f,1}, {30, 20, 10, 0}}};
+    if(operation.find("lowsun")!=std::string_view::npos) {
+      frame[204]={1,0,.99756405f,.06975647f};
+      frame[2]=frame[18]={0,-.06975647f,.99756405f,0};
+      frame[3]={0,.99756405f,.06975647f,0};
+      frame[20]={0,.99756405f,.06975647f,5};
+    }
+    if(celestial_probe) {
+      frame[13][0]=float(height)/float(width);
+      frame[204]={120,0,.8944272f,.4472136f};frame[205]={1,0,-.8944272f,-.4472136f};
+      if(operation.find("sunset")!=std::string_view::npos||operation.find("twilight")!=std::string_view::npos) {
+        const float elevation=operation.find("twilight")!=std::string_view::npos?-.02f:.025f;
+        const float horizontal=std::sqrt(1.f-elevation*elevation);
+        frame[204]={40,0,horizontal,elevation};frame[205]={1,0,-horizontal,-elevation};
+        frame[199]={27.3672714f,1.07121313f,.00014030948f,46.2497368f};
+        frame[2]=frame[18]={0,-elevation,horizontal,0};frame[3]={0,horizontal,elevation,0};
+        frame[20]={0,horizontal,elevation,5};
+      }
+      if(operation.find("night")!=std::string_view::npos)std::swap(frame[204],frame[205]);
+      if(clear_sky_probe)clouds::coverage=0.f;
+      if(operation.find("zoom")!=std::string_view::npos) {frame[13][0]*=20.f;frame[14][1]*=20.f;}
+      if(operation.find("largebody")!=std::string_view::npos) {
+        frame[206][3]=std::bit_cast<float>(0x80000000u|(2047u<<16u)|32768u);
+        frame[37][3]=std::bit_cast<float>(0x4C000000u|(511u<<16u)|32768u);
+      }
+      if(operation.find("captured-night")!=std::string_view::npos) {
+        for(unsigned i=0;i<std::size(sky_night_rows);++i)frame[sky_night_rows[i]]=sky_night_values[i];
+        frame[0][2]=sky_night_camera_height;frame[340][2]=1.f;
+      }
+    }
     auto frame_buffer = gpu::Upload(device.Get(), frame.data(), sizeof(frame));
-    auto probe = [&](ID3D12Resource* field, const std::array<float, 12>& values) {
+    if(operation.find("coherent")!=std::string_view::npos) {
+      hartapfelfx::sky::emission::enabled=true;
+      const float native_light[3]={30,20,10};
+      hartapfelfx::sky::emission::ObservePrimary(native_light);
+      hartapfelfx::sky::emission::ObserveMoon(frame[277].data(),false);
+      hartapfelfx::sky::emission::ObserveFrame(frame.data());
+    }
+    auto probe = [&](ID3D12Resource* field, const std::array<float, 24>& values, uint64_t sky_frame = 0) {
       std::array<float, 64> parameters{};
       std::copy(values.begin(), values.end(), parameters.begin());
       const auto page = gpu::Upload(device.Get(), parameters.data(), sizeof(parameters));
       begin();
-      cmd->SetComputeRootSignature(feature_root.Get()); cmd->SetPipelineState(feature_pipeline.Get());
+      cmd->SetComputeRootSignature(feature_root.Get()); cmd->SetPipelineState(selected_feature);
       cmd->SetComputeRootShaderResourceView(0, field->GetGPUVirtualAddress());
-      cmd->SetComputeRootConstantBufferView(1, frame_buffer.object->GetGPUVirtualAddress());
+      cmd->SetComputeRootConstantBufferView(1, sky_frame ? sky_frame : frame_buffer.object->GetGPUVirtualAddress());
       cmd->SetComputeRootConstantBufferView(2, page.object->GetGPUVirtualAddress());
       cmd->SetComputeRootUnorderedAccessView(3, feature_output.object->GetGPUVirtualAddress());
       cmd->Dispatch(1, 1, 1);
@@ -207,7 +254,7 @@ int main(int argc, char** argv) {
       submit();
       void* mapped = nullptr;
       gpu::Check(feature_readback.object->Map(0, nullptr, &mapped));
-      std::array<float, 16> result{};
+      std::array<float, 64> result{};
       std::memcpy(result.data(), mapped, sizeof(result));
       feature_readback.object->Unmap(0, nullptr);
       return result;
@@ -216,7 +263,8 @@ int main(int argc, char** argv) {
     auto depth = gpu::Image(device.Get(), width, height, DXGI_FORMAT_R32_FLOAT);
     auto weather = gpu::Image(device.Get(), 8, 8, DXGI_FORMAT_R32_FLOAT, 16);
     auto target_desc = depth.object->GetDesc();
-    target_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    const bool half_target=operation.find("fp16")!=std::string_view::npos;
+    target_desc.Format = half_target ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R32G32B32A32_FLOAT;
     target_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
     auto target = gpu::Create(device.Get(), target_desc, D3D12_RESOURCE_STATE_RENDER_TARGET);
     ComPtr<ID3D12DescriptorHeap> rtv;
@@ -224,6 +272,12 @@ int main(int argc, char** argv) {
     gpu::Check(device->CreateDescriptorHeap(&rtv_desc, IID_PPV_ARGS(&rtv)));
     device->CreateRenderTargetView(target.object.Get(), nullptr, rtv->GetCPUDescriptorHandleForHeapStart());
     clouds::Inputs inputs;
+    // Explicit native-mesh fixture angles, never production fallback sizes.
+    inputs.native_radius={.0316336f,.124752f};
+    if(operation.find("native-solar-material")!=std::string_view::npos)inputs.sun_material={1.f,.25f,.5f,1.f};
+    if(operation.find("native-material")!=std::string_view::npos)
+      inputs.moon_material=operation.find("toussaint")!=std::string_view::npos
+          ?std::array<float,4>{.5f,.75f,1.25f,2.f}:std::array<float,4>{14.2849865f,2.55107808f,.82191229f,1.f};
     inputs.frame = frame_buffer.object->GetGPUVirtualAddress();
     inputs.light = light_buffer.object->GetGPUVirtualAddress();
     inputs.weather = weather.object.Get(); inputs.depth = depth.object.Get();
@@ -324,11 +378,11 @@ int main(int argc, char** argv) {
     ComPtr<ID3D12QueryHeap> timestamps;
     gpu::Resource timestamp_readback;
     uint64_t frequency = 0;
-    double weather_ms = 0, shadow_ms = 0, render_ms = 0, environment_ms = 0;
+    double weather_ms = 0, shadow_ms = 0, render_ms = 0, environment_ms = 0, sky_ms = 0;
     if (benchmark) {
-      const D3D12_QUERY_HEAP_DESC description{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 5};
+      const D3D12_QUERY_HEAP_DESC description{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 7};
       gpu::Check(device->CreateQueryHeap(&description, IID_PPV_ARGS(&timestamps)));
-      timestamp_readback = gpu::Buffer(device.Get(), 40, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_HEAP_TYPE_READBACK);
+      timestamp_readback = gpu::Buffer(device.Get(), 56, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_HEAP_TYPE_READBACK);
       gpu::Check(queue->GetTimestampFrequency(&frequency));
     }
     const float background[4] = {.2f, .3f, .4f, .75f};
@@ -338,22 +392,102 @@ int main(int argc, char** argv) {
       depth_probe_pipeline=gpu::Graphics(device.Get(),assets.root.Get(),{code.front().data(),code.front().size()},
           {probe.data(),probe.size()},target_desc.Format);
     }
+    ComPtr<ID3D12PipelineState> sky_pipeline;
+    const bool native_sky_probe=operation.find("native-sky")!=std::string_view::npos;
+    ComPtr<ID3D12RootSignature> native_sky_root;
+    std::shared_ptr<gpu::Bank> native_sky_bank;
+    gpu::Resource native_sky_material,native_sky_camera,native_sky_settings,native_sky_global;
+    if(celestial_probe) {
+      if(native_sky_probe) {
+        std::array<D3D12_ROOT_PARAMETER,8> roots{};
+        for(unsigned i=0;i<5;++i)roots[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;
+        roots[0].Descriptor={0,0};roots[1].Descriptor={1,0};roots[2].Descriptor={2,0};
+        roots[3].Descriptor={12,0};roots[4].Descriptor={0,70};
+        roots[5].ParameterType=roots[6].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;
+        roots[5].Descriptor={0,71};roots[6].Descriptor={0,72};
+        D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV,2,0,0,0};
+        roots[7].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        roots[7].DescriptorTable={1,&range};
+        D3D12_STATIC_SAMPLER_DESC sampler{};
+        sampler.Filter=D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        sampler.MaxLOD=D3D12_FLOAT32_MAX;
+        sampler.ComparisonFunc=D3D12_COMPARISON_FUNC_ALWAYS;
+        const D3D12_ROOT_SIGNATURE_DESC desc{unsigned(roots.size()),roots.data(),1,&sampler};
+        ComPtr<ID3DBlob> blob,errors;
+        gpu::Check(D3D12SerializeRootSignature(&desc,D3D_ROOT_SIGNATURE_VERSION_1,&blob,&errors));
+        gpu::Check(device->CreateRootSignature(0,blob->GetBufferPointer(),blob->GetBufferSize(),IID_PPV_ARGS(&native_sky_root)));
+        const auto vertex=Read(directory/"sky-vs.cso");
+        const auto pixel=Read(directory/(operation.find("toussaint")!=std::string_view::npos?"3B15DAAB.cso":"449D3390.cso"));
+        sky_pipeline=gpu::Graphics(device.Get(),native_sky_root.Get(),{vertex.data(),vertex.size()},
+            {pixel.data(),pixel.size()},target_desc.Format);
+        std::array<float,64> settings{};
+        ShaderInjectData disabled{};disabled.sky_density=sky_density;
+        std::memcpy(settings.data(),&disabled,sizeof(disabled));
+        const uint32_t deferred=0x534B5943u;std::memcpy(settings.data()+12,&deferred,4);
+        std::memcpy(settings.data()+16,inputs.moon_material.data(),16);
+        std::memcpy(settings.data()+20,inputs.sun_material.data(),16);
+        settings[24]=hartapfelfx::sky::sun_glow_size;
+        std::memcpy(settings.data()+28,inputs.native_radius.data(),sizeof(inputs.native_radius));
+        native_sky_settings=gpu::Upload(device.Get(),settings.data(),sizeof(settings));
+        std::array<std::array<float,4>,64> material{},camera{};
+        material[0]={0,1,0,0};camera[36]=frame[0];
+        native_sky_material=gpu::Upload(device.Get(),material.data(),sizeof(material));
+        native_sky_camera=gpu::Upload(device.Get(),camera.data(),sizeof(camera));
+        std::array<std::array<float,4>,16> global{};global[9][0]=1.f;global[0][3]=.75f;
+        native_sky_global=gpu::Upload(device.Get(),global.data(),sizeof(global));
+        native_sky_bank=std::make_shared<gpu::Bank>(device.Get());
+        D3D12_SHADER_RESOURCE_VIEW_DESC cube{};
+        cube.Format=DXGI_FORMAT_R8G8B8A8_UNORM;cube.ViewDimension=D3D12_SRV_DIMENSION_TEXTURECUBE;
+        cube.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;cube.TextureCube.MipLevels=1;
+        for(unsigned i=0;i<2;++i)device->CreateShaderResourceView(nullptr,&cube,native_sky_bank->Cpu(i));
+      } else {
+        const auto sky=Read(directory/"sky.cso");
+        sky_pipeline=gpu::Graphics(device.Get(),assets.root.Get(),{code.front().data(),code.front().size()},
+            {sky.data(),sky.size()},target_desc.Format);
+      }
+    }
     std::vector<gpu::Resource> clocks;
+    gpu::Resource occlusion_mask;
+    std::shared_ptr<gpu::Bank> mask_bank;
     bool disc_enabled=operation.find("nodisc")==std::string_view::npos;
     auto render = [&](clouds::View& view, bool duplicate = false, bool compute_weather = false,
                       float clock_seconds = -1.f, bool retain_clock = false, bool depth_probe = false) {
       inputs.light=light_buffer.object->GetGPUVirtualAddress();
       std::array<float, 64> clock{};
       clock[0] = clock_seconds >= 0.f ? clock_seconds : float(serial) * 2.f;
+      clock[3] = .75f;
+      if(operation.find("phase-waxing")!=std::string_view::npos)clock[3]=0.f;
+      if(operation.find("phase-waning")!=std::string_view::npos)clock[3]=.5f;
+      if(operation.find("phase-new")!=std::string_view::npos)clock[3]=.25f;
       if(!retain_clock || clocks.empty())clocks.push_back(gpu::Upload(device.Get(), clock.data(), sizeof(clock)));
       inputs.clock = clocks.back().object->GetGPUVirtualAddress();
+      inputs.enhanced_sky=celestial_probe&&disc_enabled;
       inputs.captured_sun = sun_probe;
       inputs.captured_moon = moon_probe;
       const auto bindings = view.PrepareBindings(inputs, uint32_t(clouds::QualityLighting(clouds::quality)[3]));
+      if(operation.find("occlusion-mask")!=std::string_view::npos) {
+        if(!occlusion_mask.object) {
+          occlusion_mask=gpu::Image(device.Get(),view.LowWidth(),view.LowHeight(),DXGI_FORMAT_R16G16B16A16_FLOAT);
+          mask_bank=std::make_shared<gpu::Bank>(device.Get());
+          gpu::Uav(device.Get(),*mask_bank,0,occlusion_mask.object.Get());
+        }
+        gpu::Srv(device.Get(),*bindings.composite,14,occlusion_mask.object.Get(),D3D12_SRV_DIMENSION_TEXTURE2D);
+      }
       const auto page = view.ParameterPage(inputs, sky_density);
       const auto weather_page = view.ParameterPage(inputs, sky_density, 1);
       const auto shadow_page = view.ParameterPage(inputs, sky_density, 2);
       begin();
+      if(mask_bank) {
+        ID3D12DescriptorHeap* heaps[]={mask_bank->heap.Get()};cmd->SetDescriptorHeaps(1,heaps);
+        gpu::Transition(cmd.Get(),&occlusion_mask,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        // The production half-float storage encodes opacity, not transmission.
+        const float transparent[4]={0,0,0,0},opaque[4]={0,0,0,1};
+        cmd->ClearUnorderedAccessViewFloat(mask_bank->Gpu(16),mask_bank->Cpu(16),occlusion_mask.object.Get(),transparent,0,nullptr);
+        const D3D12_RECT left{0,0,LONG(view.LowWidth()/2u),LONG(view.LowHeight())};
+        cmd->ClearUnorderedAccessViewFloat(mask_bank->Gpu(16),mask_bank->Cpu(16),occlusion_mask.object.Get(),opaque,1,&left);
+        gpu::Transition(cmd.Get(),&occlusion_mask,gpu::TextureRead);
+      }
       cmd->ClearRenderTargetView(inputs.target, background, 0, nullptr);
       if (moon_probe) view.CaptureMoon(cmd.Get(), target.object.Get());
       if(moon_probe && disc_enabled) {
@@ -374,6 +508,34 @@ int main(int argc, char** argv) {
       view.Shadow(cmd.Get(), inputs, bindings, shadow_page);
       if (benchmark) cmd->EndQuery(timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2);
       inputs.light=view.LightingStorage()->object->GetGPUVirtualAddress();
+      if(benchmark)cmd->EndQuery(timestamps.Get(),D3D12_QUERY_TYPE_TIMESTAMP,5);
+      if(celestial_probe) {
+        if(native_sky_probe) {
+          cmd->SetGraphicsRootSignature(native_sky_root.Get());
+          cmd->SetGraphicsRootConstantBufferView(0,native_sky_global.object->GetGPUVirtualAddress());
+          cmd->SetGraphicsRootConstantBufferView(1,native_sky_camera.object->GetGPUVirtualAddress());
+          cmd->SetGraphicsRootConstantBufferView(2,native_sky_material.object->GetGPUVirtualAddress());
+          cmd->SetGraphicsRootConstantBufferView(3,inputs.frame);
+          cmd->SetGraphicsRootConstantBufferView(4,native_sky_settings.object->GetGPUVirtualAddress());
+          cmd->SetGraphicsRootShaderResourceView(5,assets.zero.object->GetGPUVirtualAddress());
+          cmd->SetGraphicsRootShaderResourceView(6,view.Shared()->GetGPUVirtualAddress());
+          ID3D12DescriptorHeap* heaps[]={native_sky_bank->heap.Get()};cmd->SetDescriptorHeaps(1,heaps);
+          cmd->SetGraphicsRootDescriptorTable(7,native_sky_bank->Gpu());
+        } else {
+          cmd->SetGraphicsRootSignature(assets.root.Get());
+          cmd->SetGraphicsRootConstantBufferView(0,inputs.frame);
+          cmd->SetGraphicsRootConstantBufferView(2,page.object->GetGPUVirtualAddress());
+          ID3D12DescriptorHeap* heaps[]={bindings.composite->heap.Get()};cmd->SetDescriptorHeaps(1,heaps);
+          cmd->SetGraphicsRootDescriptorTable(7,bindings.composite->Gpu());
+        }
+        cmd->SetPipelineState(sky_pipeline.Get());
+        const D3D12_VIEWPORT viewport{0,0,float(width),float(height),0,1};
+        const D3D12_RECT scissor{0,0,LONG(width),LONG(height)};
+        cmd->RSSetViewports(1,&viewport);cmd->RSSetScissorRects(1,&scissor);
+        cmd->OMSetRenderTargets(1,&inputs.target,FALSE,nullptr);
+        cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);cmd->DrawInstanced(3,1,0,0);
+      }
+      if(benchmark)cmd->EndQuery(timestamps.Get(),D3D12_QUERY_TYPE_TIMESTAMP,6);
       view.Render(cmd.Get(), inputs, bindings, page);
       if(depth_probe) {
         ID3D12DescriptorHeap* heaps[]={bindings.composite->heap.Get()};
@@ -390,7 +552,7 @@ int main(int argc, char** argv) {
         cmd->EndQuery(timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 3);
         view.Environment(cmd.Get(), inputs, bindings, page);
         cmd->EndQuery(timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 4);
-        cmd->ResolveQueryData(timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 5, timestamp_readback.object.Get(), 0);
+        cmd->ResolveQueryData(timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 7, timestamp_readback.object.Get(), 0);
       }
       gpu::Transition(cmd.Get(), &target, D3D12_RESOURCE_STATE_COPY_SOURCE);
       D3D12_TEXTURE_COPY_LOCATION source{target.object.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
@@ -407,13 +569,20 @@ int main(int argc, char** argv) {
         shadow_ms = 1000.0 * double(ticks[2] - ticks[1]) / double(frequency);
         render_ms = 1000.0 * double(ticks[3] - ticks[2]) / double(frequency);
         environment_ms = 1000.0 * double(ticks[4] - ticks[3]) / double(frequency);
+        sky_ms = 1000.0 * double(ticks[6] - ticks[5]) / double(frequency);
         timestamp_readback.object->Unmap(0, nullptr);
       }
       auto pixels = [&]() {
         void* data = nullptr;
         gpu::Check(readback.object->Map(0, nullptr, &data));
         std::vector<float> result(width * height * 4);
-        for (uint32_t y = 0; y < height; ++y) std::memcpy(result.data() + y * width * 4, static_cast<uint8_t*>(data) + y * footprint.Footprint.RowPitch, width * 16);
+        for (uint32_t y = 0; y < height; ++y) {
+          const auto* row=static_cast<const uint8_t*>(data)+y*footprint.Footprint.RowPitch;
+          if(half_target)for(uint32_t x=0;x<width*4u;++x) {
+            uint16_t word;std::memcpy(&word,row+x*2u,2);
+            result[(size_t(y)*width*4u)+x]=DirectX::PackedVector::XMConvertHalfToFloat(word);
+          } else std::memcpy(result.data()+y*width*4u,row,width*16u);
+        }
         readback.object->Unmap(0, nullptr);
         return result;
       };
@@ -436,11 +605,87 @@ int main(int argc, char** argv) {
     if (benchmark || capture) {
       clear_inputs(sparse_probe?.5f:1.f, 0.f);
       clouds::quality = 1.f;
+      if(const auto index=operation.find("preset");index!=std::string_view::npos)
+        clouds::quality_preset=float(operation.at(index+6)-'0');
+      if(const auto index=operation.find("quality");index!=std::string_view::npos)
+        clouds::quality=float(operation.at(index+7)-'0');
+      if(operation.find("spacing50")!=std::string_view::npos)clouds::step_size=.5f;
+      if(operation.find("authored")!=std::string_view::npos) {
+        clouds::coverage=1.f;clouds::density=.2f;clouds::size=1.f;clouds::thickness=1.f;
+        clouds::detail=1.3f;clouds::detail_size=.6f;
+        clouds::base_height=1650.f;clouds::roundness=.87f;clouds::height_variation=1.74f;
+        clouds::billow_size=1.58f;clouds::erosion=1.6f;clouds::wisp_bias=.55f;
+        clouds::base_relief=.41f;clouds::top_relief=1.71f;clouds::edge_sharpness=.56f;
+        clouds::base_feather=4.f;clouds::top_feather=.31f;
+        clouds::sunlight=2.f;clouds::self_shadow=1.5f;clouds::forward_scattering=.6f;
+      }
       clouds::base_softness=soft_probe?1.f:0.f;
       clouds::View view(&assets, width, height, clouds::quality, target_desc.Format);
-      for (uint32_t index = 0; index < 4; ++index) render(view);
+      const float capture_time=operation.find("-time")!=std::string_view::npos
+          ?std::stof(std::string(operation.substr(operation.find("-time")+5u))):100.f;
+      for (uint32_t index = 0; index < 16; ++index) render(view,false,false,capture_time);
       if(capture) {
-        const auto image=render(view);
+        const auto image=render(view,false,false,capture_time);
+        if(operation.find("native-solar-material")!=std::string_view::npos) {
+          const size_t center=(size_t(height/2u)*width+width/2u)*4u;
+          const auto material=inputs.sun_material;
+          inputs.sun_material={0,0,0,1};++inputs.revision;
+          const auto halo_only=render(view,false,false,100.f);
+          const float red=image[center]-halo_only[center],green=image[center+1]-halo_only[center+1];
+          Require(red>20.f&&std::abs(red/green-material[0]/material[1])<.02f,
+              "FP16 solar body/core lost the native HDR material colour ratios");
+          inputs.sun_material=material;++inputs.revision;
+          std::cout<<"PASS actual FP16 solar native HDR colour, separate native halo and positive source composition\n";
+        }
+        if(operation.find("native-material")!=std::string_view::npos) {
+          const size_t center=(size_t(height/2u)*width+width/2u)*4u;
+          const float expected=inputs.moon_material[0]/inputs.moon_material[1]
+              *(inputs.moon_material[3]==2.f?frame[277][0]/frame[277][1]:1.f);
+          Require(image[center]>.01f&&std::abs(image[center]/image[center+1]/expected-1.f)<.005f,
+              "Production composite did not preserve native Moon material colour/radiance");
+          std::cout<<"PASS actual FP16 composite native Moon material family="<<inputs.moon_material[3]<<"\n";
+        }
+        if(mask_bank) {
+          // An opaque current cloud and a transparent history are deliberately
+          // contradictory. Neither a disc, halo nor star may leak into it.
+          for(uint32_t y=0;y<height;++y)for(uint32_t x=0;x+2u<width/2u;++x)
+            for(unsigned c=0;c<3u;++c)
+              Require(std::abs(image[(size_t(y)*width+x)*4u+c])<.0001f,"Celestial source appeared in front of the current cloud silhouette");
+          float visible=0;
+          for(uint32_t y=0;y<height;++y)for(uint32_t x=width/2u+4u;x<width;++x)
+            visible=std::max(visible,image[(size_t(y)*width+x)*4u]);
+          Require(visible>.01f,"Occlusion erased the unobstructed side of the celestial sky");
+          std::cout<<"PASS current-cloud/transparent-history silhouette occludes discs, aureoles and stars\n";
+        }
+        if(operation.find("captured-night")!=std::string_view::npos) {
+          hartapfelfx::sky::star_brightness=0.f;++inputs.revision;
+          const auto no_stars=render(view,false,false,100.f);
+          uint32_t visible=0;
+          for(size_t i=0;i<image.size();i+=4u)
+            visible+=std::max({image[i]-no_stars[i],image[i+1]-no_stars[i+1],image[i+2]-no_stars[i+2]})>.003f;
+          Require(visible>=10u,"Stars vanished into the captured native night sky and haze at default brightness");
+          hartapfelfx::sky::star_brightness=1.f;++inputs.revision;
+          std::cout<<"PASS captured-night default stellar contrast: "<<visible<<" visible point pixels\n";
+        }
+        if(celestial_probe&&!clear_sky_probe) {
+          const auto frozen=render(view,false,false,100.f,true);
+          for(size_t i=0;i<image.size();++i)
+            Require(std::abs(frozen[i]-image[i])<.001f,"A fresh sky lost clouds/celestials while photo mode froze the GPU clock");
+          const size_t center=(size_t(height/2u)*width+width/2u)*4u;
+          disc_enabled=false;++inputs.revision;
+          const auto obscured_without_source=render(view,false,false,100.f);
+          disc_enabled=true;clouds::coverage=0.f;++inputs.revision;
+          const auto clear=render(view,false,false,100.f);
+          Require(clear[center]>(operation.find("night")!=std::string_view::npos?.01f:20.f),
+              "Analytic celestial source disappeared in a clear sky");
+          for(uint32_t channel=0;channel<3;++channel)
+            Require(std::abs(image[center+channel]-obscured_without_source[center+channel])
+                <std::max(clear[center+channel]*.0001f,.0001f),
+                "Direct celestial radiance leaked through an opaque cloud");
+          for(size_t i=0;i<image.size();++i)
+            if(i%4u!=3u)Require(image[i]>=-.001f,"Celestial compositing produced negative radiance");
+          std::cout<<"PASS analytic celestial clear/opaque integration, target="<<(half_target?"FP16":"FP32")<<"\n";
+        }
         if(operation.find("mountain")!=std::string_view::npos) {
           uint32_t below_horizon=0;
           for(uint32_t y=850u;y<height;++y)for(uint32_t x=0;x<width;++x) {
@@ -452,9 +697,9 @@ int main(int argc, char** argv) {
         }
         if((sun_probe || moon_probe) && disc_enabled && !sparse_probe) {
           const size_t center=(size_t(height/2)*width+width/2)*4;
-          if(operation.find("rainair")!=std::string_view::npos || screenshot_settings || moon_probe) {
+          if(operation.find("rainair")!=std::string_view::npos || screenshot_settings || moon_probe ||operation.find("lowsun")!=std::string_view::npos) {
             disc_enabled=false;
-            const auto no_disc=render(view,false,false,0.f);
+            const auto no_disc=render(view,false,false,100.f);
             disc_enabled=true;
             const float disc_rgb[3]={moon_probe ? 20.f : 80.f,
                 moon_probe ? 17.f : 65.f,
@@ -462,8 +707,9 @@ int main(int argc, char** argv) {
             for(uint32_t channel=0;channel<3;++channel) {
               const float remaining=(image[center+channel]-no_disc[center+channel])/disc_rgb[channel];
               std::cout<<"HDR disc channel "<<channel<<" remaining="<<remaining<<"\n";
-              Require(remaining<.02f,
-                  "Cloud leaked more than 2% of the HDR emitter disc");
+              if(operation.find("lowsun")!=std::string_view::npos &&clouds::clear_low_sun>0.f &&operation.find("family-storm")==std::string_view::npos)
+                Require(remaining>.98f,"Low-sun material opening failed to reveal the HDR disc");
+              else Require(remaining<.02f,"Cloud leaked more than 2% of the HDR emitter disc");
             }
           } else {
             Require(image[center]<1.f &&image[center+1]<1.f &&image[center+2]<1.f,
@@ -484,22 +730,28 @@ int main(int argc, char** argv) {
         std::cout<<"Captured "<<width<<"x"<<height<<" linear RGBA32F cloud composite to "<<argv[3]<<"\n";
         return 0;
       }
-      std::vector<double> timings, weather_timings, shadow_timings, environment_timings;
+      std::vector<double> timings, weather_timings, shadow_timings, environment_timings, sky_timings;
       for (uint32_t index = 0; index < 16; ++index) {
-        render(view);
+        render(view,false,false,capture_time);
         timings.push_back(render_ms);
         weather_timings.push_back(weather_ms);
         shadow_timings.push_back(shadow_ms);
         environment_timings.push_back(environment_ms);
+        sky_timings.push_back(sky_ms);
       }
       std::sort(timings.begin(), timings.end());
       std::sort(weather_timings.begin(), weather_timings.end());
       std::sort(shadow_timings.begin(), shadow_timings.end());
       std::sort(environment_timings.begin(), environment_timings.end());
+      std::sort(sky_timings.begin(),sky_timings.end());
+      if(celestial_probe)std::cout<<"Celestial sky adapter GPU median ms="<<.5*(sky_timings[7]+sky_timings[8])<<" (test draw; production uses native sky)\n";
       std::cout << "Cloud weather/shadow/render/environment GPU median ms=" << .5 * (weather_timings[7] + weather_timings[8])
                 << "/" << .5 * (shadow_timings[7] + shadow_timings[8]) << "/" << .5 * (timings[7] + timings[8])
                 << "/" << .5 * (environment_timings[7] + environment_timings[8]) << " min=" << timings.front()
-                << " max=" << timings.back() << " at " << width << "x" << height << " Medium\n";
+                << " max=" << timings.back() << " at " << width << "x" << height
+                << " preset=" << clouds::quality_preset << " quality=" << clouds::quality
+                << " trace=" << view.LowWidth() << "x" << view.LowHeight()
+                << " allocationMiB=" << double(view.Bytes())/(1024.0*1024.0) << "\n";
       if(screenshot_settings) {
         auto shadow_readback=gpu::Buffer(device.Get(),view.Shared()->GetDesc().Width,
             D3D12_RESOURCE_STATE_COPY_DEST,D3D12_HEAP_TYPE_READBACK);
@@ -569,6 +821,57 @@ int main(int argc, char** argv) {
     clear_inputs(1, 0);
     uint32_t cases = 0;
     {
+      // Fixed weather/wind/camera: clouds must evolve without a weather
+      // transition, stay continuous at gameplay frame intervals, and freeze
+      // exactly with the native clock. Probe the production shared material.
+      auto state=frame;state[340][0]=5.f;state[67]={0,0,0,0};
+      const auto evolution_frame=gpu::Upload(device.Get(),state.data(),sizeof(state));
+      inputs.frame=evolution_frame.object->GetGPUVirtualAddress();++inputs.revision;
+      clouds::View evolving(&assets,width,height,clouds::quality,target_desc.Format);
+      const auto first=render(evolving,false,false,0.f,false,true);
+      const auto next=render(evolving,false,true,1.f/60.f,false,true);
+      const auto minute=render(evolving,false,false,60.f,false,true);
+      const auto paused=render(evolving,false,true,60.f,false,true);
+      double short_change=0,minute_change=0;
+      uint32_t occupied=0,changed=0;
+      for(size_t i=0;i<first.size();i+=4u) {
+        occupied+=first[i]>0.f;
+        changed+=std::abs(first[i]-minute[i])>.01f;
+        short_change+=std::abs(first[i]-next[i]);
+        minute_change+=std::abs(first[i]-minute[i]);
+        for(const auto* image:{&first,&next,&minute,&paused}) {
+          Require(std::isfinite((*image)[i])&&std::isfinite((*image)[i+1u])
+              &&(*image)[i+1u]>=0.f&&(*image)[i+1u]<=(*image)[i]+.00001f,
+              "Evolving cloud erosion escaped its conservative density bound");
+          Require(std::abs((*image)[i+2u]-first[i+2u])<.00001f,
+              "Material evolution moved the native weather probability field");
+        }
+        Require(std::abs(minute[i]-paused[i])<.00001f
+            &&std::abs(minute[i+1u]-paused[i+1u])<.00001f,
+            "Cloud form evolved while the native animation clock was paused");
+      }
+      Require(occupied>100u&&changed>100u&&minute_change>short_change*100.f,
+          "Cloud form failed to evolve gradually at fixed weather and zero wind");
+      // Cross the periodic column/side sample boundaries without a reset.
+      std::vector<float> before_wrap;
+      for(float seconds:{449.99f,450.01f,1499.99f,1500.01f,86400.f}) {
+        const auto image=render(evolving,false,false,seconds,false,true);
+        for(size_t i=0;i<image.size();i+=4u) {
+          Require(std::isfinite(image[i])&&image[i+1u]>=0.f&&image[i+1u]<=image[i]+.00001f,
+              "Noise tile traversal or long native time corrupted cloud density");
+          if(seconds==450.01f||seconds==1500.01f)
+            Require(std::abs(image[i]-before_wrap[i])<.01f
+                &&std::abs(image[i+1u]-before_wrap[i+1u])<.01f,
+                "Evolving cloud shape popped across a periodic noise boundary");
+        }
+        before_wrap=image;
+      }
+      std::cout<<"Cloud evolution: occupied="<<occupied<<" changed after 60s="<<changed
+          <<" coarse L1 frame/minute="<<short_change<<"/"<<minute_change<<"\n";
+      inputs.frame=frame_buffer.object->GetGPUVirtualAddress();++inputs.revision;
+      cases+=5;
+    }
+    {
       // Project production GPU rays back through the captured native camera.
       // A stationary camera must close to the pixel even as TAA jitter changes.
       const auto saved_frame=frame;
@@ -596,10 +899,13 @@ int main(int argc, char** argv) {
       std::cout<<"Native jitter camera ray closure worst="<<worst<<" pixels\n";
       Require(worst<.002,"Cloud rays shake relative to the native jittered camera");
     }
-    for (uint32_t level = 0; level < 6; ++level) {
-      clouds::quality = float(level);
+    for (uint32_t level = 0; level < 10; ++level) {
+      clouds::quality_preset=level<6u?0.f:float(level-5u);
+      clouds::quality = float(std::min(level,5u));
       clouds::View view(&assets, width, height, clouds::quality, target_desc.Format);
-      Require(view.LowWidth() == width && view.LowHeight() == height, "Cloud quality must trace at full resolution");
+      const auto sampling=clouds::Quality(clouds::quality);
+      Require(view.LowWidth() == (width+sampling[0]-1)/sampling[0]
+          && view.LowHeight() == (height+sampling[0]-1)/sampling[0], "Cloud quality has incorrect rounded trace dimensions");
       const auto image = render(view, true, level % 2);
       auto shared_readback = gpu::Buffer(device.Get(), view.Shared()->GetDesc().Width, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_HEAP_TYPE_READBACK);
       begin();
@@ -848,17 +1154,30 @@ int main(int argc, char** argv) {
       }
       Require(visible_columns>20,"Mountain intersection fixture did not contain a visible cloud column");
       clear_inputs(1, 0);
+      const std::array<float, 24> full_shadow_probe{0, 0, 0, .37f, 0, 0, 0, 0, 0, 0, 1, 10};
+      render(view,false,false,800.f);
+      const auto full = probe(view.Shared(), full_shadow_probe);
+      Require(full[0]<.98f,"Shadow strength fixture did not contain a cloudy column");
+      clouds::shadows = .25f;
+      ++inputs.revision;
+      render(view,false,false,800.f);
+      const auto reduced = probe(view.Shared(), full_shadow_probe);
+      Require(std::abs(reduced[0]-std::lerp(1.f,full[0],.25f))<.0001f,
+          "Partial cloud shadow strength did not transmit the expected light");
+      Require(std::abs(reduced[13]-.37f*reduced[0])<.0001f&&reduced[14]==0.f,
+          "Partial cloud shadow strength changed native geometry occlusion");
       clouds::shadows = 0;
       ++inputs.revision;
-      render(view);
-      const auto off = probe(view.Shared(), {0, 0, 0, .37f, 0, 0, 0, 0, 0, 0, 1, 10});
+      render(view,false,false,800.f);
+      const auto off = probe(view.Shared(), full_shadow_probe);
       Require(off[0] == 1, "Cloud-shadow Off retained native/procedural shadows");
       Require(off[12] == 1.f && std::abs(off[13] - .37f) < .0001f && off[14] == 0.f,
           "Cloud-shadow Off removed native geometry occlusion");
       clouds::shadows = 1;
       ++inputs.revision;
-      cases += 9;
+      cases += 10;
     }
+    clouds::quality_preset=0.f;
     // Same camera, sun, jitter and clock address: changing native wind must
     // invalidate the shadow cache and move the world-space shadow texture.
     clocks.clear();
@@ -1011,6 +1330,147 @@ int main(int argc, char** argv) {
     }
     inputs.frame=frame_buffer.object->GetGPUVirtualAddress();
     cases+=3;
+    {
+      // Ordinary time progression, including both horizon transitions. The
+      // source is the visible sun rather than the active sun/moon light.
+      for(float elevation:{-10.f,-8.f,-5.5f,-3.f,0.f,6.f,11.f,16.f,25.f}) {
+        const float radians=elevation*.01745329252f;
+        const float y=std::cos(radians),z=std::sin(radians);
+        const auto state=probe(moving_shadow.Shared(),{0,y*10000.f,z*10000.f,1,0,y,z,1,0,0,1,10});
+        const float expected=(elevation<=-8.f ||elevation>=16.f)?0.f
+            :(elevation==-5.5f ||elevation==11.f)?.5f:1.f;
+        Require(std::abs(state[19]-expected)<.02f &&std::abs(state[20]-state[19])<.00001f
+            &&std::abs(state[21]-state[19])<.00001f &&state[22]==0.f,
+            "Low-sun opening popped at an elevation boundary or cleared the opposite sky");
+        ++cases;
+      }
+      const auto disabled=probe(moving_shadow.Shared(),{0,10000,700,1,0,1,.07f,0,0,0,1,10});
+      const auto invalid=probe(moving_shadow.Shared(),{0,10000,700,1,0,0,0,1,0,0,1,10});
+      Require(disabled[19]==0.f &&disabled[20]==0.f &&invalid[19]==0.f &&invalid[20]==0.f,
+          "Disabled or missing solar direction cleared clouds");
+      auto opening_at=[&](float azimuth,float elevation) {
+        const float a=azimuth*.01745329252f,e=elevation*.01745329252f;
+        return probe(moving_shadow.Shared(),{10000.f*std::sin(a)*std::cos(e),
+            10000.f*std::cos(a)*std::cos(e),10000.f*std::sin(e),1,
+            0,1,0,1,0,0,1,10});
+      };
+      for(float side:{-5.f,0.f,5.f}) {
+        const auto core=opening_at(side,2.f);
+        Require(core[20]>.999f&&core[21]>.999f,
+            "Low-sun arch did not leave a clear solar core");
+      }
+      const auto horizontal=opening_at(17.f,0.f),vertical=opening_at(0.f,17.f);
+      Require(horizontal[20]>.5f&&vertical[21]==0.f,
+          "Low-sun arch lost its horizontal spread");
+      const auto noisy_top=opening_at(0.f,10.f),noisy_side=opening_at(32.f,0.f);
+      Require(noisy_top[20]==0.f&&noisy_top[21]>.1f
+          &&noisy_side[20]==0.f&&noisy_side[21]>.1f,
+          "Cloud formation noise did not vary the opening ceiling and shoulders");
+      const auto shoulder_top=opening_at(24.f,11.f),shoulder_base=opening_at(24.f,-2.f);
+      Require(shoulder_top[21]==0.f&&shoulder_base[21]>.3f,
+          "Low-sun arch did not descend toward its shoulders");
+      for(const auto angles:{std::array<float,2>{39.f,0.f},std::array<float,2>{0.f,25.f},
+          std::array<float,2>{0.f,-20.f}}) {
+        const auto outside=opening_at(angles[0],angles[1]);
+        Require(outside[20]==0.f&&outside[21]==0.f,
+            "Horizon opening removed unrelated cloud formations");
+      }
+      const auto left_edge=opening_at(28.99f,0.f),right_edge=opening_at(29.01f,0.f);
+      Require(std::abs(left_edge[20]-right_edge[20])<.002f
+          &&std::abs(left_edge[21]-right_edge[21])<.002f,
+          "Horizon clearing has a hard lateral boundary");
+      cases+=9;
+      auto low_frame=frame;
+      low_frame[204]={1,0,.99756405f,.06975647f}; // visible sun at four degrees
+      low_frame[340][0]=4.f;
+      const auto low_upload=gpu::Upload(device.Get(),low_frame.data(),sizeof(low_frame));
+      inputs.frame=low_upload.object->GetGPUVirtualAddress();
+      inputs.family=family_selection(1,"WT_Mid_Clouds");
+      clouds::clear_low_sun=0.f;++inputs.revision;
+      const auto closed=render(moving_shadow,false,false,501.f,false,true);
+      const auto closed_shadow=probe(moving_shadow.Shared(),{0,0,0,1,0,0,0,0,0,0,1,10});
+      clouds::clear_low_sun=1.f;++inputs.revision;
+      const auto opened=render(moving_shadow,false,true,501.f,false,true);
+      const auto opened_shadow=probe(moving_shadow.Shared(),{0,0,0,1,0,0,0,0,0,0,1,10});
+      for(const auto clock_case:{std::array<float,2>{17.99f,0.f},std::array<float,2>{18.f,0.f},
+          std::array<float,2>{18.125f,.5f},std::array<float,2>{18.25f,1.f},
+          std::array<float,2>{0.f,1.f},std::array<float,2>{5.75f,1.f},
+          std::array<float,2>{5.875f,.5f},std::array<float,2>{6.f,0.f},std::array<float,2>{12.f,0.f}}) {
+        hartapfelfx::sky::emission::daytime=clock_case[0]/24.f;
+        const auto parameters=moving_shadow.MakeParameters(inputs,1.f);
+        Require(std::abs(parameters.scattering[2]-clock_case[1])<.0001f&&(parameters.identity[3]&8192u),
+            "Cloud clearing missed its native 18:00..06:00 schedule or smooth fades");
+        const auto scheduled=render(moving_shadow,false,true,501.f,false,true);
+        const auto scheduled_shadow=probe(moving_shadow.Shared(),{0,0,0,1,0,0,0,0,0,0,1,10});
+        if(clock_case[1]==0.f)Require(scheduled==closed&&std::abs(scheduled_shadow[0]-closed_shadow[0])<.00001f,
+            "Clock-disabled clearing changed clouds or reused stale open terrain shadows");
+        if(clock_case[1]==1.f)Require(scheduled==opened&&std::abs(scheduled_shadow[0]-opened_shadow[0])<.00001f,
+            "Scheduled clearing did not match the visible cloud opening and terrain light");
+        ++cases;
+      }
+      hartapfelfx::sky::emission::daytime=-1.f;
+      uint32_t removed=0,retained=0,thin=0;
+      for(uint32_t y=0;y<height;++y)for(uint32_t x=0;x<width;++x) {
+        const size_t i=(size_t(y)*width+x)*4;
+        Require(opened[i+1]<=opened[i]+.00001f,"Opening broke the conservative coarse/fine density bound");
+        Require(opened[i]<=closed[i]+.00001f &&opened[i+1]<=closed[i+1]+.00001f,
+            "Low-sun erosion added density to the original cloud");
+        thin+=closed[i]>.01f && opened[i]>.0001f && opened[i]<closed[i]*.35f;
+        if(std::abs(float(x)+.5f-width*.5f)<width/28.f) {
+          Require(opened[i]==0.f &&opened[i+1]==0.f,"Low sun still intersects volumetric material");
+          removed+=closed[i]>.001f;
+        }
+        if(x<width/10u ||x>=width*9u/10u) {
+          Require(opened[i]==closed[i] &&opened[i+1]==closed[i+1],"Opening changed distant cloud formations");
+          retained+=opened[i]>.001f;
+        }
+      }
+      Require(removed>10u &&retained>10u &&closed_shadow[0]<.98f &&opened_shadow[0]>.999f,
+          "Cloud shape and terrain sunlight did not share the same low-sun gap");
+      Require(thin>removed/8u,"Low-sun clearing left too little thin material along the shoulder");
+      for(const auto family:{uint64_t(0),family_selection(1,"WT_Rain_Storm"),
+          family_selection(4,"WT_Light_Rain"),
+          family_selection(2,"WT_Rain_Storm"),family_selection(11,"WT_Rain_Storm"),
+          family_selection(11,"q704_Cloud_Rain")}) {
+        inputs.family=family;clouds::clear_low_sun=0.f;++inputs.revision;
+        const auto natural=render(moving_shadow,false,false,502.f,false,true);
+        const auto natural_shadow=probe(moving_shadow.Shared(),{0,0,0,1,0,0,0,0,0,0,1,10});
+        clouds::clear_low_sun=1.f;++inputs.revision;
+        const auto protected_weather=render(moving_shadow,false,true,502.f,false,true);
+        const auto protected_shadow=probe(moving_shadow.Shared(),{0,0,0,1,0,0,0,0,0,0,1,10});
+        Require(natural==protected_weather &&natural_shadow[0]==protected_shadow[0],
+            "Low-sun opening overrode rain/storms or unidentified weather");
+        if(family)Require(protected_shadow[27]==1.f,"Native rain lost wet-weather classification");
+        ++cases;
+      }
+      inputs.family=family_selection(1,"WT_Mid_Clouds");++inputs.revision;
+      render(moving_shadow,false,false,6000.f);
+      const auto fair=uint8_t(inputs.family),storm=uint8_t(family_selection(1,"WT_Rain_Storm"));
+      inputs.family=uint64_t(fair)|(uint64_t(storm)<<8)|(uint64_t(std::bit_cast<uint32_t>(.5f))<<16);
+      render(moving_shadow,false,true,6000.f+1.f/60.f);
+      const float building=probe(moving_shadow.Shared(),{0,0,0,1,0,0,0,0,0,0,1,10})[27];
+      inputs.family=family_selection(1,"WT_Mid_Clouds");
+      render(moving_shadow,false,false,6000.f+2.f/60.f);
+      const float receding=probe(moving_shadow.Shared(),{0,0,0,1,0,0,0,0,0,0,1,10})[27];
+      Require(building>0.f &&building<.5f &&receding>0.f &&receding<building,
+          "Interrupted severe-weather transition snapped the low-sun opening");
+      std::cout<<"Weather-aware clearing: severe blend "<<building<<" -> "<<receding<<" on interruption\n";
+      // Rain protection must arrive early in the native weather blend, even
+      // when photo mode pauses the clock. Shape interpolation can stay slow.
+      inputs.family=uint64_t(fair)|(uint64_t(storm)<<8)|(uint64_t(std::bit_cast<uint32_t>(.025f))<<16);
+      render(moving_shadow,false,true,6000.f+2.f/60.f);
+      Require(probe(moving_shadow.Shared(),{0,0,0,1,0,0,0,0,0,0,1,10})[27]==1.f,
+          "Paused early rain retained the low-sun opening");
+      inputs.family=family_selection(1,"WT_Mid_Clouds");
+      render(moving_shadow,false,true,6000.f+2.f/60.f);
+      Require(probe(moving_shadow.Shared(),{0,0,0,1,0,0,0,0,0,0,1,10})[27]==1.f,
+          "Paused rain exit abruptly uncovered the sun");
+      inputs.family=0;inputs.frame=frame_buffer.object->GetGPUVirtualAddress();++inputs.revision;
+      std::cout<<"Low-sun shared density opening: core samples removed="<<removed
+          <<" thin shoulder samples="<<thin<<" surrounding material="<<retained
+          <<" terrain transmission "<<closed_shadow[0]<<" -> "<<opened_shadow[0]<<"\n";
+      cases+=5;
+    }
     clear_inputs(0.f,0.f,1.f);
     clouds::quality=1.f;
     clouds::coverage=1.3f;
@@ -1158,20 +1618,79 @@ int main(int argc, char** argv) {
       const float fade=1.f-std::exp(-(float(1000.f+1.f/60.f)-1000.f)/.8f);
       for(uint32_t channel=0;channel<8u;++channel) {
         const float target_value=channel<4u ? light_profile.low[channel] : light_profile.high[channel-4u];
-        Require(std::abs(blended[channel]-(storm[channel]+(target_value-storm[channel])*fade))<.00001f,
+        const float channel_fade=channel==7u?1.f-std::exp(-(float(1000.f+1.f/60.f)-1000.f)/.2f):fade;
+        Require(std::abs(blended[channel]-(storm[channel]+(target_value-storm[channel])*channel_fade))<.00001f,
             "Interrupted family transition popped or used a different animation clock");
       }
+      std::vector<float> settled_image;
       for(uint32_t tick=1;tick<=48u;++tick)
-        render(transition,false,(tick&1u)!=0u,1000.f+1.f/60.f+tick*.25f);
+        settled_image=render(transition,false,(tick&1u)!=0u,1000.f+1.f/60.f+tick*.25f);
       const auto settled=family_state(transition);
-      Require(settled[0]==0.f &&settled[1]==0.f,
-          "Removed-sheet weather retained unnecessary 3D raymarch work");
+      uint32_t light_pixels=0;
+      for(size_t i=0;i<settled_image.size();i+=4)
+        light_pixels+=std::abs(settled_image[i]-background[0])>.001f;
+      Require(settled[0]==light_profile.low[0] &&settled[1]==light_profile.low[1]
+          &&settled[0]>0.f &&light_pixels>10u,
+          "Light-cloud weather faded the complete volumetric sky away");
+      // Same GlobalCB address across fast travel and forward/backward meditation
+      // jumps. Light-cloud material must survive with low-sun clearing On or Off.
+      for(float clearing:{0.f,1.f}) {
+        clouds::clear_low_sun=clearing;++inputs.revision;
+        clouds::View travel(&assets,width,height,clouds::quality,target_desc.Format);
+        clocks.clear();
+        for(uint32_t tick=0;tick<6u;++tick) {
+          const float seconds[]={100.f,50000.f,200.f,43200.f,101.f,60000.f};
+          if(tick) {
+            void* mapped=nullptr;gpu::Check(clocks.back().object->Map(0,nullptr,&mapped));
+            std::memcpy(mapped,&seconds[tick],4);clocks.back().object->Unmap(0,nullptr);
+          }
+          auto travel_frame=frame;
+          travel_frame[0][0]=tick%2u?20000.f:-30000.f;
+          travel_frame[20][0]+=travel_frame[0][0]*travel_frame[20][3];
+          travel_frame[204]=tick%2u?std::array<float,4>{1,0,.70710678f,.70710678f}
+              :std::array<float,4>{1,0,.99756405f,.06975647f};
+          travel_frame[286][0]=float(100u+tick);
+          const auto travel_upload=gpu::Upload(device.Get(),travel_frame.data(),sizeof(travel_frame));
+          inputs.frame=travel_upload.object->GetGPUVirtualAddress();
+          const auto travelled=render(travel,false,(tick&1u)!=0u,seconds[tick],tick!=0u);
+          const auto state=family_state(travel);
+          uint32_t occupied=0;
+          for(size_t i=0;i<travelled.size();i+=4)occupied+=std::abs(travelled[i]-background[0])>.001f;
+          Require(state[0]==light_profile.low[0] &&state[1]==light_profile.low[1] &&occupied>10u,
+              "Fast travel/meditation erased light clouds at dawn or noon");
+          ++cases;
+        }
+      }
+      clouds::clear_low_sun=1.f;++inputs.revision;
+      for(uint32_t row:{204u,205u}) {
+        clouds::View frozen(&assets,width,height,clouds::quality,target_desc.Format);
+        clocks.clear();
+        auto celestial_frame=frame;
+        celestial_frame[204]={1,0,.99756405f,.06975647f};
+        const auto before=gpu::Upload(device.Get(),celestial_frame.data(),sizeof(celestial_frame));
+        inputs.frame=before.object->GetGPUVirtualAddress();
+        render(frozen,false,false,777.f,true);
+        // New scene target with the same clock address/value, camera, weather
+        // and jitter: a celestial change is not a duplicate native card draw.
+        celestial_frame[row]=row==204u?std::array<float,4>{1,0,.70710678f,.70710678f}
+            :std::array<float,4>{1,.2f,-.7f,.68556546f};
+        const auto after=gpu::Upload(device.Get(),celestial_frame.data(),sizeof(celestial_frame));
+        inputs.frame=after.object->GetGPUVirtualAddress();
+        const auto advanced_sky=render(frozen,false,true,777.f,true);
+        uint32_t occupied=0;
+        for(size_t i=0;i<advanced_sky.size();i+=4)occupied+=std::abs(advanced_sky[i]-background[0])>.001f;
+        Require(occupied>10u,"Celestial-only meditation change was mistaken for an already rendered sky");
+        ++cases;
+      }
+      inputs.frame=frame_buffer.object->GetGPUVirtualAddress();++inputs.revision;
+      std::cout<<"Light-cloud transition retained "<<light_pixels
+          <<" pixels; fast travel and same-address meditation jumps pass with clearing On/Off\n";
       ++cases;
       cases+=2;
       // Former high-sheet-only weather must remain completely clear in the
       // view and native receivers, including when fakeShadow is zero.
       clouds::View thin(&assets,width,height,clouds::quality,target_desc.Format);
-      inputs.family=light_family;
+      inputs.family=family_selection(1,"WT_Clear");
       clear_inputs(0.f,0.f);
       const auto thin_sky=render(thin,false,false,2000.f);
       for(size_t channel=0;channel<thin_sky.size();++channel)
@@ -1289,62 +1808,66 @@ int main(int argc, char** argv) {
       Require(occupied>100u,"Reused native clock storage suppressed a new cloud frame");
       ++cases;
     }
-    clouds::View temporal(&assets,width,height,clouds::quality,target_desc.Format);
-    auto packed_readback = gpu::Buffer(device.Get(),temporal.Shared()->GetDesc().Width,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_HEAP_TYPE_READBACK);
-    auto confidence_count = [&]() {
-      begin();
-      D3D12_RESOURCE_BARRIER barrier{};
-      barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      barrier.Transition = {temporal.Shared(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,gpu::TextureRead,D3D12_RESOURCE_STATE_COPY_SOURCE};
-      cmd->ResourceBarrier(1,&barrier); cmd->CopyResource(packed_readback.object.Get(),temporal.Shared());
-      std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter); cmd->ResourceBarrier(1,&barrier); submit();
-      void* mapped = nullptr; gpu::Check(packed_readback.object->Map(0,nullptr,&mapped));
-      const auto* words = static_cast<const uint32_t*>(mapped);
-      uint32_t confident = 0;
-      for (uint32_t y = 0; y < words[25]; ++y) for (uint32_t x = 0; x < words[24]; ++x) {
-        uint16_t half;
-        std::memcpy(&half,static_cast<const uint8_t*>(mapped)+words[27]+y*words[26]+x*8+6,2);
-        confident += DirectX::PackedVector::XMConvertHalfToFloat(half) > .9f;
+    for(unsigned choice:{0u,1u,2u}) {
+      clouds::quality_preset=float(choice);
+      clouds::View temporal(&assets,width,height,clouds::quality,target_desc.Format);
+      auto packed_readback = gpu::Buffer(device.Get(),temporal.Shared()->GetDesc().Width,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_HEAP_TYPE_READBACK);
+      auto confidence_count = [&]() {
+        begin();
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition = {temporal.Shared(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,gpu::TextureRead,D3D12_RESOURCE_STATE_COPY_SOURCE};
+        cmd->ResourceBarrier(1,&barrier); cmd->CopyResource(packed_readback.object.Get(),temporal.Shared());
+        std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter); cmd->ResourceBarrier(1,&barrier); submit();
+        void* mapped = nullptr; gpu::Check(packed_readback.object->Map(0,nullptr,&mapped));
+        const auto* words = static_cast<const uint32_t*>(mapped);
+        uint32_t confident = 0;
+        for (uint32_t y = 0; y < words[25]; ++y) for (uint32_t x = 0; x < words[24]; ++x) {
+          uint16_t half;
+          std::memcpy(&half,static_cast<const uint8_t*>(mapped)+words[27]+y*words[26]+x*8+6,2);
+          confident += DirectX::PackedVector::XMConvertHalfToFloat(half) > .9f;
+        }
+        packed_readback.object->Unmap(0,nullptr); return confident;
+      };
+      render(temporal,false,false,100);
+      Require(confidence_count() == 0,"Cold cloud history unexpectedly accepted");
+      for (uint32_t tick = 1; tick <= 12; ++tick) render(temporal,false,false,100 + tick / 60.f);
+      Require(confidence_count() > 20,"Warm cloud reconstruction never converged");
+      const auto paused = render(temporal,false,false,100.2f);
+      const auto paused_again = render(temporal,false,false,100.2f);
+      Require(confidence_count() > 20,"Paused clock rejected valid cloud history");
+      // With fixed camera, clock and stable ray phase, the history must settle
+      // without flicker. Fresh clock allocations still force each render.
+      auto previous_paused = paused_again;
+      double early_change = 0, late_change = 0;
+      for (uint32_t tick = 0; tick < 32; ++tick) {
+        const auto next = render(temporal,false,false,100.2f);
+        double change = 0;
+        for (size_t index = 0; index < next.size(); index += 4)
+          change += std::abs(next[index] - previous_paused[index]);
+        if (tick < 8) early_change += change;
+        if (tick >= 24) late_change += change;
+        previous_paused = next;
       }
-      packed_readback.object->Unmap(0,nullptr); return confident;
-    };
-    render(temporal,false,false,100);
-    Require(confidence_count() == 0,"Cold cloud history unexpectedly accepted");
-    for (uint32_t tick = 1; tick <= 12; ++tick) render(temporal,false,false,100 + tick / 60.f);
-    Require(confidence_count() > 20,"Warm cloud reconstruction never converged");
-    const auto paused = render(temporal,false,false,100.2f);
-    const auto paused_again = render(temporal,false,false,100.2f);
-    Require(confidence_count() > 20,"Paused clock rejected valid cloud history");
-    // A fixed camera and clock still advance the renderer's sample sequence.
-    // Measure whether temporal reconstruction settles those changing samples.
-    auto previous_paused = paused_again;
-    double early_change = 0, late_change = 0;
-    for (uint32_t tick = 0; tick < 32; ++tick) {
-      const auto next = render(temporal,false,false,100.2f);
-      double change = 0;
-      for (size_t index = 0; index < next.size(); index += 4)
-        change += std::abs(next[index] - previous_paused[index]);
-      if (tick < 8) early_change += change;
-      if (tick >= 24) late_change += change;
-      previous_paused = next;
+      std::cout << "Paused cloud frame change early=" << early_change << " late=" << late_change
+                << " confident=" << confidence_count() << " of " << temporal.LowWidth() * temporal.LowHeight() << '\n';
+      Require(late_change < early_change * .95, "Paused cloud samples did not converge");
+      ++inputs.revision;
+      render(temporal,false,false,100.2167f);
+      Require(confidence_count() == 0,"Cloud control edit retained stale history");
+      clouds::density = 0; ++inputs.revision;
+      const auto edited_clear = render(temporal,false,false,100.2333f);
+      for (size_t index = 0; index < edited_clear.size(); ++index) Require(std::abs(edited_clear[index]-background[index%4]) < 1.e-6f,"Cloud removal dragged warm history into clear sky");
+      clouds::density = 1.f; ++inputs.revision;
+      for (const auto& values : {std::array<float,4>{0,.2f,.5f,0}, std::array<float,4>{8,2,3,1}}) {
+        clouds::detail = values[0]; clouds::detail_size = values[1]; clouds::thickness = values[2]; clouds::base_softness = values[3]; ++inputs.revision;
+        render(temporal);
+      }
+      clouds::detail = 1.f; clouds::detail_size = 1.f;
+      clouds::thickness = 1.f; clouds::base_softness = 0; ++inputs.revision;
+      cases += 10;
     }
-    std::cout << "Paused cloud frame change early=" << early_change << " late=" << late_change
-              << " confident=" << confidence_count() << " of " << temporal.LowWidth() * temporal.LowHeight() << '\n';
-    Require(late_change < early_change * .95, "Paused cloud samples did not converge");
-    ++inputs.revision;
-    render(temporal,false,false,100.2167f);
-    Require(confidence_count() == 0,"Cloud control edit retained stale history");
-    clouds::density = 0; ++inputs.revision;
-    const auto edited_clear = render(temporal,false,false,100.2333f);
-    for (size_t index = 0; index < edited_clear.size(); ++index) Require(std::abs(edited_clear[index]-background[index%4]) < 1.e-6f,"Cloud removal dragged warm history into clear sky");
-    clouds::density = 1.f; ++inputs.revision;
-    for (const auto& values : {std::array<float,4>{0,.2f,.5f,0}, std::array<float,4>{8,2,3,1}}) {
-      clouds::detail = values[0]; clouds::detail_size = values[1]; clouds::thickness = values[2]; clouds::base_softness = values[3]; ++inputs.revision;
-      render(temporal);
-    }
-    clouds::detail = 1.f; clouds::detail_size = 1.f;
-    clouds::thickness = 1.f; clouds::base_softness = 0; ++inputs.revision;
-    cases += 10;
+    clouds::quality_preset=0.f;
     std::vector<uint8_t> synthetic(1024, 0);
     auto store = [&](uint32_t offset, const void* data, size_t bytes) { std::memcpy(synthetic.data() + offset, data, bytes); };
     const uint32_t layout[4] = {2, 2, 256, 512}, valid = 1;
@@ -1447,8 +1970,219 @@ int main(int argc, char** argv) {
         }
       }
     }
+    {
+      // Production shared-buffer publication includes the immutable mip chain.
+      const auto published=probe(moving_shadow.Shared(),{0,0,1,-1234,0,0,0,0,0,0,0,.0005f});
+      Require(published[41]>.1f &&published[41]<2.f,"Moon mip chain was not published into production sky storage");
+      std::vector<uint8_t> sky_data(512+sizeof(hartapfelfx::sky::moon_albedo));
+      const std::array<uint32_t,4> header{std::bit_cast<uint32_t>(1.f),512u,std::bit_cast<uint32_t>(1.f),0x534B5931u};
+      std::memcpy(sky_data.data()+304,header.data(),16);
+      std::memcpy(sky_data.data()+512,hartapfelfx::sky::moon_albedo.data(),sizeof(hartapfelfx::sky::moon_albedo));
+      auto sky_field=gpu::Upload(device.Get(),sky_data.data(),sky_data.size());
+      auto sky_frame=frame;
+      sky_frame[42]={};sky_frame[48]={};sky_frame[199]={1,.96f,.9f,0};
+      sky_frame[203]={1,1,1,1};sky_frame[204]={120,0,0,1};sky_frame[205]={1,0,0,-1};
+      auto sky_probe=[&](std::array<float,3> ray,float footprint=.0003f,std::array<float,4> material={},
+                         std::array<float,4> clock={0,0,0,.75f},std::array<float,4> solar={},float glow_size=1.25f,uint32_t exposure=0) {
+        const auto upload=gpu::Upload(device.Get(),sky_frame.data(),sizeof(sky_frame));
+        return probe(sky_field.object.Get(),{ray[0],ray[1],ray[2],-1234,material[0],material[1],material[2],material[3],
+            0,0,0,footprint,clock[0],clock[1],clock[2],clock[3],solar[0],solar[1],solar[2],solar[3],glow_size,std::bit_cast<float>(exposure),.0316336f,.124752f},
+            upload.object->GetGPUVirtualAddress());
+      };
+      const auto center=sky_probe({0,0,1});
+      const auto limb=sky_probe({.0285f,0,1});
+      const auto exterior=sky_probe({.045f,0,1});
+      Require(center[28]>limb[28]&&limb[28]>0.f&&exterior[28]==0.f,"Solar limb darkening/disc edge failed");
+      Require(center[28]<1000.f&&center[28]>center[30],"Solar HDR radiance/extinction is invalid");
+      Require(std::abs(center[52]-std::sin(.0316336f))<.00001f&&std::abs(center[53]-std::sin(.124752f))<.00001f,
+          "Sun/Moon did not use the supplied native mesh size");
+      Require(exterior[44]>0.f&&exterior[44]<center[44],"The Sun has no continuous glow outside its disc");
+      Require(limb[44]>limb[28]*.2f,"Solar glow does not overlap the body/rim at visible radiance");
+      Require(sky_probe({std::sin(.55f),0,std::cos(.55f)})[44]<center[44]*.0001f,
+          "The outer solar halo became a large bright disc after exposure");
+      const auto shoulder=sky_probe({std::sin(.08f),0,std::cos(.08f)});
+      Require(center[63]==1.25f,"Sun Glow Size lost its wider default");
+      const auto wider=sky_probe({std::sin(.16f),0,std::cos(.16f)},.0003f,{}, {0,0,0,.75f},{},2.5f);
+      Require(std::abs(wider[44]/shoulder[44]-1.f)<.02f&&wider[52]==center[52],
+          "Independent Sun Glow Size did not scale only the glow");
+      sky_frame[206][3]=std::bit_cast<float>(0x80000000u|16384u);
+      sky_frame[204][0]*=.25f; // native common builder's Sun Size exponent update
+      Require(sky_probe({.045f,0,1})[28]>0.f,"Existing Sun Size did not resize the replacement");
+      Require(std::abs(sky_probe({std::sin(.16f),0,std::cos(.16f)})[44]/shoulder[44]-1.f)<.02f,
+          "Solar glow did not continue to follow Sun Size");
+      sky_frame[206][3]=0.f;
+      sky_frame[204][0]*=4.f;
+      const auto solar_material=sky_probe({0,0,1},.0003f,{}, {0,0,0,.75f},{1,.25f,.5f,1});
+      Require(std::abs(solar_material[28]/solar_material[29]-4.f)<.0001f&&solar_material[60]==1.f,
+          "Sun did not preserve the normalized native HDR material colour");
+      const auto native_halo=sky_probe({std::sin(.2f),0,std::cos(.2f)},.0003f,{}, {0,0,0,.75f},{1,.25f,.5f,1});
+      Require(std::abs(native_halo[44]/native_halo[45]-1.f/.96f)<.0001f,
+          "Solar atmosphere did not retain its separate native sky-glow palette");
+      sky_frame[203][3]=2.f;
+      const auto exposed_halo=sky_probe({std::sin(.2f),0,std::cos(.2f)},.0003f,{}, {0,0,0,.75f},{1,.25f,.5f,1});
+      const auto reflection_halo=sky_probe({std::sin(.2f),0,std::cos(.2f)},.0003f,{}, {0,0,0,.75f},{1,.25f,.5f,1},1.25f,2u);
+      Require(std::abs(exposed_halo[44]/native_halo[44]-2.f)<.0001f&&std::abs(reflection_halo[44]/native_halo[44]-1.f)<.0001f,
+          "Solar halo lost the native main/reflection sky exposure branch");
+      sky_frame[203][3]=1.f;sky_frame[206][0]=0.f;
+      Require(sky_probe({std::sin(.2f),0,std::cos(.2f)})[44]<.000001f,"Solar sky glow ignored native weather strength zero");
+      sky_frame[206][0]=1.f;
+      const float elevation=.05f,horizontal=std::sqrt(1.f-elevation*elevation);
+      sky_frame[204]={40,0,horizontal,elevation};
+      Require(sky_probe({0,horizontal,elevation})[28]<center[28],"Low Sun lost its achromatic atmospheric attenuation");
+      sky_frame[199]={27.3672714f,1.07121313f,.00014030948f,46.2497368f};
+      const auto sunset=sky_probe({0,horizontal,elevation});
+      const auto sunset_shoulder=sky_probe({std::sin(.08f),horizontal*std::cos(.08f),elevation*std::cos(.08f)});
+      Require(std::abs(sunset[28]/sunset[29]-sky_frame[199][0]/sky_frame[199][1])<.001f,
+          "Sunset received a second colour filter instead of the vanilla palette");
+      Require(sunset_shoulder[44]/sunset[44]>shoulder[44]/center[44],"Native low-Sun exponent did not broaden the glow");
+      sky_frame[204]={40,0,std::sqrt(1.f-.02f*.02f),-.02f};
+      Require(sky_probe({0,1,.01f})[28]>0.f&&sky_probe({0,1,-.02f})[28]==0.f,"Solar upper limb vanished after centre-set");
+      const auto twilight=sky_probe({0,1,.025f});
+      Require(twilight[28]==0.f&&twilight[44]>0.f&&std::abs(twilight[44]/twilight[45]-sky_frame[199][0]/sky_frame[199][1])<.001f,
+          "Afterglow disappeared abruptly or lost the native sunset colour");
+      sky_frame[204]={120,0,std::sqrt(1.f-.08f*.08f),-.08f};
+      Require(sky_probe({0,1,.01f})[44]==0.f,"Solar glow survived deep twilight");
+      sky_frame[204]={120,0,0,-1};sky_frame[205]={1,0,.8f,.6f};
+      const std::array<float,3> moon_ray{0,.8f,.6f};
+      const auto full=sky_probe(moon_ray);
+      Require(std::abs(full[32]/full[34]-sky_frame[277][0]/sky_frame[277][2])<.0001f,"Moon lost the vanilla palette");
+      sky_frame[277][0]*=2.f;
+      Require(std::abs(sky_probe(moon_ray)[32]/full[32]-2.f)<.0001f,"Moon lost linear native material intensity");
+      sky_frame[277][0]*=.5f;
+      const auto native_moon=sky_probe(moon_ray,.0003f,{14.2849865f,2.55107808f,.82191229f,1.f});
+      Require(std::abs(native_moon[32]/full[32]-14.2849865f/sky_frame[277][0])<.0001f,"Standard Moon lost native material radiance");
+      const auto toussaint_moon=sky_probe(moon_ray,.0003f,{.5f,.75f,1.25f,2.f});
+      Require(std::abs(toussaint_moon[32]/full[32]-.5f)<.0001f&&std::abs(toussaint_moon[34]/full[34]-1.25f)<.0001f,
+          "Toussaint Moon lost the native environment/material colour product");
+      sky_frame[205]={1,0,0,1};sky_frame[38]={0,.6f,.8f,1};
+      const auto centered=sky_probe({0,0,1}),up=sky_probe({0,.07f,1}),down=sky_probe({0,-.07f,1});
+      Require(centered[50]>.999f&&std::abs(centered[49])<.0001f,"Sky retained the offset native Moon light");
+      Require(centered[44]>0.f&&centered[44]>up[44]&&std::abs(up[44]-down[44])<.00001f,"Lunar glow is not centred/symmetric");
+      sky_frame[205]={1,0,.8f,.6f};
+      const auto quarter=sky_probe(moon_ray,.0003f,{}, {0,0,0,0});
+      const auto crescent=sky_probe(moon_ray,.0003f,{}, {0,0,0,.25f});
+      Require(full[32]>.01f&&full[32]>quarter[32]*20.f&&crescent[32]<full[32]*.01f,"Moon phase did not follow vanilla game time");
+      Require(full[35]==1.f&&crescent[35]==1.f,"Dark Moon must still occult stars");
+      const auto left=sky_probe({-.07f,.8f,.6f},.0003f,{}, {0,0,0,0});
+      const auto right=sky_probe({.07f,.8f,.6f},.0003f,{}, {0,0,0,0});
+      const auto waning_left=sky_probe({-.07f,.8f,.6f},.0003f,{}, {0,0,0,.5f});
+      const auto waning_right=sky_probe({.07f,.8f,.6f},.0003f,{}, {0,0,0,.5f});
+      Require(right[32]>waning_right[32]*10.f&&waning_left[32]>left[32]*10.f,"Waxing/waning did not reverse the crescent direction");
+      const auto cycle=sky_probe(moon_ray,.0003f,{}, {0,29.530588f,0,.75f});
+      const auto opposite=sky_probe(moon_ray,.0003f,{}, {0,14.765294f,0,.75f});
+      Require(std::abs(cycle[32]/full[32]-1.f)<.001f&&opposite[32]<full[32]*.01f,"Native lunar month failed to cycle with fixed sky positions");
+      const auto captured_phase=sky_probe(moon_ray,.0003f,{}, {0,873,0,.531537056f});
+      const float native_phase=(873.f*.033863864839076996f+.531537056f)*6.28318530718f;
+      Require(std::abs(captured_phase[56]-std::cos(native_phase))<.0001f&&std::abs(captured_phase[57]-std::sin(native_phase))<.0001f,
+          "Phase direction differs from the original Moon pixel shader");
+      sky_frame[37][3]=std::bit_cast<float>(0x4C000000u|(256u<<16u)|8192u);
+      Require(std::abs(sky_probe(moon_ray)[32]/full[32]-256.f/511.f)<.001f,"Moon Brightness lost its existing scale");
+      sky_frame[37][3]=0.f;sky_frame[205]={1,0,0,-1};
+      // Pick one deterministic shell star on the CPU, then evaluate the real
+      // GPU filter at multiple resolutions, near a cell edge, and in daylight.
+      auto hash=[](uint32_t value) {value^=value>>16;value*=0x7FEB352Du;value^=value>>15;value*=0x846CA68Bu;return value^(value>>16);};
+      std::array<float,3> star{};
+      for(int z=30;z<96 &&star[2]==0.f;++z)for(int y=-96;y<96 &&star[2]==0.f;++y)for(int x=-96;x<96;++x) {
+        const uint32_t h=hash(uint32_t(x)*73856093u^uint32_t(y)*19349663u^uint32_t(z)*83492791u);
+        if((h&65535u)>=2294u)continue;
+        const uint32_t a=hash(h),b=hash(a),c=hash(b);
+        const std::array<float,3> p{float(x)+float(a&65535u)/65536.f,float(y)+float(b&65535u)/65536.f,float(z)+float(c&65535u)/65536.f};
+        const float r=std::sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]);
+        if(std::abs(r-96.f)<.5f) {for(unsigned i=0;i<3;++i)star[i]=p[i]/r;break;}
+      }
+      Require(star[2]>0.f,"Star fixture not found");
+      const auto bright=sky_probe(star,.0005f),filtered=sky_probe(star,.001f);
+      Require(bright[36]>0.f &&std::abs(bright[36]/filtered[36]-4.f)<.02f,"Point-star filter failed flux normalization across resolutions");
+      if(operation=="reference-stars"&&argc>3) {
+        const auto reference_code=Read(argv[3]);
+        const auto reference_pipeline=gpu::Compute(device.Get(),feature_root.Get(),{reference_code.data(),reference_code.size()});
+        selected_feature=reference_pipeline.Get();
+        const auto reference_star=sky_probe(star,.0005f);
+        selected_feature=feature_pipeline.Get();
+        Require(std::abs(bright[36]/reference_star[36]-8.f)<.001f,"Stellar base radiance is not eight times the previous production shader");
+        std::cout<<"PASS actual GPU stellar base radiance ratio="<<bright[36]/reference_star[36]<<" at unchanged 100% brightness\n";
+      }
+      std::cout<<"Celestial probe Sun="<<center[28]<<", full Moon="<<full[32]<<", star="<<bright[36]<<"\n";
+      sky_frame[204]={1,0,0,1};Require(sky_probe(star)[36]==0.f,"Stars remain visible in daylight");
+      sky_frame[204]={1,0,0,-1};
+      const float zero=0.f;std::memcpy(sky_data.data()+304,&zero,4);
+      sky_field=gpu::Upload(device.Get(),sky_data.data(),sky_data.size());
+      Require(sky_probe(star)[36]==0.f,"Star Brightness zero did not hide stars");
+      const float one=1.f;std::memcpy(sky_data.data()+304,&one,4);
+      sky_field=gpu::Upload(device.Get(),sky_data.data(),sky_data.size());
+      sky_frame[42]={1,0,7000,1};sky_frame[44]={.1f,0,0,0};sky_frame[48]={0,0,1,0};
+      sky_frame[189][3]=1;sky_frame[190]={0,0,1,-1};
+      sky_frame[205]={1,0,0,1};
+      const auto obscured=sky_probe({0,0,1});
+      Require(obscured[40]==0.f &&obscured[32]==0.f,"Moon escaped an opaque native atmospheric veil");
+      cases+=42;
+      std::cout<<"PASS celestial shared asset, limb darkening, angular sizes, atmosphere, lunar phase/material, brightness, filtered stars and day/night gates\n";
+    }
+    {
+      // Replay the production marcher with identical geometry, native power
+      // and background. Only the cached emitter spectrum may change the RGB.
+      namespace emission=hartapfelfx::sky::emission;
+      clear_inputs(1.f,0.f);clouds::skylight=0.f;clouds::sunlight=1.f;
+      clouds::density=1.f;clouds::clear_low_sun=0.f;
+      auto colour_frame=frame;colour_frame[42]={};colour_frame[48]={};
+      const float native_sun[3]={1.f,.1f,.01f},native_moon[3]={.05f,.2f,1.f};
+      for(bool lunar:{false,true}) {
+        colour_frame[204]={120,0,0,lunar?-1.f:1.f};
+        colour_frame[205]={120,0,0,lunar?1.f:-1.f};
+        const auto colour_upload=gpu::Upload(device.Get(),colour_frame.data(),sizeof(colour_frame));
+        inputs.frame=colour_upload.object->GetGPUVirtualAddress();
+        emission::enabled=false;++inputs.revision;
+        clouds::View original(&assets,width,height,clouds::quality,target_desc.Format);
+        const auto before=render(original,false,false,9000.f);
+        emission::enabled=true;emission::ObservePrimary(native_sun);emission::ObserveMoon(native_moon,false);
+        emission::ObserveFrame(colour_frame.data());++inputs.revision;
+        clouds::View matched(&assets,width,height,clouds::quality,target_desc.Format);
+        const auto after=render(matched,false,false,9000.f);
+        double red=0,blue=0,luma_error=0;unsigned changed=0;
+        for(size_t i=0;i<after.size();i+=4) {
+          const double r=after[i]-before[i],g=after[i+1]-before[i+1],b=after[i+2]-before[i+2];
+          red+=r;blue+=b;luma_error+=std::abs(.2126*r+.7152*g+.0722*b);
+          changed+=std::abs(r)+std::abs(g)+std::abs(b)>.001;
+        }
+        Require(changed>100 &&(lunar?(blue>0&&red<0):(red>0&&blue<0)),
+            "Clouds did not scatter the cached Sun/Moon colour");
+        std::cout<<"Cloud colour "<<(lunar?"Moon":"Sun")<<" delta R/B="<<red<<"/"<<blue<<" luma error="<<luma_error<<"\n";
+        Require(luma_error<.001*(std::abs(red)+std::abs(blue)),
+            "Matching cloud light colour changed native luminance");
+        ++cases;
+      }
+      colour_frame[204]={120,0,.9987492f,.05f};
+      const auto evening_frame=gpu::Upload(device.Get(),colour_frame.data(),sizeof(colour_frame));
+      inputs.frame=evening_frame.object->GetGPUVirtualAddress();
+      emission::ObserveTime(19.f/24.f);emission::ObserveFrame(colour_frame.data());
+      std::vector<float> native_blend;
+      for(float blend:{0.f,1.f}) {
+        emission::evening_blend=blend;
+        auto world_light=light;emission::Apply(world_light[1].data());
+        void* mapped=nullptr;gpu::Check(light_buffer.object->Map(0,nullptr,&mapped));
+        std::memcpy(mapped,world_light.data(),sizeof(world_light));light_buffer.object->Unmap(0,nullptr);
+        ++inputs.revision;
+        clouds::View evening(&assets,width,height,clouds::quality,target_desc.Format);
+        const auto image=render(evening,false,false,9001.f);
+        if(blend==0.f)native_blend=image;
+        else {
+          double difference=0,energy=0;
+          for(size_t i=0;i<image.size();i+=4u)for(unsigned c=0;c<3u;++c) {
+            difference+=std::abs(image[i+c]-native_blend[i+c]);energy+=std::abs(image[i+c]);
+          }
+          Require(energy>1.f&&difference<energy*.001,
+              "Evening world sunlight blend changed the independent cloud sunset colour");
+          std::cout<<"Cloud colour independence across world sunlight endpoints: relative L1="<<difference/energy<<"\n";
+        }
+      }
+      void* restored_light=nullptr;gpu::Check(light_buffer.object->Map(0,nullptr,&restored_light));
+      std::memcpy(restored_light,light.data(),sizeof(light));light_buffer.object->Unmap(0,nullptr);
+      emission::evening_blend=1.f;emission::daytime=-1.f;emission::enabled=false;
+      ++cases;
+      std::cout<<"PASS production cloud source-colour transport: solar/lunar hue and native luminance\n";
+    }
     CloseHandle(event);
-    std::cout << "PASS " << cases << " production cloud GPU cases, six qualities, packed-shadow alignment/projection/Off, HDR transport, motion signs/confidence/foreground, duplicate lists and native fallback\n";
+    std::cout << "PASS " << cases << " production cloud GPU cases, six custom qualities and four presets, packed-shadow alignment/projection/Off, HDR transport, motion signs/confidence/foreground, duplicate lists and native fallback\n";
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
     return 1;

@@ -37,6 +37,7 @@ bool GridHistoryCompatible(float4 sun, float4 radiance) {
       || any(abs(radiance - asfloat(history_volume.Load4(848))) > .05f * max(abs(radiance), 1.e-5f))) return false;
   if (any(asuint(float4(fx.enabled, fx.density, fx.sunlight, fx.anisotropy)) != history_volume.Load4(880))
       || any(asuint(float4(fx.start_distance, fx.height_falloff, fx.quality, fx.local_strength)) != history_volume.Load4(896))) return false;
+  if(asuint(fx.quality_preset)!=history_volume.Load(52))return false;
   return true;
 }
 float GridFastSample(uint2 pixel, uint dimension) {
@@ -60,6 +61,7 @@ void GenerateCell(uint3 id) {
     volume.Store4(0, asuint(float4(dimensions.xyz, far_distance)));
     volume.Store4(16, asuint(float4(fog_frame[23].zw, .1f, FOG_HEADER_BYTES + 2 * dimensions.x * dimensions.y * dimensions.z * 8)));
     volume.Store4(32, asuint(fog_frame[48]));
+    volume.Store4(48,asuint(float4(fx.haze_reduction,fx.quality_preset,fx.reconstruction,0.f)));
     [unroll] for (uint row = 0; row < 48; ++row) volume.Store4(64 + row * 16, asuint(fog_frame[row]));
     volume.Store4(832, asuint(fog_light[0]));
     volume.Store4(848, asuint(fog_light[1]));
@@ -112,19 +114,21 @@ void GenerateCell(uint3 id) {
     float3 dz = ray * (end - begin);
     // Antithetic quadrature covers the physical cell, including radial depth.
     // Deterministic until a validated temporal history is available.
-    static const float2 pattern[4] = {float2(0, 0), float2(.5f, 1.f / 3.f), float2(.25f, 2.f / 3.f), float2(.75f, 1.f / 9.f)};
+    static const float2 pattern[8] = {float2(0, 0), float2(.5f, 1.f / 3.f), float2(.25f, 2.f / 3.f), float2(.75f, 1.f / 9.f),
+        float2(.125f,4.f/9.f),float2(.625f,7.f/9.f),float2(.375f,2.f/9.f),float2(.875f,5.f/9.f)};
+    uint pairs=fx.quality_preset>=3.5f?8u:4u;
     float visibility = 0.f;
     bool history_valid = GridHistoryCompatible(fog_light[0], fog_light[1]);
     float3 jitter = history_valid ? float3(GridFastSample(id.xy, id.z * 3), GridFastSample(id.xy, id.z * 3 + 1), GridFastSample(id.xy, id.z * 3 + 2)) : .5f;
-    [unroll] for (uint i = 0; i < 4; ++i) {
-      float3 offset = float3(pattern[i] - .5f, .5f * (i + .5f) / 4.f);
-      if (history_valid) offset = float3(frac(pattern[i] + jitter.xy) - .5f, .5f * (i + jitter.z) / 4.f);
+    [loop] for (uint i = 0; i < pairs; ++i) {
+      float3 offset = float3(pattern[i] - .5f, .5f * (i + .5f) / pairs);
+      if (history_valid) offset = float3(frac(pattern[i] + jitter.xy) - .5f, .5f * (i + jitter.z) / pairs);
       float3 delta = dx * offset.x + dy * offset.y + dz * offset.z;
       visibility += FogSunVisibility(world + delta) + FogSunVisibility(world - delta);
     }
     float3 sun = fog_light[0].xyz * rsqrt(max(dot(fog_light[0].xyz, fog_light[0].xyz), 1.e-12f));
     source = max(fog_light[1].xyz, 0.f) * fx.sunlight * PhaseHG(dot(ray, sun), fx.anisotropy)
-             * (visibility / 8.f) * FogTerrainVisibility(world, sampling.x) * FogCloudVisibility(world, distance, sampling.x)
+             * (visibility / (2.f*pairs)) * FogTerrainVisibility(world, sampling.x) * FogCloudVisibility(world, distance, sampling.x)
              * FogLightTransmittance(world.z + fog_frame[42].y, sun.z, density, falloff, 1000.f);
   }
   volume.Store2(FOG_HEADER_BYTES + CellIndex(id) * 8, PackVolume(float4(min(source * max(extinction, FogSourceFloor), 60000.f), min(extinction, 100.f))));
@@ -152,7 +156,7 @@ void IntegrateColumn(uint2 id) {
     tau += cell.a * (end - previous);
     float raw = SegmentOpacity(tau);
     float opacity = pow(max(raw, 0.f), max(profile.w, .0001f))
-                    * saturate((max(end - start, 0.f) - curve.y) * curve.z);
+                    * saturate((max(end - FogFadeStart(CapturedFrame(22).z), 0.f) - curve.y) * curve.z);
     float gain = cell.a > 0.f ? max(0.f, opacity - weather_opacity) : 0.f;
     scattering += cell.rgb * (gain / max(cell.a, FogSourceFloor));
     weather_opacity += gain;

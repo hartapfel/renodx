@@ -1,6 +1,284 @@
+## Shared celestial lighting, wet-weather clearing and native sizes (8 November 2026)
+
+Validated isolated Release: `tmp/hartapfelfx-validation/celestial-coherent-lighting.addon64`
+SHA256 `8bf6a348f57450c1684cdef6b57fa6cfbaacf25d4b47a083b0fc5b9150c50e10`; 5792256 bytes.
+This supersedes the historical size/colour/weather behavior recorded below.
+Ready for user close/rebuild/restart; installed/loaded DLL and HDR addon preserved.
+
+- Existing Lighting Sun Size / Moon Size sliders retained, including saved values
+  and authored Sun100/Moon75 defaults. Removed fixed 3.63/14.3-degree references.
+  100% now scales native vertex-authored geometry; source VS matrix/unpack bounds
+  and camera distance determine angular radius. Sun sqrt(3)/2 footprint comes
+  from original E464 N.V>.5 shader support. No cinematic/astronomical substitute.
+  Safe CPU UPLOAD observation distinguishes vertex/pixel b2, accepts b3 alias;
+  original celestial fallback until potentially visible geometry is known.
+  Deeply sub-horizon unobserved bodies do not block cold day/night loads.
+  Runtime host observed its fixture Moon1.14593/Sun0.992404-degree diameters.
+- New sky/emission.hpp caches linear native light/palette/Moon chromaticities.
+  Low-Sun native warm palette supplies coherent source hue; no blue daytime halo
+  tint. Native view/direct/Global builders match directional RGB at preserved
+  Rec709 luminance/alpha, before scattering/reflection. Common row10 is a matrix
+  and is untouched. Fresh native observation avoids tint feedback. Local lights,
+  native night power and Off/Original behavior retained. Enhanced Sun/Moon/glow
+  and cloud direct light consume same cache; no final-scene tint. Absolute disc
+  photometric calibration remains stylized, not a new spectral atmosphere.
+- Cloud primary selection now uses cloud-top spherical horizon after ground
+  sunset, with per-occupied-sample planetary Sun occlusion. Terrain shadow
+  selection keeps original ground-horizon behavior. Existing sky reduction
+  analytically integrates native narrow cos^p solar/lunar aureoles, including
+  native lunar phase. No new pass/texture/ray/root, no GPU readback/wait.
+  Per-sky page adds radii112 and spectra128/144; cloud pagebase256 carries them.
+  HLSL private tail416 fits existing512 page; C++ Parameters256/injection48 unchanged.
+- Generator classifies all active rain/drizzle/storm/blizzard/thunder, including
+  light rain and Toussaint quest rain; zero strength/probability effects excluded.
+  19 profiles/56 regional rows. Wet high.w ramps first2.5% native blend, uses .2s
+  protection filter separately from .8s shape fade. Paused clock can acquire
+  protection, retains it until resumed on exit. Unknown retains natural cover.
+  Updated existing tooltip only; no new tab/preset/control.
+- PASS Clang x64 Release CompileOnly and strict shaders, native bindings/upload/
+  UI/descriptor/concurrency, fog PS/CS/local/interior/negative-distance/HDR suite;
+  337 production cloud GPU cases and17 celestial captures. New fixed-clock GPU
+  solar/lunar source-colour transport retains luminance through FP16 precision;
+  light-rain, early/paused/interrupted wet transitions pass. CPU/menu integration
+  exercises actual native builder hook composition, matrix/alpha/Off/no-feedback,
+  native projected size/distance and saved controls. Four additional coherent
+  FP16 sunset/night captures finite/nonnegative; synthetic preview/CSV in scratch.
+- PASS isolated actual-addon tests in both HDR load orders WITHOUT DevKit: sky
+  families with no later disc/card draws, split command lists, native clocks,
+  photo-mode local light observers, Raster/RT/PT sun consumers, native five DXR
+  libraries/DispatchRays, descriptor/state restoration and teardown. Toussaint
+  fixture explicitly observes actual E464 Sun mesh; A0A02407 remains screen copy.
+  Final logs coherence-release-final.log, coherence-clouds-final.log,
+  coherence-world-menu.log, coherence-startup-final.log and coherence-link.log.
+- Research rationale/source links in sky/README.md: PBRT radiometry and Hillaire
+  integrated atmosphere. Palette/luminance matching is a game-specific adaptation.
+  No live gameplay visual acceptance or gameplay performance claim. Next user
+  test: native100% sizes vs Original, saved sliders/glow, sunset cloud colour,
+  Moon/world/fog coherence, rain/storm blends, travel/meditation/photo mode and Off.
+
+Validated isolated Release: tmp/hartapfelfx-validation/celestial-native-style.addon64
+SHA256 4a1723a19e74f2e761451ee7e7f6b2828dbc1795d403c17d02e2400e6ee57e9b; bytes 5798400. Ready for user rebuild/restart.
+
+## Native celestial style, glow control, phases and brighter stars (8 November 2026)
+
+Added SunGlowSizeV1 in Lighting > Sun & Moon Appearance, between Sun Size and
+Moon Size:25..400%, default125%, parsed as scalar. Sun Size still scales both
+body and entire glow; new control changes only glow. Existing Sun100/Moon75,
+all fog/cloud preferences and Star Brightness saved/default100% preserved.
+Lighting reset restores125%; Nights reset preserves glow control. Source/runtime
+revision includes glow size; no new tab/preset/texture/pass/root/parameter allocation.
+Private settings CBV now carries Moon64, Sun80, glow size96, exposure flag100;
+composite pagebase256. ShaderInjectData48 / Parameters256 remain unchanged.
+
+Sun native E46451D5 formula derives normalized HDR colour from GlobalCB row10
+and material b2[0]/b2[2]. Native normalized colour is proportional to
+pow(max(L*L*material0,0),2.2)*material2.rgb*material2.a. Shader's common positive
+normalization/divisor/height/fog factors cancel in RGB ratios; final shade tint
+is post-gamma. CPU-visible upload sampling:light16 + material48bytes, separate
+Sun cache, same safe helper as Moon. Vertex pair E1C4426E validated, finite
+nonnegative values only. Callback returns immediately for Original/PresetOff.
+Read-only native capture PID31980: L=(37.2318993,24.9522991,26.5398407), material0=
+(38.9785233,38.6149559,37.5709763), white material2. b4 scalar/default b12 readback
+rejected for submission-end aliasing; absolute native Sun intensity NOT claimed.
+Existing bounded160..800 calibration and achromatic near-horizon dimming remain;
+fixed warm RGB and extra solar spectral tint removed. Cache used by following
+sky recording; unavailable Sun falls back to normalized current native glow colour.
+
+Solar shoulder uses native199RGB, native203x*y gain, material.y==1 exposure203w
+branch (CPU Sky-material flag transported to composite), native206x strength,
+and native pow(dot(view,sun),204x) width curve. Thus weather/sunset colours and
+width follow vanilla rather than independent warm filters. Radius-relative45%
+core/55%disc,12%soft rim, four-power outer falloff, short smooth afterglow and
+current-cloud/fine-column attenuation remain. Moon material matching unchanged.
+
+Both native Moon shaders use phase=2pi*(GlobalCB0.y*.033863864839+GlobalCB0.w),
+world light(cos,sin,0). Helper now uses that original clock-driven vector for
+surface normal NoL, earthshine and centred glow. Visible Sun/Moon positions can
+stay fixed while game days advance. The native approximately29.53-day cycle,
+daily rotation convention, opposite waxing/waning directions and dark-disc star
+occlusion are verified; NASA terrain/regolith photometry retained. No phase UI.
+
+Stellar linear base .2 ->1.6 (8x), saved slider/default100% untouched. Filter,
+atmospheric/haze/horizon/twilight/cloud attenuation unchanged. Direct GPU A/B
+against native-style-before/cloud-features.cso gives ratio8 at same ray,
+footprint, atmosphere,100%:previous.0758948 -> new.607159. Both actual native
+sky PS under captured haze200 now yield1051 visible stellar point pixels.
+
+PASS Release CompileOnly/strict all DXIL/fogPS-CS/local/HDR/interior/temporal and
+333cloudGPUcases,17 celestial pixel fixtures; final C++ Off guard rebuilt and
+isolated-linked Release again. PASS menu/profile/reset/Off integration. PASS
+actual-addon + HDR both load orders WITHOUT DevKit:24actualframes/75split
+recordings/both sky variants without disc-card draws/native5DXR/realDispatchRays.
+HDR float captures finite/nonnegative/belowFP16 overflow; native Sun/core colour
+and separate halo palette, exposure branch, zero native strength, glow-only
+scaling and inherited Sun Size scaling, opaque current vs transparent history,
+clock phases/month/opposite sides all covered. GPU comparison CLI argument guard
+fixed and host recompiled alone; repeat full333cases/reference8 passed. No live
+visual acceptance or gameplay FPS claimed; debug layer unavailable. Production
+GPU Moon phase and Sun day/sunset/afterglow preview plots inspected (fixed
+exposure/Reinhard; NOT gameplay/HDR display calibration). RawRGBA32F, scripts and
+HDR stats CSV retained in scratch. Logs native-style-{release,link,menu,startup,
+stellar-ratio}.log. Research/current limits in sky/README.md. Game/install untouched.
+User owns rebuild/restart and acceptance in Toussaint + base region/HDR.
+
+Validated isolated Release: tmp/hartapfelfx-validation/celestial-size-balance.addon64
+SHA256 33c8ec4705b2f5566e4ec179d21ba9c868e5b6c37d564a3245555cbc3c2bcc40; bytes 5787136. Ready for user rebuild/restart.
+
+## Celestial size, native Moon material and low-Sun glow (8 November 2026)
+
+Sun reference enlarged 1.7x to approximately3.63deg diameter; Moon enlarged4.6x
+to approximately14.3deg at100%. Existing authored Moon75% remains75% (about10.7deg).
+No setting migration/new tab/reset of user preferences. Solar glow now overlaps
+the body/rim:55% limb-darkened body +45% radius-relative Gaussian core, dim HG
+shoulder,12%-radius rim and fourth-order outer falloff. A bright wide halo with
+flat20..25deg cutoff made another large circle in the first GPU preview; the
+final falloff fixes that. Entire profile/support scales with Sun Size. Grazing
+path mixture, wavelength-dependent transmission and a fitted low aerosol layer
+produce warm sunrise/sunset and a smooth short afterglow; body extinction uses
+pixel elevation, preserving the upper limb after centre-set. Native sky/weather
+and all current-cloud/temporal fine-column extinction remain. No full-sky LUT,
+new pass/texture/root or buffer allocation. Research/approximation limits in sky/README.md.
+
+Native Moon material capture: standard E446F231 uses b2[0].rgb*b2[2].rgb*b2[2].a;
+Toussaint6D5A1EC2 uses b12[277].rgb*b2[2].rgb*b2[2].a. Live read-only standard
+capture PID32536 gives b2[0]=(14.2849865,2.55107808,.82191229), white b2[2], versus
+frame277=(1.07493377,.45421204,.28163663): frame277 alone is insufficient for
+standard sky. ObserveMoon validates native VS pair and reads48bytes only from
+CPU-visible UPLOAD memory, caches each family under existing device mutex, and
+passes16bytes via existing private settings CBV at64 (composite page320).
+Following sky recording consumes it; first/unavailable material falls back to
+frame277. No GPU readback/wait. NASA terrain/phase retained with native colour,
+Lambert2/3 mean normalization; fixed warm tint and extra lunar spectral filter
+removed, centred lunar glow follows same colour. This matches native material
+values/mean reference, not exact per-pixel native terrain/phase output.
+
+PASS final Release CompileOnly: strict all DXIL, source/root/layout/Off tests,
+fogPS/CS/local/interior/HDR/temporal tests,320 production cloud GPU cases,13
+celestial pixel captures including both native sky PS/captured night-haze200,
+both native Moon material families, clear/opaque FP16/FP32, contradictory current
+opaque/history-transparent silhouettes, Sun Size/glow scaling, low-Sun warming,
+upper limb and afterglow, outer halo contrast. Both actual-addon HDR load orders
+without DevKit pass24frames/75 delayed split recordings/both sky variants without
+disc-card draws/native5DXR libraries/real DispatchRays. Debug layer unavailable;
+no gameplay FPS or live visual acceptance claimed. Logs solar-size-{release,link,startup}.log.
+Fixture solar-size-preview.py/png (production GPU data, fixed2x exposure/Reinhard,
+not gameplay) inspected after correcting the outer halo. Whitespace check passes.
+Game and installed addons untouched; user controls rebuild/restart and visual acceptance.
+
+Validated isolated Release: tmp/hartapfelfx-validation/celestial-glow.addon64
+SHA256 91f21e29969fe522ebed22d5b16d052d0fd0cf5970a05510507f83f027b7ce67; bytes 5779456. Ready for user rebuild/restart.
+
+## Sun/Moon glow and stellar visibility iteration (8 November 2026)
+
+User found literal half-degree bodies too small, Sun too hard/bright and sometimes
+over clouds, lunar glow below Moon, stars invisible. New 100% size references
+are Sun2.13deg (4x) / Moon3.11deg (6x); authored Moon75% remains75%, yielding
+2.33deg. No profile reset or new UI section. Existing size tooltip now explains
+cinematic versus Original-cloud reference. Solar limb darkening remains; native
+sky amplitude sets a bounded160..800-unit core rather than40000.
+
+Added finite-source dual-HG aureoles with smooth20..25deg support. Both discs
+and glows share actual celestial directions and extinction. Glow reuses cloud
+optical columns rather than marching its broad area. Existing raw current-cloud
+texture is bound at privateSRV14; decode its OPACITY storage before conservative
+four-tap transmission comparison. Min current/resolved/fine columns prevent
+celestials shining through a visible cloud or a temporal hole. This adds no
+texture allocation/root parameter/full-screen production pass. Unready main
+views retain native sky/discs rather than inline enhanced/unoccluded sources.
+
+Read-only DevKit PID15532 standard sky capture found native light12deg below
+visible Moon (b12[38] vs[205]). Sky-only air direction now fades to actual Moon
+at night; the native azimuth-only lunar horizon hotspot is replaced by centered
+aureole. World-light/shadow constants stay unchanged. Stars use .2 gain instead
+of.006 and a .65-pixel Gaussian sigma. Nights brightness and resets unchanged.
+
+PASS309 cloudGPU cases plus9 celestial capture cases: FP16/32 clear/opaque,
+frozen clock, current-opaque/history-transparent silhouettes at default and
+large sizes, both actual native skyPS (449D3390/3B15DAAB) RASTERIZED with captured
+night/haze200 data. Each shows116 point pixels with >.003 scene RGB contrast at
+100% brightness. Test VS must retain native semantic REGISTER ORDER (UV,world,
+position); adapters with position first fail PSO linkage. Previous compositor
+restored in scratch FAILS silhouette regression as expected: 'Celestial source
+appeared in front of the current cloud silhouette'. Both HDR load orders without
+DevKit, native Moon variants, reflection atlas,75 split records, no-card/disc
+skies, local fog/photo-mode,5 native DXR libraries/DispatchRays, menu/reset/Off
+passed. Logs sky-iteration-{release,startup,menu,negative}.log.
+
+RTX5090, isolated FP16 Performance clear fixture,16 warmup+16 measured frames:
+4K sky adapter/render medians night.1578/.4952ms, day.0616/.3914ms. Prior same
+fixture .1501/.4229 and .0578/.3286ms. Render includes adapter; these are not play
+FPS, incremental gameplay cost or a low-end prediction. Running game can cause
+outliers. Allocation unchanged317.125MiB at4K; new glow needs no new image.
+
+Primary research and approximation limits: sky/README.md (Hillaire2020, Bruneton,
+GPU Gems2, Epic Sky Atmosphere, PBRT HG mixtures, measured solar aureoles).
+Captured data, labelled synthetic native-sky previews, previous shader and
+regression inputs: tmp/hartapfelfx-validation/sky-iteration*. User still controls
+restarts; final live artistic acceptance is pending. Installed game unchanged.
+
+Final validated isolated Release: tmp/hartapfelfx-validation/celestial-sky.addon64
+SHA256 21fb50738ce0d6e1d34e74f9b39d1744b0edacc465e2c4883c70d785cbc93f84 (5769216 bytes). Both HDR load orders passed without DevKit.
+
+# Celestial sky handoff - 8 November 2026
+
+Implemented user request for stars behind clouds, Nights Star Brightness,
+physical-style Sun/Moon and Toussaint missing/ghost sky sources. Details and
+primary sources: sky/README.md. Preserve prior user defaults and prior work.
+
+Live read-only DevKit PID29596: standard449D absent in current Toussaint scene;
+3B15DAAB/979EED1B sky,6D5A1EC2/680C44CE Moon, thenA0A02407/7A54F808. Last is
+a Load-only full-screen copy, not Sun; removed its emitter observer. Native
+original Moon dumps preserved in tmp/hartapfelfx-validation/layers-shaders/original.
+MoonPS SHA7057e81e1ffb448f277243ba486017b6ddb44c80556cfe85b5f8bd119820ea70;
+MoonVS SHAd971641abba51f816944b6e4beb83238cb76f228e88a7e62458ee520489c2600.
+Do not use CUA or control/launch/close the game. No shader live-load or installed
+DLL replacement was performed for this work. Use CompileOnly and isolated links.
+
+New sky/celestial.hlsli shares finite angular Sun, lunar phase/LS material,
+NASA relative-albedo mip chain, atmosphere/native veil and filtered point stars
+between both native skies and CompositeF7C00004. Main sky's existing space70
+CBV carries sky_deferred at48 (only HARTAPFEL_SKY_VIEW builds expose it).
+PrepareCelestialSky validates main target/view/admission and retains a256-byte
+page. Sky command-action post callback replays sky, then Render for sky hashes;
+that composite adds direct sources after128-step extinction BEFORE FP16 write.
+Atlas/nondeferred skies add sources inline. Native Sun/Moons bypass only scoped
+enhanced views; native cloud cards bypass successful main sky composites.
+Composite reapplies cached clouds/direct sources to a fresh sky even when GPU
+clock/camera freeze (important photo-mode case). Legacy captured-emitter test
+path remains for nondeferred inputs. Original/Off restores native paths.
+
+Parameters256 (authoring160,celestial240), fog starts256 unchanged. Shadow meta
+240 publishes row14->Shared304; appended174768-byte R8 Moon mip chain shares
+existing RAW resource. No new root parameters. Stars map to NightStarBrightness
+in Nights/Night Atmosphere, default100%, independent reset. Existing SunSize,
+MoonSize and NightMoonStrength remain. NASA CGI Moon Kit2019 source in scratch,
+SHA/source/linear-filter derivation in generated header and sky/README.
+
+Offline: 305 cloudGPU cases, four FP16/32 direct clear/opaque/frozen-clock cases,
+strictRelease compile, actual-addon both HDR order/nodevkit hosts including
+both sky families WITHOUT later native cards, both native Moon variants,
+six-face atlas, 75 split records, foreign views, photo/local fog,5 native DXR
+libraries/real DispatchRays; menu/reset/Off. Logs celestial-release-final.log,
+celestial-startup-final.log,celestial-menu-final.log. Final build/candidate hash
+reported below when finalized. User still needs rebuild/restart and visual
+acceptance in Toussaint/base regions across clear/rain/night/sunrise/photo mode.
+Exact screenshot glow attribution remains a live acceptance limitation: known
+painted-highlight smears and misclassified copy are removed, but do not claim
+a live A/B proven fix of that exact pixel.
+
 # HartapfelFX volumetric clouds handoff — 6 November 2026
 
 ## Continuation and current result
+
+- **Cloud disappearance after travel/meditation (8 November; offline fixed, user rebuild pending):** User reports whole sky fades away from sunrise through noon after fast travel/meditation; confirms low-sun Off does NOT restore it. Read-only DevKit snapshot and bounded ReadProcessMemory native weather check on PID29072 found active world0, region1, WT_Light_Clouds settled (duration45 remaining-1). Source recipe was zero low-family strength after removed 2D-sheet policy, explaining full family fade. Existing generator now seeds .45 cumulus only for WT_Light_Clouds rows with no retained low layer; existing light recipes retained, cover floor computed BEFORE fallback so none is added. Generated20profiles/56rows; clear/storm policies unchanged. Also found incomplete CloudAlreadyRendered guard: now includes frame204/205, and shadow metadata stores low-sun XYZ in existing base-height row spare components; cache compares it for twilight moon-primary cases. No metadata growth/new GPU passes/resources. Added regional nonzero-light assertions, settled storm->light visible sky, 12 dawn/noon/long-teleport/forward+back meditation cases with SAME clock GPU address and clearing Off/On, and frozen-clock sun-only/moon-only render cases. PASS full Release CompileOnly/strict shaders/fog/native/profile suites and291cloudGPUcases; light transition retains10978/161x91 affected pixels. Isolated old celestial guard restored in scratch PS shaders FAILS exact frozen-clock regression; corrected production passes. Final actual-addon host passes BOTH HDR orders without DevKit including native DXR5libs/DispatchRays, local-light photo-view test, roots/heaps and actualcloudframes. Candidate tmp/hartapfelfx-validation/cloud-travel-fixed.addon64 SHA256 473615b8d10eb7cdbff8face8fef7e4fa692801b61fec3a65ba99ae88a40c64c. Evidence cloud-travel-native-weather.json (read-native names, source recipe at capture), cloud-travel-release.log (mapping only), cloud-travel-solar-release.log (final291cases), cloud-travel-stale-cache-before.log, cloud-travel-host.log, cloud-travel-link.log. Scratch read-cloud-travel-weather.py parses loaded module names/native weather only, no game writes; modules JSON tied to old PID29072, do not reuse blindly. README/PERFORMANCE/WEATHER_MAP updated. Game stayed running; installed loaded DLL unchanged, user owns closure/rebuild/restart. User had toggled low-sun Off diagnostically; turn it back On after rebuild if desired. Live visual acceptance pending; no commit/push.
+- **Weather-aware low-sun cloud formations (8 November; offline complete, user rebuild/live look pending):** User wants cloud formations to open around the actual sun at sunrise/sunset, with smooth transitions, and explicitly EXCEPT heavy rain/storms. Added default-On CloudClearLowSunV1 under Cloud Appearance, existing four tabs/reset/master gates. New clouds/low_sun.hlsli uses native visible solar frame204.yzw only, smooth elevation fade -8/-3 and +6/+16 degrees, 2.5deg core and existing column-noise-varied10..15deg shoulder. Shapes coverage in shared CloudDensity before material erosion, so visible, environment, self-light and terrain-shadow rays agree. No shadow bypass or brightness change, no new passes/textures/roots; existing scattering.z float carries toggle, Parameters240 bytes unchanged. Cloud runtime revision includes toggle. Severe-weather metadata added by existing generator from audited native thunder/storm/blizzard/heavy rain effects (NOT fakeShadow), including Toussaint quest rain; regenerated20profiles/56rows. Existing high.w and family_transition.w carry severe blend; exact native blend plus existing0.8secGPUfamily fade controls opening. Unknown weather conservatively retains natural cover. PASS full Release CompileOnly, strict all shaders, fogPS/CS/negative fade/local/interiors/temporal,277cloudGPUcases incl all qualities, solar endpoints, shape/shadow coupling (ground1.788e-6->1 in fair weather), severe/unknown byte-identical Off/On, interrupted weather transition. Synthetic640x360actualshadercaptures reveal >98%HDRdisc onlyfair; storm blocks. PreviewPNG explicitly labeled synthetic square emitter/notgameplay, rawfloat/CSV/plot script in scratch (analysis-graphing skill). PASS final2HDRloadorderswithoutDevKit + actualcloud/fog/localphoto/DXR native5libraries/DispatchRays. Menuprofile/resetpass. Noticed existing user-authored fog defaults50 density/35sun/-40start in source; preserved, changedFogReset test tocompareauthoredsnapshot andstartuphost pinsFogDensity100/FogStart0. Final tmp/hartapfelfx-validation/cloud-low-sun.addon64 SHA256 91b95aa19539ad6c70ebf52b3c91fccc8dc6b5770a62d08851edc06a5d5d61c7. Logs cloud-low-sun-weather-{release,preview,menu,host,link}.log. Existing game addon not replaced, no game controls/DevKit changes used this turn. Docs README/PERFORMANCE/WEATHER_MAP updated with primary Nubis2015/2017 references and feature-specific limits. Next user close/rebuild/restart then fair low-sun/normal day/night/storm blend/Off visual acceptance; no gameplaybenchmark claimed.
+- **Local fog lights/photo-mode fix (8 November; offline validated, live rebuild pending):** User reports lamps disappear, reload recovers, suspects DevKit, then reproduces by entering/leaving photo mode. Source bug: ApplyLocal FindVolume(frame,nullptr) chose last allocated volume; Generate/Prepare match viewport. A second cached view sharing frame CBV permanently steals local injection after returning to first. ApplyLocal now resolves native compute t0, validates IsFogDepthInput, constructs full scene viewport from depth dimensions, and matches FindVolume to that view. Never use graphics viewport here (shadow passes leave 4096-square viewport). Runtime GPU host now dispatches native E6A77B56 and 9A6F318E with root/table CBVs, reads colored lamp RGB and local marker in second probe pixel, allocates a second real depth/viewport on shared frame CBV then returns, and records 96 split lists ahead. Existing candidate FAILS new regression (frame0 RGB .05578 equal channels, local marker0); fixed candidate PASS all14 fog-quality/HDR-order combinations without DevKit (336 frames/1344 delayed lists). Earlier startup directories contained stale 50-devkit DLL; corrected earlier mistaken no-DevKit statement to user. startup.ps1 now uses fresh startup-*-nodevkit dirs and rejects unexpected addon files; game install unchanged. Release object/link passed. Separate tmp/hartapfelfx-validation/fog-local-photo.addon64 SHA256 cfa5bed5e45169f22a69dfd1fe1e8953e2ead3debe1966d7f09f36c21a9da9df. Evidence fog-local-{object,link,photo-before,photo-after,host-build}.log and nodevkit ReShade.logs. Native live snapshot working 5418/5422/5587 and broken 7275/7350/7501 both sun/local/composite in order, same b12/b13 and t0 scene depth; after photo mode many shadow draws intervene. b12/b13 GPU capture rejected safely for aliasable allocation, no native light count claimed; capture cleared0pending. DevKit connected PID2784 during inspection. No game control, no installed addon replacement, no settings/default changes, no shader-math/brightness tweak. User must close/rebuild/restart and repeat photo cycle for visual acceptance.
+- **Signed fog fade/default revision (8 November; supersedes defaults/buttons below):** User requests negative Clear Distance, removal of Clear Beams/Default Balance and screenshot defaults; latest correction explicitly keeps Medium Density100%. Implemented FogStart range -100..100, default0. Shared HLSL FogFadeStart advances native distance fade for negatives while retaining nonnegative physical extinction start and logarithmic/far volume bounds. Prefix integration, per-pixel integration and opaque/forward weather reconstruction agree; existing history rejects changed FogStart. Defaults: Volumetric, Performance, Amount100%, Sky200%, Sun45%, Focus.65, Lamps100%, Height200%, SmoothOn, Medium100%. Removed both buttons; existing saved values retained, Fog Reset All applies authored defaults. PASS strict Release object/all shader compilation, negative PS/CS and per-pixel GPU regression, near/zero/positive fade paths, native interior/local/temporal checks, actual menu defaults/reset/profile roundtrip and actual addon Performance/Per-Pixel with both HDR load orders and native DXR. Evidence tmp/hartapfelfx-validation/fog-negative-{finalize,gpu,menu,host,link,release}.log. Isolated candidate.addon64 SHA256 c10dcdb4de764449bc11410ecf7e7157b32468cd0e82db67d7a3f1a062149856. Normal Release CMake link was denied because witcher3 PID26316 holds that addon open (confirmed with elevated read-only tasklist /m; sandbox Get-Process hid it). Installed DLL unchanged; user must close/rebuild. No game controls used; live look acceptance pending.
+- **Fog/volumetric-light separation and quality (8 November, offline complete; rebuild/live acceptance pending):** User accepts cloud presets and requests stronger beams without washing out the scene plus scalable fog quality. Preserve current user-authored CloudQualityPresetV1 default1/Performance (noticed during this turn; test now follows authored defaults). New FogAmountV1 defaults65%, scales broad native weather veil/desaturation only; beam RGB and physical medium remain independent. 100% restores old veil. FogDensity remains physical medium in collapsed Fog Medium (Advanced). FogSunlight key retained as Sun & Moon Beams, max400; Light Focus tooltip explains angles. Clear Beams button sets Amount35/Sun75/Focus.35, giving 7.06x HG side factor and .245x head-on factor vs saved Sun35/Focus.75 at equal medium/visibility; Default Balance reads the three registered defaults. Both are scoped and leave density/lamp strength/quality/other tabs alone. No new tabs or inline hints. FogQualityPresetV1: Custom (old key), Performance120x68x64, Balanced160x90x96, High240x135x128, Ultra256x144x128+16 directional shadow taps, Per-Pixel same field+per-receiver transport to exact depth. Portrait grids fit same pixel budget. Per-Pixel is expensive and does not trace fresh pixel geometry shadows. Sparse source normalization is decoded before coefficient filtering to prevent vacuum-edge double fading; homogeneous/partial-depth/vacuum-edge GPU tests pass. Header/cbuffer remains1024/48 bytes; two reserved floats reused; no new private root or resource tracker. Quality budget eviction retains recorded allocation ownership and history rejects changed modes. PASS strict Release, production fog PS/CS/local/interior/temporal/HDR cases, 256 cloud GPU cases, menu/profile/reset/quick-look scope, 14 actual-addon HDR/fog quality combinations with Performance clouds and native DXR. Final coefficient correction rechecked in both HDR orders. Separate final candidate tmp/hartapfelfx-validation/fog-beams.addon64 SHA256 60f62df563453408d41a1ff67cd3a364dfb5f6252e6524ac77bfd7fd9294e487; all critical CSOs verified embedded. Normal loaded Release DLL SHA256129495f054e7ae1b17155d41459e5f407d77a916047d654ee56e0bdc9e63487a unchanged, gamePID26792 running at last inspection. Native Raster806C has1920x1080depth,4096x4096x4cascades, terrain/cloud textures; captured b12 far7000,density.001954,exponent.87506. b13 readback rejected by DevKit for unproven submission-end aliasing; do not claim numeric shadow visibility from texture presence. Diagnostic cleared0pending. Evidence fog-beams-release.log, fog-beams-coefficients.log, fog-beams-ui-final.log, fog-beams-finalize.log, fog-beams-host.log, fog-beams-perpixel-host.log. Primary research/budgets/limits in README/PERFORMANCE. Plot script+CSVs+PNG fog-beam-analysis in scratch (analysis-graphing skill; matplotlib installed only under tmp plot-deps). User owns game close/launch; no Computer Use. No commit/push requested. Next: user rebuild/restart, choose Clear Beams and High or Balanced; verify natural sun/moon/local shafts, highlights, forward material edges, interiors and quality switching. Clean performance measurement remains pending while game runs.
+
+
+- **Cloud scalability (8 November, offline validated; live/clean timing pending):** New CloudQualityPresetV1 defaults to Custom, preserving old CloudQualityV2 and CloudStepSizeV2 values and full-resolution behavior. Main selector: Custom/Performance/Balanced/High/Ultra; manual quality/spacing move to conditional collapsed Cloud Quality (Advanced). Performance and Balanced trace and resolve at half width/height with positive depth-aware reconstruction and exact clipped rays for mountain intersections; stable phase/history and full-resolution emitter attenuation remain. High matches accepted Medium/50; Ultra uses prior Ultra/50. Performance retains 256-wide lighting volume after 128/192 experiments changed brightness by 13.5/6.8%; final mean brightness change 1.21%, Balanced 1.05% in held 1080p authored fixture. Custom and High pixel-identical to old shader in that capture. No shape/wind/night/lighting strength edits; pre-existing Internal Shadows default150 preserved. PASS strict Release/256 GPU cases, conditional menu/profile/scoped resets, 16 actual-addon HDR/fog/cloud configurations with native DXR and final Performance recheck in all4. Tested CSOs embedded in stable candidate tmp/hartapfelfx-validation/cloud-quality.addon64 SHA256 43d6485a9de4b90b1353a618cbe43ac220c6d850281522b4ab96270944db301d. Normal loaded Release DLL not replaced. GamePID26024 remains running; user asked once via async question to close for clean timing and normal link, or keep separate candidate. Do not close/launch/control PC. Contended timings are not speedup evidence. Evidence quality-final-build.log, quality-final-gpu.log, quality-reset-ui.log, quality-host.log, quality-performance-host.log, quality-image-statistics.json and quality-comparison.png. PERFORMANCE.md documents primary research, budgets, rejected experiments, limitations and benchmark suffixes. No commit/push requested.
+
 
 - **Current accepted state and PT lighting check (8 November):** User accepts current mod and requests commit/push on existing checkpoint branch. High/middle flat sheets removed, wind0.35x, Preset1-based defaults and current user source settings preserved, hover-only hints, standard preset slider, four tabs with scoped resets and short shared Help/About plus Classic support links. Moon ground/glow occlusion explicitly accepted. Latest camera correction passed strict Release,200 cloudGPUcases and4actual-addon HDR/RT/PT configurations. Live PT On/Off/On inspection confirmed active cloud shadow response: whole-scene pre-tonemap meanY1.15134/1.97914/1.15071 with camera unchanged; PT buffer outputs also dimmed on restoration. The PT skybox uses the mod-filled256x256environment (same resource asF716B319output), and active nativePT/SER/SHARC libraries match the cloud-adapter manifest. Do not interpret combined-buffer means as isolated indirect-sun attenuation factors; diffuse sky remains a separate lighting source. User restoredCloudShadowsOn and explicitly says no brightness change is needed if shadowing works. No lighting source edits for this inspection. Bounded DXR/native diagnostics stopped/cleared,0pendingreadbacks. Evidence in tmp/hartapfelfx-validation/INDIRECT_LIVE_PROGRESS.md and indirect-live-* artifacts.
 

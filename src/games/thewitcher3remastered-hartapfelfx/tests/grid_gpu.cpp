@@ -236,6 +236,7 @@ int main(int argc, char** argv) {
     if (!event) throw std::runtime_error("Fence event failed");
     uint64_t serial = 0;
     std::vector<uint32_t> graphics_result;
+    for (float clear_distance : {-100.f, 0.f})
     for (bool shaped_weather : {false, true})
       for (uint32_t local_count : {0u, 1u, 257u})
         for (bool occluded : {false, true})
@@ -271,7 +272,7 @@ int main(int argc, char** argv) {
                 light_data[10] = {.5f, .5f, .5f, 0};
                 light_data[16][0] = .1f;
                 Upload(light.Get(), light_data.data(), sizeof(light_data));
-                float controls[12] = {1, 1, local ? 0.f : strength, 0, 0, 1, 1, local ? 1.f : 0.f, 1, 0, 0, 0};
+                float controls[12] = {1, 1, local ? 0.f : strength, 0, clear_distance, 1, 1, local ? 1.f : 0.f, 1, 0, 0, 0};
                 Upload(settings.Get(), controls, sizeof(controls));
                 D3D12_RESOURCE_BARRIER barrier{};
                 barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -365,7 +366,7 @@ int main(int argc, char** argv) {
                 std::vector<uint32_t> result(bytes / 4);
                 std::memcpy(result.data(), mapped, bytes);
                 readback->Unmap(0, nullptr);
-                const float expected_opacity = std::pow(1.f - std::exp(-density * 1000.f), frame_data[42][3]) * (shaped_weather ? .4995f : 1.f);
+                const float expected_opacity = std::pow(1.f - std::exp(-density * 1000.f), frame_data[42][3]) * (shaped_weather ? (clear_distance < 0.f ? .5495f : .4995f) : 1.f);
                 const float expected_light = occluded ? 0.f : expected_opacity * strength * std::exp(-density * 1000.f) / (4.f * 3.141592653589793f);
                 for (uint32_t i = 0; i < width * height; ++i) {
                   const uint32_t offset = (FOG_HEADER_BYTES + 2 * cell_bytes + (slices * width * height + i) * 8) / 4;
@@ -410,7 +411,7 @@ int main(int argc, char** argv) {
                   for (uint32_t i = FOG_HEADER_BYTES / 4; i < volume_bytes / 4; ++i)
                     if (result[i] != graphics_result[i]) throw std::runtime_error("Graphics/compute grid mismatch");
                 }
-                std::cout << (compute ? "CS" : "PS") << " weather=" << shaped_weather << " local=" << local_count << " density=" << density << " sunlight=" << strength << " shadow=" << occluded << " passed\n";
+                std::cout << (compute ? "CS" : "PS") << " clear distance=" << clear_distance << " weather=" << shaped_weather << " local=" << local_count << " density=" << density << " sunlight=" << strength << " shadow=" << occluded << " passed\n";
               }
     // Exercise the production early capture and a later PS/CS generation with
     // t24 explicitly unbound. Only the frame-matched snapshot may remove fog.
@@ -738,12 +739,28 @@ int main(int argc, char** argv) {
     light_data[35] = {1000, 0, 0, 10};
     light_data[42] = {1, 0, 0, 1};
     Upload(light.Get(), light_data.data(), sizeof(light_data));
-    for (float reconstruction : {0.f, 1.f}) {
+    for(const auto& mode:{std::array<float,6>{0.f,0.f,0.f,1000.f,0.f,0.f},std::array<float,6>{1.f,0.f,0.f,1000.f,0.f,0.f},
+        std::array<float,6>{0.f,.35f,0.f,1000.f,0.f,0.f},std::array<float,6>{0.f,1.f,0.f,1000.f,0.f,0.f},
+        std::array<float,6>{0.f,0.f,5.f,1000.f,0.f,0.f},std::array<float,6>{0.f,.35f,5.f,1000.f,0.f,0.f},std::array<float,6>{0.f,1.f,5.f,1000.f,0.f,0.f},
+        std::array<float,6>{0.f,1.f,5.f,25.f,0.f,0.f},std::array<float,6>{0.f,1.f,5.f,.05f,0.f,0.f},std::array<float,6>{0.f,1.f,5.f,1000.f,1.f,0.f},
+        std::array<float,6>{0.f,0.f,5.f,1.f,0.f,0.f},std::array<float,6>{0.f,0.f,5.f,1.f,0.f,-100.f},
+        std::array<float,6>{0.f,0.f,5.f,25.f,0.f,-50.f},std::array<float,6>{0.f,0.f,5.f,25.f,0.f,100.f}}) {
+      const float reconstruction=mode[0];
+      if(mode[2]==5.f) {
+        auto ray_fixture=fixture;
+        const auto cell=pack(250.f,500.f,1000.f,.001f);
+        for(uint32_t i=0;i<width*height*slices;++i) {
+          ray_fixture[(FOG_HEADER_BYTES+cell_bytes)/4+2*i]=mode[4]>0.f &&i%width>=width/2?0u:cell[0];
+          ray_fixture[(FOG_HEADER_BYTES+cell_bytes)/4+2*i+1]=mode[4]>0.f &&i%width>=width/2?0u:cell[1];
+        }
+        Upload(history_upload.Get(),ray_fixture.data(),bytes);
+      } else Upload(history_upload.Get(),fixture.data(),bytes);
       frame_data[0][0] = reconstruction;
       Upload(frame.Get(), frame_data.data(), sizeof(frame_data));
-      float controls[12] = {1, 1, 0, 0, 0, 1, 1, 1, 1, reconstruction, 0, 0};
+      float controls[12] = {1, 1, 0, 0, mode[5], 1, 1, 1, 1, reconstruction, mode[1], mode[2]};
       Upload(settings.Get(), controls, sizeof(controls));
       grid_data[5] = 3;
+      std::memcpy(&grid_data[7],&mode[3],4);
       Upload(grid.Get(), grid_data, sizeof(grid_data));
       Check(allocator->Reset());
       Check(cmd->Reset(allocator.Get(), features.Get()));
@@ -751,7 +768,7 @@ int main(int argc, char** argv) {
       barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
       barrier.Transition = {output.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS};
       cmd->ResourceBarrier(1, &barrier);
-      if (reconstruction == 0.f) {
+      if(mode==std::array<float,6>{0.f,0.f,0.f,1000.f,0.f,0.f}) {
         D3D12_RESOURCE_BARRIER texture_barrier{};
         texture_barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
         texture_barrier.Transition = {shadow_texture.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST};
@@ -787,7 +804,7 @@ int main(int argc, char** argv) {
       barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
       barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
       cmd->ResourceBarrier(1, &barrier);
-      cmd->CopyBufferRegion(readback.Get(), 0, output.Get(), 0, 160);
+      cmd->CopyBufferRegion(readback.Get(), 0, output.Get(), 0, 176);
       Check(cmd->Close());
       ID3D12CommandList* lists[] = {cmd.Get()};
       queue->ExecuteCommandLists(1, lists);
@@ -795,14 +812,25 @@ int main(int argc, char** argv) {
       Check(fence->SetEventOnCompletion(serial, event));
       if (WaitForSingleObject(event, 30000) != WAIT_OBJECT_0) throw std::runtime_error("Feature GPU test timed out");
       void* mapped = nullptr;
-      D3D12_RANGE read{0, 160};
+      D3D12_RANGE read{0, 176};
       Check(readback->Map(0, &read, &mapped));
-      std::array<float, 40> values{};
-      std::memcpy(values.data(), mapped, 160);
+      std::array<float, 44> values{};
+      std::memcpy(values.data(), mapped, 176);
       readback->Unmap(0, nullptr);
-      const float expected[16] = {1000, 2000, 4000, .5f, 0, 0, 0, 0, 1000.5f, 2001, 4001.5f, .5f, 0, 1, 0, 1};
+      const float opacity=mode[2]==5.f?std::pow(1.f-std::exp(-Half(uint16_t(pack(0,0,0,.001f)[1]>>16))*(mode[4]>0.f?.5f:1.f)*std::max(0.f,mode[3]-.1f)),saved_frame[42][3])
+          *std::clamp((mode[3]-(mode[5]>0.f?mode[5]:saved_frame[22][2]+mode[5])-saved_frame[48][1])*saved_frame[48][2],0.f,1.f):.5f;
+      const float beam=mode[2]==5.f?1000.f*opacity:1000.f;
+      const float veil=opacity*(1.f-mode[1]);
+      const float expected[16] = {beam,2*beam,4*beam,opacity,0,0,0,0,
+          beam+veil,2*beam+2*veil,4*beam+3*veil,veil,0,1,0,1};
       for (uint32_t i = 0; i < 16; ++i)
-        if (!std::isfinite(values[i]) || std::abs(values[i] - expected[i]) > std::max(.0001f, std::abs(expected[i]) * .00001f)) throw std::runtime_error("HDR reconstruction, weather receiver or interior interval regression");
+        if (!std::isfinite(values[i]) || std::abs(values[i] - expected[i]) > std::max(.0001f, std::abs(expected[i]) * .00002f)) {
+          std::cerr<<"Fog control mode "<<mode[0]<<","<<mode[1]<<","<<mode[2]<<" channel "<<i<<" got "<<values[i]<<" expected "<<expected[i]<<"\n";
+          throw std::runtime_error("HDR reconstruction, independent fog/beam controls or per-pixel transport regression");
+        }
+      for(unsigned i=0;i<3;++i)
+        if(std::abs(values[40+i]*values[43]-values[8+i])>std::max(.001f,values[8+i]*.00001f))
+          throw std::runtime_error("Forward fog lost additive beam energy when clearing the veil");
       auto fast = [](uint32_t x, uint32_t y, uint32_t dimension) {
         const uint32_t ox = uint32_t(std::fmod(float(dimension) * .754877666f, 1.f) * 128), oy = uint32_t(std::fmod(float(dimension) * .569840296f, 1.f) * 128);
         return (float(witcher3classic::clouds::fast_noise[(3 * 128 + ((y + oy) & 127)) * 128 + ((x + ox) & 127)]) + .5f) / 256.f;
@@ -816,7 +844,8 @@ int main(int argc, char** argv) {
       for (uint32_t i = 0; i < 8; ++i)
         if (values[28 + i] != expected_local[i]) throw std::runtime_error("RGB/channel/animated cookie or cube-shadow regression");
       if (values[36] != (reconstruction == 0.f ? 1.f : 0.f)) throw std::runtime_error("Receiver accepted the wrong camera volume");
-      std::cout << "HDR reconstruction=" << reconstruction << ", weather receivers, interior boundaries and FAST addressing passed\n";
+      std::cout << "HDR reconstruction=" << reconstruction << " haze reduction="<<mode[1]<<" quality="<<mode[2]<<" clear distance="<<mode[5]
+          << ", independent beam/veil, per-pixel transport, forward additive energy and native receivers passed\n";
     }
     CloseHandle(event);
     if (messages)

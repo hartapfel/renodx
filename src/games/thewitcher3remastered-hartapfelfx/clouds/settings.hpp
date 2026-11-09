@@ -6,8 +6,18 @@
 namespace hartapfelfx::clouds {
 inline float mode = 1.f;
 inline float quality = 1.f;
+// Custom retains existing profiles byte-for-byte. Named presets own sampling,
+// never the user's weather, morphology, lighting strengths or shadow toggle.
+inline float quality_preset = 0.f;
 inline float step_size = 1.f;
 inline float shadows = 1.f;
+inline float clear_low_sun = 1.f;
+// 18:00..06:00, with 15-minute in-game fades inside the requested window.
+inline float LowSunSchedule(float time) {
+  if(!std::isfinite(time)||time<0.f||time>1.f)return 1.f;
+  const float t=std::clamp(time>=.75f?(time-.75f)*96.f:(.25f-time)*96.f,0.f,1.f);
+  return t*t*(3.f-2.f*t);
+}
 // The controls are direct multipliers of the model. Historic Classic rebases
 // (.18/.432 density, 4 detail, .8 detail size, 1.3 thickness) must not silently
 // alter the neutral 100% presentation of this new implementation.
@@ -46,20 +56,28 @@ inline std::array<float,4> Appearance() {
   return {std::clamp(coverage,0.f,2.f),std::clamp(density,0.f,4.f),
       std::clamp(size,.25f,4.f),std::clamp(thickness,.5f,3.f)};
 }
-// Full resolution divisor, view samples, light samples. Step size changes
-// view sampling only, preserving lighting quality.
+inline unsigned QualityLevel(float value) {
+  constexpr std::array<unsigned,5> levels{0,0,1,1,3};
+  return quality_preset<.5f ? unsigned(std::clamp(std::lround(value),0L,5L))
+      : levels[std::clamp(std::lround(quality_preset),0L,4L)];
+}
+// Resolution divisor, view floor, light budget. Named presets retain smooth
+// longitudinal sampling and scale pixels first; Custom retains its old spacing.
 inline std::array<unsigned,3> Quality(float value) {
   constexpr std::array<std::array<unsigned,3>,6> levels{{{1,32,3},{1,48,4},{1,64,5},{1,80,6},{1,128,10},{1,160,12}}};
-  auto samples=levels[std::clamp(std::lround(value),0L,5L)];
-  samples[1]=unsigned(std::ceil(samples[1]/std::clamp(step_size,.5f,2.f)));
+  auto samples=levels[QualityLevel(value)];
+  if(quality_preset>.5f &&quality_preset<2.5f)samples[0]=2;
+  samples[1]=unsigned(std::ceil(samples[1]/(quality_preset<.5f ? std::clamp(step_size,.5f,2.f) : .5f)));
   return samples;
 }
-// Two direct-scattering octaves, erosion octaves, reserved, noise size.
+// Two direct-scattering octaves, erosion octaves, low-sun opening, noise size.
 // The two-octave lighting model is fixed across quality levels as in Bauer's
 // cloud shading model; quality refines ray sampling and morphology.
 inline std::array<float,4> QualityLighting(float value) {
   constexpr std::array<std::array<float,4>,6> levels{{
       {2,1,0,64},{2,1,0,64},{2,2,0,128},{2,3,0,128},{2,3,0,128},{2,3,0,128}}};
-  return levels[std::clamp(std::lround(value),0L,5L)];
+  auto result = levels[QualityLevel(value)];
+  result[2] = std::clamp(clear_low_sun, 0.f, 1.f);
+  return result;
 }
 }

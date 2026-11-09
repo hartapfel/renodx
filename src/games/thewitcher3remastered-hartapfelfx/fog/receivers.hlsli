@@ -16,7 +16,7 @@ float4 ReceiverFog(float4 position, float distance, out float4 desaturation) {
   float opacity = saturate(integrated.a);
   float4 profile = FogSourceFrame(42);
   float4 curve = asfloat(FogVolume.Load4(32));
-  float start = max(fx.start_distance, FogSourceFrame(22).z);
+  float start = FogFadeStart(FogSourceFrame(22).z);
   float path = min(max(distance - start, 0.f), max(profile.z, 0.f));
   float fade = saturate((path - curve.y) * curve.z);
   float raw = fade > 1.e-7f ? pow(saturate(opacity / fade), rcp(max(profile.w, .0001f))) : 0.f;
@@ -38,10 +38,17 @@ float4 ReceiverFog(float4 position, float distance, out float4 desaturation) {
     blend = saturate(opacity * weights.xz + weights.yw);
     weather = lerp(weather, float4(lerp(base, second.rgb, blend.x), saturate(opacity * lerp(1.f, second.a, blend.y))), secondary);
   }
-  return float4(weather.rgb * weather.a + integrated.rgb * (opacity > 1.e-7f ? weather.a / opacity : 0.f), weather.a);
+  // Art direction changes the weather veil, not the independently shadowed
+  // scattering field. Keep its medium and incoming-light extinction intact.
+  desaturation.a*=FogAmount();
+  return float4(weather.rgb * (weather.a*FogAmount())
+      + integrated.rgb * (opacity > 1.e-7f ? weather.a / opacity : 0.f), weather.a*FogAmount());
 }
 float4 ReceiverFogVarying(float4 position, float distance) {
   float4 desaturation;
   float4 fog = ReceiverFog(position, distance, desaturation);
-  return float4(fog.a > 1.e-7f ? fog.rgb / fog.a : 0.f, fog.a);
+  // Native forward materials represent fog as colour/coverage. Preserve
+  // additive beam radiance at zero veil with negligible residual coverage.
+  float coverage=fx.haze_reduction>0.f?max(fog.a,any(fog.rgb>0.f)?1.e-4f:0.f):fog.a;
+  return float4(coverage>1.e-7f?fog.rgb/coverage:0.f,coverage);
 }

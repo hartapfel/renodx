@@ -64,6 +64,10 @@ using BuildConstants = void (*)(const void*, void*);
 inline BuildEnvironment build_direct_constants = nullptr;
 inline BuildConstants build_common_constants = nullptr;
 inline void (*edit_shared_common_constants)(void*) = nullptr;
+inline void (*observe_celestial_frame)(const void*) = nullptr;
+inline void (*observe_game_time)(float) = nullptr;
+inline void (*observe_native_primary)(const void*) = nullptr;
+inline void (*edit_celestial_light)(void*) = nullptr;
 inline BuildConstants build_global_constants = nullptr;
 // This builder returns its output pointer and resolves negative CVar values
 // through the current weather curves before writing sky/reflection strengths.
@@ -126,6 +130,7 @@ inline uint64_t NightSchedule() {
 inline float ClockNightWeight(const unsigned char* environment) {
   float time = 0.f;
   std::memcpy(&time, environment + 0x15c0, sizeof(time));
+  if(observe_game_time)observe_game_time(time);
   if (!std::isfinite(time) || time < 0.f || time > 1.f) return 0.f;
   const uint64_t schedule = night_schedule.load(std::memory_order_relaxed);
   if (schedule == 0) return 0.f;
@@ -161,10 +166,12 @@ inline void BuildHook(void* output, const void* input) {
   std::memcpy(&environment, static_cast<const unsigned char*>(input) + 0x10, sizeof(environment));
   const float clock_weight = ClockNightWeight(environment);
   const auto calibration = normalization::GetCalibration();
+  if(observe_native_primary)observe_native_primary(view+0x280);
   // Native cached global-light colors EFE0/EFF0/F000 -> 280/290/2A0.
   // Darker Nights zeros EFE0; this covers the PT/shared-view consumer.
   for (unsigned offset : {0x280u, 0x290u, 0x2a0u}) {
     ScaleRGB(view + offset, direct_multiplier.load(std::memory_order_relaxed) * calibration.direct, clock_weight);
+    if(edit_celestial_light)edit_celestial_light(view+offset);
   }
   // Skylight must follow the same clock fade. The weather-authored day-weight
   // can stay above zero in deep night, leaving residual light at strength 0.
@@ -180,7 +187,11 @@ inline void DirectConstantsHook(void* renderer, const void* environment) {
                           * normalization::GetCalibration().direct;
   // b13 c1/c61/c62: same native colors as the PT view, independent of its
   // constants upload. Do not touch the structured buffers of torch/local lights.
-  for (unsigned offset : {0x10u, 0x3d0u, 0x3e0u}) ScaleRGB(constants + offset, intensity, weight);
+  if(observe_native_primary)observe_native_primary(constants+0x10);
+  for (unsigned offset : {0x10u, 0x3d0u, 0x3e0u}) {
+    ScaleRGB(constants + offset, intensity, weight);
+    if(edit_celestial_light)edit_celestial_light(constants+offset);
+  }
 }
 
 inline void* SkyConstantsHook(void* output, const void* environment) {
@@ -206,10 +217,11 @@ inline void* SkyConstantsHook(void* output, const void* environment) {
 
 inline void CommonConstantsHook(const void* context, void* output) {
   build_common_constants(context, output);
-  if (edit_shared_common_constants) edit_shared_common_constants(output);
   const unsigned char* environment = nullptr;
   std::memcpy(&environment, static_cast<const unsigned char*>(context) + 0x8, sizeof(environment));
   const float weight = ClockNightWeight(environment);
+  if(observe_celestial_frame)observe_celestial_frame(output);
+  if (edit_shared_common_constants) edit_shared_common_constants(output);
   // This builder also runs without PT. Publish its clock so cloud/smoke
   // injection and native impacts do not retain a stale PT-frame night weight.
   night_weight.store(weight, std::memory_order_relaxed);
@@ -317,6 +329,7 @@ inline void GlobalConstantsHook(const void* context, void* output) {
   const float weight = ClockNightWeight(environment);
   const float intensity = water_multiplier.load(std::memory_order_relaxed);
   auto* constants = static_cast<unsigned char*>(output);
+  if(edit_celestial_light)edit_celestial_light(constants+0xa0);
   // The native builder clears c14.zw. Rain uses only c14.w, tagged so a
   // shader loaded without this addon passes through at native brightness.
   const float rain = rain_multiplier.load(std::memory_order_relaxed);

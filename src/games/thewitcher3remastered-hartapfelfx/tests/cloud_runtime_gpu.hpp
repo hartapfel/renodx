@@ -65,6 +65,7 @@ inline void CloudRuntime(ID3D12Device* device, const std::filesystem::path& orig
   auto deferred_sun = pair("0x0C1350D8.vs_6_3.cso", "0x806C62A8.ps_6_6.cso", scene_format);
   auto sky = pair("0xCCD2CA86.vs_6_3.cso", "0x449D3390.ps_6_6.cso", scene_format);
   auto moon_disc = pair("0x14AEBBFB.vs_6_3.cso", "0xE446F231.ps_6_6.cso", scene_format);
+  const auto standard_moon_disc=moon_disc;
   auto sun_disc = pair("0xE1C4426E.vs_6_3.cso", "0xE46451D5.ps_6_6.cso", scene_format);
   auto cloud_card = pair("0xF20F0978.vs_6_3.cso", "0xBF0CA052.ps_6_6.cso", scene_format);
   auto animated_card=pair("0xB5373B9F.vs_6_3.cso","0x683213A3.ps_6_6.cso",scene_format);
@@ -76,6 +77,8 @@ inline void CloudRuntime(ID3D12Device* device, const std::filesystem::path& orig
   ComPtr<ID3D12PipelineState> sky_toussaint, sun_toussaint, card_toussaint, background_toussaint, material_storm;
   if (alternate_sky) {
     sky_toussaint = pair("0x979EED1B.vs_6_3.cso", "0x3B15DAAB.ps_6_6.cso", scene_format);
+    if(std::filesystem::exists(originals/"0x680C44CE.vs_6_3.cso"))
+      moon_disc=pair("0x680C44CE.vs_6_3.cso","0x6D5A1EC2.ps_6_6.cso",scene_format);
     sun_toussaint = pair("0x7A54F808.vs_6_3.cso", "0xA0A02407.ps_6_6.cso", scene_format);
     card_toussaint = pair("0x6AB84A91.vs_6_3.cso", "0xA35EA14D.ps_6_6.cso", scene_format);
     background_toussaint = pair("0xB38E970F.vs_6_3.cso", "0x2AF34748.ps_6_6.cso", scene_format);
@@ -111,6 +114,11 @@ inline void CloudRuntime(ID3D12Device* device, const std::filesystem::path& orig
   auto light_buffer = RuntimeBuffer(device, sizeof(lighting), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, lighting.data());
   auto camera_buffer = RuntimeBuffer(device, sizeof(camera), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, camera.data());
   auto clock_buffer = RuntimeBuffer(device, sizeof(clock), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, clock.data());
+  std::array<float,64> native_geometry{};
+  native_geometry[0]=native_geometry[5]=native_geometry[10]=1.f;native_geometry[11]=1000.f;
+  native_geometry[32]=native_geometry[33]=native_geometry[34]=20.f;
+  native_geometry[36]=native_geometry[37]=native_geometry[38]=-10.f;
+  auto geometry_buffer=RuntimeBuffer(device,sizeof(native_geometry),D3D12_HEAP_TYPE_UPLOAD,D3D12_RESOURCE_STATE_GENERIC_READ,native_geometry.data());
   const float sentinel[64] = {.125f,.25f,.5f,.75f};
   auto sentinel_buffer = RuntimeBuffer(device, sizeof(sentinel), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, sentinel);
   ComPtr<ID3D12DescriptorHeap> heap, samplers, rtvs;
@@ -167,6 +175,7 @@ inline void CloudRuntime(ID3D12Device* device, const std::filesystem::path& orig
   command->ResourceBarrier(2, barriers);
   command->SetGraphicsRootSignature(common.Get());
   for (uint32_t index = 0; index < 14; ++index) command->SetGraphicsRootConstantBufferView(index, zero->GetGPUVirtualAddress());
+  command->SetGraphicsRootConstantBufferView(3,geometry_buffer->GetGPUVirtualAddress());
   command->SetGraphicsRootConstantBufferView(0, clock_buffer->GetGPUVirtualAddress()); command->SetGraphicsRootConstantBufferView(12, frame_buffer->GetGPUVirtualAddress()); command->SetGraphicsRootConstantBufferView(13, light_buffer->GetGPUVirtualAddress());
   command->SetGraphicsRootConstantBufferView(1,frame_buffer->GetGPUVirtualAddress());
   command->SetGraphicsRootDescriptorTable(14, gpu(0)); command->SetGraphicsRootDescriptorTable(15, gpu(128));
@@ -186,7 +195,11 @@ inline void CloudRuntime(ID3D12Device* device, const std::filesystem::path& orig
   command->SetPipelineState(deferred_sun.Get()); command->DrawInstanced(0,1,0,0);
   command->SetPipelineState(alternate_sky ? sky_toussaint.Get() : sky.Get()); command->DrawInstanced(0,1,0,0);
   command->SetPipelineState(moon_disc.Get()); command->DrawInstanced(0,1,0,0);
+  command->SetPipelineState(standard_moon_disc.Get());command->DrawInstanced(0,1,0,0);
   command->SetPipelineState(alternate_sky ? sun_toussaint.Get() : sun_disc.Get()); command->DrawInstanced(0,1,0,0);
+  // Toussaint's A0A02407 is only a screen copy. Observe the actual native Sun
+  // mesh as well so later no-disc sky fixtures have an authored size cached.
+  command->SetPipelineState(sun_disc.Get());command->DrawInstanced(0,1,0,0);
   const auto pre_card_desc = targets[4]->GetDesc();
   D3D12_PLACED_SUBRESOURCE_FOOTPRINT pre_card_footprint{};
   uint64_t pre_card_bytes = 0;
@@ -601,7 +614,7 @@ inline void CloudRuntime(ID3D12Device* device, const std::filesystem::path& orig
       list->SetGraphicsRootDescriptorTable(14,gpu(0)); list->SetGraphicsRootDescriptorTable(15,gpu(128));
       list->RSSetViewports(1,&viewport); list->RSSetScissorRects(1,&scissor); list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
       if (stage == 0) { list->OMSetRenderTargets(4,&first_target,TRUE,nullptr); list->SetPipelineState(gbuffer.Get()); }
-      else { list->OMSetRenderTargets(1,&scene_target,FALSE,nullptr); list->SetPipelineState(stage == 1 ? sun.Get() : sky.Get()); }
+      else { list->OMSetRenderTargets(1,&scene_target,FALSE,nullptr); list->SetPipelineState(stage == 1 ? sun.Get() : (tick&2u)&&alternate_sky ? sky_toussaint.Get() : sky.Get()); }
       if (stage == 2) list->ClearRenderTargetView(scene_target,background,0,nullptr);
       list->DrawInstanced(0,1,0,0);
       if(stage==1u) {
@@ -625,9 +638,13 @@ inline void CloudRuntime(ID3D12Device* device, const std::filesystem::path& orig
         list->CopyTextureRegion(&destination,0,0,0,&indirect_source,nullptr);
       }
       if (stage == 2) {
-        list->SetPipelineState(moon_disc.Get()); list->DrawInstanced(0,1,0,0);
-        list->SetPipelineState(sun_disc.Get()); list->DrawInstanced(0,1,0,0);
-        list->SetPipelineState(cloud_card.Get()); list->DrawInstanced(0,1,0,0);
+        // Every other frame has no native discs or cloud-card draws. The sky
+        // post callback must still render celestials/clouds exactly once.
+        if((tick&1u)!=0u) {
+          list->SetPipelineState(moon_disc.Get()); list->DrawInstanced(0,1,0,0);
+          list->SetPipelineState(sun_disc.Get()); list->DrawInstanced(0,1,0,0);
+          list->SetPipelineState(cloud_card.Get()); list->DrawInstanced(0,1,0,0);
+        }
         D3D12_RESOURCE_BARRIER barrier{}; barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
         barrier.Transition = {targets[4].Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE}; list->ResourceBarrier(1,&barrier);
         D3D12_TEXTURE_COPY_LOCATION source{targets[4].Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX}, destination{split_readback.Get(),D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
@@ -666,7 +683,7 @@ inline void CloudRuntime(ID3D12Device* device, const std::filesystem::path& orig
     } else if (cloud_pixels < 1000) throw std::runtime_error("Split cloud frame was lost or matched the wrong clock page at frame "+std::to_string(tick));
   }
   split_readback->Unmap(0,nullptr);
-  std::cout << "PASS 24 actual cloud frames, 75 delayed split recordings, distinct light/sky clock allocations, foreign-view rejection and GPU-ordered temporal publication" << std::endl;
+  std::cout << "PASS 24 actual cloud frames, both sky variants without native disc/card draws, 75 delayed split recordings, distinct light/sky clock allocations, foreign-view rejection and GPU-ordered temporal publication" << std::endl;
   std::cout << "PASS five native DXR libraries, export/local-root association, real DispatchRays and compute/native state restoration" << std::endl;
   std::cout << "PASS actual-addon main cloud render, native weather/clock/light capture, foreground fog, HDR API-injected CBV/root constants/resource and sampler heaps. Changed=" << changed << std::endl;
 }

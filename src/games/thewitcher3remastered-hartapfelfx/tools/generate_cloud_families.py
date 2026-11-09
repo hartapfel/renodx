@@ -39,9 +39,23 @@ for table in sorted(audit["tables"],key=lambda t:t["bundle"].lower().startswith(
                 weights[i]=max(weights[i],value*min(strength,1)*probability)
         if not matched:continue
         cover=.65 if row.get("fakeShadow")=="0" and max(weights[:2])>0 else 0.
+        # Light-cloud weather can be authored entirely with the removed flat
+        # alto/cirrus sheets. Retain a light volumetric formation in that case;
+        # otherwise the family fade erases the entire sky after a weather change.
+        # Native coverage still supplies the gaps, with no new coverage floor.
+        if name=="WT_Light_Clouds" and max(weights[:2])==0:
+            weights[0]=.45
         # Native flat/alto/cirrus effects remain catalogued as evidence,
         # but all added 2D sheets were rejected and are not rendered.
-        rows[(region,name)]={"low":weights[:2]+[0.,0.],"high":[0.,1.,cover,0.]}
+        # Weather texture slots are not precipitation identities. Use the
+        # audited native weather/effect record, including regional quest rain.
+        effects=[path.lower() for key,path in row.items() if key.endswith("_effect") and path
+            and float(row.get(key[:-6]+"prob") or 1)>0
+            and float(row.get(key[:-6]+"strength") or 1)>0]
+        severe=float(row.get("backgroundThunder","").lower()=="true"
+            or any(word in name.lower() for word in ("rain","drizzle","storm","blizzard","thunder"))
+            or any(any(word in path for word in ("rain","drizzle","storm","blizzard","thunder")) for path in effects))
+        rows[(region,name)]={"low":weights[:2]+[0.,0.],"high":[0.,1.,cover,severe]}
 profiles=[{"low":[1,0,0,0],"high":[0,0,0,0]}]
 names=sorted({name for _,name in rows})
 entries=[]
@@ -62,7 +76,7 @@ lines=["""// Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #include <cstdint>
 namespace hartapfelfx::clouds::families {
 struct Profile { std::array<float,4> low, high; };
-// low: cumulus, stratus deck, reserved, reserved; high: reserved, known, fallback cover, reserved.
+// low: cumulus, stratus deck, reserved, reserved; high: reserved, known, fallback cover, severe weather.
 inline constexpr Profile profiles[] = {
 """]
 for profile in profiles:

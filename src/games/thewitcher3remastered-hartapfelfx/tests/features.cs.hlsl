@@ -15,7 +15,9 @@ SamplerState fog_wrap_sampler : register(s14);
 #define fog_clamp_sampler FogLocalSampler
 #include "../fog/sun.hlsli"
 [numthreads(1, 1, 1)] void main() {
+  float test_distance=sampling.w!=0u?asfloat(sampling.w):1000.f;
   volume.Store4(144, asuint(float4(ReceiverFrameMatches() ? 1.f : 0.f, 0, 0, 0)));
+  volume.Store4(160,asuint(ReceiverFogVarying(float4(960,540,0,1),test_distance)));
   FogLocalLight light = (FogLocalLight)0;
   light.data[0].w = 100;
   light.data[2] = float4(0, 0, 1, 0);
@@ -37,10 +39,10 @@ SamplerState fog_wrap_sampler : register(s14);
   volume.Store4(128, asuint(float4(mono, green, animated, cube)));
 
   volume.Store4(96, asuint(float4(FogTerrainVisibility(float3(.5f, .5f, 0), 1), FogTerrainVisibility(float3(.5f, .5f, 20), 1), FogCloudVisibility(0, 20, 2), FogCloudVisibility(0, 20, 0))));
-  volume.Store4(0, asuint(SampleFogVolume(float2(960, 540), 1000.f)));
+  volume.Store4(0, asuint(SampleFogVolume(float2(960, 540), test_distance)));
   volume.Store4(16, asuint(SampleFogVolume(float2(960, 540), .05f)));
   float4 desaturation;
-  volume.Store4(32, asuint(ReceiverFog(float4(960, 540, 0, 1), 1000.f, desaturation)));
+  volume.Store4(32, asuint(ReceiverFog(float4(960, 540, 0, 1), test_distance, desaturation)));
   volume.Store4(48, asuint(float4(
                         FogExteriorFraction(float2(10, 20), 12, 18),
                         FogExteriorFraction(float2(10, 20), 0, 5),

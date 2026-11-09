@@ -1,8 +1,21 @@
 
 // Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
+#define HARTAPFEL_SKY_VIEW
 #include "integration.hlsli"
 #include "storage.hlsli"
+#include "upsample.hlsli"
 #include "../fog/volume_sample.hlsli"
+#define SKY_FRAME frame
+#define SKY_DATA cloud_shared
+#define SKY_MOON_MATERIAL sky_moon_material
+#define SKY_SOLAR_MATERIAL sky_sun_material
+#define SKY_SOLAR_GLOW_SIZE sky_sun_glow_size
+#define SKY_GLOW_EXPOSURE sky_glow_exposure
+#define SKY_CLOCK cloud_clock
+#define SKY_NATIVE_RADIUS sky_native_radius
+#define SKY_SUN_EMISSION sky_sun_emission
+#define SKY_MOON_EMISSION sky_moon_emission
+#include "../sky/celestial.hlsli"
 bool CloudFogReady() {
   return fx.enabled > .5f && FogVolume.Load(1008) == FOG_HISTORY_VALID
       && all(asfloat(FogVolume.Load4(64)).xyz == frame[0].xyz)
@@ -13,18 +26,30 @@ Texture2D<float> cloud_depth : register(t4);
 Texture2D<float4> scene_before : register(t10);
 Texture2D<float4> scene_without_sun : register(t5);
 Texture2D<float4> scene_without_moon : register(t6);
+Texture2D<float4> current_cloud : register(t14);
 float4 main(float4 position:SV_Position):SV_Target {
-  if (CloudAlreadyRendered()) discard;
+  // A fresh native sky can overwrite the scene while photo mode holds all
+  // GPU clock/camera values fixed. Reuse its resolved clouds, but reapply the
+  // deferred sources to that fresh sky. CPU view scoping suppresses old cards.
+  if (CloudAlreadyRendered()&&(identity.w&4096u)==0u) discard;
   float2 uv=position.xy/dimensions.zw;
   float3 ray=CloudRay(uv);
   float2 interval=CloudInterval(frame[0].xyz,ray);
   float surface_distance=CloudSceneDistance(position.xy,ray);
   interval.y=min(interval.y,surface_distance);
-  // Full-resolution tracing places one resolved cloud sample at this exact
-  // output pixel. The former 2x2 upscale performed four depth/colour reads
-  // and bilinear arithmetic that reduced to this single sample.
   int2 pixel=int2(position.xy);
-  float distance=cloud_depth.Load(int3(pixel,0));
+  float distance;
+  float4 value=UpsampleCloud(cloud,cloud_depth,uv,surface_distance,distance);
+  // Mixed-resolution texels retain the farthest visible column during trace.
+  // At mountains inside the layer, integrate this exact pixel only to its
+  // surface instead of leaking the neighboring sky column onto the mountain.
+  if(any(dimensions.xy!=dimensions.zw) &&surface_distance<1.e8f
+      &&interval.y>interval.x &&appearance.x>0.f &&appearance.y>0.f
+      &&any(cloud_family_low.xy>0.f)) {
+    float cone=max(length(CloudRay(uv+float2(1.f/dimensions.z,0))-ray),
+        length(CloudRay(uv+float2(0,1.f/dimensions.w))-ray));
+    value=TraceCloud(frame[0].xyz,ray,interval,cone,uint2(position.xy),512u,160.f,distance);
+  }
   // The native sky uses b12[204].yzw for a separate solar lobe. Correcting
   // that sky image with offset pixel taps printed colored rings and a halo.
   // The separately captured sun and moon additions have exact pixel masks;
@@ -36,7 +61,18 @@ float4 main(float4 position:SV_Position):SV_Target {
       ?max(((identity.w&512u)!=0u ? scene_without_sun.Load(int3(pixel,0)).rgb
           : scene_before.Load(int3(pixel,0)).rgb)-scene_without_moon.Load(int3(pixel,0)).rgb,0.f)
       :0.f;
-  float4 value=distance>0.f?CloudDecode(cloud.Load(int3(pixel,0))):float4(0,0,0,1);
+  float footprint=max(length(ddx(ray)),length(ddy(ray)));
+  float sky_air_transmission=1.f,moon_mask=0.f;
+  float3 glow=0.f;
+  bool deferred_sky=(identity.w&4096u)!=0u &&SkyReady();
+  if(deferred_sky) {
+    sun_excess=0.f;moon_excess=0.f;
+    if(surface_distance>=1.e8f) {
+      sky_air_transmission=SkyFogTransmission(ray);
+      SkyDiscs(ray,footprint,sky_air_transmission,sun_excess,moon_excess,moon_mask);
+      glow=SkyGlow(ray,sky_air_transmission);
+    }
+  }
   // Resolve the native emitter through the cloud column independently of the
   // temporally reconstructed view ray. Correct only measured disc radiance:
   // changing cloud opacity inside the sun's angular mask prints a circular edge.
@@ -60,7 +96,20 @@ float4 main(float4 position:SV_Position):SV_Target {
   }
   // Merge foreground air only after cloud history and the disc beam are
   // resolved, using the volume's weighted depth.
+  float intrinsic_transmission=value.a;
+  if(deferred_sky&&surface_distance>=1.e8f) {
+    // The fine beam must not contradict a cloud already visible in either
+    // the current trace or its temporal reconstruction. Four conservative
+    // taps stop bright discs/halos punching through a low-resolution edge.
+    int2 cell=int2(floor(uv*dimensions.xy-.5f));
+    [unroll]for(uint y=0u;y<2u;++y)[unroll]for(uint x=0u;x<2u;++x)
+      intrinsic_transmission=min(intrinsic_transmission,
+          CloudDecode(current_cloud.Load(int3(clamp(cell+int2(x,y),0,int2(dimensions.xy)-1),0))).a);
+  }
   if(distance>0.f)value=CloudAerialPerspective(uv,distance,value);
+  float3 stars=0.f;
+  if(deferred_sky&&surface_distance>=1.e8f&&value.a>intrinsic_transmission+1.e-6f)
+    stars=SkyStars(ray,footprint,sky_air_transmission,moon_mask);
   // Aerial perspective fades cloud opacity, which would let the native discs
   // appear in front of dense distant clouds. Density is also a visual
   // control: at its authored 12% default the very bright HDR emitter needs
@@ -70,6 +119,14 @@ float4 main(float4 position:SV_Position):SV_Target {
   float emitter_scale=CloudDirectBeamScale();
   float native_sun_transmission=pow(saturate(beam_transmission),emitter_scale);
   float native_moon_transmission=native_sun_transmission;
+  if(deferred_sky) {
+    float column=pow(saturate(intrinsic_transmission),emitter_scale);
+    native_sun_transmission=min(native_sun_transmission,column);
+    native_moon_transmission=min(native_moon_transmission,column);
+    // The wider aureole follows each pixel's cloud column. Reuse extinction
+    // already traced for the volume; no 128-step march over the whole halo.
+    glow*=column;
+  }
   // The terrain receiver uses a world-anchored, finite-beam solar column.
   // A bright native disc must not remain visible through the same column
   // while the ground below has lost direct light.
@@ -78,9 +135,10 @@ float4 main(float4 position:SV_Position):SV_Target {
       &&all(cloud_status.Load4(80)==asuint(frame[286]))) {
     float4 region=asfloat(cloud_status.Load4(0));
     float4 sun=asfloat(cloud_status.Load4(16));
-    uint2 size=uint2(asfloat(cloud_status.Load2(32)));
+    float3 shadow_parameters=asfloat(cloud_status.Load3(32));
+    uint2 size=uint2(shadow_parameters.xy);
     uint offset=cloud_status.Load(60),pitch=cloud_status.Load(64);
-    if(sun.w==1.f &&sun.z>.015f &&region.w>0.f &&all(size>0u)
+    if(shadow_parameters.z>0.f &&sun.w==1.f &&sun.z>.015f &&region.w>0.f &&all(size>0u)
         &&pitch>=size.x*4u &&offset>=240u) {
       float2 shadow_uv=(frame[0].xy-frame[0].z*sun.xy/sun.z-region.xy)/region.w+.5f;
       if(all(shadow_uv>0.f)&&all(shadow_uv<1.f)) {
@@ -101,10 +159,15 @@ float4 main(float4 position:SV_Position):SV_Target {
       }
     }
   }
-  float3 disc_correction=(value.a-native_sun_transmission)*sun_excess
+  float3 disc_correction=(value.a-intrinsic_transmission)*stars;
+  if(!deferred_sky)disc_correction+=(value.a-native_sun_transmission)*sun_excess
       +(value.a-native_moon_transmission)*moon_excess;
-  if(distance<=0.f &&all(disc_correction==0.f))discard;
+  float3 direct=deferred_sky ? native_sun_transmission*sun_excess+native_moon_transmission*moon_excess+glow : 0.f;
+  if(distance<=0.f &&all(disc_correction==0.f)&&all(direct==0.f))discard;
   value.rgb-=disc_correction;
+  // Direct sources are added after extinction. In particular, never subtract
+  // a reconstructed HDR Sun from a previously quantized half-float sky.
+  value.rgb+=direct;
   float opacity=saturate(1.f-value.a);
   // Premultiplied over: C + (1-opacity)*background. The background sky
   // already contains foreground fog S, so the cloud must carry opacity*S.

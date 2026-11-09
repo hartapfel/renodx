@@ -80,6 +80,8 @@ float HartapfelCloudShadow(float3 world, float native_visibility) {
     visibility.x=max(visibility.x,saturate(visibility.y*exp(12.f*depth)));
   }
   float edge = min(min(uv.x, uv.y), min(1.f - uv.x, 1.f - uv.y));
+  // Mix clear and cloud-filtered illumination in linear light. The map
+  // stores full-strength transmission for the separate solar disc test.
   return lerp(1.f, saturate(visibility.x), parameters.z * smoothstep(0.f, .08f, edge));
 }
 bool CloudShadowReady() {

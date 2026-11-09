@@ -59,7 +59,7 @@ void main(float4 position : SV_Position) {
   valid = valid && identity.x == previous_identity.x
       && all(dimensions == previous_dimensions) && all(integration.xy == previous_integration.xy)
       && all(appearance == previous_appearance) && all(atmosphere == previous_atmosphere)
-      && all(scattering == previous_scattering);
+      && all(scattering.xyw == previous_scattering.xyw);
   float2 motion=projected_uv-trace_uv
       -(previous[15].xy-frame[15].xy)*float2(.5f,-.5f);
   float4 lower=current,upper=current;

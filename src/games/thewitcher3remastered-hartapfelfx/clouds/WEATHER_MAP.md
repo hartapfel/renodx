@@ -27,7 +27,8 @@ listed separately; their presence does not establish that a current world uses t
 | Frame b12[66].w | Evaluated source-to-target weather weight. Applied before the shared weather fade. |
 | Frame b12[67].xy | Integrated signed native weather wind offset, not directly metres of broad-layer motion. Native broad world offset = `20 * native_offset`; the user-requested 35% cloud speed uses `7 * native_offset`. Same conversion in weather, billows, shadows, directional visibility and motion/history reprojection. |
 | Frame b12[68].xy | Native source/target layer IDs. Clamped to the available array; the authored tables use 0–4. Never infer weather identity, speed or rainfall from this pair. |
-| Native b0[0].x | Retained native animation clock. Drives the existing slow billow evolution and delta-time fades. Paused time does not advance fading. |
+| Native b0[0].x | Retained native animation clock. Drives bulk vertical billow drift (0.6 m/s), slow column-slice traversal (one noise tile / 2400 s), independent side-warp traversal (one tile / 1200 s), and delta-time fades. Paused time freezes material evolution and fading. These traversal periods are not full sky repeat periods. |
+| Evaluated environment +0x15c0 | Audited normalized game time, already read by Darker Nights. The existing native builders publish it for the 18:00-06:00 clearing window and evening world-light colour blend. This is independent of the animation clock and Moon phase. |
 | Native b12[204].yzw | Solar direction used by the native sky lobe. Canonical daytime cloud-light/terrain-shadow projection. |
 | Native b12[38].xyz | Atmospheric attenuation direction, not the solar-position authority. Used as fallback only when solar input is missing. |
 | Native b13 light constants | Authored light radiance and native dominant-light fallback (including moonlight). |
@@ -322,3 +323,41 @@ middle-sheet/altocumulus and high-cirrus sheets were removed at the user's reque
 Their authored weights remain in the evidence catalog but are zero in generated
 GPU recipes. Weather containing only those effects now produces clear sky and
 has no synthetic sheet shadows. No high-sheet atlas or lookup remains.
+
+## Low-sun clearing and precipitation
+
+Clear Sunrises & Sunsets uses the generated weather recipe's wet-weather
+weight, not `fakeShadow` or its storm-profile envelope. The audited native names,
+background thunder and active rain/drizzle/storm/blizzard effects classify
+precipitation. Light rain is protected too. Disabled/zero-probability effects
+do not classify otherwise dry weather as wet.
+The generator keeps ordinary cloud-family weights intact and carries the extra
+weight in the previously reserved `high.w` component. Protection ramps smoothly
+over the first 2.5% of the native precipitation blend, with a separate 0.2-second
+filter so rain does not wait for the 0.8-second shape fade. Interrupted blends
+retain the filtered tail. A paused clock can acquire protection immediately,
+but cannot release it until time resumes. Full wet weather and unknown weather
+receive the original density field at every solar angle. No weather effect is
+removed or replaced by this control. The generated map now contains 19 unique
+profiles across the same 56 regional rows.
+
+## Light Clouds after fast travel and meditation
+
+The live report was captured in Novigrad/Velen with `WT_Light_Clouds` as both
+source and target and no weather transition remaining. Its previous generated
+recipe had zero cumulus/deck weights, because that native weather was authored
+with the removed flat layers. The GPU family fade therefore erased all main
+volumetric material regardless of the low-sun switch.
+
+For `WT_Light_Clouds` records with no retained main layer, the generator now uses
+a 0.45-strength volumetric billow recipe. Existing regional light-cloud recipes
+are retained. Native weather coverage and wind still place the clouds; the
+change adds no coverage floor and restores none of the removed 2D layers.
+Clear, storm and other cloud-family recipes retain their prior mapping.
+
+The duplicate-render cache also compares the visible solar and lunar inputs.
+The cloud-shadow metadata retains the low-sun direction in its existing spare
+components, so twilight solar changes invalidate a cached map even while the
+primary shadow direction still follows the moon. No buffer grows or new pass
+is added. Tests include same-address forward/backward clock jumps, long camera
+teleports, frozen-clock celestial changes, and low-sun clearing On and Off.

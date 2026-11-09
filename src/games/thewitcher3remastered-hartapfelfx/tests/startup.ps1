@@ -7,7 +7,9 @@ param(
   [Parameter(Mandatory)][string]$NativeCapturePath,
   [string]$RayCapturePath,
   [string]$D3D12SdkPath,
-  [string]$AddonPath
+  [string]$AddonPath,
+  [ValidateRange(0,4)][int[]]$CloudQualityPresets=@(0),
+  [ValidateRange(0,5)][int[]]$FogQualityPresets=@(0)
 )
 $ErrorActionPreference='Stop'
 $repoRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../..'))
@@ -25,7 +27,7 @@ $cloudArguments=@()
 if($RayCapturePath){$cloudArguments=@((Resolve-Path -LiteralPath $RayCapturePath).Path,$cloudDirectory)}
 foreach($fogFirst in @($false,$true)) {
   $order=if($fogFirst){'fog-first'}else{'hdr-first'}
-  $testDirectory=Join-Path $repoRoot "tmp/hartapfelfx-validation/startup-$order"
+  $testDirectory=Join-Path $repoRoot "tmp/hartapfelfx-validation/startup-$order-nodevkit"
   New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
   if($D3D12SdkPath) {
     $sdkDirectory=Join-Path $testDirectory 'D3D12_0'
@@ -38,13 +40,23 @@ foreach($fogFirst in @($false,$true)) {
   # Distinct names and directories make the loader order explicit in ReShade.log.
   Copy-Item -LiteralPath $addonPath -Destination (Join-Path $testDirectory $(if($fogFirst){'00-hartapfelfx.addon64'}else{'99-hartapfelfx.addon64'}))
   Copy-Item -LiteralPath $HdrAddonPath -Destination (Join-Path $testDirectory $(if($fogFirst){'99-hdr.addon64'}else{'00-hdr.addon64'}))
+  $expectedAddons=@($(if($fogFirst){'00-hartapfelfx.addon64'}else{'99-hartapfelfx.addon64'}),$(if($fogFirst){'99-hdr.addon64'}else{'00-hdr.addon64'}))
+  foreach($extra in Get-ChildItem -LiteralPath $testDirectory -File | Where-Object {$_.Extension -in '.addon','.addon64'}) {
+    if($extra.Name -notin $expectedAddons){throw "Unexpected addon in isolated host: $($extra.FullName)"}
+  }
   Push-Location -LiteralPath $testDirectory
   try {
-    foreach ($quality in @(0, 1)) {
-      # Workspace-only profiles exercise Balanced and High with the actual addon.
-      Set-Content -LiteralPath 'ReShade.ini' -Value "[thewitcher3remastered-hartapfelfx-preset1]`nFogQuality=$quality" -Encoding ascii
-      & ./startup-gpu.exe $NativeCapturePath $embedPath (Join-Path $repoRoot 'tmp/hartapfelfx-validation/runtime-probe.cso') $(if ($quality) { 240 } else { 160 }) @cloudArguments
-      if($LASTEXITCODE -ne 0){throw "Addon compatibility failed in $order order at quality $quality (exit $LASTEXITCODE)"}
+    foreach ($cloudQuality in $CloudQualityPresets) {
+      foreach($fogPreset in $FogQualityPresets) {
+        foreach ($quality in $(if($fogPreset){@(0)}else{@(0,1)})) {
+          # Workspace-only profiles exercise Balanced and High with the actual addon.
+          Set-Content -LiteralPath 'ReShade.ini' -Value "[thewitcher3remastered-hartapfelfx-preset1]`nFogDensity=100`nFogStart=0`nFogQuality=$quality`nFogQualityPresetV1=$fogPreset`nCloudQualityPresetV1=$cloudQuality" -Encoding ascii
+          Write-Host "Checking $order, fog quality $quality, fog preset $fogPreset, cloud preset $cloudQuality"
+          $columns=if($fogPreset){@(0,120,160,240,256,256)[$fogPreset]}elseif($quality){240}else{160}
+          & ./startup-gpu.exe $NativeCapturePath $embedPath (Join-Path $repoRoot 'tmp/hartapfelfx-validation/runtime-probe.cso') $columns @cloudArguments
+          if($LASTEXITCODE -ne 0){throw "Addon compatibility failed in $order order at fog $quality / preset $fogPreset / cloud $cloudQuality (exit $LASTEXITCODE)"}
+        }
+      }
     }
   }finally{Pop-Location}
 }

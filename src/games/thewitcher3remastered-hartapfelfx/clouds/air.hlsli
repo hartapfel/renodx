@@ -2,8 +2,10 @@
 #ifndef HARTAPFEL_CLOUD_AIR
 #define HARTAPFEL_CLOUD_AIR
 #include "common.hlsli"
+#include "../sky/lighting.hlsli"
 float CloudAirTransmission(float3 ray,float distance) {
-  float directional=saturate((frame[42].x+dot(ray,frame[38].xyz))/max(1.f+frame[42].x,.0001f));
+  float directional=saturate((frame[42].x+dot(ray,SkyAtmosphereLight(frame[204].yzw,
+      frame[205].yzw,frame[38].xyz)))/max(1.f+frame[42].x,.0001f));
   float falloff=max(0.f,lerp(frame[44].z,frame[44].y,directional));
   // Native HDR sky 0x449D3390 integrates this rational height profile in 16
   // segments. Its finite sky distance and sample positions define the

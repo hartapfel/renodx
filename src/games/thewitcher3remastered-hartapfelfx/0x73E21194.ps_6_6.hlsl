@@ -200,7 +200,7 @@ float4 main(
     float _137 = _104 / _110;
     bool fog_current = ReceiverFrameMatches();
     float4 volume = fog_current ? SampleFogVolume(SV_Position.xy,_110) : 0.f;
-    float _142 = min(cb12_042z, max(0.0f, (_110 - (fog_current ? max(fx.start_distance,cb12_022z) : cb12_022z))));
+    float _142 = min(cb12_042z, max(0.0f, (_110 - (fog_current ? FogFadeStart(cb12_022z) : cb12_022z))));
     float _143 = _142 * 0.0625f;
     float _144 = _143 * _137;
     float _145 = _143 * cb12_043x;
@@ -280,8 +280,8 @@ float4 main(
       _458 = _405;
       _459 = _411;
     }
-    float _460 = _459 * _125;
-    float _462 = (_374 * _125) * exp2(_376 * cb12_048x);
+    float _460 = _459 * _125 * (fog_current?FogAmount():1.f);
+    float _462 = (_374 * _125) * exp2(_376 * cb12_048x) * (fog_current?FogAmount():1.f);
     float _463 = dot(float3(0.3330000042915344f, 0.5550000071525574f, 0.22200000286102295f), float3(_85, _86, _87));
     float _473 = (((_463 * (lerp(cb12_046x, _216, _176))) - _85) * _462) + _85;
     float _474 = (((_463 * (lerp(cb12_046y, _217, _176))) - _86) * _462) + _86;

@@ -15,10 +15,30 @@ struct ShaderInjectData {
   float local_strength;
   float sky_density;
   float reconstruction;
-  float reserved0;
-  float reserved1;
+  float haze_reduction;
+  float quality_preset;
 };
 #ifndef __cplusplus
-cbuffer HartapfelFX : register(b0, space70) { ShaderInjectData fx; }
+cbuffer HartapfelFX : register(b0, space70) {
+  ShaderInjectData fx : packoffset(c0);
+#ifdef HARTAPFEL_SKY_VIEW
+  uint sky_deferred : packoffset(c3);
+  float4 sky_moon_material : packoffset(c4);
+  float4 sky_sun_material : packoffset(c5);
+  float sky_sun_glow_size : packoffset(c6);
+  uint sky_glow_exposure : packoffset(c6.y);
+  float2 sky_native_radius : packoffset(c7);
+  float4 sky_sun_emission : packoffset(c8);
+  float4 sky_moon_emission : packoffset(c9);
+#endif
+}
+float FogAmount() { return 1.f-saturate(fx.haze_reduction); }
+// Negative clear distance advances the native fade without integrating medium
+// behind the camera. Nonnegative values retain the original clear-space rule.
+float FogFadeStart(float native_near) {
+  return max(fx.start_distance, native_near) + min(fx.start_distance, 0.f);
+}
+#else
+static_assert(sizeof(ShaderInjectData)==48);
 #endif
 #endif

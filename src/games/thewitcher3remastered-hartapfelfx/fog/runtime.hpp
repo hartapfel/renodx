@@ -8,6 +8,7 @@
 #include "../raster.hpp"
 #include "../shared.h"
 #include "bindings.hpp"
+#include "settings.hpp"
 #include "fast_noise.hpp"
 
 namespace hartapfelfx::fog::runtime {
@@ -244,8 +245,9 @@ inline void CopyStorage(api::command_list* cmd, DeviceData* data, const std::sha
 }
 inline std::shared_ptr<Job> FindVolume(DeviceData* data, const api::buffer_range& frame, const api::viewport* viewport) {
   for (auto it = data->volumes.rbegin(); it != data->volumes.rend(); ++it) {
+    const auto grid=GridQuality(*settings,(*it)->viewport.width,(*it)->viewport.height);
     if ((*it)->frame.buffer == frame.buffer && (*it)->frame.offset == frame.offset
-        && (*it)->slices == (settings->quality < 1.5f ? 96u : 128u)
+        && (*it)->width==grid[0] &&(*it)->height==grid[1] &&(*it)->slices==grid[2]
         && (!viewport || MatchesFogViewport(*viewport, (*it)->viewport))) return *it;
   }
   return {};
@@ -323,6 +325,14 @@ inline void Generate(api::command_list* cmd, bool compute) {
   }
   if (!(viewport.width > 0.f && viewport.height > 0.f)) return;
   std::lock_guard lock(data->mutex);
+  // Retire cached budgets after a quality edit. Recordings still retain their
+  // allocations; unused old budgets must not permanently fill the pool.
+  const auto incompatible=[](const std::shared_ptr<Job>& job) {
+    const auto grid=GridQuality(*settings,job->viewport.width,job->viewport.height);
+    return job->width!=grid[0] ||job->height!=grid[1] ||job->slices!=grid[2];
+  };
+  std::erase_if(data->active,incompatible);
+  std::erase_if(data->volumes,incompatible);
   auto storage = FindVolume(data, bindings->sun.frame, &viewport);
   if (!storage) {
     // Bound the view cache. Recordings retain immutable parameter pages and
@@ -334,9 +344,8 @@ inline void Generate(api::command_list* cmd, bool compute) {
     storage = std::make_shared<Job>();
     storage->frame = bindings->sun.frame;
     storage->viewport = viewport;
-    storage->width = settings->quality < 1.5f ? 160 : 240;
-    storage->slices = settings->quality < 1.5f ? 96 : 128;
-    storage->height = std::clamp(uint32_t(std::ceil(double(storage->width) * viewport.height / viewport.width)), 45u, 256u);
+    const auto grid=GridQuality(*settings,viewport.width,viewport.height);
+    storage->width=grid[0];storage->height=grid[1];storage->slices=grid[2];
     const uint64_t cells = uint64_t(storage->width) * storage->height * storage->slices;
     if (!AllocateJob(cmd, data, storage, FOG_HEADER_BYTES + (3 * cells + uint64_t(storage->width) * storage->height) * 8 + 128 + 240 * 256 * 8)) return;
     storage->history = std::make_shared<Job>();
@@ -435,8 +444,16 @@ inline void ApplyLocal(api::command_list* cmd, bool raster) {
   if (!bindings || !data || !settings || settings->enabled < .5f) return;
   const auto frame = Resolve(cmd, bindings->compute, api::descriptor_type::constant_buffer, 12);
   if (frame.type != api::descriptor_type::constant_buffer) return;
+  const auto depth = Resolve(cmd, bindings->compute, api::descriptor_type::texture_shader_resource_view, 0);
+  if (!depth.HasResourceView() || !depth.resource_view.handle) return;
+  const auto desc = cmd->get_device()->get_resource_desc(cmd->get_device()->get_resource_from_view(depth.resource_view));
+  if (!IsFogDepthInput(desc, cmd->get_device()->get_resource_view_desc(depth.resource_view))) return;
+  // Photo mode can allocate another volume for the same frame CBV. Cache order
+  // does not identify the current view, and the graphics viewport may still
+  // belong to an intervening shadow pass. Use the native scene depth instead.
+  const api::viewport viewport{0, 0, float(desc.texture.width), float(desc.texture.height), 0, 1};
   std::lock_guard lock(data->mutex);
-  auto storage = FindVolume(data, frame.buffer_range, nullptr);
+  auto storage = FindVolume(data, frame.buffer_range, &viewport);
   if (!storage) return;
   auto job = BeginWork(cmd, data, storage);
   if (!job || !DrawVolume(cmd, data, job.get(), true, false, true, raster)) return;

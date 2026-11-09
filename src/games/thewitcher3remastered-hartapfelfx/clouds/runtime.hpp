@@ -11,6 +11,7 @@
 #include "family_runtime.hpp"
 #include "ray_hooks.hpp"
 #include "../fog/runtime.hpp"
+#include "../sky/native_size.hpp"
 
 namespace hartapfelfx::clouds::runtime {
 namespace api = reshade::api;
@@ -57,13 +58,17 @@ struct __declspec(uuid("66374d6d-8560-48fd-a617-75cf842e2649")) DeviceData {
   std::vector<std::shared_ptr<Entry>> allocated;
   std::vector<std::shared_ptr<AtlasStorage>> atlas_allocations;
   std::shared_ptr<Entry> latest_environment;
+  std::array<std::array<float,4>,2> moon_material{};
+  std::array<float,4> sun_material{};
+  float native_sun_radius=0.f;
+  std::array<float,2> native_moon_radius{};
   std::deque<Recording> retired;
   std::atomic_bool retirement_pending{false};
   std::deque<Admission> admissions;
   std::map<uint64_t, gpu::ComPtr<ID3D12PipelineState>> clock_pipelines;
   std::set<uint64_t> ray_pipelines;
   std::vector<api::command_queue*> queues;
-  std::array<float, 12> configuration{};
+  std::array<float, 16> configuration{};
   AuthoringParameters authoring_configuration{};
   uint32_t revision = 1;
   uint64_t view_serial = 0;
@@ -82,6 +87,12 @@ struct __declspec(uuid("1081dc05-ccbf-439a-b246-183511d53683")) CommandData {
   } atlas;
   api::buffer_range sky_frame{}, sky_camera{}, sky_clock{};
   api::resource_view sky_target{};
+  api::resource_view celestial_target{};
+  api::viewport celestial_viewport{};
+  bool enhanced_sky = false;
+  bool toussaint_sky = false;
+  uint32_t sky_glow_exposure=0;
+  bool deferred_sky = false, sky_composited = false;
   Recording recording;
   std::vector<std::shared_ptr<pool::Queue>> queues;
   std::set<std::tuple<uint64_t, uint64_t, uint64_t>> rendered;
@@ -107,9 +118,41 @@ inline bool Buffer(const api::buffer_range& buffer, uint64_t minimum) {
   return desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && buffer.offset <= desc.Width && minimum <= desc.Width - buffer.offset
       && buffer.size >= minimum && (Address(buffer) & 255u) == 0;
 }
+// Native material/GlobalCB upload memory is CPU-written before its draw. Read
+// only that heap type: no GPU readback, resource transition or queue wait.
+inline bool ReadNativeUpload(const api::buffer_range& buffer,uint64_t offset,void* output,size_t bytes) {
+  if(offset>UINT64_MAX-bytes||!Buffer(buffer,offset+bytes))return false;
+  auto* resource=reinterpret_cast<ID3D12Resource*>(buffer.buffer.handle);
+  D3D12_HEAP_PROPERTIES heap{};
+  if(FAILED(resource->GetHeapProperties(&heap,nullptr))||heap.Type!=D3D12_HEAP_TYPE_UPLOAD)return false;
+  void* mapped=nullptr;
+  const D3D12_RANGE read{SIZE_T(buffer.offset+offset),SIZE_T(buffer.offset+offset+bytes)};
+  if(FAILED(resource->Map(0,&read,&mapped)))return false;
+  std::memcpy(output,static_cast<const uint8_t*>(mapped)+buffer.offset+offset,bytes);
+  const D3D12_RANGE written{0,0};resource->Unmap(0,&written);
+  return true;
+}
+inline void CaptureNativeSize(api::command_list* cmd,DeviceData* data,const fog::BindingState& state,bool lunar,bool toussaint=false) {
+  std::array<float,3> camera{};
+  if(!ReadNativeUpload(fog::Resolve(cmd,state,api::descriptor_type::constant_buffer,1,0,api::shader_stage::vertex).buffer_range,
+      36*16,camera.data(),sizeof(camera)))return;
+  for(uint32_t slot:{2u,3u}) {
+    std::array<float,40> vertex{};
+    if(!ReadNativeUpload(fog::Resolve(cmd,state,api::descriptor_type::constant_buffer,slot,0,api::shader_stage::vertex).buffer_range,
+        0,vertex.data(),sizeof(vertex)))continue;
+    const float radius=sky::NativeRadius(vertex,camera,!lunar);
+    if(radius<=0.f)continue;
+    std::lock_guard lock(data->mutex);
+    if((lunar?data->native_moon_radius[toussaint]:data->native_sun_radius)==0.f)
+      renodx::utils::log::i(lunar?"HartapfelFX native Moon diameter: ":"HartapfelFX native Sun diameter: ",radius*114.591559f," degrees");
+    if(lunar)data->native_moon_radius[toussaint]=radius;
+    else data->native_sun_radius=radius;
+    return;
+  }
+}
 inline uint32_t Revision(DeviceData* data) {
-  const std::array<float, 12> current{mode, quality, step_size, shadows, coverage, density, size, thickness, detail,
-                                      detail_size, base_softness, fog_settings ? fog_settings->sky_density : 1.f};
+  const std::array<float, 16> current{mode, quality, step_size, shadows, coverage, density, size, thickness, detail,
+                                      detail_size, base_softness, fog_settings ? fog_settings->sky_density : 1.f, quality_preset, clear_low_sun, sky::star_brightness,sky::sun_glow_size};
   const auto authoring=Authoring();
   if (current != data->configuration ||authoring!=data->authoring_configuration) {
     data->configuration = current;
@@ -152,7 +195,7 @@ inline std::shared_ptr<Entry> GetView(api::command_list* cmd, DeviceData* data, 
   auto& entry = data->views[key];
   if (entry) entry->used = ++data->view_serial;
   const auto samples = Quality(quality);
-  const uint32_t level = uint32_t(std::clamp(std::lround(quality), 0L, 5L));
+  const uint32_t level = QualityLevel(quality);
   // Receiver/clock hooks run before the cloud target is known. The captured
   // main sky target is RGBA16F; prepare its scene copy now so Render can reuse
   // this view instead of allocating a second full-resolution view each frame.
@@ -346,6 +389,113 @@ inline bool PrepareShadowReceiver(api::command_list* cmd, bool compute) {
   else native->SetGraphicsRootShaderResourceView(root, address ? address : data->assets.zero.object->GetGPUVirtualAddress());
   return true;
 }
+// A cubemap face has its own b12 camera, but celestial assets/settings are
+// view-independent. Retain the latest main-view storage for those faces.
+inline void PrepareCelestialSky(api::command_list* cmd, bool replacement_ready) {
+  auto* command=renodx::utils::data::Get<CommandData>(cmd);
+  if(!command)return;
+  command->enhanced_sky=false;
+  command->deferred_sky=false;
+  command->sky_composited=false;
+  if(!replacement_ready ||mode<.5f ||!MainCommand(cmd))return;
+  auto* data=renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  auto* bindings=renodx::utils::data::Get<fog::CommandData>(cmd);
+  const auto* state=hartapfelfx::raster::Get(cmd);
+  if(!data||!data->ready||!bindings||!state||state->render_targets.size()!=1||state->viewports.size()!=1)return;
+  command->toussaint_sky=renodx::utils::shader::GetCurrentShaderHash(
+      renodx::utils::shader::GetCurrentPixelState(renodx::utils::shader::GetCurrentState(cmd)))==0x3B15DAABu;
+  const int root=fog::runtime::RootIndex(cmd,bindings->graphics.layout,api::descriptor_type::buffer_shader_resource_view,0,72);
+  const int settings_root=fog::runtime::RootIndex(cmd,bindings->graphics.layout,api::descriptor_type::constant_buffer,0,70);
+  if(root<0||settings_root<0)return;
+  uint64_t address=ShadowAddress(cmd,false);
+  if(!address) {
+    std::lock_guard lock(data->mutex);
+    if(data->latest_environment) {
+      Retain(cmd,data->latest_environment);
+      address=data->latest_environment->view->Shared()->GetGPUVirtualAddress();
+    }
+  }
+  if(!address)return;
+  const auto& area=state->viewports.front();
+  const auto frame=fog::Resolve(cmd,bindings->graphics,api::descriptor_type::constant_buffer,12).buffer_range;
+  const auto clock=fog::Resolve(cmd,bindings->graphics,api::descriptor_type::constant_buffer,0).buffer_range;
+  std::array<float,8> native_directions{};
+  const bool directions_ready=ReadNativeUpload(frame,204*16,native_directions.data(),sizeof(native_directions));
+  std::array<float,4> sky_material{};
+  command->sky_glow_exposure=ReadNativeUpload(fog::Resolve(cmd,bindings->graphics,api::descriptor_type::constant_buffer,2,0,api::shader_stage::pixel).buffer_range,
+      0,sky_material.data(),sizeof(sky_material))&&sky_material[1]!=1.f?2u:1u;
+  const auto target=cmd->get_device()->get_resource_from_view(state->render_targets.front());
+  const auto description=cmd->get_device()->get_resource_desc(target);
+  const auto format=DXGI_FORMAT(cmd->get_device()->get_resource_view_desc(state->render_targets.front()).format);
+  std::array<uint8_t,256> page{};
+  bool native_geometry_ready=false;
+  if(fog_settings)std::memcpy(page.data(),fog_settings,sizeof(*fog_settings));
+  {
+    std::lock_guard lock(data->mutex);
+    const auto found=data->views.find({frame.buffer.handle,frame.offset});
+    const bool admitted=std::any_of(data->admissions.begin(),data->admissions.end(),[&](const auto& item) {return item.frame==Address(frame);});
+    command->deferred_sky=admitted &&found!=data->views.end()&&found->second
+        &&found->second->target_format==format &&area.x==0.f&&area.y==0.f&&area.width>=320.f&&area.height>=180.f
+        &&area.width==found->second->view->Width()&&area.height==found->second->view->Height()
+        &&description.type==api::resource_type::texture_2d&&description.texture.samples==1
+        &&description.texture.depth_or_layers==1&&area.width<=description.texture.width&&area.height<=description.texture.height
+        &&Buffer(frame,341*16)&&Buffer(clock,16);
+    const uint32_t deferred=command->deferred_sky?0x534B5943u:0u;
+    std::memcpy(page.data()+sizeof(ShaderInjectData),&deferred,4);
+    std::memcpy(page.data()+64,data->moon_material[command->toussaint_sky].data(),16);
+    std::memcpy(page.data()+80,data->sun_material.data(),16);
+    const float glow_size=std::clamp(sky::sun_glow_size,.25f,4.f);
+    std::memcpy(page.data()+96,&glow_size,sizeof(glow_size));
+    std::memcpy(page.data()+100,&command->sky_glow_exposure,sizeof(command->sky_glow_exposure));
+    const std::array<float,2> radii{data->native_sun_radius,data->native_moon_radius[command->toussaint_sky]};
+    // A night load may never submit the Sun mesh, and vice versa. Do not wait
+    // for an invisible body far below the horizon before enhancing this sky.
+    const auto below_horizon=[&](unsigned offset,float limit) {
+      const float length=std::sqrt(native_directions[offset+1]*native_directions[offset+1]
+          +native_directions[offset+2]*native_directions[offset+2]+native_directions[offset+3]*native_directions[offset+3]);
+      return directions_ready&&std::isfinite(length)&&length>.5f&&native_directions[offset+3]<limit*length;
+    };
+    native_geometry_ready=(radii[0]>0.f||below_horizon(0,-.1f))
+        &&(radii[1]>0.f||below_horizon(4,-.25f));
+    std::memcpy(page.data()+112,radii.data(),sizeof(radii));
+    const bool coherent=sky::emission::enabled.load(std::memory_order_relaxed);
+    const auto solar=coherent?sky::emission::Unpack(sky::emission::sun.load(std::memory_order_relaxed)):std::array<float,4>{};
+    const auto lunar=coherent?sky::emission::Unpack(sky::emission::moon.load(std::memory_order_relaxed)):std::array<float,4>{};
+    std::memcpy(page.data()+128,solar.data(),sizeof(solar));
+    std::memcpy(page.data()+144,lunar.data(),sizeof(lunar));
+    command->recording.pages.push_back(data->uploads.Upload(data->assets.Device(),page.data(),page.size()));
+  }
+  auto* native=reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native());
+  // Keep the actual native bodies until their authored geometry is observed.
+  // There is no hard-coded cinematic or astronomical substitute size.
+  if(!native_geometry_ready) {
+    command->deferred_sky=false;
+    native->SetGraphicsRootShaderResourceView(root,data->assets.zero.object->GetGPUVirtualAddress());
+    return;
+  }
+  native->SetGraphicsRootShaderResourceView(root,address);
+  native->SetGraphicsRootConstantBufferView(settings_root,command->recording.pages.back().object->GetGPUVirtualAddress());
+  // Inline celestial sources belong to reflection faces. If a main view
+  // cannot run the cloud composite yet, retain its native sky/disc pipeline
+  // rather than painting enhanced emitters in front of later cloud draws.
+  if(area.x==0.f&&area.y==0.f&&area.width>=320.f&&area.height>=180.f&&!command->deferred_sky) {
+    native->SetGraphicsRootShaderResourceView(root,data->assets.zero.object->GetGPUVirtualAddress());
+    return;
+  }
+  command->celestial_target=state->render_targets.front();
+  command->celestial_viewport=state->viewports.front();
+  command->enhanced_sky=true;
+}
+inline bool EnhancedSkyMatches(api::command_list* cmd) {
+  const auto* command=renodx::utils::data::Get<CommandData>(cmd);
+  const auto* state=hartapfelfx::raster::Get(cmd);
+  if(mode<.5f||!command||!command->enhanced_sky||!state
+      ||state->render_targets.size()!=1||state->viewports.size()!=1)return false;
+  const auto& a=command->celestial_viewport;
+  const auto& b=state->viewports.front();
+  return command->celestial_target==state->render_targets.front()
+      &&a.x==b.x&&a.y==b.y&&a.width==b.width&&a.height==b.height;
+}
 inline bool PrepareMotion(api::command_list* cmd) {
   if (!MainCommand(cmd)) return false;
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
@@ -528,7 +678,10 @@ inline bool Render(api::command_list* cmd, uint32_t card_hash) {
   const auto* state = hartapfelfx::raster::Get(cmd);
   auto* shader = renodx::utils::shader::GetCurrentState(cmd);
   if (!data || !data->ready || !command || !bindings || !state || !shader || state->render_targets.size() != 1 || state->viewports.size() != 1) return false;
-  if (!CardVertexMatches(card_hash, renodx::utils::shader::GetCurrentShaderHash(renodx::utils::shader::GetCurrentVertexState(shader)))) return false;
+  if(EnhancedSkyMatches(cmd)&&command->sky_composited)return true;
+  const bool sky_pass=card_hash==0x449D3390u||card_hash==0x3B15DAABu;
+  const uint32_t vertex=renodx::utils::shader::GetCurrentShaderHash(renodx::utils::shader::GetCurrentVertexState(shader));
+  if(sky_pass ? vertex!=(card_hash==0x3B15DAABu?0x979EED1Bu:0xCCD2CA86u) : !CardVertexMatches(card_hash,vertex))return false;
   const auto viewport = state->viewports.front();
   if (viewport.x != 0 || viewport.y != 0 || viewport.width < 320 || viewport.height < 180) return false;
   const bool animated=card_hash==0x683213A3u;
@@ -573,6 +726,11 @@ inline bool Render(api::command_list* cmd, uint32_t card_hash) {
     auto inputs = MakeInputs(cmd, data, entry, Address(clock));
     inputs.captured_sun = command->sun_captured.contains(key);
     inputs.captured_moon = command->moon_captured.contains(key);
+    inputs.enhanced_sky = command->deferred_sky &&EnhancedSkyMatches(cmd);
+    inputs.moon_material=data->moon_material[command->toussaint_sky];
+    inputs.sun_material=data->sun_material;
+    inputs.sky_glow_exposure=command->sky_glow_exposure;
+    inputs.native_radius={data->native_sun_radius,data->native_moon_radius[command->toussaint_sky]};
     inputs.fog = fog_address;
     inputs.target = {SIZE_T(target_view.handle)};
     inputs.target_resource = reinterpret_cast<ID3D12Resource*>(target_resource.handle);
@@ -612,6 +770,7 @@ inline bool SuppressCard(api::command_list* cmd, uint32_t hash) {
   auto* shaders = renodx::utils::shader::GetCurrentState(cmd);
   if (!data || !command || !bindings || !state || !shaders || state->render_targets.size() != 1) return false;
   if (!CardVertexMatches(hash, renodx::utils::shader::GetCurrentShaderHash(renodx::utils::shader::GetCurrentVertexState(shaders)))) return false;
+  if(EnhancedSkyMatches(cmd)&&command->sky_composited)return true;
   const auto clock = fog::Resolve(cmd, bindings->graphics, api::descriptor_type::constant_buffer, 0).buffer_range;
   const auto target = cmd->get_device()->get_resource_from_view(state->render_targets.front());
   std::lock_guard lock(data->mutex);
@@ -781,10 +940,67 @@ inline constexpr auto ObserveClock = []<typename Context>(Context& context) -> r
   return {};
 };
 inline constexpr auto ObserveSun = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context> {
+  if(mode<.5f)return {};
+  auto* data=renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device());
+  auto* bindings=renodx::utils::data::Get<fog::CommandData>(context.cmd_list);
+  auto* shaders=renodx::utils::shader::GetCurrentState(context.cmd_list);
+  if(data&&bindings&&shaders&&renodx::utils::shader::GetCurrentShaderHash(
+      renodx::utils::shader::GetCurrentVertexState(shaders))==0xE1C4426Eu) {
+    CaptureNativeSize(context.cmd_list,data,bindings->graphics,false);
+    std::array<float,4> light{};
+    std::array<float,12> material{};
+    if(ReadNativeUpload(fog::Resolve(context.cmd_list,bindings->graphics,api::descriptor_type::constant_buffer,0,0,api::shader_stage::pixel).buffer_range,
+            160,light.data(),sizeof(light))
+        &&ReadNativeUpload(fog::Resolve(context.cmd_list,bindings->graphics,api::descriptor_type::constant_buffer,2,0,api::shader_stage::pixel).buffer_range,
+            0,material.data(),sizeof(material))) {
+      // E46451D5: pow(L * normalize(L) / dot(L, scalar) * material0,2.2)
+      // times material2. The unknown GPU-only b4 scalar, height and native fog
+      // are achromatic, so cancel in the normalized HDR colour ratios.
+      std::array<float,4> colour{};
+      for(unsigned i=0;i<3;++i)
+        colour[i]=std::pow(std::max(light[i]*light[i]*material[i],0.f),2.2f)*material[8+i]*material[11];
+      if(std::all_of(colour.begin(),colour.end(),[](float value){return std::isfinite(value)&&value>=0.f;})) {
+        const float peak=std::max({colour[0],colour[1],colour[2]});
+        for(unsigned i=0;i<3;++i)colour[i]/=std::max(peak,1.e-20f);
+        colour[3]=1.f;
+        std::lock_guard lock(data->mutex);
+        data->sun_material=colour;
+      }
+    }
+  }
+  const auto* command=renodx::utils::data::Get<CommandData>(context.cmd_list);
+  if(EnhancedSkyMatches(context.cmd_list)&&(!command->deferred_sky||command->sky_composited))return {.bypass=true};
   CaptureDisc(context.cmd_list, false);
   return {};
 };
 inline constexpr auto ObserveMoon = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context> {
+  if(mode<.5f)return {};
+  // Native Moon material is already CPU-written in an upload heap. Reading
+  // its 48 bytes here needs no GPU readback, queue wait or extra render pass.
+  // The next sky recording uses this family-specific material; frame[277]
+  // supplies the fallback before a native Moon draw has been seen.
+  auto* data=renodx::utils::data::Get<DeviceData>(context.cmd_list->get_device());
+  auto* bindings=renodx::utils::data::Get<fog::CommandData>(context.cmd_list);
+  auto* shaders=renodx::utils::shader::GetCurrentState(context.cmd_list);
+  const bool toussaint=context.matched_shader_hash==0x6D5A1EC2u;
+  if(data&&bindings&&shaders&&renodx::utils::shader::GetCurrentShaderHash(
+      renodx::utils::shader::GetCurrentVertexState(shaders))==(toussaint?0x680C44CEu:0x14AEBBFBu)) {
+    CaptureNativeSize(context.cmd_list,data,bindings->graphics,true,toussaint);
+    const auto material=fog::Resolve(context.cmd_list,bindings->graphics,api::descriptor_type::constant_buffer,2,0,api::shader_stage::pixel).buffer_range;
+    std::array<float,12> constants{};
+    if(ReadNativeUpload(material,0,constants.data(),sizeof(constants))) {
+      std::array<float,4> colour{};
+      for(unsigned i=0;i<3;++i)colour[i]=constants[8+i]*constants[11]*(toussaint?1.f:constants[i]);
+      colour[3]=toussaint?2.f:1.f;
+      if(std::all_of(colour.begin(),colour.end(),[](float value){return std::isfinite(value)&&value>=0.f;})) {
+        sky::emission::ObserveMoon(colour.data(),toussaint);
+        std::lock_guard lock(data->mutex);
+        data->moon_material[toussaint]=colour;
+      }
+    }
+  }
+  const auto* command=renodx::utils::data::Get<CommandData>(context.cmd_list);
+  if(EnhancedSkyMatches(context.cmd_list)&&(!command->deferred_sky||command->sky_composited))return {.bypass=true};
   CaptureDisc(context.cmd_list, true);
   return {};
 };
@@ -796,8 +1012,15 @@ inline constexpr auto ObserveCard = []<typename Context>(Context& context) -> re
   return {.bypass = SuppressCard(context.cmd_list, context.matched_shader_hash)};
 };
 inline constexpr auto ObserveSkyAtlas = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context> {
+  if(mode<.5f)return {};
   BeginAtlasFace(context.cmd_list, context.matched_shader_hash);
-  return {};
+  // Replay the native sky first. The main-view composite then adds direct
+  // celestial radiance only after cloud extinction, before any FP16 store.
+  return {.post_callback=+[](Context& after,const void*) {
+    auto* command=renodx::utils::data::Get<CommandData>(after.cmd_list);
+    if(command&&command->deferred_sky&&EnhancedSkyMatches(after.cmd_list))
+      command->sky_composited=Render(after.cmd_list,after.matched_shader_hash);
+  }};
 };
 inline constexpr auto ObserveAtlasConvert = []<typename Context>(Context& context) -> renodx::utils::command_action::CallbackResult<Context> {
   return {.bypass=ConvertAtlas(context.cmd_list)};
@@ -1063,8 +1286,10 @@ inline void Use(DWORD reason, ShaderInjectData* settings) {
     reshade::register_event<reshade::addon_event::dispatch_rays>(OnDispatchRays);
     renodx::utils::command_action::RegisterCallback(ObserveClock, {.shader_hash = 0x30DE6E02u});
     for (uint32_t hash : {0x449D3390u, 0x3B15DAABu}) renodx::utils::command_action::RegisterCallback(ObserveSkyAtlas, {.shader_hash = hash});
-    for (uint32_t hash : {0xE46451D5u, 0xA0A02407u}) renodx::utils::command_action::RegisterCallback(ObserveSun, {.shader_hash = hash});
-    renodx::utils::command_action::RegisterCallback(ObserveMoon, {.shader_hash = 0xE446F231u});
+    // A0A02407 is an unmodified screen copy, not a solar emitter.
+    renodx::utils::command_action::RegisterCallback(ObserveSun, {.shader_hash = 0xE46451D5u});
+    for(uint32_t hash:{0xE446F231u,0x6D5A1EC2u})
+      renodx::utils::command_action::RegisterCallback(ObserveMoon, {.shader_hash = hash});
     renodx::utils::command_action::RegisterCallback(ObserveAtlasConvert, {.shader_hash = 0xF716B319u});
     for (uint32_t hash : {0x683213A3u, 0xBF0CA052u, 0xB7D286D5u, 0xA35EA14Du, 0x2AF34748u, 0x093DCC92u})
       renodx::utils::command_action::RegisterCallback(ObserveCard, {.shader_hash = hash});

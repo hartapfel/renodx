@@ -10,6 +10,26 @@ below every tab.
 Lighting includes independent sun/moon size and character fill; Nights contains
 the night look, schedule, brightness, atmosphere, colour and exposure.
 
+Volumetric clouds include enhanced stars, Sun and Moon in both captured sky
+families, including Toussaint. **Nights > Night Atmosphere > Star Brightness**
+adjusts the stars behind the clouds; the existing Moon Brightness and Lighting
+sun/moon size controls also apply. Direct celestial light is attenuated before
+it reaches the HDR scene buffer. See the [celestial sky notes](sky/README.md)
+for rendering details, research, provenance and validation limits.
+Sun Size scales the body and glow together; **Sun Glow Size** independently adjusts
+the glow, defaulting to125%. Both reuse native Sun/glow colours and weather curves.
+The Moon follows the native clock-driven phase cycle and material colour/brightness.
+Stars have an8x brighter linear base while the saved Star Brightness percentage remains unchanged.
+
+Sun Size and Moon Size now scale the **native mesh size**: 100% follows the
+game's current authored geometry, rather than a fixed enlarged reference.
+Saved slider values and the authored 75% Moon default are retained. The glow
+continues to follow Sun Size, with Sun Glow Size providing independent control.
+The enhanced sources share their linear colour with directional world light,
+volumetric light and cloud scattering, preserving each native light's luminance.
+Cloud tops remain sunlit until their own horizon hides the Sun. Clear Sunrises
+& Sunsets preserves natural cover in rain, including light rain, and storms.
+
 The addon imports missing values from the standalone Darker Nights and Improved
 Graphics profiles into the corresponding HartapfelFX slots. Preset Off restores
 native lighting across all tabs. Use HartapfelFX in place of the standalone Darker Nights and Improved Graphics
@@ -63,6 +83,13 @@ layer. Temporal support respects the same occlusion.
 Cloud view rays reconstruct the native jittered perspective from camera rotation,
 avoiding precision loss from translated inverse matrices that made stationary
 clouds shake. Wind remains at 0.35x native speed.
+Cloud columns gradually grow and dissolve while their billows turn over, even
+when the weather stays unchanged. Two existing 3D noise lookups traverse their
+previously fixed slice axes at different slow rates. This adds no texture
+samples, passes, resources or simulation; pausing the native animation clock
+also freezes evolution. View, sunlight, terrain shadows and reflection clouds
+use the same evolving density. See the
+[research and validation notes](PERFORMANCE.md#gradual-cloud-form-evolution-8-november-2026).
 Large oriented mist particles use a local density volume within their native
 bounds. The engine still supplies their centres, sizes, material animation,
 colour, fades and flow; the GPU integrates the visible column. Small particles
@@ -108,11 +135,101 @@ The shared preset slider applies to the whole mod. Choose **Clouds**, **Fog**,
 collapsed; open their named sections when needed. Edits apply immediately and
 save to the selected preset.
 
+On **Clouds**, **Quality Preset** offers **Performance**, **Balanced**, **High**
+and **Ultra**. Start with Balanced for a faster image with smooth reconstruction;
+use High for full detail or Performance for the lowest cost. The choice changes
+sampling and shadow resolution while keeping your cloud appearance, weather,
+wind, lighting strengths and Cloud Shadow Strength. **Custom** preserves saved
+manual quality settings. Its original six Detail Quality levels and
+Sample Spacing remain under **Cloud Quality (Advanced)**. Switching back to
+Custom restores those saved manual choices. These cloud quality choices are
+independent of the shared numbered preset slider above the tabs.
+
+New profiles start with **Performance** quality and the cloud defaults below.
+Use **Reset All** on the Clouds tab to apply these values to an existing profile.
+
+| Section | Defaults |
+| --- | --- |
+| Performance | Volumetric rendering, Performance quality, Cloud Shadow Strength 100% |
+| Appearance | Coverage 200%, Density 20%, Formation Size 100%, Layer Thickness 100% |
+| Formation | Base Height 433 m, Roundness −64, Height Variation 41%, Gaps Between Formations 200% |
+| Edges | Edge Sharpness 93%, Edge Irregularity 100%, Base Fade Width 165%, Top Fade 74% |
+| Lighting | Sun & Moon Brightness 300%, Ambient Brightness 236%, Internal Shadows 200%, Bright Rim Strength 60% |
+| Structure | Billow Size 300%, Shape Irregularity 245%, Upper Cloud Lean 192%, Core Contrast 196% |
+| Detail | Surface Detail 51%, Detail Size 62%, Underside Softness 38% |
+| Erosion | Erosion Strength 236%, Wispy / Rounded Balance 55, Underside Relief 41%, Top Relief 171% |
+
+**Cloud Shadow Strength** under **Clouds & Performance** controls how much
+sunlight and moonlight clouds block from reaching the world. At 50%, clouds
+dim the light half as much as at 100%. At 0%, cloud shadows are off. Saved On
+and Off choices carry over as 100% and 0%.
+
+**Clear Sunrises & Sunsets** under **Cloud Appearance** is On by default.
+It opens a shallow arch along the Sun's horizon. The opening stays clear near
+the Sun and curves down into thin cloud strands and irregular gaps. Native game
+time starts it at **18:00** and ends it at **06:00**, fading over 18:00-18:15
+and 05:45-06:00. When the Sun is below the horizon, the opening follows its
+bearing along the horizon. The shared density also drives
+cloud lighting, reflections and terrain shadows, so sunlight reaches the scene
+through the visible opening. The rest of the sky keeps its weather formations.
+Storms, heavy rain and blizzards keep natural cloud cover; that exception follows
+the native weather transition smoothly. Unknown weather keeps its natural cover.
+If native game time is unavailable, the previous solar-elevation timing remains
+the fallback. Terrain, buildings and atmospheric haze can still
+obscure the sun. Switch it Off for weather-driven cloud cover at every sun angle.
+Meditation changes to the sun or moon also invalidate the cloud render cache,
+even if the animation clock is frozen. Fast travel and time jumps reset invalid
+history while retaining the current weather's cloud formations.
+
+**Lighting > Sun & Moon Appearance > Evening Sunlight Colour** blends native
+world sunlight (0%) with the enhanced sunset colour (100%, default). It fades
+in with the evening and low Sun, preserving native light brightness. Cloud
+scattering and the visible Sun retain the full sunset palette independently.
+Morning and Moon lighting retain their existing colours. This controls tint;
+it does not reduce the Sun's light intensity.
+
+Performance and Balanced trace at half the render width and height, resolve
+history at that size, then reconstruct at the game's full internal resolution.
+They retain stable sampling, HDR sun/moon occlusion and native motion output.
+Fine features can be softer, especially with a low internal game resolution.
+High matches Custom Medium with 50% spacing; Ultra uses the existing Ultra
+sampling at 50%. Cinematic and Maximum remain available in Custom.
+See [cloud scalability and research](PERFORMANCE.md#cloud-quality-presets-8-november)
+for budgets, measurements, limitations and validation.
+
+### Fog and volumetric light
+
+The **Fog** tab separates **Fog Amount**, the broad weather veil and its colour
+desaturation, from **Sun & Moon Beams** and **Lamp & Fire Light**. The default
+Fog Amount is 100%, retaining the full weather veil. **Medium Density**, now under
+**Fog Medium (Advanced)**, still changes the actual medium for both scattering
+and light attenuation. Zero Medium Density removes both fog and beams.
+
+The defaults use **Performance** quality, Sun & Moon Beams **45%**, Light Focus
+**0.65**, Lamp & Fire Light **100%**, Distant Sky Haze **200%**, Fade With Height
+**200%**, Smooth Fog Lighting **On** and Medium Density **100%**. Clear Distance
+defaults to **0** and ranges from **-100 to 100**. Negative values advance the
+game's distance fade to bring fog and beams closer to the camera; positive
+values leave a clear space. Hover help explains the controls in the existing tab.
+
+Fog **Quality Preset** offers **Performance**, **Balanced**, **High**, **Ultra**,
+**Per-Pixel Integration** and **Custom**. Custom retains the old Balanced/High
+volume choice under **Fog Quality (Advanced)**. Ultra adds denser shadow
+sampling. Per-Pixel Integration uses the Ultra lighting field and integrates
+it to each receiver's exact depth, including transparent materials. It is very
+expensive and does not trace fresh geometry shadows per pixel. Smooth Fog
+Lighting is disabled in this mode because its prefix filter is bypassed.
+The existing interior exclusion, clouds, wind, HDR addon and four-tab flow remain.
+Local-light injection selects the fog volume matching the current scene depth
+size, so returning from a different photo-mode view keeps lamps and fire in the
+active view. Intervening shadow viewports do not select the light volume.
+See [fog controls, research and quality budgets](PERFORMANCE.md#fog-and-volumetric-light-8-november).
+
 **Reset All** on each tab restores only that tab's settings in the selected
 preset, after a scope-specific confirmation. Hidden exposure options reset too.
 Sun and moon size belong to Lighting and remain independent of night brightness.
-Night look buttons affect Nights only. All 81 active control keys are retained, and this menu revision keeps the
-existing defaults and saved presets.
+Night look buttons affect Nights only. Saved appearance values remain in their
+numbered presets; the revised fog defaults apply to unset values and Fog Reset All.
 
 **Help & About** is a shared section below every tab, including with Preset Off. It
 covers the whole mod and includes the Classic mod's RenoDX/HDR Den Discord,
@@ -168,8 +285,11 @@ cloud effects. Unknown weather/worlds retain the generic fallback.
 
 The added middle sheet, altocumulus patches and high cirrus sheet have all been
 removed at the user's request. Their textures, setup and shading/shadow work are
-gone. Weather containing only those effects now produces clear sky. The main
-volumetric billows/decks retain their existing shapes and realtime controls.
+gone. **Light Clouds** weather retains a light 3D billow recipe when its native
+appearance used only those removed sheets, so the normal weather blend no longer
+fades the entire cloud field away. The native coverage map still controls its
+gaps. Other former-sheet-only weather keeps its existing clear-sky behavior.
+The main volumetric billows/decks retain their shapes and realtime controls.
 
 Native source/target weather and its blend drive the remaining families.
 The existing 0.8-second GPU fade prevents recipe changes from popping.
@@ -203,13 +323,9 @@ selected addon preset. The Clouds tab's **Reset All** restores its rendering, pe
 | Cloud Edges | Edge Sharpness, Edge Irregularity, Base Fade Width, Top Fade |
 | Cloud Lighting | Sun & Moon Brightness, Ambient Brightness, Internal Shadows, Bright Rim Strength |
 
-Mod defaults use the user's saved Preset #1 from 8 November 2026 across all
-81 active settings. For example, the main cloud base starts at 1650 m, Roundness
-at 87, Height Variation at 174%, Billow Size at 158% and Sun & Moon Brightness at 200%.
-Reset All on Clouds uses these authored values. The four cirrus controls
-were removed with the high sheet; older saved values are unused. The underlying
-material scales still use 100% as their reference, independently of the chosen
-starting values.
+The cloud defaults above use the appearance values from the 9 November 2026
+Preset #1 screenshot. The underlying material scales use 100% as their
+reference, independently of the chosen starting values.
 
 For firmer silhouettes, start with Edge Sharpness and Base Fade Width. Use
 Edge Irregularity for coherent contour breakup. Roundness, Billow Size and

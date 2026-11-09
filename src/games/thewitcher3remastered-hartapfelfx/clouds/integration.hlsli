@@ -25,6 +25,8 @@ float4 TraceCloud(float3 origin,float3 ray,float2 interval,float cone,uint2 id,
   float3 light_tangent=normalize(cross(direction,abs(direction.z)<.9f?float3(0,0,1):float3(0,1,0)));
   float3 light_bitangent=cross(direction,light_tangent);
   float phase_cosine=dot(ray,direction);
+  bool solar=dot(direction,normalize(frame[204].yzw+float3(0,0,1.e-8f)))>.999f;
+  float3 direct_colour=MatchLightSpectrum(max(light[1].rgb,0.f),solar?emission_sun:emission_moon);
   float3 ambient=light[2].rgb;
   float3 radiance=0.f;
   float transmission=1.f,weighted_depth=0.f,weight=0.f;
@@ -102,13 +104,20 @@ float4 TraceCloud(float3 origin,float3 ray,float2 interval,float cone,uint2 id,
         }
         tau*=illumination.z;
         float direct=CloudDirectScattering(phase_cosine,sigma,tau,illumination.w);
+        if(solar) {
+          float altitude=max(CloudAltitude(p),0.f);
+          float3 up=normalize(p+float3(0,0,PlanetRadius));
+          float horizon=sqrt(saturate(1.f-pow(PlanetRadius/(PlanetRadius+altitude),2.f)));
+          float width=max(private_sky[7].x,.001f);
+          direct*=smoothstep(-width,width,dot(up,direction)+horizon);
+        }
         // Reuse the broad directional cone's visibility for diffuse sky, as
         // in Bauer et al. 2019. Plane-parallel optical depth converts the
         // oblique light path to an approximate zenith column by cos(zenith).
         // This also avoids a second sparse quadrature that drew terraces on
         // opaque cloud undersides at Medium quality.
         float sky_tau=tau*saturate(direction.z);
-        float3 source=CloudScatteringAlbedo*(max(light[1].rgb,0.f)*direct*illumination.x
+        float3 source=CloudScatteringAlbedo*(direct_colour*direct*illumination.x
             +ambient*CloudDiffuseTransport(sky_tau,illumination.w).y*illumination.y);
         radiance+=contribution*source;
       }

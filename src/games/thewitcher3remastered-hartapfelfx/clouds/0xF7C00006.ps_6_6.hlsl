@@ -10,9 +10,9 @@ void main(float4 position : SV_Position) {
   if(any(id.xy>=uint2(dimensions.xy)))return;
   if(all(id.xy==0)) {
     shadow_data[6]=light[0];shadow_data[7]=light[1];
-    shadow_data[8]=float4(CloudSkyAmbient(),1.f);
+    shadow_data[8]=float4(CloudSkyAmbient(),cloud_low_sun.w);
   }
-  float3 sun=CloudLightingDirection();
+  float3 sun=CloudLightingDirection(true);
   bool valid=sun.z>.015f &&frame[66].x>0.f &&CloudAltitude(frame[0].xyz)<CloudBase-50.f;
   bool clock_valid = (identity.w & 256u) == 0 || (clock_identity.w == 0xF7C0000Du
       && all(clock_camera.xyz == frame[0].xyz) && all(clock_jitter == asuint(frame[286])));
@@ -25,6 +25,9 @@ void main(float4 position : SV_Position) {
       && all(previous_shadow.Load4(256) == asuint(frame[68]))
       && all(previous_shadow.Load4(272) == asuint(cloud_clock))
       && all(asfloat(previous_shadow.Load3(48)) == frame[0].xyz)
+      && all(asfloat(previous_shadow.Load3(292)) == cloud_low_sun.xyz)
+      && all(previous_shadow.Load4(304)==asuint(celestial))
+      && previous_shadow.Load(352)==asuint(cloud_low_sun.w)
       && all(asfloat(previous_shadow.Load3(16)) == sun)) return;
   float texel=dimensions.z/dimensions.x;
   // Project the primary camera onto z=0 along the light, then snap in world
@@ -34,7 +37,8 @@ void main(float4 position : SV_Position) {
   float map_top=CloudBase+CloudThickness();
   if(all(id.xy==0)) {
     shadow_data[0]=float4(center,map_top,dimensions.z);
-    shadow_data[13]=float4(CloudBase,0,0,0);
+    shadow_data[13]=float4(CloudBase,cloud_low_sun.xyz);
+    shadow_data[14]=celestial;
     shadow_data[1]=float4(sun,valid ? 1.f : 0.f);
     shadow_data[2]=float4(dimensions.xy,saturate(integration.x),clock_valid ? 1357.f : 0.f);
     shadow_data[3]=float4(frame[0].xyz,asfloat(storage.w));

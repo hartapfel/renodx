@@ -7,24 +7,27 @@
 #include <cstdint>
 namespace hartapfelfx::clouds::families {
 struct Profile { std::array<float,4> low, high; };
-// low: cumulus, stratus deck, reserved, reserved; high: reserved, known, fallback cover, reserved.
+// low: cumulus, stratus deck, reserved, reserved; high: reserved, known, fallback cover, severe weather.
 inline constexpr Profile profiles[] = {
     {{1.000000f,0.000000f,0.000000f,0.000000f},{0.000000f,0.000000f,0.000000f,0.000000f}},
     {{0.000000f,0.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
-    {{1.000000f,0.900000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
+    {{1.000000f,0.900000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,1.000000f}},
     {{1.000000f,0.350000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
-    {{1.000000f,0.850000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
+    {{1.000000f,0.850000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,1.000000f}},
+    {{0.450000f,0.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
     {{1.000000f,0.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
     {{0.850000f,0.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
-    {{0.000000f,1.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
+    {{0.000000f,1.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,1.000000f}},
     {{0.680000f,0.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
+    {{0.850000f,0.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,1.000000f}},
     {{0.000000f,0.350000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.650000f,0.000000f}},
-    {{0.000000f,1.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.650000f,0.000000f}},
+    {{1.000000f,0.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,1.000000f}},
+    {{0.000000f,1.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.650000f,1.000000f}},
     {{0.500000f,0.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
-    {{0.450000f,0.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
     {{0.800000f,0.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
-    {{1.000000f,1.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
+    {{1.000000f,1.000000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,1.000000f}},
     {{1.000000f,0.400000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,0.000000f}},
+    {{1.000000f,0.400000f,0.000000f,0.000000f},{0.000000f,1.000000f,0.000000f,1.000000f}},
 };
 struct Name { const char* text; uint32_t native = 0; };
 inline Name names[] = {
@@ -65,58 +68,58 @@ inline constexpr Weather weather[] = {
     {1,5,2}, // WT_Grey_Sky
     {1,6,3}, // WT_Heavy_Clouds
     {1,7,4}, // WT_Heavy_Clouds_Dark
-    {1,9,1}, // WT_Light_Clouds
-    {1,11,5}, // WT_Mid_Clouds
-    {1,12,6}, // WT_Mid_Clouds_Dark
+    {1,9,5}, // WT_Light_Clouds
+    {1,11,6}, // WT_Mid_Clouds
+    {1,12,7}, // WT_Mid_Clouds_Dark
     {1,14,4}, // WT_Rain_Storm
-    {1,15,6}, // WT_Snow
-    {1,24,5}, // WT_q605_Hell
-    {2,2,7}, // WT_Blizzard
-    {2,3,8}, // WT_Clear
-    {2,6,5}, // WT_Heavy_Clouds
+    {1,15,7}, // WT_Snow
+    {1,24,6}, // WT_q605_Hell
+    {2,2,8}, // WT_Blizzard
+    {2,3,9}, // WT_Clear
+    {2,6,6}, // WT_Heavy_Clouds
     {2,7,4}, // WT_Heavy_Clouds_Dark
-    {2,11,6}, // WT_Mid_Clouds
-    {2,12,5}, // WT_Mid_Clouds_Dark
-    {2,13,6}, // WT_Mid_Clouds_Fog
-    {2,14,7}, // WT_Rain_Storm
-    {2,17,7}, // WT_Wild_Hunt
-    {2,18,6}, // WT_lessun_forest
-    {2,19,7}, // WT_q501_Blizzard
-    {2,20,6}, // WT_q501_Blizzard2
-    {2,21,7}, // WT_q501_Storm
-    {2,22,5}, // WT_q501_fight_ship_18_00
-    {2,23,7}, // WT_q501_storm_arena
-    {3,0,5}, // WT_Battle
-    {3,1,6}, // WT_Battle_Forest
-    {3,2,7}, // WT_Blizzard
-    {3,3,9}, // WT_Clear
+    {2,11,7}, // WT_Mid_Clouds
+    {2,12,6}, // WT_Mid_Clouds_Dark
+    {2,13,10}, // WT_Mid_Clouds_Fog
+    {2,14,8}, // WT_Rain_Storm
+    {2,17,8}, // WT_Wild_Hunt
+    {2,18,7}, // WT_lessun_forest
+    {2,19,8}, // WT_q501_Blizzard
+    {2,20,10}, // WT_q501_Blizzard2
+    {2,21,8}, // WT_q501_Storm
+    {2,22,6}, // WT_q501_fight_ship_18_00
+    {2,23,8}, // WT_q501_storm_arena
+    {3,0,6}, // WT_Battle
+    {3,1,7}, // WT_Battle_Forest
+    {3,2,8}, // WT_Blizzard
+    {3,3,11}, // WT_Clear
     {3,6,3}, // WT_Heavy_Clouds
-    {3,7,5}, // WT_Heavy_Clouds_Dark
-    {3,9,1}, // WT_Light_Clouds
-    {3,11,6}, // WT_Mid_Clouds
-    {3,14,10}, // WT_Rain_Storm
-    {3,16,6}, // WT_Vesemir_burial_hour_3_30
+    {3,7,12}, // WT_Heavy_Clouds_Dark
+    {3,9,5}, // WT_Light_Clouds
+    {3,11,7}, // WT_Mid_Clouds
+    {3,14,13}, // WT_Rain_Storm
+    {3,16,7}, // WT_Vesemir_burial_hour_3_30
     {4,3,1}, // WT_Clear
     {4,5,2}, // WT_Grey_Sky
-    {4,6,5}, // WT_Heavy_Clouds
-    {4,9,1}, // WT_Light_Clouds
+    {4,6,6}, // WT_Heavy_Clouds
+    {4,9,5}, // WT_Light_Clouds
     {4,10,4}, // WT_Light_Rain
-    {4,11,5}, // WT_Mid_Clouds
-    {4,14,7}, // WT_Rain_Storm
-    {8,6,5}, // WT_Heavy_Clouds
-    {8,11,6}, // WT_Mid_Clouds
-    {11,3,11}, // WT_Clear
-    {11,4,7}, // WT_Fog
+    {4,11,6}, // WT_Mid_Clouds
+    {4,14,8}, // WT_Rain_Storm
+    {8,6,6}, // WT_Heavy_Clouds
+    {8,11,7}, // WT_Mid_Clouds
+    {11,3,14}, // WT_Clear
+    {11,4,8}, // WT_Fog
     {11,8,3}, // WT_Heavy_Distant
-    {11,9,12}, // WT_Light_Clouds
-    {11,11,13}, // WT_Mid_Clouds
-    {11,14,14}, // WT_Rain_Storm
-    {11,15,6}, // WT_Snow
-    {11,25,15}, // q704_Cloud
-    {11,26,7}, // q704_Cloud_Rain
-    {11,27,15}, // q704_Cloud_Sunny
-    {11,28,14}, // q704_Detlaff_arena
-    {11,29,14}, // q704_main
+    {11,9,5}, // WT_Light_Clouds
+    {11,11,15}, // WT_Mid_Clouds
+    {11,14,16}, // WT_Rain_Storm
+    {11,15,7}, // WT_Snow
+    {11,25,17}, // q704_Cloud
+    {11,26,8}, // q704_Cloud_Rain
+    {11,27,18}, // q704_Cloud_Sunny
+    {11,28,16}, // q704_Detlaff_arena
+    {11,29,16}, // q704_main
 };
 // Source/target recipe IDs and exact native float blend in one lock-free word.
 // Zero selects the previous generic field; renderer workers never read game RAM.

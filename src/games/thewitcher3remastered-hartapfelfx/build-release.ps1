@@ -91,6 +91,9 @@ try {
   New-Item -ItemType Directory -Path $cloudDirectory -Force | Out-Null
   Copy-Item -Path 'build/thewitcher3remastered-hartapfelfx.include/embed/0xF7C*.cso' -Destination $cloudDirectory
   Copy-Item -LiteralPath 'build/thewitcher3remastered-hartapfelfx.include/embed/0xF7F00001.cso' -Destination $cloudDirectory
+  foreach($skyHash in @('449D3390','3B15DAAB')) {
+    Copy-Item -LiteralPath ('build/thewitcher3remastered-hartapfelfx.include/embed/0x'+$skyHash+'.cso') -Destination (Join-Path $cloudDirectory ($skyHash+'.cso'))
+  }
   & clang-cl /nologo /EHsc /std:c++20 /O2 /DNDEBUG /DNOMINMAX (Join-Path $PSScriptRoot 'tests/clouds_gpu.cpp') ('/Fe' + (Join-Path $validationDirectory 'clouds-gpu.exe')) ('/Fo' + (Join-Path $validationDirectory 'clouds-gpu.obj')) /link d3d12.lib dxgi.lib
   if ($LASTEXITCODE -ne 0) { throw 'Cloud GPU validation compilation failed.' }
   & clang-cl /nologo /EHsc /std:c++20 /O2 /DNDEBUG /DNOMINMAX (Join-Path $PSScriptRoot 'tests/ray_state.cpp') ('/Fe' + (Join-Path $validationDirectory 'ray-state.exe')) ('/Fo' + (Join-Path $validationDirectory 'ray-state.obj'))
@@ -101,7 +104,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Cloud family selector compilation failed.' }
   & (Join-Path $validationDirectory 'cloud-families.exe')
   if ($LASTEXITCODE -ne 0) { throw 'Cloud family selector validation failed.' }
-  foreach ($shader in @(@('ps_6_6','local-cloud.cso','tests/local_cloud.ps.hlsl'), @('ps_6_6','cloud-depth.cso','tests/cloud_depth.ps.hlsl'), @('cs_6_6','cloud-features.cso','tests/cloud_features.cs.hlsl'), @('ps_6_6','cloud-state.cso','tests/cloud_state.ps.hlsl'), @('cs_6_6','cloud-indirect.cso','tests/cloud_indirect.cs.hlsl'), @('cs_6_6','lighting-controls.cso','tests/lighting_controls.cs.hlsl'), @('lib_6_6','cloud-ray.cso','tests/cloud_ray.lib.hlsl'), @('cs_6_6','motion-9f.cso','0x9F1C32F1.cs_6_6.hlsl'), @('cs_6_6','motion-fa.cso','0xFA11F41B.cs_6_6.hlsl'))) {
+  foreach ($shader in @(@('ps_6_6','sky.cso','tests/sky.ps.hlsl'), @('vs_6_6','sky-vs.cso','tests/sky.vs.hlsl'), @('ps_6_6','local-cloud.cso','tests/local_cloud.ps.hlsl'), @('ps_6_6','cloud-depth.cso','tests/cloud_depth.ps.hlsl'), @('cs_6_6','cloud-features.cso','tests/cloud_features.cs.hlsl'), @('ps_6_6','cloud-state.cso','tests/cloud_state.ps.hlsl'), @('cs_6_6','cloud-indirect.cso','tests/cloud_indirect.cs.hlsl'), @('cs_6_6','lighting-controls.cso','tests/lighting_controls.cs.hlsl'), @('lib_6_6','cloud-ray.cso','tests/cloud_ray.lib.hlsl'), @('cs_6_6','motion-9f.cso','0x9F1C32F1.cs_6_6.hlsl'), @('cs_6_6','motion-fa.cso','0xFA11F41B.cs_6_6.hlsl'))) {
     & ./bin/dxc.exe -T $shader[0] -HV 2021 -Ges -WX -Fo (Join-Path $cloudDirectory $shader[1]) (Join-Path $PSScriptRoot $shader[2])
     if ($LASTEXITCODE -ne 0) { throw "Cloud validation shader compilation failed $($shader[2])" }
   }
@@ -115,6 +118,24 @@ try {
   }
   & (Join-Path $validationDirectory 'clouds-gpu.exe') $cloudDirectory
   if ($LASTEXITCODE -ne 0) { throw 'Cloud GPU validation failed.' }
+  foreach($skyCase in @('capture-celestial-preview-nativeair','capture-celestial-preview-nativeair-night',
+      'capture-celestial-preview-nativeair-fp16','capture-celestial-preview-nativeair-night-fp16',
+      'capture-celestial-preview-clear-occlusion-mask-fp16',
+      'capture-celestial-preview-clear-occlusion-mask-largebody-fp16',
+      'capture-celestial-preview-clear-night-occlusion-mask-fp16',
+      'capture-celestial-clear-captured-night-native-sky-standard-haze200-fp16',
+      'capture-celestial-clear-captured-night-native-sky-toussaint-haze200-fp16',
+      'capture-celestial-preview-clear-night-native-material-fp16',
+      'capture-celestial-preview-clear-night-native-material-toussaint-fp16',
+      'capture-celestial-preview-clear-nativeair-sunset-fp16',
+      'capture-celestial-preview-clear-nativeair-twilight-fp16',
+      'capture-celestial-preview-clear-native-solar-material-fp16',
+      'capture-celestial-preview-clear-night-phase-waxing-fp16',
+      'capture-celestial-preview-clear-night-phase-waning-fp16',
+      'capture-celestial-preview-clear-night-phase-new-fp16')) {
+    & (Join-Path $validationDirectory 'clouds-gpu.exe') $cloudDirectory $skyCase (Join-Path $validationDirectory ($skyCase+'.rgba32f'))
+    if($LASTEXITCODE -ne 0){throw "Celestial cloud integration failed: $skyCase"}
+  }
   # The native fair-weather air coefficients exposed HDR sun leakage through
   # an otherwise dense cloud when the entire sky was treated as foreground air.
   & (Join-Path $validationDirectory 'clouds-gpu.exe') $cloudDirectory 'capture-horizon-nativeair-sun' (Join-Path $validationDirectory 'nativeair-sun.rgba32f')

@@ -38,6 +38,10 @@ int main() {
     write(&weather,0x18,family::names[row.name].native);
     family::Update(true);
     assert(uint8_t(family::current.load())==row.profile);
+    if(std::string_view(family::names[row.name].text)=="WT_Light_Clouds")
+      assert(family::profiles[row.profile].low[0]>0.f ||family::profiles[row.profile].low[1]>0.f);
+    if(std::string_view(family::names[row.name].text).find("Rain")!=std::string_view::npos)
+      assert(family::profiles[row.profile].high[3]==1.f);
   }
   uint32_t storm=0,light=0;
   for(const auto& name:family::names) {

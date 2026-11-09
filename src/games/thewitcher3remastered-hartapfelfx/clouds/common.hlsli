@@ -11,11 +11,14 @@ cbuffer Parameters : register(b2) {
   float4 integration; // view samples, light samples, jitter index, history valid
   float4 appearance; // coverage, optical density, horizontal size, layer thickness
   float4 atmosphere; // sky-haze density, detail strength, detail size, base softness
-  float4 scattering; // multiple scattering, erosion octaves, air samples, noise size
+  float4 scattering; // multiple scattering, erosion octaves, low-sun opening, noise size
   uint4 identity; // settings revision, immutable native b0 GPU address, reserved
   uint4 storage; // packed motion row pitch/offset, shadow row pitch/offset
   float4 family_from, family_to, family_transition;
   float4 morphology, structure, microstructure, contour, illumination;
+  float4 celestial; // stars, packed Moon offset, sky haze, validity tag
+  float4 private_sky[8]; // existing settings/material/size page, bytes256..383
+  float4 emission_sun,emission_moon; // same private page as sky/composite
 }
 cbuffer Previous : register(b3) { float4 previous[341]; }
 cbuffer PreviousParameters : register(b4) {
@@ -31,7 +34,14 @@ static float4 cloud_family_low=asfloat(cloud_shared.Load4(320));
 static float4 cloud_family_high=asfloat(cloud_shared.Load4(336));
 static float cloud_main_strength=max(cloud_family_low.x,cloud_family_low.y);
 static float cloud_deck=cloud_family_low.y/max(cloud_family_low.x+cloud_family_low.y,.001f);
+#include "low_sun.hlsli"
+// Severe precipitation follows the native weather blend and the same temporal
+// publication as formation weights. Unknown weather is conservatively unedited.
+static float4 cloud_low_sun = CloudLowSunState(frame[204].yzw,
+    scattering.z * smoothstep(.975f,1.f,cloud_family_high.y)
+        * (1.f-saturate(cloud_family_high.w)),(identity.w&8192u)!=0u);
 #include "clock.hlsli"
+#include "../sky/lighting.hlsli"
 uint3 CloudIdentity() {
   return uint3(identity.x,cloud_clock_captured ? captured_clock_identity.xy
       : (identity.w&256u)!=0u ? clock_identity.xy : identity.yz);
@@ -39,8 +49,10 @@ uint3 CloudIdentity() {
 bool CloudAlreadyRendered() {
   return all(CloudIdentity() == previous_identity.xyz) && all(dimensions == previous_dimensions)
       &&all(cloud_clock==previous_cloud_clock) &&all(frame[0]==previous[0])
+      &&all(frame[204]==previous[204]) &&all(frame[205]==previous[205])
       &&all(frame[66]==previous[66]) &&all(frame[67]==previous[67])
-      &&all(frame[68]==previous[68]) &&all(frame[286]==previous[286]);
+      &&all(frame[68]==previous[68]) &&all(frame[286]==previous[286])
+      &&scattering.z==previous_scattering.z;
 }
 Texture3D<float4> shape_noise : register(t0);
 Texture2DArray<float2> weather : register(t1);
@@ -57,10 +69,14 @@ static const float CloudFormationScale = 7200.f;
 // Native sky 0x449D3390 places its solar lobe at b12[204].yzw. b12[38]
 // drives atmospheric attenuation instead; in the live scene they differ by
 // 4.48 degrees (~460 m at the cloud base). Do not cast through that other gap.
-float3 CloudLightingDirection() {
+float3 CloudLightingDirection(bool terrain=false) {
   float3 native_sun=frame[204].yzw;
   if(!all(isfinite(native_sun)) ||dot(native_sun,native_sun)<=.25f)native_sun=frame[38].xyz;
-  if(all(isfinite(native_sun)) &&dot(native_sun,native_sun)>.25f &&native_sun.z>.015f)
+  // High cloud tops can still receive direct Sun after ground-level sunset.
+  // Keep ground shadows on their original native primary-light convention.
+  float height=max(CloudBase+1200.f*appearance.w,0.f);
+  float horizon=terrain?-.015f:sqrt(saturate(1.f-pow(PlanetRadius/(PlanetRadius+height),2.f)));
+  if(all(isfinite(native_sun)) &&dot(native_sun,native_sun)>.25f &&native_sun.z>-horizon)
     return normalize(native_sun);
   // The same native sky places the visible lunar lobe at b12[205].yzw.
   // Keeping the below-horizon sun here invalidated the entire night shadow
@@ -165,11 +181,30 @@ float CloudDensity(float3 p,uint detail,float lod,float footprint=0.f) {
   // the authored weather front or the shared view/shadow world coordinates.
   float2 column_xy=float2(.8f*advected.x-.6f*advected.y,
       .6f*advected.x+.8f*advected.y)/(CloudFormationScale*appearance.z*1.7f);
+  // Animate the unused noise axis, not the native weather probability field
+  // (Nubis 2017, density-model animation). A 40-minute tile traversal slowly
+  // grows/dissolves the column envelope while preserving its XY wind. The
+  // existing periodic volume/filter makes crossings continuous, without a
+  // second sample, crossfade, simulation or per-frame noise update.
   float4 column=shape_noise.SampleLevel(wrap_sampler,
-      float3(column_xy,.375f),lod);
+      float3(column_xy,.375f+cloud_clock.x/2400.f),lod);
   // Let high Coverage intentionally close these smaller formation gaps.
   float breakup=lerp(1.f,lerp(.55f,1.3f,column.r),morphology.w);
   coverage=saturate(coverage*lerp(breakup,1.f,saturate(appearance.x-1.f)));
+  float opening = 0.f;
+  float strand = 0.f;
+  if (cloud_low_sun.w > 0.f) {
+    // Use a broad Worley band alongside the formation potential so adjacent
+    // columns cut into the arch at noticeably different heights.
+    float edge_variation = .5f + 2.5f * (lerp(column.r, column.g, .35f) - .5f);
+    opening = CloudLowSunOpening(p - frame[0].xyz, cloud_low_sun, edge_variation);
+    if (opening > 0.f) {
+      strand = smoothstep(.38f, .65f, column.b);
+      float remaining = 1.f - opening;
+      coverage *= remaining * lerp(remaining * remaining, 1.f, strand);
+    }
+  }
+  if (coverage < .002f) return 0.f;
   // Shadow opacity is not cloud species/height. Inferring height inversely
   // from local cover raised thin edges above their cores, producing curtains
   // and making a fading weather mask grow taller. Use a coherent formation
@@ -181,16 +216,19 @@ float CloudDensity(float3 p,uint detail,float lod,float footprint=0.f) {
   top=clamp(lerp(.75f,top,morphology.z),.15f,1.f);
   float relative_height=height/max(top,.01f);
   if(relative_height>=1.f)return 0.f;
-  // Slow vertical evolution and column-coherent shear preserve the formation
-  // while its billows turn over. All detail uses the same bulk evolution rate
-  // as cloud motion/reprojection; unmatched detail scrolling causes smearing.
+  // Retain the bulk vertical evolution used by cloud motion/reprojection.
+  // Column/side shape changes are non-rigid; the existing current-frame
+  // depth, transmission and radiance rejection handles their residual motion.
   advected.z+=cloud_clock.x*.6f;
   advected.xy+=(column.gb-.5f)*(140.f*height*height)*structure.z;
   // The second displacement plane varies across X/Z. Together with the
   // column's X/Y plane it bends the 3D Perlin-Worley material in all three
   // axes without moving the native weather front or its world-space shadow.
+  // The second unused axis evolves twice as fast as the broad envelope. Its
+  // bounded displacement turns billows over rather than translating the
+  // whole cloud. All view/light/shadow/environment paths share this material.
   float4 side=shape_noise.SampleLevel(wrap_sampler,
-      float3(advected.x/(CloudFormationScale*appearance.z),.625f,advected.z/2800.f),lod);
+      float3(advected.x/(CloudFormationScale*appearance.z),.625f+cloud_clock.x/1200.f,advected.z/2800.f),lod);
   advected.xz+=(side.gb-.5f)*float2(100.f,60.f)*structure.y;
   float4 body=shape_noise.SampleLevel(wrap_sampler,
       advected/(float3(CloudFormationScale*appearance.zz,2800.f)*structure.x),clamp(lod-log2(structure.x),0.f,4.f));
@@ -276,6 +314,15 @@ float CloudDensity(float3 p,uint detail,float lod,float footprint=0.f) {
     }
   }
   if(structure.w!=1.f)shape=pow(saturate(shape),structure.w);
+  if (opening > 0.f) {
+    // Fade the resolved material as well as cutting gaps in the column.
+    // The shared column noise keeps wisps and gaps coherent along each ray.
+    float remaining = 1.f - opening;
+    float diffuse = remaining * remaining;
+    float filament = strand * lerp(.5f, 1.f, .5f * (side.a + features.a));
+    shape = max(0.f, shape * lerp(diffuse * diffuse * remaining,
+        remaining * lerp(.35f, 1.f, remaining), filament) - .005f * opening);
+  }
   return shape*appearance.y*cloud_main_strength;
 }
 float3 CloudSky(float3 ray) {

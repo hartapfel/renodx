@@ -1,3 +1,5 @@
+#define HARTAPFEL_SKY_VIEW
+#include "shared.h"
 #define FOG_RECEIVER_FRAME
 cbuffer HartapfelReceiverFrame : register(b12) { float4 receiver_frame[341]; }
 #include "fog/receivers.hlsli"
@@ -176,6 +178,17 @@ cbuffer cb2 : register(b2) {
 #define cb12_287z asint(receiver_frame[287].z)
 #define cb12_padding asuint(receiver_frame[340].w)
 
+#define SKY_FRAME receiver_frame
+#define SKY_DATA HartapfelCloudData
+#define SKY_MOON_MATERIAL sky_moon_material
+#define SKY_SOLAR_MATERIAL sky_sun_material
+#define SKY_SOLAR_GLOW_SIZE sky_sun_glow_size
+#define SKY_GLOW_EXPOSURE sky_glow_exposure
+#define SKY_CLOCK GlobalShaderConsts_000
+#define SKY_NATIVE_RADIUS sky_native_radius
+#define SKY_SUN_EMISSION sky_sun_emission
+#define SKY_MOON_EMISSION sky_moon_emission
+#include "sky/celestial.hlsli"
 SamplerState s0 : register(s0);
 
 float4 main(
@@ -183,6 +196,7 @@ float4 main(
   linear float3 TEXCOORD_1 : TEXCOORD1,
   noperspective float4 SV_Position : SV_Position
 ) : SV_Target {
+  bool enhanced_sky=SkyReady();
   float4 SV_Target = 0;
   float _29 = TEXCOORD_1.x - cb12_000x;
   float _30 = TEXCOORD_1.y - cb12_000y;
@@ -200,7 +214,7 @@ float4 main(
   float _42 = cb12_042z * 0.0625f;
   float _43 = _40 * _42;
   float _44 = _42 * cb12_044x;
-  float _49 = dot(float3(cb12_038x, cb12_038y, cb12_038z), float3(_38, _39, _40));
+  float _49 = dot(enhanced_sky ? SkyAtmosphereLight(receiver_frame[204].yzw,receiver_frame[205].yzw,receiver_frame[38].xyz) : receiver_frame[38].xyz,float3(_38,_39,_40));
   float _51 = _49 + cb12_042x;
   float _52 = cb12_042x + 1.0f;
   float _53 = _51 / _52;
@@ -527,7 +541,9 @@ float4 main(
   float _393 = dot(float2(_391, _392), float2(_381, _382));
   float _394 = dot(float3(cb12_204y, cb12_204z, cb12_204w), float3(_376, _377, _378));
   float _399 = _387 * 0.5f;
-  float _400 = _399 + 0.5f;
+  // Remove the azimuth-only lunar hotspot on the horizon; the centered
+  // phase-consistent aureole is composited with the actual Moon below.
+  float _400 = enhanced_sky ? 0.f : _399 + 0.5f;
   float _409 = cb12_200x - cb12_201x;
   float _410 = cb12_200y - cb12_201y;
   float _411 = cb12_200z - cb12_201z;
@@ -608,6 +624,8 @@ float4 main(
   float _500 = _497 + _473;
   float _501 = _498 + _474;
   bool volumetric_sky = CloudShadowMatches(receiver_frame[0].xyz, asuint(receiver_frame[286]));
+  float3 celestial_ray=SkyDirection(TEXCOORD_1.xyz-receiver_frame[0].xyz);
+  float celestial_footprint=max(length(ddx(celestial_ray)),length(ddy(celestial_ray)));
   float _503 = cb12_205x / _360;
   float _504 = saturate(_388);
   float _505 = log2(_504);
@@ -631,6 +649,7 @@ float4 main(
   }
   if (volumetric_sky)
     _524 *= HartapfelCloudEmitterVisibility(receiver_frame[0].xyz, receiver_frame[205].yzw);
+  if(enhanced_sky) _524=0.f;
   float _525 = max(1.0f, _359);
   float _530 = cb12_202x * _525;
   float _531 = cb12_202y * _525;
@@ -677,6 +696,7 @@ float4 main(
   if (volumetric_sky) {
     _575 *= CloudSolarGlowScale(_543, _340 ? cb12_228w : 0.f);
   }
+  if(enhanced_sky) _575=0.f;
   float _576 = max(1.0f, _358);
   float _581 = cb12_199x * _576;
   float _582 = cb12_199y * _576;
@@ -721,8 +741,8 @@ float4 main(
   float _628 = _625 * _623;
   // The native cubemap carries painted cloud detail as well as broad sky
   // color. Keep its low-frequency color during lightning and weather shifts.
-  float4 _631 = volumetric_sky ? t0.SampleLevel(s0, float3(_626, _627, _628), 9.f)
-                               : t0.Sample(s0, float3(_626, _627, _628));
+  float4 _631 = enhanced_sky ? float4(1.f,1.f,1.f,1.f) : (volumetric_sky ? t0.SampleLevel(s0, float3(_626, _627, _628), 9.f)
+                               : t0.Sample(s0, float3(_626, _627, _628)));
   float _635 = TEXCOORD.x * 100.0f;
   float _636 = TEXCOORD.y * 50.0f;
   float _639 = GlobalShaderConsts_000.x + _636;
@@ -801,8 +821,8 @@ float4 main(
   float _712 = _711 + _626;
   float _713 = _711 + _627;
   float _714 = _711 + _628;
-  float4 _717 = volumetric_sky ? t0.SampleLevel(s0, float3(_712, _713, _714), 9.f)
-                               : t0.Sample(s0, float3(_712, _713, _714));
+  float4 _717 = enhanced_sky ? float4(1.f,1.f,1.f,1.f) : (volumetric_sky ? t0.SampleLevel(s0, float3(_712, _713, _714), 9.f)
+                               : t0.Sample(s0, float3(_712, _713, _714)));
   float _721 = log2(_631.x);
   float _722 = log2(_631.y);
   float _723 = log2(_631.z);
@@ -855,9 +875,9 @@ float4 main(
   float _770 = saturate(_767);
   float _773 = 1.0f - GlobalShaderConsts_144.w;
   float _774 = _773 * 10.0f;
-  float _775 = _774 * _768;
-  float _776 = _774 * _769;
-  float _777 = _774 * _770;
+  float _775 = enhanced_sky ? 0.f : (_774 * _768);
+  float _776 = enhanced_sky ? 0.f : (_774 * _769);
+  float _777 = enhanced_sky ? 0.f : (_774 * _770);
   float _778 = _775 + _599;
   float _779 = _776 + _600;
   float _780 = _777 + _601;
@@ -874,6 +894,13 @@ float4 main(
   SV_Target.y = _788;
   SV_Target.z = _789;
   SV_Target.w = 1.0f;
+  if(enhanced_sky) {
+    float3 solar,lunar;float moon_mask;
+    float air=SkyFogTransmission(celestial_ray);
+    SkyDiscs(celestial_ray,celestial_footprint,air,solar,lunar,moon_mask);
+    SV_Target.rgb+=SkyStars(celestial_ray,celestial_footprint,air,moon_mask);
+    if(sky_deferred!=0x534B5943u)SV_Target.rgb+=solar+lunar+SkyGlow(celestial_ray,air);
+  }
   if(ReceiverFrameMatches()) SV_Target.rgb += SampleFogVolume(SV_Position.xy,asfloat(FogVolume.Load(12))).rgb;
   return SV_Target;
 }

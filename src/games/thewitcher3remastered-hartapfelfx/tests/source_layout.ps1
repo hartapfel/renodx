@@ -16,8 +16,9 @@ foreach($file in Get-ChildItem -LiteralPath $modRoot -Filter '0x*.hlsl' -File) {
 }
 if($aliases -lt 100) {throw 'Receiver alias coverage unexpectedly small.'}
 $addon=Get-Content -Raw -LiteralPath (Join-Path $modRoot 'addon.cpp')
+$registered=$addon+(Get-Content -Raw -LiteralPath (Join-Path $modRoot 'night/settings.hpp'))
 $keys=@{}
-foreach($match in [regex]::Matches($addon,'\.key\s*=\s*"([^"]+)"')) { $keys[$match.Groups[1].Value]=$true }
+foreach($match in [regex]::Matches($registered,'\.key\s*=\s*"([^"]+)"')) { $keys[$match.Groups[1].Value]=$true }
 foreach($match in [regex]::Matches($addon,'UpdateSetting\("([^"]+)"')) {
   if(-not $keys.ContainsKey($match.Groups[1].Value)) {throw "Preset Off references an unregistered setting: $($match.Groups[1].Value)"}
 }
