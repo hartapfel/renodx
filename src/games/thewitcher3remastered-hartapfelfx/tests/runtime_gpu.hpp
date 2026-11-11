@@ -285,10 +285,13 @@ void RuntimeFrames(ID3D12Device* device, ID3D12RootSignature* root, D3D12_GRAPHI
     std::array<float, 8> result;
     std::memcpy(result.data(), mapped, sizeof(result));
     results[frame]->Unmap(0, nullptr);
-    if(!std::isfinite(result[4]) ||!std::isfinite(result[6]) ||result[7]!=1.f
-        ||(frame%2?std::abs(result[6]-result[4])>1.e-5f:result[6]-result[4]<=.0001f)) {
+    const bool raster=((frame/2)%4)%2==0;
+    // These split recordings deliberately have no native DXR producer. Do not
+    // inject unshadowed RT beams when its world visibility inputs are missing.
+    if(!std::isfinite(result[4]) ||!std::isfinite(result[6]) ||result[7]!=(raster?1.f:0.f)
+        ||(raster && (frame%2?std::abs(result[6]-result[4])>1.e-5f:result[6]-result[4]<=.0001f))) {
       std::cerr<<"Local fog frame "<<frame<<" RGB="<<result[4]<<","<<result[5]<<","<<result[6]<<" marker="<<result[7]<<"\n";
-      throw std::runtime_error("Native Raster/RT local-light observer lost volumetric radiance");
+      throw std::runtime_error("Raster radiance or conservative missing-DXR input fallback regression");
     }
     std::cout << "Runtime frame " << frame << " valid=" << result[0] << " opacity=" << result[1] << " width=" << result[2] << " camera=" << result[3] << std::endl;
     if (result[0] != 1 || result[2] != expected_width || !std::isfinite(result[1]) || std::abs(result[3] - std::min(frame, 16u) * .003f) > .00001f

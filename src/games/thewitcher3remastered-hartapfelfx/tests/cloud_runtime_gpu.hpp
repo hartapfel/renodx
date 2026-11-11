@@ -485,7 +485,7 @@ inline void CloudRuntime(ID3D12Device* device, const std::filesystem::path& orig
   indirect_desc.CS = {controls_code.data(), controls_code.size()};
   Check(device->CreateComputePipelineState(&indirect_desc, IID_PPV_ARGS(&controls_check)));
   auto indirect_output = image(DXGI_FORMAT_R32G32B32A32_FLOAT, 1,
-      D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 1, 1);
+      D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 2, 1);
   device->CreateUnorderedAccessView(indirect_output.Get(), nullptr, &texture_uav, cpu(132));
   D3D12_PLACED_SUBRESOURCE_FOOTPRINT indirect_footprint{};
   uint64_t indirect_bytes = 0;
@@ -575,7 +575,8 @@ inline void CloudRuntime(ID3D12Device* device, const std::filesystem::path& orig
   std::cout << "PBR/contact/soft/diameter controls=" << surface_controls[0] << "/" << surface_controls[1]
             << "/" << surface_controls[2] << "/" << surface_controls[3] << std::endl;
   if (surface_controls[0] != 1.f || surface_controls[1] != 1.f || surface_controls[2] != 1.f
-      || std::abs(surface_controls[3] - 1.3f) > .000001f)
+      || std::abs(surface_controls[3] - 1.3f) > .000001f
+      || std::abs(surface_controls[4] - 1.f) > .000001f)
     throw std::runtime_error("PBR/contact controls depend on ray-material submission tracking");
   std::cout << "PASS: actual deferred PBR/contact controls without a ray-material producer tracker" << std::endl;
   indirect_readback->Unmap(0, nullptr);

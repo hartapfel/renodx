@@ -9,14 +9,33 @@ Texture2D<float> history_depth : register(t6);
 RWTexture2D<float4> resolved : register(u0);
 RWTexture2D<float> resolved_depth : register(u1);
 RWTexture2D<float4> cloud_motion : register(u2);
+float4 CurrentCloud(float2 uv,float surface_distance,out float depth) {
+  float2 location=uv*trace_grid.xy-.5f-CloudTraceOffset();
+  int2 origin=int2(floor(location));
+  float2 fraction=frac(location);
+  float4 value=0.f;
+  float weight_sum=0.f,depth_sum=0.f;
+  depth=0.f;
+  [unroll]for(uint y=0u;y<2u;++y)[unroll]for(uint x=0u;x<2u;++x) {
+    int2 pixel=clamp(origin+int2(x,y),0,int2(trace_grid.xy)-1);
+    float distance=current_depth.Load(int3(pixel,0));
+    if(distance>0.f &&distance>=surface_distance)continue;
+    float weight=(x?fraction.x:1.f-fraction.x)*(y?fraction.y:1.f-fraction.y);
+    value+=CloudDecode(current_cloud.Load(int3(pixel,0)))*weight;
+    if(distance>0.f) {depth+=distance*weight;depth_sum+=weight;}
+    weight_sum+=weight;
+  }
+  depth/=max(depth_sum,1.e-8f);
+  return weight_sum>1.e-8f?value/weight_sum:float4(0,0,0,1);
+}
 void main(float4 position : SV_Position) {
   uint3 id = uint3(uint2(position.xy), 0);
   if(any(id.xy>=uint2(dimensions.xy)) || CloudAlreadyRendered())return;
-  float4 current=CloudDecode(current_cloud.Load(int3(id.xy,0)));
-  float depth=current_depth.Load(int3(id.xy,0));
   float2 trace_uv=(float2(id.xy)+.5f)/dimensions.xy;
   float3 ray=CloudRay(trace_uv);
   float surface_distance=CloudSceneDistance(trace_uv*dimensions.zw,ray);
+  float depth;
+  float4 current=CurrentCloud(trace_uv,surface_distance,depth);
   cloud_motion[id.xy]=float4(0,0,1.f-current.a,0);
   resolved_depth[id.xy]=depth;
   if(integration.w==0.f) {resolved[id.xy]=CloudEncode(current);return;}
@@ -27,7 +46,7 @@ void main(float4 position : SV_Position) {
     float support=0.f,count=0.f;
     [unroll]for(uint axis=0;axis<2;++axis)[unroll]for(int side=-1;side<=1;side+=2) {
       int2 offset=axis==0?int2(side,0):int2(0,side);
-      int2 pixel=clamp(int2(id.xy)+offset,0,int2(dimensions.xy)-1);
+      int2 pixel=clamp(int2(trace_uv*trace_grid.xy)+offset,0,int2(trace_grid.xy)-1);
       float candidate=current_depth.Load(int3(pixel,0));
       if(candidate>0.f &&candidate<surface_distance) {support+=candidate;count+=1.f;}
     }
@@ -70,8 +89,9 @@ void main(float4 position : SV_Position) {
   float radiance_weight=0.f;
   float transmission_sum=0.f;
   float transmission_weight=0.f;
+  int2 center=int2(floor(trace_uv*trace_grid.xy-CloudTraceOffset()));
   [unroll]for(int y=-1;y<=1;++y)[unroll]for(int x=-1;x<=1;++x) {
-    int2 pixel=clamp(int2(id.xy)+int2(x,y),0,int2(dimensions.xy)-1);
+    int2 pixel=clamp(center+int2(x,y),0,int2(trace_grid.xy)-1);
     float neighbor_depth=current_depth.Load(int3(pixel,0));
     if(neighbor_depth>0.f &&neighbor_depth<surface_distance) {
       float4 value=CloudDecode(current_cloud.Load(int3(pixel,0)));lower=min(lower,value);upper=max(upper,value);
@@ -91,11 +111,12 @@ void main(float4 position : SV_Position) {
       transmission_weight+=alpha_weight;
     }
   }
-  current.rgb=lerp(current.rgb,radiance_sum/max(radiance_weight,1.e-5f),.75f);
+  bool interleaved=any(trace_grid.xy<dimensions.xy);
+  current.rgb=lerp(current.rgb,radiance_sum/max(radiance_weight,1.e-5f),interleaved?.2f:.75f);
   // Primary-ray jitter is most visible in partially covered edge pixels.
   // Denoise transmission separately, with a tighter depth/opacity gate than
   // an ordinary blur, so the large cloud silhouette stays weather-driven.
-  current.a=lerp(current.a,transmission_sum/max(transmission_weight,1.e-5f),.8f);
+  current.a=lerp(current.a,transmission_sum/max(transmission_weight,1.e-5f),interleaved?.2f:.8f);
   float4 old=CloudDecode(ReconstructCloud(history_cloud,clamp_sampler,uv,dimensions.xy));
   old=clamp(old,lower,upper);
   // Lighting/weather and Darker Nights changes invalidate only their history.
@@ -120,6 +141,12 @@ void main(float4 position : SV_Position) {
   float transmission_change=max(0.f,difference-2.5f*transmission_deviation);
   float history_weight=lerp(.88f,.94f,smooth_region)*(1.f-saturate(transmission_change*4.f))
       /((1.f+2.f*change)*(1.f+.25f*length(motion*dimensions.xy)));
+  // Exact samples arrive on one of four phases. Retain reprojected detail
+  // between those phases, with the same depth and radiance rejection.
+  float2 sample_position=trace_uv*trace_grid.xy-.5f-CloudTraceOffset();
+  bool fresh_sample=all(abs(sample_position-round(sample_position))<.26f);
+  if(interleaved &&!fresh_sample)history_weight=lerp(history_weight,.97f,
+      (1.f-saturate(transmission_change*8.f))/(1.f+4.f*change));
   float4 filtered=lerp(current,old,valid?history_weight:0.f);
   resolved[id.xy]=CloudEncode(filtered);
   // The upscaler must see the same opacity/confidence as the resolved cloud.

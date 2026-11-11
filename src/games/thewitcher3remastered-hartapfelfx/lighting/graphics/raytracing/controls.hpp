@@ -3,6 +3,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <string>
 #include "../rendering/bindings.hpp"
 #include "../volumetrics/ray_layout.hpp"
 
@@ -12,7 +13,7 @@ inline std::atomic_uint32_t controls{0};
 inline bool (*bind_path_inputs)(command_list*) = nullptr;
 class HitSelection;
 struct __declspec(uuid("32a29010-615e-42de-a6e8-e63cb3f8c409")) ControlData {
-  struct State { uint64_t root; uint32_t libraries; std::shared_ptr<HitSelection> selection; };
+  struct State { uint64_t root; uint32_t libraries; std::shared_ptr<HitSelection> selection; std::vector<std::wstring> fog_exports; };
   std::mutex mutex;
   std::vector<std::unique_ptr<std::vector<pipeline_layout_param>>> extended;
   std::unordered_map<uint64_t, uint32_t> layouts;
@@ -91,7 +92,7 @@ inline bool OnCreateLayout(device* dev, uint32_t& count, pipeline_layout_param*&
 }
 // HartapfelFX appends its cloud visibility buffer after the shared ray roots.
 inline uint32_t NativeControlCount(uint32_t count, const pipeline_layout_param* params) {
-  if (volumetrics::rays::FindProducerRootSuffix(count, params).Valid()) count -= 3;
+  if (volumetrics::rays::FindProducerRootSuffix(count, params).Valid()) count -= 8;
   if ((count == 6 || count == 17) && IsGlobalLayout(count, params)) {
     const auto* root = bindings::RootDescriptor(params[count - 1]);
     if (root && root->type == descriptor_type::buffer_shader_resource_view && root->dx_register_space == 72

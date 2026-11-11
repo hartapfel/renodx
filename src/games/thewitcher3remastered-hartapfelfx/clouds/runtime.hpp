@@ -73,7 +73,7 @@ struct __declspec(uuid("66374d6d-8560-48fd-a617-75cf842e2649")) DeviceData {
   std::map<uint64_t, gpu::ComPtr<ID3D12PipelineState>> clock_pipelines;
   std::set<uint64_t> ray_pipelines;
   std::vector<api::command_queue*> queues;
-  std::array<float, 16> configuration{};
+  std::array<float, 17> configuration{};
   AuthoringParameters authoring_configuration{};
   uint32_t revision = 1;
   uint64_t view_serial = 0;
@@ -156,8 +156,8 @@ inline void CaptureNativeSize(api::command_list* cmd,DeviceData* data,const fog:
   }
 }
 inline uint32_t Revision(DeviceData* data) {
-  const std::array<float, 16> current{mode, quality, step_size, shadows, coverage, density, size, thickness, detail,
-                                      detail_size, base_softness, fog_settings ? fog_settings->sky_density : 1.f, quality_preset, clear_low_sun, sky::star_brightness,sky::sun_glow_size};
+  const std::array<float, 17> current{mode, quality, step_size, shadows, coverage, density, size, thickness, detail,
+                                      detail_size, base_softness, fog_settings ? fog_settings->sky_density : 1.f, quality_preset, clear_low_sun, sky::star_brightness,sky::sun_glow_size,low_sun_cache};
   const auto authoring=Authoring();
   if (current != data->configuration ||authoring!=data->authoring_configuration) {
     data->configuration = current;
@@ -736,7 +736,7 @@ inline bool Render(api::command_list* cmd, uint32_t card_hash) {
   if (target_desc.type != api::resource_type::texture_2d || target_desc.texture.samples != 1 || target_desc.texture.depth_or_layers != 1
       || (target_format != api::format::r16g16b16a16_float && target_format != api::format::r32g32b32a32_float)) return false;
   uint64_t fog_address = 0;
-  if (fog_settings && fog_settings->enabled > .5f) fog::runtime::PrepareReceiver(cmd, &fog_address);
+  if (fog_settings && fog::Active(*fog_settings)) fog::runtime::PrepareReceiver(cmd, &fog_address);
   NativeState restore(cmd, command->regular_pipeline, false);
   if (!restore.Valid()) return false;
   std::lock_guard lock(data->mutex);

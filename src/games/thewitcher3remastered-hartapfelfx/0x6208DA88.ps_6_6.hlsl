@@ -180,7 +180,7 @@ float4 main(
   noperspective float4 SV_Position : SV_Position
 ) : SV_Target {
   float4 SV_Target = 0;
-  if(ReceiverFrameMatches()) TEXCOORD_1 = ReceiverFogVarying(SV_Position,length(TEXCOORD_5.xyz-receiver_frame[0].xyz));
+  if(ReceiverFrameMatches()) TEXCOORD_1 = ReceiverFogVarying(SV_Position,length(TEXCOORD_5.xyz-receiver_frame[0].xyz), TEXCOORD_1);
   float _60;
   float _59;
   float _58;

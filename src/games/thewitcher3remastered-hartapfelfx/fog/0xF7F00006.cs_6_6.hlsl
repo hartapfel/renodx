@@ -4,7 +4,7 @@
 #include "grid.hlsli"
 #include "local_lights.hlsli"
 [numthreads(4, 4, 4)] void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint thread : SV_GroupIndex) {
-  if (fx.local_strength <= 0.f) return;
+  if (fx.local_strength <= 0.f || !LightEnabled()) return;
   CullFogLightGroup(group, thread);
   AddLocalCell(id);
 }

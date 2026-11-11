@@ -40,7 +40,7 @@ SamplerState fog_wrap_sampler : register(s14);
                                   WaterTransmittance(column, WaterMediumDensity(1.f, .85f), 1.f).g,
                                   WaterTransmittance(column, WaterMediumDensity(2.f, .85f), 1.f).g)));
   volume.Store4(144, asuint(float4(ReceiverFrameMatches() ? 1.f : 0.f, 0, 0, 0)));
-  volume.Store4(160,asuint(ReceiverFogVarying(float4(960,540,0,1),test_distance)));
+  volume.Store4(160,asuint(ReceiverFogVarying(float4(960,540,0,1),test_distance,0.f)));
   FogLocalLight light = (FogLocalLight)0;
   light.data[0].w = 100;
   light.data[2] = float4(0, 0, 1, 0);

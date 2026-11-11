@@ -11,6 +11,7 @@ cbuffer HartapfelLighting : register(b0, space73) {
   float contact_enabled;
   float soft_enabled;
   float light_diameter;
+  float contact_length;
 }
 ShaderInjectData HartapfelLightingSettings() {
   ShaderInjectData settings = (ShaderInjectData)0;
@@ -20,6 +21,7 @@ ShaderInjectData HartapfelLightingSettings() {
   settings.contact_shadows = contact_enabled;
   settings.soft_shadows = soft_enabled;
   settings.sun_diameter = light_diameter;
+  settings.contact_length = contact_length;
   return settings;
 }
 float HartapfelSurfaceCloudShadow(float3 world, float native_visibility, float3 camera, uint4 jitter) {

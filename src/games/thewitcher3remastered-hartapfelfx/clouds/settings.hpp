@@ -12,6 +12,7 @@ inline float quality_preset = 0.f;
 inline float step_size = 1.f;
 inline float shadows = 1.f;
 inline float clear_low_sun = 1.f;
+inline float low_sun_cache = 0.f;
 // 18:00..06:00, with 15-minute in-game fades inside the requested window.
 inline float LowSunSchedule(float time) {
   if(!std::isfinite(time)||time<0.f||time>1.f)return 1.f;
@@ -66,7 +67,8 @@ inline unsigned QualityLevel(float value) {
 inline std::array<unsigned,3> Quality(float value) {
   constexpr std::array<std::array<unsigned,3>,6> levels{{{1,32,3},{1,48,4},{1,64,5},{1,80,6},{1,128,10},{1,160,12}}};
   auto samples=levels[QualityLevel(value)];
-  if(quality_preset>.5f &&quality_preset<2.5f)samples[0]=2;
+  if(quality_preset>.5f &&quality_preset<2.5f)samples[0]=4;
+  else if(quality_preset>=2.5f &&quality_preset<3.5f)samples[0]=2;
   samples[1]=unsigned(std::ceil(samples[1]/(quality_preset<.5f ? std::clamp(step_size,.5f,2.f) : .5f)));
   return samples;
 }

@@ -8,8 +8,8 @@ using namespace reshade::api;
 
 // Extend only the audited native DXR global. Generic graphics/compute layouts
 // must never receive these bindings: their settings injection has other rules.
-// Both camera and controls are CBVs; the owner leases immutable controls with
-// the written field instead of changing upload memory referenced by old work.
+// Settings and grid inputs use immutable CBVs leased with the written field,
+// instead of changing upload memory referenced by older work.
 inline bool AppendProducerRoots(uint32_t count, const pipeline_layout_param* params,
     std::vector<pipeline_layout_param>* output) {
   if (!raytracing::IsGlobalLayout(count, params)) return false;
@@ -49,11 +49,14 @@ inline bool AppendProducerRoots(uint32_t count, const pipeline_layout_param* par
       }
     } else return false;
   }
-  if (conflict || cost > 58) return false;
+  if (conflict || cost > 48) return false;
   std::vector<pipeline_layout_param> extended(params, params + count);
-  extended.emplace_back(descriptor_range{0, 0, 61, 1, shader_stage::all, 1, descriptor_type::constant_buffer});
-  extended.emplace_back(descriptor_range{0, 1, 61, 1, shader_stage::all, 1, descriptor_type::constant_buffer});
+  for (uint32_t slot = 0; slot < 4; ++slot)
+    extended.emplace_back(descriptor_range{0, slot, 61, 1, shader_stage::all, 1, descriptor_type::constant_buffer});
   extended.emplace_back(descriptor_range{0, 0, 61, 1, shader_stage::all, 1, descriptor_type::buffer_unordered_access_view});
+  for (uint32_t slot = 0; slot < 2; ++slot)
+    extended.emplace_back(descriptor_range{0, slot, 61, 1, shader_stage::all, 1, descriptor_type::buffer_shader_resource_view});
+  extended.emplace_back(descriptor_range{0, 4, 61, 1, shader_stage::all, 1, descriptor_type::constant_buffer});
   *output = std::move(extended);
   return true;
 }

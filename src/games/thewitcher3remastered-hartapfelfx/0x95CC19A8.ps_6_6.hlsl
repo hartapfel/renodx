@@ -180,7 +180,7 @@ OutputSignature main(
 ) {
   float4 SV_Target_1 = 0;
   float4 SV_Target = 0;
-  if(ReceiverFrameMatches()) TEXCOORD_2 = ReceiverFogVarying(SV_Position,length(TEXCOORD_7.xyz-receiver_frame[0].xyz));
+  if(ReceiverFrameMatches()) TEXCOORD_2 = ReceiverFogVarying(SV_Position,length(TEXCOORD_7.xyz-receiver_frame[0].xyz), TEXCOORD_2);
   float _54 = abs(GlobalShaderConsts_144.x);
   float _55 = abs(GlobalShaderConsts_144.y);
   float _56 = abs(GlobalShaderConsts_144.z);

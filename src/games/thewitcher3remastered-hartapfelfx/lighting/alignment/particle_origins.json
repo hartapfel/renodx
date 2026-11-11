@@ -1,0 +1,21 @@
+{
+  "fx\\light_sources\\torches\\torch_fx1.w2p": {
+    "position": [
+      -0.009999999776482582,
+      0.0,
+      0.10000000149011612
+    ],
+    "sha256": "0edf0b62a621e4bc0008a640d782e859601740ea6697762996e943be9d05b713",
+    "emitter": "Copy of new_fire_looped",
+    "evidence": "Unique named flame emitter among six emitters; identical cooked position endpoints and zero position_offset. Smoke, sphere, distortion and sparks are separate emitters."
+  },
+  "fx\\light_sources\\torches\\torch_fx5.w2p": {
+    "position": [
+      -0.009999999776482582,
+      0.0,
+      0.10000000149011612
+    ],
+    "sha256": "a393a17150fa9250250ce613518d615c37ae533d5da95c5d237a6b5e3b4ce86b",
+    "evidence": "Single CParticleEmitter; identical cooked position endpoints; zero position_offset. WolvenKit SParticleEmitterModuleData field order."
+  }
+}

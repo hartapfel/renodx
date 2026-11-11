@@ -14,6 +14,7 @@ inline std::atomic_uint64_t sun_captures = 0, fog_matches = 0, fog_fallbacks = 0
 inline std::atomic_uint64_t interior_captures = 0, interior_matches = 0;
 inline std::function<void(api::command_list*, bool)> on_sun;
 inline const float* sun_enabled = nullptr;
+inline const float* light_enabled = nullptr;
 inline const float* water_enabled = nullptr;
 inline std::function<void(api::command_list*, bool)> before_sun;
 inline std::function<void(api::command_list*, bool)> after_sun;
@@ -164,7 +165,7 @@ inline void OnBarrier(api::command_list* cmd, uint32_t count, const api::resourc
 inline constexpr auto ObserveSun = []<typename Context>(Context& context)
     -> renodx::utils::command_action::CallbackResult<Context> {
   if (before_sun) before_sun(context.cmd_list, context.IsDispatch());
-  if (((sun_enabled && *sun_enabled > .5f) || (water_enabled && *water_enabled > .5f))
+  if (((sun_enabled && *sun_enabled > .5f) || (light_enabled && *light_enabled > .5f) || (water_enabled && *water_enabled > .5f))
       && CaptureSun(context.cmd_list, context.IsDispatch())) {
     if (on_sun) on_sun(context.cmd_list, context.IsDispatch());
   }
@@ -198,13 +199,10 @@ inline void Use(DWORD reason) {
     // Observers must not participate in settings injection or replacement PSOs.
     for (auto hash : {0x806C62A8u, 0x4A7A44D6u, 0xD2C88922u})
       renodx::utils::command_action::RegisterCallback(ObserveSun, {.shader_hash = hash});
-    for (auto hash : {0xE6A77B56u, 0x9A6F318Eu})
-      renodx::utils::command_action::RegisterCallback(ObserveLocal, {.shader_hash = hash});
   } else if (reason == DLL_PROCESS_DETACH) {
     reshade::unregister_event<reshade::addon_event::create_pipeline_layout>(OnCreateLayout);
     renodx::utils::command_action::Unregister(ObserveSun);
     renodx::utils::command_action::Unregister(ObserveInterior);
-    renodx::utils::command_action::Unregister(ObserveLocal);
     reshade::unregister_event<reshade::addon_event::init_device>(OnInitDevice);
     reshade::unregister_event<reshade::addon_event::destroy_device>(OnDestroyDevice);
     reshade::unregister_event<reshade::addon_event::init_pipeline_layout>(OnInitLayout);

@@ -17,7 +17,7 @@
 #define SKY_MOON_EMISSION sky_moon_emission
 #include "../sky/celestial.hlsli"
 bool CloudFogReady() {
-  return fx.enabled > .5f && FogVolume.Load(1008) == FOG_HISTORY_VALID
+  return (fx.enabled > .5f || (IndependentVolumeLight() && asfloat(FogVolume.Load(1024)) > .5f)) && FogVolume.Load(1008) == FOG_HISTORY_VALID
       && all(asfloat(FogVolume.Load4(64)).xyz == frame[0].xyz)
       && all(FogVolume.Load4(912) == asuint(frame[286]));
 }
@@ -43,7 +43,7 @@ float4 main(float4 position:SV_Position):SV_Target {
   // Mixed-resolution texels retain the farthest visible column during trace.
   // At mountains inside the layer, integrate this exact pixel only to its
   // surface instead of leaking the neighboring sky column onto the mountain.
-  if(any(dimensions.xy!=dimensions.zw) &&surface_distance<1.e8f
+  if(any(trace_grid.xy!=dimensions.zw) &&surface_distance<1.e8f
       &&interval.y>interval.x &&appearance.x>0.f &&appearance.y>0.f
       &&any(cloud_family_low.xy>0.f)) {
     float cone=max(length(CloudRay(uv+float2(1.f/dimensions.z,0))-ray),
@@ -101,10 +101,10 @@ float4 main(float4 position:SV_Position):SV_Target {
     // The fine beam must not contradict a cloud already visible in either
     // the current trace or its temporal reconstruction. Four conservative
     // taps stop bright discs/halos punching through a low-resolution edge.
-    int2 cell=int2(floor(uv*dimensions.xy-.5f));
+    int2 cell=int2(floor(uv*trace_grid.xy-.5f-CloudTraceOffset()));
     [unroll]for(uint y=0u;y<2u;++y)[unroll]for(uint x=0u;x<2u;++x)
       intrinsic_transmission=min(intrinsic_transmission,
-          CloudDecode(current_cloud.Load(int3(clamp(cell+int2(x,y),0,int2(dimensions.xy)-1),0))).a);
+          CloudDecode(current_cloud.Load(int3(clamp(cell+int2(x,y),0,int2(trace_grid.xy)-1),0))).a);
   }
   if(distance>0.f)value=CloudAerialPerspective(uv,distance,value);
   float3 stars=0.f;

@@ -10,6 +10,7 @@ void main(float4 position : SV_Position) {
   if (row != 0) return;
   if((identity.w&255u)==1u)PublishCloudFamilies();
   uint3 old_identity = published.Load3(5888 + 80);
+  uint phase=((uint)asfloat(published.Load(6004))+(cloud_clock.x!=asfloat(published.Load(5632))?1u:0u))&3u;
   if (any(old_identity != CloudIdentity())) published.Store(6144, published.Load(6144) + 1);
   published.Store4(5632, asuint(cloud_clock));
   published.Store4(5888, asuint(dimensions));
@@ -21,6 +22,7 @@ void main(float4 position : SV_Position) {
   published.Store4(5984, storage);
   if ((identity.w & 255u) == 0) {
     published.Store(6000,asuint(CloudWeatherBase(asfloat(shared_data.Load2(328)))));
+    published.Store(6004,asuint(float(phase)));
     shared_data.Store4(96, uint4(uint2(dimensions.xy), storage.xy));
     shared_data.Store4(112, asuint(frame[0]));
     shared_data.Store4(128, asuint(frame[286]));

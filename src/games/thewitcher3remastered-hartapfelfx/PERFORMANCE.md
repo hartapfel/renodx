@@ -1384,3 +1384,167 @@ includes the four captured-camera regressions; live visual acceptance is separat
 Strict Release, all 200 production cloud GPU cases and HDR sun/moon capture
 checks pass after rebuilding every affected shader. The previous compiled
 shader set failed the new camera test before the correction.
+
+
+## Independent volumetric light, 11 November 2026
+
+The Lighting tab now owns the beam master, quality, medium and appearance.
+Fog settings no longer supply beam density/height/clear-space controls. The
+existing volume pipeline evaluates two extinction profiles in one generation
+pass, integrates beam radiance using Beer transport and preserves the native
+weather curve for fog opacity. A four-byte-per-cell fog sidecar adds about
+2.0–18.0 MiB per active field across the four light qualities; history remains
+shared. The header grows from 1024 to 1280 bytes. The mod-local hard pool cap is
+896 MiB (previously 768), accommodating four rotating Ultra fields and their
+histories/sidecars; allocation still follows active quality. Resource ordering and native
+bindings retain the existing lifetime rules.
+
+Light quality sets 2/4/8/16 directional shadow taps per cell and requests
+120/160/240/256 columns with 64/96/128/128 slices. The shared grid takes the
+higher active fog/light budget. Disabling local brightness or the beam master
+skips local dispatch/preparation; local-shadow Off omits shadow texture work
+while retaining projected cookies. Temporal Off controls response/stability,
+not a claimed performance gain. No new gameplay timing claim accompanies
+these budgets.
+
+See [fog/README.md](fog/README.md) for the source audit, transport equations,
+ABI/storage layout, UI rationale, migration, and acceptance scenes.
+
+## Small Object Shadows with atmospheric volumes, 11 November 2026
+
+Both local lighting hashes (E6A77B56, 9A6F318E) had their local-volume
+observer registered after the shader replacement callback. DrawVolume
+restored the native PSO after private work, overwriting the contact/PBR
+replacement already selected for the dispatch. The addon now registers only
+these observers before the shader module. Sun observers stay after native
+night-light edits. This correction adds no GPU pass or shadow samples.
+
+Forward receivers also lacked contact_length: the shader settings adapter
+zero-initialized the field and never filled it. The existing immutable
+lighting upload now stores reach as its fifth float, which the adapter copies
+into receiver settings. The 256-byte allocation and root layout stay the same.
+Affected forward receivers now execute their existing shadow trace; zero reach
+had disabled it. No gameplay timing claim is made.
+
+The integration regression returned exit 60 before the scheduling fix and
+checks both hash registrations. The actual-addon GPU controls probe now
+includes the production HLSL adapter and checks reach (1.00 m in its profile)
+as well as the original four controls. Evidence is retained under
+tmp/small-shadows-20261111. Final results and installation status follow.
+
+Final validation: the complete Clang Release compile-only workflow passed,
+including settings/lifecycle, descriptor/upload lifetime, production fog/light
+transport and receiver cases, native ray-root checks and 387 cloud GPU cases.
+Six actual-addon startup runs passed with the installed Agility 619 runtime:
+both HDR load orders at both custom fog qualities, plus both load orders with
+Original fog and independent Ultra volumetric light. Each run checked the
+production lighting adapter's 1.00 m reach on the GPU, native Raster/RT/PT
+consumer linkage, delayed recordings, HDR private roots and real DispatchRays.
+The host's D3D12 debug layer was unavailable. Gameplay appearance/frame times
+remain a separate acceptance check.
+
+Installed after the user closed the game. Candidate, build/Release addon and
+the existing game-folder symlink all match SHA-256
+D92455C077FA2808C472CCACEB5DFF8FC43CD59F4E783B4BDEE74CF6C2483A94
+(6,178,816 bytes). The previous addon and symbols are backed up in
+tmp/small-shadows-20261111. The separate HDR addon and game configuration
+were preserved. No game process was launched or closed by the agent.
+
+## Engine light-source alignment, 11 November 2026
+
+The optional mod0000_HartapfelLightAlignment content/script companion places
+verified local lights at their authored flame spawners. A generated content
+patch updates 315 components in 187 effective templates (630 editable/compiled
+records), preserving every other asset byte except required checksums. The
+builder resolves the user's active source-mod overrides; the new folder does
+not alter those mods or the HDR addon. Unsupported template edits are skipped.
+
+A native-slot script map covers 201 fixture identities and corrects gameplay
+instance overrides. New fixtures are handled at spawn. A bounded 60 m / 2048
+entity sweep every five seconds covers restored and subclassed fixtures.
+Per-entity caching avoids repeated slot resolution and SetPosition calls.
+There is no per-frame scan, diagnostic readback or new lighting pass in the
+production feature. No gameplay CPU/GPU timing claim is made.
+
+Data verification passes all position-only byte comparisons, compiled-copy
+consistency, nested checksums, bundle round trips and idempotence. The user
+restarted the game, native scripts compiled and gameplay resumed. Live t18
+copies show the nearby 1.8 m-radius candle source corrected about 0.61 m down
+onto its emitter, within about 1.4 mm of its corresponding spot source (small
+flicker remains). Unrelated window fills stay unchanged; lighting replacement
+logs report zero fallbacks. Separate all-mode/location visual acceptance is
+still pending. The existing Release addon hash is unchanged.
+
+Implementation, source references, rebuild/update limitations, install hashes
+and evidence are in lighting/alignment/README.md and
+tmp/light-alignment-20261111. The full emissive-light replacement remains
+separate research; this step aligns the native lights.
+
+### 2026-11-11 - Standalone Light Alignment package and brazier coverage
+- Public script-only mod-manager ZIP is generated with lighting/alignment/package_release.py. No addon rebuild, native plugin or GPU pass is introduced. Optional personal template bundles are excluded from distribution.
+- Extended the bounded offline reader to CR2W 163/164 for flame-slot associations; byte editing remains restricted to 162. Added 62 verified brazier/fireplace fixture identities, retaining the original 201 mappings.
+- The bathhouse floor-brazier complex has a source point light at local Z 3.2 m versus flame slots near 0.4 m. New mappings resolve the actual engine slot matrices, preserving light count and photometric/shadow settings.
+- Package validation passed: six safe archive members, simulated installation layout, all payload hashes and all 263 unique fixture mappings. Expanded map syntax diagnostics are empty. Two independent builds produced SHA-256 1AF03636980B7E1263A45EAC744D6F6D56E2038BD044D92A1E4CE1F368E59248. The original position-only asset regression still passes (187 templates / 315 components).
+- Runtime algorithm is unchanged: spawn hooks plus bounded 5-second / 60 m / 2048-entity fallback, cached per-entity slot resolution. CPU and FPS costs remain unmeasured. New brazier live acceptance awaits the user-controlled restart.
+
+### 2026-11-11 - Hanging-bowl emission origin follow-up
+- The user confirmed the floor-brazier result. Two-frame ready native t18 captures match four point sources lowered by 2.392-2.401 m and two spots lowered by about 0.532 m. Radius/type stayed equal and world XY differences were below 1.7 cm including flicker. Diagnostic collection is cleared.
+- A hanging bowl exposed an additional particle-local offset. Verified torch_fx5.w2p SHA-256 A393A17150FA9250250CE613518D615C37AE533D5DA95C5D237A6B5E3B4CE86B has one cooked emitter with constant position (-0.01, 0, 0.10) and zero extra position_offset. Ten supported fixture identities now compose this with the -0.35 m effect-spawner offset.
+- The composition is generated offline and changes only the native position map. Runtime script, timer frequency, scan bounds and addon remain unchanged. Particle data and game assets are not distributed in the standalone package.
+- Constant-origin parser and hanging-lamp regression checks pass, including rejection of varying emitter positions. Expanded map syntax and package validation pass. Final ZIP is 9,661 bytes with SHA-256 D7CCD8BDFF6FED2BD2C281F5D5719E04A3D4B0D874E9C1C6360668CD9B05618B; an independent rebuild is identical. Hanging-bowl live acceptance awaits the user's restart.
+
+### 2026-11-11 - Packed bathhouse bowl light and public release package
+- The user's screenshot and failed hanging-lamp experiment required tracing the placed world sources. The internal particle-origin improvement is retained for ten verified lamp fixtures, but did not solve this particular bowl. Do not claim it did.
+- Read-only source inspection and native captures identify a packed static point pair in levels/novigrad/novigrad/bathhouse/lights.w2l. The pair shares XY (714.008972, 2000.185913); Z is 15.738350 / 17.345688. The lower radius-14 m, brightness-10 light is 1.607338 m below the upper radius-6 m, brightness-40 source. These lights are not gameplay entities accessible to the script sweep.
+- Added static_lights.py: source SHA-256 guard, bounded version-8 sector reader, lower-point render and streaming position copies moved to the upper point, existing CR2W checksums rebuilt. Validation permits only those coordinates and checksums: 18 bytes change, all light properties and every other layer object preserved. Wrong-source rejection and compressed bundle round trip pass.
+- A fresh build directly from the installed stock game produces identical bundle and metadata bytes to the independently extracted-input build. The public archive now combines scripts and this native patch in one mod folder; it excludes the personalized BetterCandles content bundle.
+- Public release ZIP: build/Release/packages/HartapfelFX-Light-Alignment-1.0.0-release/HartapfelFX-Light-Alignment-Remastered-1.0.0.zip; 14,293 bytes, eight members, SHA-256 B516AFC872849B0485F4F84DFB18B55FEEAFD9A3ACD214BCAB9E538AF06A8C06. Safe paths, hashes, simulated installation and a complete independent rebuild pass.
+- The local personal setup retains its existing bundle and loads the byte-identical native correction through mod0000_HartapfelLightAlignmentWorld. A public-package migration should remove both old companion folders first. Other installed mods, settings and the addon are preserved. Live acceptance follows the user-controlled restart.
+
+### 2026-11-11 - Local volumetric geometry occlusion
+- After the user confirmed the packed bathhouse bowl correction, the user supplied an outside-wall example of local scattering leaking through a building and props. Ready t18 capture records show nearby unshadowed lamp records and available maps with low surface shadow blend weights. Captured allocation contents are not an authoritative active scene count.
+- Added bounded, perspective-correct visible-depth intervals in fog/local_occlusion.hlsli, reusing native t0 and the verified Remastered frame/depth matrices. Native atlas/cube shadows remain the world-space source; no new GPU resources, engine shadow maps, geometry replay or CPU readbacks are introduced in production.
+- The volume now preserves full native map visibility instead of restoring energy through the surface shadow fade, uses a 2 mm world receiver bias, and clamps atlas samples within the selected tile. Local injection is cropped at the column's opaque depth to avoid mixing hidden light into its terminal visible cell.
+- Lamp Occlusion Quality lives in the existing advanced Lighting section: Native Shadows Only, Balanced (default, up to 8 intervals), High (16), Ultra (24). The existing shadow master disables it. It occupies a reserved float in the unchanged 48-byte light constants and invalidates volume history when changed.
+- Strict shaders, standalone production PS/CS GPU tests, new wall/clear/near-plane/offscreen/radial-depth probes, and native atlas/cube fade regressions pass. The GPU host's debug layer was unavailable. C++ control/migration/ownership/callback-order/Off tests pass. Game GPU timing and all-mode visual acceptance remain outstanding; hidden/offscreen geometry without a native map remains a documented limitation.
+- See fog/LOCAL_OCCLUSION.md and tmp/local-light-occlusion-20261111. Capture collection was cleared. Release build and actual-addon compatibility checks follow the user's game closure.
+
+### 2026-11-11 - Small wooden wall-torch alignment, standalone 1.0.1
+- DevKit-only scene-color and native light captures identify the current Novigrad fish-market fixture as torch_wall_wooden_small_bounce in water_channel_ns.w2l. The captured light matches its placed light_point slot within 0.1 mm; the flame slot plus authored spawner offset predicts a 0.295 m correction, including 0.166 m down.
+- Added three verified small wooden wall-torch identities, bringing the standalone catalog to 266. All eleven stock/installed template occurrences agree per identity. Ten stock checksum checks pass; the installed BetterCandles copy has two pre-existing chunk checksum diagnostics. Its bounded properties match stock; no source assets are edited or distributed for this change.
+- Native-slot runtime and its bounded scan/cache behavior are unchanged. Only hf_light_alignment_map.ws was replaced in the personal installation; original script, personal bundles, native bathhouse patch and addon are preserved. Installed map SHA-256: 95384FFBD66885AF2C9F25ED0C4B00C2DB6F8CAC44429412C1ACAEB581059F6B.
+- Version 1.0.1 ZIP passes syntax, payload hashes, safe paths/install layout and independent byte-identical rebuild checks. Eight members, 14,383 bytes, SHA-256 ACEF0B8C19E8AA1C905C8CD4C988311F9E2015E3B3F7607D824D5FB8D682830E. All previous candle/brazier bindings and the native world correction are retained.
+- Captures are cleared with zero pending readbacks. Same-view verification awaits the user-controlled restart; no manual build is needed. See lighting/alignment/README.md and tmp/torch-alignment-20261111.
+
+### 2026-11-11 - Automated fixture discovery and Crow's Perch long torch, standalone 1.1.0
+- Added lighting/alignment/catalog.py to index installed content/DLC and enabled mod bundles, examine owned point/spot components and authored flame attachments, and generate a candidate catalog/report without visiting individual scenes. The run indexed 24,663 entity paths from 64 bundles; 734 serialized candidates were reported, with 284 fixture paths passing the guards. After name-ambiguity checks, 71 identities were added for a total of 337, preserving all 266 previous bindings.
+- New mappings require explicit unique native slots, stationary attachments and consistent content/active-mod associations. The scan excludes gameplay/cinematic composites and reports unsupported formats, bone/separate attachments, missing slots and ambiguous stems. No arbitrary nearest-world-flame matching is used. Packed sector lights still require separately verified world-layer associations.
+- DevKit-only frame/light inspection identifies the current fence-mounted torch at Crow's Perch as torch_hand_long_complex in baron_castle/fx_lights.w2l. Its local flame attachment plus spawner gives (-0.030710, 0.001624, 0.230000). Captured point/spot pair distances match the authored fixture within 1.5 cm including flicker; expected corrections are 0.535 / 0.504 m. Runtime resolves actual tilted world positions through native matrices.
+- The catalog audit re-extracts every added source and validates hashes, associations, fixture scope, ambiguity guards and preserved baseline. Map syntax and public ZIP tests pass. Independent package builds are byte-identical: eight members, 15,497 bytes, SHA-256 1E3474E80D568F463A19FF88DD09BF18A4D4A6BFD7765B1CE6FBF977F0B9BF2F.
+- Only the local generated map was replaced; installed SHA-256 EEA4ECF2EAAF6680FBD568B9A74351D714BBC75D6CD35D226B3F692CD5774D84. Runtime script, personal template bundles, bathhouse native patch and both addons are preserved. No addon rebuild is required. Runtime retains the 5-second / 60 m / 2048-entity sweep and cache; increased one-time name lookup work and game CPU/FPS impact are unmeasured.
+- Diagnostic captures are cleared with zero pending readbacks. A user-controlled restart and same-scene verification are pending. Sources, commands and limits are in lighting/alignment/AUTOMATION.md; evidence is in tmp/light-alignment-auto-20261111.
+
+### 2026-11-11 - Automated catalog live position verification
+- The user restarted the game with the 337-entry map. Two ready native t18 captures confirm the Crow's Perch torch point moves 0.528 / 0.528 m and the spot 0.504 / 0.504 m, with radius and type unchanged. Their separation is 3.47 / 3.50 cm including native flicker. This agrees with the authored attachment corrections, without relying on stable light-buffer indices between launches.
+- The expanded script map compiled and gameplay resumed. The camera moved away from the close-up; no identical-view visual quality, all-location or all-mode visual claim is made. Source position verification is recorded in tmp/light-alignment-auto-20261111/live-verification.json and after-inputs.json.
+- Both captures are cleared, zero pending readbacks. Post-install hashes confirm the original runtime script, personal content bundle, native bathhouse patch, HartapfelFX addon and separate HDR addon are preserved. The version 1.1.0 archive remains byte-identical to its independently validated rebuild.
+
+### 2026-11-11 - Torch self-shadow halo and internal flame origin, standalone 1.1.1
+- Ready native depth/t18 captures reproduce the supplied torch scene. At the point-source projection, opaque camera-view depth is 4.081004 m versus light depth 4.097690 m: the old source is about 1.7 cm inside the wrapped torch head. CPU replay of the existing depth query blocks nearly all nearby rays, including on a full candidate-hit reprojection; a broad sampling-interval change does not resolve this source-placement error.
+- Exact installed torch_fx1.w2p SHA-256 0EDF0B62A621E4BC0008A640D782E859601740EA6697762996E943BE9D05B713 has six emitters. The unique Copy of new_fire_looped flame initializes at (-0.01, 0, 0.10), with identical position endpoints and zero additional position_offset. Its origin differs from the attachment root used by the previous map. Smoke/sphere/distortion/sparks are separate emitters and are not used for flame placement.
+- Added explicit named-emitter support to the bounded particle reader and the verified torch profile. Re-extracted and matched all 337 source associations to their old bindings. Exactly 13 torch families now compose the measured particle displacement through native slot matrices; the other 324 bindings and every slot identity are unchanged. No shadow bias, visibility threshold, sampling budget, map or master setting is weakened.
+- Both exact particle hash/origin regressions pass, including named flame selection among six emitters and rejection of ambiguous, missing or varying emitters. Hanging-lamp composition remains valid. Generated map syntax and package layout/hash checks pass. Two independent package builds match: eight members, 15,580 bytes, SHA-256 A44F30BC963A86FB5800A8ACAE6CA875EA66D5F56C5D47CA617772405BD2D8AC.
+- Installed only the generated map, SHA-256 4CB26F5A2A8B7F77671317B569A3C133AAD223ED4DA3F6A368AC817E3867A6B5. Addon/runtime and native bathhouse correction are preserved. Capture collection is cleared; live depth and same-view halo verification await the user-controlled restart. No manual build is needed. Evidence: tmp/local-light-halo-20261111; method and primary format links: lighting/alignment/README.md.
+
+
+## Local RT/PT volumetric visibility investigation (2026-11-11)
+
+Raster has user acceptance and remains on native shadow maps. RT/PT now submit world-visibility ray dispatches, but visible local scattering is still absent in the user scene; this is not an accepted performance or rendering result. The exact production ray shader passes 36 synthetic GPU cases across four quality levels. Native PT/SER and local-shadow pipeline compatibility pass both HDR addon load orders. Current shader diagnostics read back a 1280-byte header at most once per 300 presents, with completion fences and no CPU wait. No gameplay frame-time improvement or cost claim is made. See fog/LOCAL_OCCLUSION.md for the captured ABI, remaining GPU acceptance checks and source references.
+
+Follow-up: the live GPU header reports stages=3, proving rejection at the native/deferred TAA jitter equality check before tracing. World-space BVH queries now accept different ray-pass jitter/projections while preserving source epoch/depth, camera origin, viewport and exact fog-field validation. The expanded GPU regression has 48 passing cases. Live acceptance of this correction remains pending.
+
+Live follow-up: native CameraCB b0/space1 row 8, rather than zero RT/PT SharedPixelConsts camera fields, is the correct view source. The user confirms visible PT local scattering; GPU stages=63, owner=1, 43 lights. A directional torch cutoff remains under investigation. The candidate restores the native finite emitter exclusion and passes 72 GPU cases, with visible wall blockers outside the excluded segment. Installed standalone alignment files hash-match 1.1.1. Gameplay timing and directional-shadow acceptance remain pending.
+
+Accepted live candidate: 128c9c541ef82b6fc8dd7b274f7c2ffc85d71fd20330a0a3e466a9d0e23a2474. The user confirms the previous bad torch angle looks much better. GPU stages=63, owner=1, 15 lights; native emitter exclusions are 0.25 m default and 0.3 m fallback, with override enabled. All 72 production-ray cases pass. This records PT scene acceptance, not a measured FPS claim, whole-world coverage, or a separate hybrid-RT visual comparison.
+
+Final validation: accepted DLL passes startup13.log in both HDR load orders and both fog quality variants, plus check-runtime13.log Release/integration checks and test-ray9.log 72 GPU cases. HDR addon hash is unchanged. Documentation-only follow-up requires no rebuild.

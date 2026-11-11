@@ -10,6 +10,7 @@
 #include "graphics/raytracing/probe_local.generated.hpp"
 #include "../night/settings.hpp"
 #include "../clouds/runtime.hpp"
+#include "../fog/ray_local.generated.hpp"
 
 namespace hartapfelfx::lighting {
 namespace api = reshade::api;
@@ -30,7 +31,7 @@ inline uint32_t diagnostic_frames = 0;
 
 struct __declspec(uuid("e8afdb27-1b29-493e-a869-bf47c0996e9b")) ControlsData {
   std::mutex mutex;
-  std::array<float, 4> values{};
+  std::array<float, 5> values{};
   Microsoft::WRL::ComPtr<ID3D12Resource> buffer;
 };
 
@@ -44,7 +45,7 @@ inline void OnDestroyDevice(api::device* device) {
 inline bool BindSurfaceMaterials(api::command_list* cmd, api::pipeline_layout layout, uint32_t index, bool compute) {
   auto* data = renodx::utils::data::Get<ControlsData>(cmd->get_device());
   if (!data) return false;
-  const std::array values{pbr, contact_shadows, soft, diameter};
+  const std::array values{pbr, contact_shadows, soft, diameter, reach};
   std::lock_guard lock(data->mutex);
   auto* command = renodx::utils::data::Get<clouds::runtime::CommandData>(cmd);
   if (!command) return false;
@@ -201,10 +202,16 @@ inline void ConfigureShaders(renodx::mods::shader::CustomShaders* shaders) {
   const auto bytes = [](const auto& code) {
     return std::span(reinterpret_cast<const uint8_t*>(code), sizeof(code));
   };
+  static constexpr const wchar_t* pt_exports[] = {L"PTRGSFinal", L"PTRGSWithSERFinal"};
+  const auto pt_cloud = clouds::native::RayLibrary(0x47BC87E1u);
   ray::replacements = {
       {0xCD37BD3Fu, native_size_CD37BD3F, bytes(shader_CD37BD3F), ray::LibraryPurpose::reflection},
       {0xB6F9CABDu, native_size_B6F9CABD, bytes(shader_B6F9CABD), ray::LibraryPurpose::global_probe},
       {0xCC3F1F1Cu, native_size_CC3F1F1C, bytes(shader_CC3F1F1C), ray::LibraryPurpose::local_probe},
+      {0x25AB4BF4u, 10616u, fog::rays::local_code, ray::LibraryPurpose::fog},
+      {0x47BC87E1u, 231144u, fog::rays::local_code, ray::LibraryPurpose::fog, pt_exports},
+      {renodx::utils::hash::ComputeCRC32(pt_cloud.data(), pt_cloud.size()), pt_cloud.size(), fog::rays::local_code,
+       ray::LibraryPurpose::fog, pt_exports},
   };
 }
 

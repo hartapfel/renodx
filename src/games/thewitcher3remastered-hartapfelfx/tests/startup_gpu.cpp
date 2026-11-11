@@ -103,6 +103,7 @@ ComPtr<ID3D12RootSignature> Root(ID3D12Device* device, bool common, uint32_t pad
 }
 #include "runtime_gpu.hpp"
 #include "cloud_runtime_gpu.hpp"
+#include "local_ray_startup.hpp"
 int main(int argc, char** argv) {
   try {
     if (argc != 5 && argc != 7) throw std::runtime_error("Expected original/production shaders, fog probe/width, optional ray libraries/cloud probes");
@@ -266,7 +267,10 @@ int main(int argc, char** argv) {
       if (extended_layouts == 0 || unrelated_layouts < 2) throw std::runtime_error("Expected scoped fog/HDR root extensions and untouched unrelated/local layouts");
       if (private_volume_root == UINT32_MAX) throw std::runtime_error("Missing private fog source root");
       RuntimeFrames(device.Get(), common.Get(), desc, argv[1], argv[3], private_volume_root, uint32_t(std::stoul(argv[4])));
-      if (argc == 7) CloudRuntime(device.Get(), argv[1], argv[2], argv[5], argv[6], reflection_utils.Get());
+      if (argc == 7) {
+        NativeFogRayPipeline(device.Get(), argv[5], argv[6], argv[2]);
+        CloudRuntime(device.Get(), argv[1], argv[2], argv[5], argv[6], reflection_utils.Get());
+      }
     }
     reshade::unregister_event<reshade::addon_event::init_pipeline_layout>(InspectLayout);
     reshade::unregister_event<reshade::addon_event::init_pipeline_layout>(CloudInspectLayout);

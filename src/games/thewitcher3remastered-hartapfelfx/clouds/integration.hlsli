@@ -4,6 +4,7 @@
 #include "common.hlsli"
 #include "air.hlsli"
 #include "lighting.hlsli"
+#include "light_ray.hlsli"
 #include "fast_sample.hlsli"
 #include "../night/lighting/common.hlsli"
 Texture3D<float> cloud_samples : register(t7);
@@ -22,8 +23,6 @@ float4 TraceCloud(float3 origin,float3 ray,float2 interval,float cone,uint2 id,
   // every frame made cloud-edge opacity flicker with fixed camera and weather.
   float random=FastSample(cloud_samples,id.xy,0u,0u);
   float3 direction=CloudLightingDirection();
-  float3 light_tangent=normalize(cross(direction,abs(direction.z)<.9f?float3(0,0,1):float3(0,1,0)));
-  float3 light_bitangent=cross(direction,light_tangent);
   float phase_cosine=dot(ray,direction);
   bool solar=dot(direction,normalize(frame[204].yzw+float3(0,0,1.e-8f)))>.999f;
   float3 direct_colour=MatchLightSpectrum(max(light[1].rgb,0.f),solar?emission_sun:emission_moon);
@@ -67,10 +66,11 @@ float4 TraceCloud(float3 origin,float3 ray,float2 interval,float cone,uint2 id,
         light_visibility.GetDimensions(volume_width,volume_height,volume_depth);
         float cell=32000.f/volume_width;
         float2 center=floor(frame[0].xy/cell+.5f)*cell;
-        float2 volume_uv=(p.xy-center)/32000.f+.5f;
+        float2 shear=CloudLightShear(direction);
+        float2 volume_uv=(p.xy-(p.z-CloudBase-.5f*CloudThickness())*shear-center)/32000.f+.5f;
         float volume_top=CloudBase+CloudThickness();
-        float2 margin=(volume_top-p.z)*abs(direction.xy)/max(direction.z,.015f)/32000.f+.01f;
-        bool in_volume=direction.z>.15f &&all(volume_uv>margin)&&all(volume_uv<1.f-margin)
+        float2 margin=(volume_top-p.z)*abs(direction.xy/max(direction.z,.015f)-shear)/32000.f+.01f;
+        bool in_volume=direction.z>(trace_grid.z>.5f?.02f:.15f) &&all(volume_uv>margin)&&all(volume_uv<1.f-margin)
             &&p.z>=CloudMinimum()&&p.z<=volume_top;
         float boundary=min(min(volume_uv.x-margin.x,volume_uv.y-margin.y),
             min(1.f-margin.x-volume_uv.x,1.f-margin.y-volume_uv.y));
@@ -82,25 +82,7 @@ float4 TraceCloud(float3 origin,float3 ray,float2 interval,float cone,uint2 id,
         if(volume_weight<1.f) {
           // Outside the camera's world-anchored visibility volume, retain a
           // bounded secondary ray instead of sampling an unrelated edge cell.
-          float2 light_interval=CloudInterval(p,direction);
-          float light_distance=max(light_interval.y,0.f);
-          float light_scale=log2(1.f+light_distance/24.f);
-          uint light_pairs=max(2u,((uint)integration.y+1u)/2u);
-          float fallback_tau=0.f;
-          [loop]for(uint j=0;j<light_pairs;++j) {
-            float begin=24.f*(exp2(light_scale*j/light_pairs)-1.f);
-            float end=24.f*(exp2(light_scale*(j+1.f)/light_pairs)-1.f);
-            float beam=max(footprint,(end-begin)*.175f);
-            float light_lod=clamp(log2(max(beam*scattering.w/min(cloud_formation_period,cloud_vertical_period),1.f)),0.f,4.f);
-            [unroll]for(uint sample=0;sample<2;++sample) {
-              float distance=lerp(begin,end,sample==0u?.211324865f:.788675135f);
-              float3 transverse=(j%2u==0u?light_tangent:light_bitangent)
-                  *(sample==0u?1.f:-1.f)*min(distance*.035f,80.f);
-              fallback_tau+=CloudDensity(p+direction*distance+transverse,j<2u?(uint)scattering.y:1u,light_lod,beam)
-                  *CloudOpticalExtinction*(end-begin)*.5f;
-            }
-          }
-          tau=lerp(fallback_tau,tau,volume_weight);
+          tau=lerp(CloudLightDepth(p,direction,footprint),tau,volume_weight);
         }
         tau*=illumination.z;
         float direct=CloudDirectScattering(phase_cosine,sigma,tau,illumination.w);

@@ -79,7 +79,7 @@ ComPtr<ID3D12PipelineState> Graphics(ID3D12Device* device, ID3D12RootSignature* 
 }
 int main(int argc, char** argv) {
   try {
-    if (argc != 3) throw std::runtime_error("Expected production shader embed directory and feature test shader");
+    if (argc != 3 && argc != 4) throw std::runtime_error("Expected production shader embed directory, feature shader and optional local occlusion shader");
     ComPtr<ID3D12Debug> debug;
     if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) debug->EnableDebugLayer();
     ComPtr<ID3D12Device> device;
@@ -113,11 +113,11 @@ int main(int argc, char** argv) {
     roots[3].Descriptor = {3, 71};
     roots[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
     roots[4].Descriptor = {0, 71};
-    D3D12_DESCRIPTOR_RANGE ranges[7]{};
-    const UINT registers[7] = {8, 14, 19, 24, 9, 10, 42};
-    for (UINT i = 0; i < 7; ++i) ranges[i] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, registers[i], 0, i};
+    D3D12_DESCRIPTOR_RANGE ranges[8]{};
+    const UINT registers[8] = {8, 14, 19, 24, 9, 10, 42, 0};
+    for (UINT i = 0; i < 8; ++i) ranges[i] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, registers[i], 0, i};
     roots[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    roots[5].DescriptorTable = {7, ranges};
+    roots[5].DescriptorTable = {8, ranges};
     D3D12_STATIC_SAMPLER_DESC samplers[2]{};
     for (auto& sampler : samplers) {
       sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -156,7 +156,7 @@ int main(int argc, char** argv) {
     compute_desc.CS = {local_raster_code.data(), local_raster_code.size()};
     Check(device->CreateComputePipelineState(&compute_desc, IID_PPV_ARGS(&local_raster)));
     auto local_lights = Buffer(device.Get(), 257 * 160, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
-    D3D12_DESCRIPTOR_HEAP_DESC heap_desc{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 8, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC heap_desc{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 9, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     ComPtr<ID3D12DescriptorHeap> heap;
     Check(device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&heap)));
     D3D12_SHADER_RESOURCE_VIEW_DESC shadow{};
@@ -169,7 +169,8 @@ int main(int argc, char** argv) {
     texture_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
     D3D12_RESOURCE_DESC texture_desc{};
     texture_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    texture_desc.Width = texture_desc.Height = texture_desc.MipLevels = texture_desc.SampleDesc.Count = 1;
+    texture_desc.Width = texture_desc.Height = 8;
+    texture_desc.MipLevels = texture_desc.SampleDesc.Count = 1;
     texture_desc.DepthOrArraySize = 6;
     texture_desc.Format = DXGI_FORMAT_R16_UNORM;
     ComPtr<ID3D12Resource> shadow_texture;
@@ -189,6 +190,13 @@ int main(int argc, char** argv) {
     device->CreateShaderResourceView(shadow_texture.Get(), &shadow, descriptor);
     descriptor.ptr += device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     D3D12_SHADER_RESOURCE_VIEW_DESC structured{};
+    D3D12_SHADER_RESOURCE_VIEW_DESC depth_view{};
+    depth_view.Format = DXGI_FORMAT_R32_FLOAT;
+    depth_view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    depth_view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    depth_view.Texture2D.MipLevels = 1;
+    device->CreateShaderResourceView(nullptr, &depth_view, descriptor);
+    descriptor.ptr += device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     structured.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
     structured.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     structured.Buffer.NumElements = 257;
@@ -203,11 +211,13 @@ int main(int argc, char** argv) {
     auto frame = Buffer(device.Get(), 5632, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     auto light = Buffer(device.Get(), 57600, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     auto settings = Buffer(device.Get(), 256, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+    const std::array<uint8_t,256> empty_controls{};
+    Upload(settings.Get(),empty_controls.data(),empty_controls.size());
     auto grid = Buffer(device.Get(), 256, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     constexpr uint32_t width = 16, height = 9, slices = 32;
     constexpr uint32_t cell_bytes = width * height * slices * 8;
     constexpr uint32_t volume_bytes = FOG_HEADER_BYTES + width * height * (3 * slices + 1) * 8;
-    constexpr uint32_t interior_bytes = 128 + width * height * 8, bytes = volume_bytes + interior_bytes;
+    constexpr uint32_t interior_bytes = 128 + width * height * 8, bytes = volume_bytes + interior_bytes + width * height * slices * 4;
     auto output = Buffer(device.Get(), bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     auto readback = Buffer(device.Get(), bytes, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
     std::array<std::array<float, 4>, 352> frame_data{};
@@ -244,6 +254,7 @@ int main(int argc, char** argv) {
         for (bool occluded : {false, true})
           for (float density : {0.f, .001f})
             for (float strength : {1.f, 1000.f})
+              for (unsigned independent : {0u,1u,2u,3u,4u,5u})
               for (bool compute : {false, true}) {
                 Check(allocator->Reset());
                 Check(cmd->Reset(allocator.Get(), nullptr));
@@ -256,7 +267,7 @@ int main(int argc, char** argv) {
                 point[0] = {0, 0, 20, 100};
                 point[3] = {strength, 2 * strength, 4 * strength, 0};
                 point[5] = {.01f, 1, occluded ? 1.f : 0.f, 1};
-                uint32_t tile = 64u << 18;
+                uint32_t tile = 4u << 18;
                 float packed;
                 std::memcpy(&packed, &tile, 4);
                 point[7] = {packed, packed, packed, packed};
@@ -276,6 +287,15 @@ int main(int argc, char** argv) {
                 Upload(light.Get(), light_data.data(), sizeof(light_data));
                 float controls[12] = {1, 1, local ? 0.f : strength, 0, clear_distance, 1, 1, local ? 1.f : 0.f, 1, 0, 0, 0};
                 Upload(settings.Get(), controls, sizeof(controls));
+                VolumeLightData beams{independent==3u?0.f:1.f, independent==4u?0.f:1.f, independent==5u?100.f:0.f, 1.f, 1.f, 1.f, 1.f, independent?FOG_LIGHT_VALID:0u};
+                if(independent) {
+                  controls[1]=independent==1u?0.f:independent==2u?3.f:1.f;
+                  Upload(settings.Get(),controls,sizeof(controls));
+                }
+                void* settings_data=nullptr;
+                Check(settings->Map(0,nullptr,&settings_data));
+                std::memcpy(static_cast<uint8_t*>(settings_data)+FOG_LIGHT_CONSTANT_OFFSET,&beams,sizeof(beams));
+                settings->Unmap(0,nullptr);
                 D3D12_RESOURCE_BARRIER barrier{};
                 barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                 barrier.Transition = {output.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS};
@@ -316,7 +336,7 @@ int main(int argc, char** argv) {
                 cmd->SetComputeRootShaderResourceView(6, settings->GetGPUVirtualAddress());
                 cmd->SetComputeRootShaderResourceView(7, settings->GetGPUVirtualAddress());
                 auto local_table = heap->GetGPUDescriptorHandleForHeapStart();
-                local_table.ptr += 7 * device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                local_table.ptr += 8 * device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
                 cmd->SetComputeRootDescriptorTable(8, local_table);
                 cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
                 cmd->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
@@ -368,8 +388,10 @@ int main(int argc, char** argv) {
                 std::vector<uint32_t> result(bytes / 4);
                 std::memcpy(result.data(), mapped, bytes);
                 readback->Unmap(0, nullptr);
-                const float expected_opacity = std::pow(1.f - std::exp(-density * 1000.f), frame_data[42][3]) * (shaped_weather ? (clear_distance < 0.f ? .5495f : .4995f) : 1.f);
-                const float expected_light = occluded ? 0.f : expected_opacity * strength * std::exp(-density * 1000.f) / (4.f * 3.141592653589793f);
+                const float fog_density=density*(independent==1u?0.f:independent==2u?3.f:1.f);
+                const float expected_opacity = std::pow(1.f - std::exp(-fog_density * 1000.f), frame_data[42][3]) * (shaped_weather ? (clear_distance < 0.f ? .5495f : .4995f) : 1.f);
+                const float light_opacity=independent?1.f-std::exp(-density*(independent==5u?900.f:999.9f)):expected_opacity;
+                const float expected_light = occluded ||independent==3u ||independent==4u ? 0.f : light_opacity * strength * std::exp(-density * 1000.f) / (4.f * 3.141592653589793f);
                 for (uint32_t i = 0; i < width * height; ++i) {
                   const uint32_t offset = (FOG_HEADER_BYTES + 2 * cell_bytes + (slices * width * height + i) * 8) / 4;
                   const float radiance = Half(uint16_t(result[offset]));
@@ -377,7 +399,7 @@ int main(int argc, char** argv) {
                   if (!std::isfinite(radiance) || std::abs(opacity - expected_opacity) > .002f
                       || (!local && std::abs(radiance - expected_light) > std::max(.0001f, expected_light * .004f))) throw std::runtime_error("Transport differs from analytic homogeneous-medium solution");
                 }
-                if (local) {
+                if (local && independent<3u) {
                   for (uint32_t z = 0; z < slices; ++z)
                     for (uint32_t y = 0; y < height; ++y)
                       for (uint32_t x = 0; x < width; ++x) {
@@ -392,7 +414,7 @@ int main(int argc, char** argv) {
                           const double dx = -rx * distance, dy = -ry * distance, dz = 20 - inverse * distance;
                           const double squared = dx * dx + dy * dy + dz * dz;
                           const double ratio = squared / 10000.;
-                          if (ratio < 1) expected += .25 * std::pow(1 - ratio * ratio, 2) / (1 + .01 * squared) * std::exp(-density * std::sqrt(squared)) * std::exp(occluded ? -.99 * std::sqrt(squared) : 0.) / (4 * 3.141592653589793) * strength;
+                          if (ratio < 1) expected += .25 * std::pow(1 - ratio * ratio, 2) / (1 + .01 * squared) * std::exp(-density * std::sqrt(squared)) * std::exp(occluded ? -std::max(0., std::sqrt(squared) - .002) : 0.) / (4 * 3.141592653589793) * strength;
                         }
                         const uint32_t offset = (FOG_HEADER_BYTES + ((z * height + y) * width + x) * 8) / 4;
                         const float extinction = Half(uint16_t(result[offset + 1] >> 16));
@@ -410,11 +432,13 @@ int main(int argc, char** argv) {
                 else {
                   // Header padding is intentionally unspecified. Every actual cell and
                   // integrated boundary must agree between Raster/PT and compute/RT paths.
-                  for (uint32_t i = FOG_HEADER_BYTES / 4; i < volume_bytes / 4; ++i)
+                  for (uint32_t i = FOG_HEADER_BYTES / 4; i < (volume_bytes + (independent?width*height*slices*4u:0u)) / 4; ++i)
                     if (result[i] != graphics_result[i]) throw std::runtime_error("Graphics/compute grid mismatch");
                 }
-                std::cout << (compute ? "CS" : "PS") << " clear distance=" << clear_distance << " weather=" << shaped_weather << " local=" << local_count << " density=" << density << " sunlight=" << strength << " shadow=" << occluded << " passed\n";
+                std::cout << (compute ? "CS" : "PS") << " independent=" << independent << " clear distance=" << clear_distance << " weather=" << shaped_weather << " local=" << local_count << " density=" << density << " sunlight=" << strength << " shadow=" << occluded << " passed\n";
               }
+    Upload(settings.Get(),empty_controls.data(),empty_controls.size());
+    graphics_result[1052/4]=0u;
     // Exercise the production early capture and a later PS/CS generation with
     // t24 explicitly unbound. Only the frame-matched snapshot may remove fog.
     const auto saved_frame = frame_data;
@@ -526,6 +550,8 @@ int main(int argc, char** argv) {
     for (uint32_t i = 0; i <= 32; ++i) intervals.push_back({120000, 8.f + i * .125f, 991.2f - i * .125f});
     bool first_snapshot = true;
     for (uint32_t test = 0; test < intervals.size(); ++test)
+      for (bool independent : {false,true})
+      for (unsigned indoors=0;indoors<(independent?2u:1u);++indoors)
       for (bool compute : {false, true}) {
         const auto& interval = intervals[test];
         frame_data = saved_frame;
@@ -543,6 +569,11 @@ int main(int argc, char** argv) {
         Upload(light.Get(), light_data.data(), sizeof(light_data));
         float controls[12] = {1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0};
         Upload(settings.Get(), controls, sizeof(controls));
+        VolumeLightData beams{1.f,1.f,0.f,1.f,1.f,1.f,1.f,independent?FOG_LIGHT_VALID:0u,float(indoors)};
+        void* settings_data=nullptr;
+        Check(settings->Map(0,nullptr,&settings_data));
+        std::memcpy(static_cast<uint8_t*>(settings_data)+FOG_LIGHT_CONSTANT_OFFSET,&beams,sizeof(beams));
+        settings->Unmap(0,nullptr);
         grid_data[0] = interval.rejection == 5 ? width / 2 : width;
         grid_data[1] = interval.rejection == 5 ? height / 2 : height;
         grid_data[4] = 4;
@@ -600,7 +631,7 @@ int main(int argc, char** argv) {
         Check(cmd->Reset(allocator.Get(), nullptr));
         barrier.Transition = {output.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST};
         cmd->ResourceBarrier(1, &barrier);
-        cmd->CopyBufferRegion(output.Get(), volume_bytes, snapshot.Get(), 0, interior_bytes);
+        cmd->CopyBufferRegion(output.Get(), volume_bytes + (independent?width*height*slices*4u:0u), snapshot.Get(), 0, interior_bytes);
         barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
         barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
         cmd->ResourceBarrier(1, &barrier);
@@ -653,10 +684,15 @@ int main(int argc, char** argv) {
           for (uint32_t z = 0; z <= slices && .1 * std::pow(10002., double(z) / slices) <= interval.exit; ++z)
             for (uint32_t i = 0; i < width * height; ++i) {
               const uint32_t offset = (FOG_HEADER_BYTES + 2 * cell_bytes + (z * width * height + i) * 8) / 4;
-              if (values[offset] != 0 || values[offset + 1] != 0) throw std::runtime_error("Interior vacuum contains fog radiance or opacity");
+              if ((!indoors &&(values[offset]!=0 ||values[offset+1]!=0))
+                  ||(indoors && (Half(uint16_t(values[offset+1]>>16))!=0.f ||(.1*std::pow(10002.,double(z)/slices)>.3 &&Half(uint16_t(values[offset]))<=0.f))))
+                { std::cerr<<"Indoor case="<<test<<" independent="<<independent<<" indoor="<<indoors<<" z="<<z
+                    <<" rgb="<<Half(uint16_t(values[offset]))<<" alpha="<<Half(uint16_t(values[offset+1]>>16))
+                    <<" captured indoor="<<std::bit_cast<float>(values[1056/4])<<"\n";
+                  throw std::runtime_error("Indoor light density did not remain independent of the fog vacuum"); }
             }
         }
-        if (interval.scale > 0 && interval.rejection == 0 && interval.entry >= 0 && interval.entry < interval.exit) {
+        if (!indoors && interval.scale > 0 && interval.rejection == 0 && interval.entry >= 0 && interval.entry < interval.exit) {
           for (uint32_t z = 0; z < slices; ++z) {
             const double begin = .1 * std::pow(10002., double(z) / slices), end = .1 * std::pow(10002., double(z + 1) / slices);
             if (begin < interval.entry || end > interval.exit) continue;
@@ -667,12 +703,13 @@ int main(int argc, char** argv) {
           }
         }
         readback->Unmap(0, nullptr);
-        std::cout << "Interior capture case " << test << " " << (compute ? "CS" : "PS") << " passed\n";
+        std::cout << "Interior independent=" << independent << " indoor-light=" << indoors << " capture case " << test << " " << (compute ? "CS" : "PS") << " passed\n";
       }
     frame_data = saved_frame;
     light_data = saved_light;
     Upload(frame.Get(), frame_data.data(), sizeof(frame_data));
     Upload(light.Get(), light_data.data(), sizeof(light_data));
+    Upload(settings.Get(),empty_controls.data(),empty_controls.size());
     float saved_controls[12] = {1, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0};
     Upload(settings.Get(), saved_controls, sizeof(saved_controls));
     grid_data[4] = 0;
@@ -790,6 +827,7 @@ int main(int argc, char** argv) {
     light_data[35] = {1000, 0, 0, 10};
     light_data[42] = {1, 0, 0, 1};
     Upload(light.Get(), light_data.data(), sizeof(light_data));
+    for(bool independent:{false,true})
     for(const auto& mode:{std::array<float,6>{0.f,0.f,0.f,1000.f,0.f,0.f},std::array<float,6>{1.f,0.f,0.f,1000.f,0.f,0.f},
         std::array<float,6>{0.f,.35f,0.f,1000.f,0.f,0.f},std::array<float,6>{0.f,1.f,0.f,1000.f,0.f,0.f},
         std::array<float,6>{0.f,0.f,5.f,1000.f,0.f,0.f},std::array<float,6>{0.f,.35f,5.f,1000.f,0.f,0.f},std::array<float,6>{0.f,1.f,5.f,1000.f,0.f,0.f},
@@ -797,12 +835,16 @@ int main(int argc, char** argv) {
         std::array<float,6>{0.f,0.f,5.f,1.f,0.f,0.f},std::array<float,6>{0.f,0.f,5.f,1.f,0.f,-100.f},
         std::array<float,6>{0.f,0.f,5.f,25.f,0.f,-50.f},std::array<float,6>{0.f,0.f,5.f,25.f,0.f,100.f}}) {
       const float reconstruction=mode[0];
+      fixture[1052/4]=independent?FOG_LIGHT_VALID:0u;
+      fixture[1024/4]=std::bit_cast<uint32_t>(1.f);
+      fixture[1040/4]=std::bit_cast<uint32_t>(2.f);
       if(mode[2]==5.f) {
         auto ray_fixture=fixture;
         const auto cell=pack(250.f,500.f,1000.f,.001f);
         for(uint32_t i=0;i<width*height*slices;++i) {
           ray_fixture[(FOG_HEADER_BYTES+cell_bytes)/4+2*i]=mode[4]>0.f &&i%width>=width/2?0u:cell[0];
           ray_fixture[(FOG_HEADER_BYTES+cell_bytes)/4+2*i+1]=mode[4]>0.f &&i%width>=width/2?0u:cell[1];
+          ray_fixture[volume_bytes/4+i]=std::bit_cast<uint32_t>(mode[4]>0.f &&i%width>=width/2?0.f:.001f);
         }
         Upload(history_upload.Get(),ray_fixture.data(),bytes);
       } else Upload(history_upload.Get(),fixture.data(),bytes);
@@ -868,9 +910,10 @@ int main(int argc, char** argv) {
       std::array<float, 68> values{};
       std::memcpy(values.data(), mapped, sizeof(values));
       readback->Unmap(0, nullptr);
-      const float opacity=mode[2]==5.f?std::pow(1.f-std::exp(-Half(uint16_t(pack(0,0,0,.001f)[1]>>16))*(mode[4]>0.f?.5f:1.f)*std::max(0.f,mode[3]-.1f)),saved_frame[42][3])
+      const float opacity=mode[2]==5.f?std::pow(1.f-std::exp(-(independent?.001f:Half(uint16_t(pack(0,0,0,.001f)[1]>>16)))*(mode[4]>0.f?.5f:1.f)*std::max(0.f,mode[3]-.1f)),saved_frame[42][3])
           *std::clamp((mode[3]-(mode[5]>0.f?mode[5]:saved_frame[22][2]+mode[5])-saved_frame[48][1])*saved_frame[48][2],0.f,1.f):.5f;
-      const float beam=mode[2]==5.f?1000.f*opacity:1000.f;
+      const float beam=mode[2]==5.f?1000.f*(independent?
+          1.f-std::exp(-Half(uint16_t(pack(0,0,0,.001f)[1]>>16))*(mode[4]>0.f?.5f:1.f)*std::max(0.f,mode[3]-.1f)):opacity):1000.f;
       const float veil=opacity*(1.f-mode[1]);
       const float expected[16] = {beam,2*beam,4*beam,opacity,0,0,0,0,
           beam+veil,2*beam+2*veil,4*beam+3*veil,veil,0,1,0,1};
@@ -916,6 +959,99 @@ int main(int argc, char** argv) {
         throw std::runtime_error("Shared murk no longer follows the near-water optical path and slider");
       std::cout << "HDR reconstruction=" << reconstruction << " haze reduction="<<mode[1]<<" quality="<<mode[2]<<" clear distance="<<mode[5]
           << ", independent beam/veil, per-pixel transport, forward additive energy and native receivers passed\n";
+    }
+    if (argc == 4) {
+      const auto code = Read(argv[3]);
+      compute_desc.CS = {code.data(), code.size()};
+      ComPtr<ID3D12PipelineState> occlusion;
+      Check(device->CreateComputePipelineState(&compute_desc, IID_PPV_ARGS(&occlusion)));
+      auto depth_desc = texture_desc;
+      depth_desc.DepthOrArraySize = 1;
+      depth_desc.Format = DXGI_FORMAT_R32_FLOAT;
+      ComPtr<ID3D12Resource> local_depth;
+      Check(device->CreateCommittedResource(&texture_heap, D3D12_HEAP_FLAG_NONE, &depth_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&local_depth)));
+      D3D12_PLACED_SUBRESOURCE_FOOTPRINT depth_footprint{};
+      UINT64 depth_bytes = 0;
+      device->GetCopyableFootprints(&depth_desc, 0, 1, 0, &depth_footprint, nullptr, nullptr, &depth_bytes);
+      auto depth_upload = Buffer(device.Get(), depth_bytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+      auto depth_descriptor = heap->GetCPUDescriptorHandleForHeapStart();
+      depth_descriptor.ptr += 7 * device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+      device->CreateShaderResourceView(local_depth.Get(), &depth_view, depth_descriptor);
+      frame_data = {};
+      frame_data[1][0] = frame_data[2][1] = frame_data[3][2] = 1;
+      frame_data[13][0] = frame_data[14][1] = frame_data[15][3] = frame_data[16][2] = 1;
+      frame_data[21][0] = frame_data[22][0] = 1;
+      frame_data[23] = {8, 8, .125f, .125f};
+      Upload(frame.Get(), frame_data.data(), sizeof(frame_data));
+      VolumeLightData beams{1, 1, 0, 1, 1, 1, 0, FOG_LIGHT_VALID, 0, 1};
+      void* settings_data = nullptr;
+      Check(settings->Map(0, nullptr, &settings_data));
+      std::memcpy(static_cast<uint8_t*>(settings_data) + FOG_LIGHT_CONSTANT_OFFSET, &beams, sizeof(beams));
+      settings->Unmap(0, nullptr);
+      std::fill(zero_depths.begin(), zero_depths.end(), char(0));
+      Upload(shadow_upload.Get(), zero_depths.data(), zero_depths.size());
+      for (unsigned wall = 0; wall < 2; ++wall) {
+        std::vector<char> pixels(size_t(depth_bytes), 0);
+        const float raw = wall ? .2f : 1.f;  // Five-metre wall or sky.
+        for (uint32_t y = 0; y < 8; ++y)
+          for (uint32_t x = 0; x < 8; ++x)
+            std::memcpy(pixels.data() + depth_footprint.Offset + y * depth_footprint.Footprint.RowPitch + x * 4, &raw, 4);
+        Upload(depth_upload.Get(), pixels.data(), pixels.size());
+        Check(allocator->Reset());
+        Check(cmd->Reset(allocator.Get(), occlusion.Get()));
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        if (wall) {
+          barrier.Transition = {local_depth.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST};
+          cmd->ResourceBarrier(1, &barrier);
+        } else {
+          barrier.Transition = {shadow_texture.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST};
+          cmd->ResourceBarrier(1, &barrier);
+          for (UINT layer = 0; layer < 6; ++layer) {
+            D3D12_TEXTURE_COPY_LOCATION source{shadow_upload.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+            source.PlacedFootprint = footprints[layer];
+            D3D12_TEXTURE_COPY_LOCATION destination{shadow_texture.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+            destination.SubresourceIndex = layer;
+            cmd->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+          }
+          std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+          cmd->ResourceBarrier(1, &barrier);
+        }
+        D3D12_TEXTURE_COPY_LOCATION source{depth_upload.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+        source.PlacedFootprint = depth_footprint;
+        D3D12_TEXTURE_COPY_LOCATION destination{local_depth.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+        cmd->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+        barrier.Transition = {local_depth.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE};
+        cmd->ResourceBarrier(1, &barrier);
+        barrier.Transition = {output.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS};
+        cmd->ResourceBarrier(1, &barrier);
+        bind_inputs(output.Get());
+        cmd->Dispatch(1, 1, 1);
+        std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+        cmd->ResourceBarrier(1, &barrier);
+        cmd->CopyBufferRegion(readback.Get(), 0, output.Get(), 0, 80);
+        finish_commands();
+        void* mapped = nullptr;
+        Check(readback->Map(0, nullptr, &mapped));
+        std::array<float, 20> values{};
+        std::memcpy(values.data(), mapped, sizeof(values));
+        readback->Unmap(0, nullptr);
+        const float visible = wall ? 0.f : 1.f;
+        const std::array<float, 12> expected{visible, 1, 1, visible, 1, 1, 1, 1, visible, visible, visible, visible};
+        for (size_t i = 0; i < expected.size(); ++i)
+          if (values[i] != expected[i]) {
+            std::cerr << "Occlusion wall=" << wall << " ray=" << i << " got=" << values[i] << " expected=" << expected[i] << '\n';
+            throw std::runtime_error("Perspective depth interval, near plane, budget or offscreen fallback regression");
+          }
+        for (size_t i : {12u, 13u})
+          if (std::abs(values[i] - std::exp(-9.998f)) > 1.e-7f)
+            throw std::runtime_error("Native local shadow fade restored light through blocked geometry");
+        const std::array<float, 4> distances{wall ? 5.f : 1.e30f, wall ? 5.f * std::sqrt(2.f) : 1.e30f, 1.e30f, 1.e30f};
+        for (size_t i = 0; i < distances.size(); ++i)
+          if (std::abs(values[16 + i] - distances[i]) > distances[i] * 2.e-6f)
+            throw std::runtime_error("Opaque local-light integration boundary differs from the visible depth");
+        std::cout << "Local occlusion wall=" << wall << ": coaxial/oblique rays, front/behind geometry, near plane, quality budgets, offscreen limits and full atlas/cube visibility passed\n";
+      }
     }
     CloseHandle(event);
     if (messages)

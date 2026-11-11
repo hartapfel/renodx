@@ -56,6 +56,29 @@ and volumetric clouds.
 
 ## Lighting & Shadows
 
+The optional [Light Alignment standalone mod](lighting/alignment/README.md)
+places supported candle, torch, brazier and fire lights at their authored flame
+emitters. Its standalone mod-manager package supports 337 fixture identities
+and resolves live engine slots for Raster, RT and PT, including volumetrics.
+It runs independently of RenoDX and preserves other lighting properties. The
+earlier personalized asset prototype corrected 315 components across 187
+templates; that custom bundle is excluded from the public package. A separate
+position-only fix for the bathhouse's packed hanging-bowl light is included.
+
+[Local volumetric occlusion](fog/LOCAL_OCCLUSION.md) traces fog samples against
+the native world geometry in RT/PT; raster retains the game's atlas/cube maps.
+**Lighting > Volumetric Light Quality (Advanced) > Lamp Occlusion Quality**
+selects one to four RT/PT samples. The native CameraCB and emitter endpoint
+rules preserve the correct view and avoid torch-housing cutoffs. The former
+camera-depth supplement is retired. Existing emitter alignment is preserved.
+Raster lights without native shadow maps still lack world occlusion.
+
+An [emissive local-lighting investigation](lighting/EMISSIVE_LIGHTING.md)
+records the requested all-mode replacement of candle/torch proxy illumination,
+verified engine interfaces, source material and unresolved integration work.
+That replacement is not implemented; the controls below describe the current
+lighting features.
+
 On the **Lighting** tab, under **World Lighting & Shadows**:
 
 | Setting | Default | Effect |
@@ -71,6 +94,32 @@ three to Native. Matching saved controls from the standalone Graphics addon
 are imported into unused profile entries. HartapfelFX shares the Graphics
 lighting shaders, contact pipeline and RT material records; it uses its own
 cloud and Darker Nights inputs on shared passes.
+
+Small Object Shadows work with either volumetric fog, volumetric light, or
+both enabled. The local-volume observer runs before the deferred lighting
+replacement is selected, so its private GPU work cannot restore the original
+shader over the contact-shadow/PBR shader. Forward materials also receive the
+saved Small Shadow Reach, using the existing lighting constant buffer.
+
+These shadows use visible scene depth. Armor decorations with actual geometry
+can cast them; chainmail detail represented only by a normal map cannot create
+additional depth occlusion. Objects outside the view or hidden behind another
+surface remain the responsibility of the game's other shadow techniques. This
+matches the role of [Bend Studio's screen-space shadows](https://www.bendstudio.com/blog/inside-bend-screen-space-shadows/)
+and [Epic's depth-based contact shadows](https://dev.epicgames.com/documentation/en-us/unreal-engine/contact-shadows-in-unreal-engine).
+
+For an in-game check, hold the camera on sunlit armor decorations, set Small
+Object Shadows to Improved, and toggle Fog Rendering and Volumetric Light
+independently. The small directional shadows should remain present in all
+four combinations; atmospheric scattering can still change their apparent
+contrast. Compare Original/Improved, then adjust Small Shadow Reach on an
+object shaded by a forward material. Keep the separate HDR addon enabled.
+
+The existing controls, defaults and saved keys are retained. Their tooltips
+explain visible geometry and the reach/detail tradeoff where the choice is
+made. This follows NN/g's [recognition over recall](https://www.nngroup.com/articles/recognition-and-recall/)
+and [progressive disclosure](https://www.nngroup.com/articles/progressive-disclosure/):
+keep the familiar controls easy to scan and put additional explanation in help.
 
 CPU-side cloud uploads and atlas descriptor heaps are recycled after their
 recordings retire on the GPU. Cloud storage also survives rotation of the
@@ -196,42 +245,62 @@ scattering and the visible Sun retain the full sunset palette independently.
 Morning and Moon lighting retain their existing colours. This controls tint;
 it does not reduce the Sun's light intensity.
 
-Performance and Balanced trace at half the render width and height, resolve
-history at that size, then reconstruct at the game's full internal resolution.
-They retain stable sampling, HDR sun/moon occlusion and native motion output.
-Fine features can be softer, especially with a low internal game resolution.
-High matches Custom Medium with 50% spacing; Ultra uses the existing Ultra
-sampling at 50%. Cinematic and Maximum remain available in Custom.
+High traces at half the internal render width and height and reconstructs into
+full-resolution history. Performance and Balanced trace at one quarter of each
+dimension and reconstruct into half-resolution history. Four spatial sample
+phases accumulate detail across advancing frames; paused native time holds the
+phase fixed. Depth rejection and exact terrain-intersection rays preserve
+foreground outlines. HDR sun/moon occlusion and native motion output remain
+active. Fine features can be softer, especially at low internal resolutions.
+High retains Custom Medium's ray budgets at 50% spacing; Ultra retains full
+resolution and Ultra sampling at 50%. Custom retains its previous resolution,
+with Cinematic and Maximum still available.
 See [cloud scalability and research](PERFORMANCE.md#cloud-quality-presets-8-november)
-for budgets, measurements, limitations and validation.
+and the [measured cloud GPU breakdown](CLOUD_GPU_PROFILE.md) for pass costs,
+live comparisons and lower-resolution rendering experiments.
+
+**Low Sun Lighting Cache (Experimental)** in **Clouds & Performance** is Off by
+default. On extends the shared directional lighting cache toward the horizon,
+reducing repeated light rays near sunrise and sunset. It can soften internal
+cloud shadows and change brightness. Turn it off for the established lighting;
+the quality-preset tracing optimization remains active independently.
 
 ### Fog and volumetric light
 
-The **Fog** tab separates **Fog Amount**, the broad weather veil and its colour
-desaturation, from **Sun & Moon Beams** and **Lamp & Fire Light**. The default
-Fog Amount is 100%, retaining the full weather veil. **Medium Density**, now under
-**Fog Medium (Advanced)**, still changes the actual medium for both scattering
-and light attenuation. Zero Medium Density removes both fog and beams.
+**Lighting** now has an independent **Volumetric Light** master and **Light
+Quality** choice below the existing world, Sun/Moon and character controls.
+**Sun & Moon Beams**, **Light Focus**, **Lamp & Fire Light** and **Light Density**
+control its appearance. Placement and specialist quality options start collapsed.
+Light scattering works with **Original** fog and at zero Fog Density. Fog keeps
+its own amount, density, placement and quality on the **Fog** tab.
 
-The defaults use **Performance** quality, Sun & Moon Beams **45%**, Light Focus
-**0.65**, Lamp & Fire Light **100%**, Distant Sky Haze **200%**, Fade With Height
-**200%**, Smooth Fog Lighting **On** and Medium Density **100%**. Clear Distance
-defaults to **0** and ranges from **-100 to 100**. Negative values advance the
-game's distance fade to bring fog and beams closer to the camera; positive
-values leave a clear space. Hover help explains the controls in the existing tab.
+New profiles use Volumetric Light **On**, **Performance** quality, Sun & Moon
+Beams **35%**, Light Focus **0.65**, Lamp & Fire Light **100%**, Light Density
+**50%**, Clear Space **0 m**, Fade With Height **200%**, Indoor Light Density **0%**, Lamp & Fire Shadows **On**
+and Stabilize Light Over Time **On**. Fog defaults remain Performance, Amount
+100%, Medium Density 50%, Clear Distance -40, Fade With Height 200%, Distant Sky
+Haze 150% and Smooth Fog Lighting On. Existing profiles retain their saved
+beam brightness/focus; missing light medium and quality settings migrate from
+saved fog values. Lighting Reset All owns beams; Fog Reset All preserves them.
 
-Fog **Quality Preset** offers **Performance**, **Balanced**, **High**, **Ultra**,
-**Per-Pixel Integration** and **Custom**. Custom retains the old Balanced/High
-volume choice under **Fog Quality (Advanced)**. Ultra adds denser shadow
-sampling. Per-Pixel Integration uses the Ultra lighting field and integrates
-it to each receiver's exact depth, including transparent materials. It is very
-expensive and does not trace fresh geometry shadows per pixel. Smooth Fog
-Lighting is disabled in this mode because its prefix filter is bypassed.
-The existing interior exclusion, clouds, wind and HDR integration remain.
-Local-light injection selects the fog volume matching the current scene depth
-size, so returning from a different photo-mode view keeps lamps and fire in the
-active view. Intervening shadow viewports do not select the light volume.
-See [fog controls, research and quality budgets](PERFORMANCE.md#fog-and-volumetric-light-8-november).
+Light Quality offers **Performance**, **Balanced**, **High** and **Ultra**.
+The light and fog share the higher active grid resolution, while light shadow
+sampling follows Light Quality. Lowering only light quality saves less when
+fog still requests a dense volume. **Lamp & Fire Shadows** can save local shadow
+samples at the cost of light leaks. **Stabilize Light Over Time** can be disabled
+to remove history trails, exposing coarser current-frame shadows.
+
+Fog Quality retains **Performance**, **Balanced**, **High**, **Ultra**,
+**Per-Pixel Integration** and **Custom**. Per-Pixel integrates the resolved field
+to each receiver depth and remains expensive. It does not trace fresh geometry
+shadows per pixel. Both media retain native interior exclusion, current weather,
+light colours, cloud shadows, transparent depth and HDR radiance.
+
+The beam path now integrates Beer transport independently of the fog's nonlinear
+weather-opacity curve. Its brightness can differ from the previous coupled
+implementation. This is a deliberate artistic separation; native weather still
+supplies the participating medium. See [implementation, quality budgets,
+primary research, migration and validation](fog/README.md).
 
 **Reset All** on each tab restores only that tab's settings in the selected
 preset, after a scope-specific confirmation. Hidden exposure options reset too.
@@ -897,3 +966,20 @@ checks closed command-list creation, stale alias recovery and the post-submissio
 producer fence. The live log reports admitted lighting passes, fallbacks and
 contact-field generation so neutral-mask fallback is distinguishable from an
 active effect.
+
+
+## Independent volumetric light validation, 11 November 2026
+
+The new Lighting controls, separate beam medium and scoped resets pass the
+Release build and strict shader checks. GPU validation covers 1,152 transport
+cases, 282 interior cases, 28 HDR receiver/per-pixel modes and all 387 cloud
+cases. Twelve actual-addon startup runs pass with the HDR addon in both load
+orders across the Windows system runtime and the game's Agility SDK 619,
+including Original fog with independent Performance/Ultra light.
+
+The tested Release addon is installed through the existing game-folder link.
+No game launch/closure or installed HDR-addon change was performed by the
+agent. Gameplay appearance, moving-light trails, indoor beams, native shadow
+leaks and FPS/GPU time still require in-game acceptance. See the
+[full implementation and source audit](fog/README.md) for controls, storage,
+quality budgets, migration and test evidence.

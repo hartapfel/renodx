@@ -3856,12 +3856,16 @@ OutputSignature main(
       _2058 = TEXCOORD_4.z;
       _2059 = TEXCOORD_4.w;
     }
-    if(ReceiverFrameMatches()) {
+    if(ReceiverFrameMatches() && fx.enabled > .5f) {
     float4 fx_desaturation;
     float4 fx_fog=ReceiverFog(SV_Position,length(TEXCOORD_3.xyz-receiver_frame[0].xyz),fx_desaturation);
-    float3 fx_color=fx_fog.a>1.e-7f ? fx_fog.rgb/fx_fog.a:0.f;
+    float fx_coverage=max(fx_fog.a,any(fx_fog.rgb>0.f)?1.e-4f:0.f);
+    float3 fx_color=fx_coverage>1.e-7f ? fx_fog.rgb/fx_coverage:0.f;
     _2052=fx_desaturation.x;_2053=fx_desaturation.y;_2054=fx_desaturation.z;_2055=fx_desaturation.w;
-    _2056=fx_color.x;_2057=fx_color.y;_2058=fx_color.z;_2059=fx_fog.a;
+    _2056=fx_color.x;_2057=fx_color.y;_2058=fx_color.z;_2059=fx_coverage;
+    } else if(ReceiverFrameMatches()) {
+      float4 beam_fog=ReceiverFogVarying(SV_Position,length(TEXCOORD_3.xyz-receiver_frame[0].xyz),float4(_2056,_2057,_2058,_2059));
+      _2056=beam_fog.x;_2057=beam_fog.y;_2058=beam_fog.z;_2059=beam_fog.a;
     }
     float _2064 = cb1_036x - TEXCOORD_3.x;
     float _2065 = cb1_036y - TEXCOORD_3.y;
@@ -7171,12 +7175,13 @@ OutputSignature main(
     _2058 = TEXCOORD_4.z;
     _2059 = TEXCOORD_4.w;
   }
-  if(ReceiverFrameMatches()) {
+  if(ReceiverFrameMatches() && fx.enabled > .5f) {
     float4 fx_desaturation;
     float4 fx_fog=ReceiverFog(SV_Position,length(TEXCOORD_3.xyz-receiver_frame[0].xyz),fx_desaturation);
-    float3 fx_color=fx_fog.a>1.e-7f ? fx_fog.rgb/fx_fog.a:0.f;
+    float fx_coverage=max(fx_fog.a,any(fx_fog.rgb>0.f)?1.e-4f:0.f);
+    float3 fx_color=fx_coverage>1.e-7f ? fx_fog.rgb/fx_coverage:0.f;
     _2052=fx_desaturation.x;_2053=fx_desaturation.y;_2054=fx_desaturation.z;_2055=fx_desaturation.w;
-    _2056=fx_color.x;_2057=fx_color.y;_2058=fx_color.z;_2059=fx_fog.a;
+    _2056=fx_color.x;_2057=fx_color.y;_2058=fx_color.z;_2059=fx_coverage;
     }
     float _2064 = cb1_036x - TEXCOORD_3.x;
   float _2065 = cb1_036y - TEXCOORD_3.y;

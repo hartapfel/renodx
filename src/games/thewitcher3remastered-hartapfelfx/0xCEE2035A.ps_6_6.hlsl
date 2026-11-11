@@ -188,7 +188,7 @@ OutputSignature main(
 ) {
   float4 SV_Target_1 = 0;
   float4 SV_Target = 0;
-  if(ReceiverFrameMatches()) TEXCOORD_2 = ReceiverFogVarying(SV_Position,length(TEXCOORD_5.xyz-receiver_frame[0].xyz));
+  if(ReceiverFrameMatches()) TEXCOORD_2 = ReceiverFogVarying(SV_Position,length(TEXCOORD_5.xyz-receiver_frame[0].xyz), TEXCOORD_2);
   float _55 = cb4_003x * GlobalShaderConsts_000.x;
   float _56 = cb4_003y * GlobalShaderConsts_000.x;
   float _60 = cb4_004x * TEXCOORD_1.y;

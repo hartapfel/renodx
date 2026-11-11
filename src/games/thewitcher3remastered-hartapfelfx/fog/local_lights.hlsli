@@ -4,14 +4,26 @@ struct FogLocalLight {
   float4 data[10];
 };
 #ifndef FOG_RASTER_LIGHTS
+#ifdef FOG_RAY_LOCAL_PASS
+StructuredBuffer<FogLocalLight> FogLocalLights : register(t0, space61);
+#else
 StructuredBuffer<FogLocalLight> FogLocalLights : register(t18);
 #endif
+#endif
+#ifdef FOG_RAY_LOCAL_PASS
+Texture2DArray<float4> FogLocalCookies : register(t42, space2);
+SamplerState FogLocalSampler : register(s0, space1);
+#include "ray_visibility.hlsli"
+#else
 Texture2DArray<float> FogLocalAtlas : register(t9);
 TextureCubeArray<float> FogLocalCubes : register(t10);
 Texture2DArray<float4> FogLocalCookies : register(t42);
 SamplerState FogLocalSampler : register(s10);
+#endif
+#ifndef FOG_RAY_LOCAL_PASS
 groupshared uint FogGroupLightCount;
 groupshared uint FogGroupLights[256];
+#endif
 
 FogLocalLight ReadFogLight(uint index) {
 #ifdef FOG_RASTER_LIGHTS
@@ -26,12 +38,15 @@ uint FogLightCount() {
   uint count = asuint(fog_light[67].y);
 #ifdef FOG_RASTER_LIGHTS
   return min(count, 256u);
+#elif defined(FOG_RAY_LOCAL_PASS)
+  return min(count, local_ray_inputs.x);
 #else
   uint available, stride;
   FogLocalLights.GetDimensions(available, stride);
   return stride == 160u ? min(count, available) : 0u;
 #endif
 }
+#ifndef FOG_RAY_LOCAL_PASS
 void CullFogLightGroup(uint3 group, uint thread) {
   if (thread == 0) FogGroupLightCount = 0;
   GroupMemoryBarrierWithGroupSync();
@@ -39,7 +54,7 @@ void CullFogLightGroup(uint3 group, uint thread) {
   float2 ndc = ((lower + upper) * .5f) / dimensions.xy * float2(2, -2) + float2(-1, 1);
   float4 homogeneous = ndc.x * fog_frame[17] + ndc.y * fog_frame[18] + .5f * fog_frame[19] + fog_frame[20];
   float3 ray = normalize(homogeneous.xyz / homogeneous.w - fog_frame[0].xyz);
-  float far_distance = max(1000.f, fog_frame[42].z + max(fx.start_distance, fog_frame[22].z));
+  float far_distance = VolumeFarDistance();
   float begin = SliceDistance(min(group.z * 4u, dimensions.z), dimensions.z, .1f, far_distance);
   float end = SliceDistance(min(group.z * 4u + 4u, dimensions.z), dimensions.z, .1f, far_distance);
   float3 center = fog_frame[0].xyz + ray * (.5f * (begin + end));
@@ -58,6 +73,7 @@ void CullFogLightGroup(uint3 group, uint thread) {
   }
   GroupMemoryBarrierWithGroupSync();
 }
+#endif
 float3 LocalProjection(FogLocalLight light, float3 to_light, bool spot, out float packed, out uint cookie) {
   uint flags = asuint(light.data[9].x);
   float3 from_light = -to_light;
@@ -93,13 +109,19 @@ float3 LocalProjection(FogLocalLight light, float3 to_light, bool spot, out floa
 float3 LocalVisibility(FogLocalLight light, float3 to_light, float distance, bool spot) {
   float visibility = 1.f;
   float3 color = 1.f;
+  bool shadows = !IndependentLight() || beam.local_shadows > .5f;
   uint cookie_flags = asuint(light.data[9].x);
-  if (light.data[5].z > 0.f || (cookie_flags & 1u) != 0) {
+#ifdef FOG_RAY_LOCAL_PASS
+  if ((cookie_flags & 1u) != 0) {
+#else
+  if ((shadows && light.data[5].z > 0.f) || (cookie_flags & 1u) != 0) {
+#endif
     float packed;
     uint cookie;
     float3 projection = LocalProjection(light, to_light, spot, packed, cookie);
     float2 uv = projection.xy * light.data[5].y / max(projection.z, 1.e-6f) * float2(.5f, -.5f) + .5f;
-    if (light.data[5].z > 0.f) {
+#ifndef FOG_RAY_LOCAL_PASS
+    if (shadows && light.data[5].z > 0.f) {
       uint bits = asuint(packed);
       float size = float((bits >> 18) & 4092u);
       if (size > 0.f) {
@@ -108,10 +130,13 @@ float3 LocalVisibility(FogLocalLight light, float3 to_light, float distance, boo
         uint layer = bits >> 30;
         if (width == 0 || height == 0 || layer >= layers) return 0.f;
         float2 origin = float2((bits << 2) & 4092u, (bits >> 8) & 4092u);
-        float stored = FogLocalAtlas.SampleLevel(FogLocalSampler, float3((origin + uv * size) * fog_light[67].x, layer), 0);
-        visibility = exp2(min(0.f, 144.269501f * (stored - .99f * distance / light.data[0].w)));
+        if (any(origin + size > float2(width, height))) return 0.f;
+        float2 texel = clamp(uv * size, .5f, size - .5f);
+        float stored = FogLocalAtlas.SampleLevel(FogLocalSampler, float3((origin + texel) / float2(width, height), layer), 0);
+        visibility = exp2(min(0.f, 144.269501f * (stored - max(0.f, distance - .002f) / light.data[0].w)));
       }
     }
+#endif
     if ((cookie_flags & 1u) != 0) {
       bool rgb = (cookie_flags & 2u) != 0;
       uint index = rgb ? cookie & 1023u : cookie & 255u;
@@ -123,17 +148,18 @@ float3 LocalVisibility(FogLocalLight light, float3 to_light, float distance, boo
       color = rgb ? value.rgb : value[channel];
     }
   }
-  if (light.data[6].x > 0.f) {
+#ifndef FOG_RAY_LOCAL_PASS
+  if (shadows && light.data[6].x > 0.f) {
     uint width, height, cubes;
     FogLocalCubes.GetDimensions(width, height, cubes);
     if (width == 0 || light.data[6].y < 0.f || light.data[6].y >= cubes) return 0.f;
     float stored = FogLocalCubes.SampleLevel(FogLocalSampler, float4(to_light, light.data[6].y), 0);
-    visibility *= exp2(min(0.f, 144.269501f * (stored - .99f * distance / light.data[0].w)));
+    visibility *= exp2(min(0.f, 144.269501f * (stored - max(0.f, distance - .002f) / light.data[0].w)));
   }
-  // This weighted form preserves small ESM visibility in HDR. Subtracting
-  // visibility from one first cancels dim shadowed contributions in FP32.
-  float shadow_strength = saturate(light.data[5].w);
-  return color * ((1.f - shadow_strength) + visibility * shadow_strength);
+#endif
+  // Surface shadow fading is an artistic distance blend, not medium visibility.
+  // Preserve small ESM visibility directly in HDR instead of restoring lit energy.
+  return color * visibility;
 }
 float3 LocalRadiance(FogLocalLight light, float3 world, float3 ray, float falloff) {
   float3 to_light = light.data[0].xyz - world;
@@ -147,39 +173,72 @@ float3 LocalRadiance(FogLocalLight light, float3 world, float3 ray, float fallof
   bool spot = (asuint(light.data[3].w) & 1u) != 0;
   if (spot) attenuation *= pow(saturate(dot(-direction, light.data[2].xyz) * light.data[4].y + light.data[4].z), max(light.data[4].w, 0.f));
   if (attenuation <= 0.f) return 0.f;
-  float transmittance = FogLightTransmittance(world.z + fog_frame[42].y, direction.z, max(fog_frame[43].x, 0.f) * fx.density, falloff, distance);
+  float transmittance = FogLightTransmittance(world.z + fog_frame[42].y, direction.z, max(fog_frame[43].x, 0.f) * LightDensity(), falloff, distance);
   return max(light.data[3].rgb, 0.f) * LocalVisibility(light, to_light, distance, spot)
          * (attenuation * transmittance * PhaseHG(dot(ray, direction), fx.anisotropy) * fx.local_strength);
 }
+bool LocalFieldReady() {
+  return volume.Load(1016) == FOG_FRAME_VALID && volume.Load(1008) == 0 && volume.Load(1012) == 0
+      && all(volume.Load4(912) == asuint(fog_frame[286]))
+      && all(asfloat(volume.Load4(64)) == fog_frame[0])
+      && all(asfloat(volume.Load4(64 + 17 * 16)) == fog_frame[17])
+      && all(asfloat(volume.Load4(64 + 18 * 16)) == fog_frame[18])
+      && all(asfloat(volume.Load4(64 + 23 * 16)) == fog_frame[23]);
+}
 void AddLocalCell(uint3 id) {
-  if (any(id >= dimensions.xyz) || fx.local_strength <= 0.f) return;
-  if (volume.Load(1016) != FOG_FRAME_VALID || volume.Load(1008) != 0 || volume.Load(1012) != 0
-      || any(volume.Load4(912) != asuint(fog_frame[286]))
-      || any(asfloat(volume.Load4(64)) != fog_frame[0])
-      || any(asfloat(volume.Load4(64 + 17 * 16)) != fog_frame[17])
-      || any(asfloat(volume.Load4(64 + 18 * 16)) != fog_frame[18])
-      || any(asfloat(volume.Load4(64 + 23 * 16)) != fog_frame[23])) return;
+  if (any(id >= dimensions.xyz) || fx.local_strength <= 0.f || !LightEnabled() || !LocalFieldReady()) return;
   float4 cell = UnpackVolume(volume.Load2(FOG_HEADER_BYTES + CellIndex(id) * 8));
   if (cell.a <= 0.f) return;
   float2 ndc = (id.xy + .5f) / dimensions.xy * float2(2, -2) + float2(-1, 1);
   float4 position = ndc.x * fog_frame[17] + ndc.y * fog_frame[18] + .5f * fog_frame[19] + fog_frame[20];
   float3 ray = normalize(position.xyz / position.w - fog_frame[0].xyz);
   float directional = saturate((fog_frame[42].x + dot(ray, fog_frame[38].xyz)) / max(1.f + fog_frame[42].x, .0001f));
-  float falloff = max(0.f, lerp(fog_frame[43].z, fog_frame[43].y, directional)) * fx.height_falloff;
-  float far_distance = max(1000.f, fog_frame[42].z + max(fx.start_distance, fog_frame[22].z));
+  float falloff = max(0.f, lerp(fog_frame[43].z, fog_frame[43].y, directional)) * LightHeight();
+  float far_distance = VolumeFarDistance();
   float begin = SliceDistance(id.z, dimensions.z, .1f, far_distance);
   float end = SliceDistance(id.z + 1.f, dimensions.z, .1f, far_distance);
+#ifdef FOG_RAY_LOCAL_PASS
+  uint count = FogLightCount();
+#else
   bool overflow = FogGroupLightCount > 256u;
   uint count = overflow ? FogLightCount() : FogGroupLightCount;
+#endif
   float3 source = 0.f;
   [loop] for (uint i = 0; i < count; ++i) {
+#ifdef FOG_RAY_LOCAL_PASS
+    FogLocalLight light = ReadFogLight(i);
+#else
     FogLocalLight light = ReadFogLight(overflow ? i : FogGroupLights[i]);
+#endif
     if (asuint(light.data[3].w) == 0x80001800u || light.data[0].w <= 0.f || !any(light.data[3].rgb > 0.f)) continue;
     float3 relative = light.data[0].xyz - fog_frame[0].xyz;
     float3 closest = relative - ray * clamp(dot(relative, ray), begin, end);
     if (dot(closest, closest) > light.data[0].w * light.data[0].w) continue;
-    [unroll] for (uint sample = 0; sample < 4; ++sample)
-        source += .25f * LocalRadiance(light, fog_frame[0].xyz + ray * lerp(begin, end, (sample + .5f) / 4.f), ray, falloff);
+#ifdef FOG_RAY_LOCAL_PASS
+    uint samples = IndependentLight() ? uint(clamp(round(beam.occlusion_quality), 0.f, 3.f)) + 1u : 4u;
+#else
+    uint samples = 4u;
+#endif
+    [loop] for (uint sample = 0; sample < samples; ++sample) {
+      float3 world = fog_frame[0].xyz + ray * lerp(begin, end, (sample + .5f) / samples);
+      float3 radiance = LocalRadiance(light, world, ray, falloff);
+#ifdef FOG_RAY_LOCAL_PASS
+      if ((!IndependentLight() || beam.local_shadows > .5f) && any(radiance > 0.f)) {
+        // Preserve the native fallback setting and choose the atlas face from
+        // this world sample, not the camera: the choice must be view independent.
+        float emitter_exclusion = max(native_ray_camera[78].x, 0.f);
+        if (asuint(native_ray_camera[79].x) != 0u) {
+          float packed; uint cookie;
+          LocalProjection(light, light.data[0].xyz - world,
+                          (asuint(light.data[3].w) & 1u) != 0u, packed, cookie);
+          if ((light.data[5].z <= 0.f || (asuint(packed) & 0x3ff00000u) == 0u) && light.data[6].x <= 0.f)
+            emitter_exclusion = max(native_ray_camera[79].z, 0.f);
+        }
+        radiance *= FogTraceLocalVisibility(world, light.data[0].xyz, asuint(light.data[3].w), emitter_exclusion);
+      }
+#endif
+      source += radiance / samples;
+    }
   }
   cell.rgb = min(cell.rgb + source * max(cell.a, FogSourceFloor), 60000.f);
   volume.Store2(FOG_HEADER_BYTES + CellIndex(id) * 8, PackVolume(cell));

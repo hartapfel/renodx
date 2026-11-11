@@ -7,7 +7,7 @@
 cbuffer Frame : register(b0) { float4 frame[341]; }
 cbuffer Lighting : register(b1) { float4 light[3]; }
 cbuffer Parameters : register(b2) {
-  float4 dimensions; // low width/height, active render width/height
+  float4 dimensions; // reconstruction width/height, active render width/height
   float4 integration; // view samples, light samples, jitter index, history valid
   float4 appearance; // coverage, optical density, horizontal size, layer thickness
   float4 atmosphere; // sky-haze density, detail strength, detail size, base softness
@@ -20,13 +20,14 @@ cbuffer Parameters : register(b2) {
   float4 private_sky[8]; // existing settings/material/size page, bytes256..383
   float4 emission_sun,emission_moon; // same private page as sky/composite
   float4 family_appearance; // source clear/light weights, target clear/light weights
+  float4 trace_grid; // primary trace width/height, experimental low-sun cache, reserved
 }
 cbuffer Previous : register(b3) { float4 previous[341]; }
 cbuffer PreviousParameters : register(b4) {
   float4 previous_dimensions, previous_integration, previous_appearance, previous_atmosphere, previous_scattering;
   uint4 previous_identity;
   uint4 previous_storage;
-  float4 previous_cloud_layer; // base altitude in x
+  float4 previous_cloud_layer; // base altitude, spatial sampling phase
 }
 ByteAddressBuffer cloud_status : register(t9);
 ByteAddressBuffer cloud_shared : register(t8);
@@ -49,6 +50,13 @@ static float4 cloud_low_sun = CloudLowSunState(frame[204].yzw,
     scattering.z * smoothstep(.975f,1.f,cloud_family_high.y)
         * (1.f-saturate(cloud_family_high.w)),(identity.w&8192u)!=0u);
 #include "clock.hlsli"
+// A stable clock holds the sampling pattern in photo mode. Advancing time
+// visits the four reconstruction pixels within each primary trace cell.
+float2 CloudTraceOffset() {
+  uint phase=((uint)previous_cloud_layer.y+(cloud_clock.x!=previous_cloud_clock.x?1u:0u))&3u;
+  return any(trace_grid.xy<dimensions.xy)
+      ?(float2(phase&1u,phase>>1u)+.5f)*.5f-.5f:0.f;
+}
 #include "../sky/lighting.hlsli"
 uint3 CloudIdentity() {
   return uint3(identity.x,cloud_clock_captured ? captured_clock_identity.xy
@@ -96,6 +104,12 @@ float3 CloudLightingDirection(bool terrain=false) {
 // Density setting. Use one calibrated direct-beam column for the visible disc
 // and the sunlight reaching terrain; otherwise one can vanish without the other.
 float CloudDirectBeamScale() { return max(1.f,1.f/max(appearance.y,.125f)); }
+// At a grazing light angle, a sun-aligned cache retains a useful footprint
+// through the entire layer. Off preserves the existing vertical volume.
+float2 CloudLightShear(float3 direction) {
+  return trace_grid.z>.5f?direction.xy/max(direction.z,.02f)
+      *(1.f-smoothstep(.10f,.15f,direction.z)):0.f;
+}
 float CloudThickness() {return 1200.f*appearance.w*lerp(1.f,.80f,cloud_light_weather);}
 float CloudDetailScale() {return 1200.f*max(atmosphere.z,.2f)*lerp(1.f,.80f,cloud_light_weather);}
 float CloudBaseReliefScale() {return CloudDetailScale()*saturate(atmosphere.y)*lerp(.25f,1.f,atmosphere.w);}

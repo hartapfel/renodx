@@ -78,7 +78,7 @@ float4 main(
   noperspective float4 position : SV_Position
 ) : SV_Target {
   if (CloudVisibleMatches(receiver_frame[0].xyz, receiver_frame[17], receiver_frame[18], receiver_frame[23], asuint(receiver_frame[286]), GlobalShaderConsts_000.x)) discard;
-  if (ReceiverFrameMatches()) TEXCOORD = ReceiverFogVarying(position, length(TEXCOORD_4 - receiver_frame[0].xyz));
+  if (ReceiverFrameMatches()) TEXCOORD = ReceiverFogVarying(position, length(TEXCOORD_4 - receiver_frame[0].xyz), TEXCOORD);
   float4 SV_Target = 0;
   float _34 = cb4_002x * TEXCOORD_1.x;
   float _35 = cb4_002y * TEXCOORD_1.y;

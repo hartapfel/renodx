@@ -18,6 +18,7 @@ inline Tab selected = Tab::Clouds;
 
 inline Tab TabForKey(std::string_view key) {
   if(key.starts_with("Cloud"))return Tab::Clouds;
+  if(key=="FogSunlight" ||key=="FogAnisotropy" ||key=="FogLocalLight")return Tab::Lighting;
   if(key.starts_with("Fog"))return Tab::Fog;
   if(key.starts_with("Water"))return Tab::Water;
   if(key.empty() ||key.starts_with("Night"))return Tab::Nights;
@@ -46,18 +47,21 @@ inline void Configure(Settings* settings) {
   Setting* cloud_mode=nullptr;
   Setting* fog_mode=nullptr;
   Setting* water_mode=nullptr;
+  Setting* beam_mode=nullptr;
   for(auto* setting:*settings) {
     if(setting->key=="CloudModeV2")cloud_mode=setting;
     if(setting->key=="FogEnabled")fog_mode=setting;
     if(setting->key=="WaterEnabledV1")water_mode=setting;
+    if(setting->key=="VolumeLightEnabledV1")beam_mode=setting;
   }
   // Keep sections contiguous, including Sun/Moon Appearance moved from Nights.
-  constexpr std::array<std::string_view,27> order{
+  constexpr std::array<std::string_view,30> order{
       "Clouds & Performance","Cloud Quality (Advanced)","Cloud Appearance","Cloud Formation","Cloud Edges","Cloud Lighting",
       "Cloud Structure (Advanced)","Cloud Detail (Advanced)","Cloud Erosion (Advanced)",
-      "Fog & Performance","Fog Appearance","Volumetric Light","Fog Placement",
+      "Fog & Performance","Fog Appearance","Fog Placement",
       "Fog Quality (Advanced)","Fog Medium (Advanced)","Diagnostics (Advanced)",
-      "World Lighting & Shadows","Sun & Moon Appearance","Character Lighting","Water",
+      "World Lighting & Shadows","Sun & Moon Appearance","Character Lighting",
+      "Volumetric Light & Performance","Volumetric Light Appearance","Volumetric Light Placement (Advanced)","Volumetric Light Quality (Advanced)","Water",
       "Night Lighting","Night Brightness","Night Atmosphere","Night Colour","Night Schedule",
       "Exposure","Exposure Tuning (Advanced)"};
   std::stable_sort(settings->begin(),settings->end(),[&](auto* left,auto* right) {
@@ -65,7 +69,7 @@ inline void Configure(Settings* settings) {
   });
   for(auto* setting:*settings) {
     const Tab tab=TabForKey(setting->key);
-    auto* master=tab==Tab::Clouds ? cloud_mode : tab==Tab::Fog ? fog_mode : tab==Tab::Water ? water_mode : nullptr;
+    auto* master=tab==Tab::Clouds ? cloud_mode : tab==Tab::Fog ? fog_mode : tab==Tab::Water ? water_mode : setting->section.starts_with("Volumetric Light") ? beam_mode : nullptr;
     if(master &&master!=setting &&IsValue(setting) &&setting->key!="FogSkyDensity") {
       setting->is_enabled=[master,enabled=std::move(setting->is_enabled)] {
         return master->binding &&*master->binding>.5f &&(!enabled ||enabled());
@@ -74,7 +78,7 @@ inline void Configure(Settings* settings) {
     if(setting->value_type==ValueType::FLOAT
         &&((tab==Tab::Clouds &&setting->key!="CloudRoundnessV1" &&setting->key!="CloudWispBiasV1")
             ||setting->key=="FogAmountV1" ||setting->key=="FogDensity" ||setting->key=="FogSunlight"
-            ||setting->key=="FogLocalLight" ||setting->key=="FogHeight" ||setting->key=="FogSkyDensity"))
+            ||setting->key=="VolumeLightIndoorV1" ||setting->key=="VolumeLightDensityV1" ||setting->key=="VolumeLightHeightV1" ||setting->key=="FogLocalLight" ||setting->key=="FogHeight" ||setting->key=="FogSkyDensity"))
       setting->format="%.0f%%";
     setting->is_visible=[tab,visible=std::move(setting->is_visible)] {
       return selected==tab &&(!visible ||visible());

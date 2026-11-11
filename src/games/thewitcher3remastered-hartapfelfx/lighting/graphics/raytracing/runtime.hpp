@@ -42,7 +42,10 @@ inline ControlData::State ResolveState(ControlData* data, const D3D12_STATE_OBJE
     else if (object.Type == D3D12_STATE_SUBOBJECT_TYPE_EXISTING_COLLECTION) {
       const auto* collection = static_cast<const D3D12_EXISTING_COLLECTION_DESC*>(object.pDesc);
       const auto found = data->states.find(reinterpret_cast<uint64_t>(collection->pExistingCollection));
-      if (found != data->states.end()) { root = found->second.root; result.libraries |= found->second.libraries; }
+      if (found != data->states.end()) {
+        root = found->second.root; result.libraries |= found->second.libraries;
+        result.fog_exports.insert(result.fog_exports.end(), found->second.fog_exports.begin(), found->second.fog_exports.end());
+      }
     }
     if (root) {
       if (result.root && result.root != root) return {};
@@ -74,7 +77,7 @@ HRESULT CreateOnDevice(device* api_device, const D3D12_STATE_OBJECT_DESC* desc, 
     const bool hit_output = state.root && hits::FindHitRoots(api_device, {state.root}).role == hits::LayoutRole::producer;
     const bool fog_output = state.root && volumetrics::rays::FindProducerRoots({state.root}).Valid();
     const bool matched = modified.Replace(*desc, replacements,
-        required | (hit_output ? reflection : 0u) | (fog_output ? fog : 0u));
+        required | (hit_output ? reflection : 0u) | (fog_output ? fog : 0u), !(state.libraries & fog));
     changed = matched && state.root;
     if (matched && !state.root && (modified.Mask() & required) != 0) {
       std::lock_guard lock(data->mutex);
@@ -113,7 +116,10 @@ HRESULT CreateOnDevice(device* api_device, const D3D12_STATE_OBJECT_DESC* desc, 
     // Inherited collections/parent libraries survive a native addition retry.
     { std::lock_guard lock(data->mutex); data->water_failed |= (modified.Mask() & required) != 0; }
     result = call(desc, iid, output);
-  } else if (changed) state.libraries |= modified.Mask();
+  } else if (changed) {
+    state.libraries |= modified.Mask();
+    state.fog_exports.insert(state.fog_exports.end(), modified.FogExports().begin(), modified.FogExports().end());
+  }
   if (SUCCEEDED(result) && *output && state.root) {
     Microsoft::WRL::ComPtr<ID3D12StateObject> object;
     if (SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&object)))) {

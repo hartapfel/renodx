@@ -4,6 +4,7 @@
 #include <iostream>
 #include <stdexcept>
 #include "../clouds/ray_state.hpp"
+#include "../lighting/graphics/raytracing/state.hpp"
 void Require(bool condition, const char* message) {
   if (!condition) throw std::runtime_error(message);
 }
@@ -47,6 +48,34 @@ int main() {
       Require(association.NumExports == 1 && association.pExports == names, "Native association export list changed");
     }
     Require(std::memcmp(baseline.data(), objects.data(), sizeof(objects)) == 0, "Adapter mutated caller-owned descriptors");
+    witcher3graphics::raytracing::StateDescription fog;
+    const witcher3graphics::raytracing::LibraryReplacement fog_library{
+        renodx::utils::hash::ComputeCRC32(original.data(), original.size()), original.size(), patched,
+        witcher3graphics::raytracing::LibraryPurpose::fog};
+    Require(fog.Replace(source, {&fog_library, 1}), "Additive fog state was not admitted");
+    Require(fog.Get()->NumSubobjects == source.NumSubobjects + 1, "Fog library was not added separately");
+    Require(fog.Get()->pSubobjects[2].pDesc == &library, "Fog adapter altered native library/export identity");
+    Require(fog.FogExports().size() == 1 && fog.FogExports()[0] == L"RenamedRay", "Fog selector discarded native export rename");
+    const auto& added = *static_cast<const D3D12_DXIL_LIBRARY_DESC*>(fog.Get()->pSubobjects[source.NumSubobjects].pDesc);
+    Require(added.NumExports == 1 && std::wcscmp(added.pExports[0].Name, L"HartapfelVolumeLocalRGS") == 0,
+            "Additive fog export lost");
+    const auto& fog_local = *static_cast<const D3D12_SUBOBJECT_TO_EXPORTS_ASSOCIATION*>(fog.Get()->pSubobjects[6].pDesc);
+    Require(fog_local.pSubobjectToAssociate == &fog.Get()->pSubobjects[1] && fog_local.pExports == names,
+            "Adding fog invalidated a native local-root association");
+    Require(std::memcmp(baseline.data(), objects.data(), sizeof(objects)) == 0, "Fog adapter mutated native state description");
+    const std::array<uint8_t,4> pt_original{9,10,11,12};
+    const D3D12_DXIL_LIBRARY_DESC pt_library{{pt_original.data(),pt_original.size()},0,nullptr};
+    const D3D12_STATE_SUBOBJECT combined_objects[]={{D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY,&library},
+        {D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY,&pt_library}};
+    const D3D12_STATE_OBJECT_DESC combined{D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE,2,combined_objects};
+    static constexpr const wchar_t* pt_names[]={L"PTRGSFinal",L"PTRGSWithSERFinal"};
+    const witcher3graphics::raytracing::LibraryReplacement combined_replacements[]={fog_library,
+        {renodx::utils::hash::ComputeCRC32(pt_original.data(),pt_original.size()),pt_original.size(),patched,
+         witcher3graphics::raytracing::LibraryPurpose::fog,pt_names}};
+    Require(fog.Replace(combined,combined_replacements) && fog.Get()->NumSubobjects==3 && fog.FogExports().size()==3,
+            "Combined RT/PT state duplicated fog helper or lost generator names");
+    Require(fog.Replace(combined,combined_replacements,UINT32_MAX,false) && fog.Get()->NumSubobjects==2 && fog.FogExports().size()==3,
+            "Inherited fog helper was added again instead of preserving PT selection metadata");
     hartapfelfx::clouds::RayState untouched(source, [](auto) { return std::span<const uint8_t>{}; });
     Require(!untouched.changed && untouched.descriptor.pSubobjects == source.pSubobjects, "Unmatched native state object changed");
     std::cout << "PASS native ray roots, library exports/renames, collections, shader/pipeline configuration, local/config associations and unmatched identity\n";

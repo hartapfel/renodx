@@ -149,7 +149,7 @@ float4 main(
   if (CloudVisibleMatches(receiver_frame[0].xyz, receiver_frame[17], receiver_frame[18], receiver_frame[23], asuint(receiver_frame[286]), GlobalShaderConsts_000.x)) discard;
   float4 SV_Target = 0;
   const float night_cloud = WitcherNightCloudMultiplier(receiver_frame[185].w);
-  if(ReceiverFrameMatches()) TEXCOORD_1 = ReceiverFogVarying(SV_Position,length(TEXCOORD_3.xyz-receiver_frame[0].xyz));
+  if(ReceiverFrameMatches()) TEXCOORD_1 = ReceiverFogVarying(SV_Position,length(TEXCOORD_3.xyz-receiver_frame[0].xyz), TEXCOORD_1);
   float _33 = -0.0f - GlobalShaderConsts_144.x;
   float _34 = dot(float3(GlobalShaderConsts_144.y, _33, 0.0f), float3(GlobalShaderConsts_144.y, _33, 0.0f));
   float _35 = rsqrt(_34);

@@ -43,6 +43,7 @@ int main(int argc, char** argv) {
     Require(clouds::Atmosphere(1.f)==std::array<float,4>{1.f,1.f,1.f,0.f},
         "Cloud detail defaults must be neutral multipliers");
     if(operation.find("noclearing")!=std::string_view::npos)clouds::clear_low_sun=0.f;
+    if(operation.find("cache-on")!=std::string_view::npos)clouds::low_sun_cache=1.f;
     const bool screenshot_settings=operation.find("user")!=std::string_view::npos;
     if(screenshot_settings) {
       clouds::coverage=1.3f; clouds::density=.12f; clouds::size=.6f;
@@ -906,6 +907,13 @@ int main(int argc, char** argv) {
       const auto sampling=clouds::Quality(clouds::quality);
       Require(view.LowWidth() == (width+sampling[0]-1)/sampling[0]
           && view.LowHeight() == (height+sampling[0]-1)/sampling[0], "Cloud quality has incorrect rounded trace dimensions");
+      const auto reconstruction=view.Resolved()->GetDesc();
+      const uint32_t resolve_divisor=clouds::quality_preset>.5f&&clouds::quality_preset<2.5f?2u:1u;
+      Require(reconstruction.Width==(width+resolve_divisor-1u)/resolve_divisor
+          &&reconstruction.Height==(height+resolve_divisor-1u)/resolve_divisor,
+          "Cloud reconstruction used the trace resolution instead of the history resolution");
+      Require(view.Motion()->GetDesc().Width==reconstruction.Width
+          &&view.Motion()->GetDesc().Height==reconstruction.Height,"Cloud motion and reconstruction dimensions differ");
       const auto image = render(view, true, level % 2);
       auto shared_readback = gpu::Buffer(device.Get(), view.Shared()->GetDesc().Width, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_HEAP_TYPE_READBACK);
       begin();
@@ -1791,6 +1799,64 @@ int main(int argc, char** argv) {
       std::cout<<"PASS 19 authoring controls: GPU layout, both endpoints, visible response and coupled extremes\n";
     }
     {
+      clouds::quality_preset=3.f;
+      auto sampling_frame=frame;sampling_frame[340][0]=6.f;
+      const auto sampling_upload=gpu::Upload(device.Get(),sampling_frame.data(),sizeof(sampling_frame));
+      inputs.frame=sampling_upload.object->GetGPUVirtualAddress();++inputs.revision;
+      clouds::View sampling(&assets,width,height,clouds::quality,target_desc.Format);
+      std::array<bool,4> phases{};
+      for(uint32_t phase=0;phase<4u;++phase) {
+        const float time=10.f+phase/30.f;
+        const auto sample=render(sampling,false,false,time,false,true);
+        const uint32_t x=sample[0]>0.f?1u:0u,y=sample[1]>0.f?1u:0u;
+        phases[y*2u+x]=true;
+        Require(sample[4]==float(sampling.LowWidth()) &&sample[5]==float(sampling.LowHeight()),
+            "Primary trace dimensions were lost from the private parameter page");
+        const auto paused=render(sampling,false,false,time,false,true);
+        Require(sample==paused,"Paused native time changed the reconstruction phase");
+      }
+      Require(std::all_of(phases.begin(),phases.end(),[](bool visited){return visited;}),
+          "Temporal cloud reconstruction failed to visit all four sample phases");
+      inputs.frame=frame_buffer.object->GetGPUVirtualAddress();++inputs.revision;
+      clear_inputs(1.f,.5f);
+      for(uint32_t phase=0;phase<4u;++phase) {
+        const auto foreground=render(sampling,false,false,11.f+(phase+.25f)/60.f);
+        for(size_t i=0;i<foreground.size();++i)
+          Require(std::abs(foreground[i]-background[i%4u])<1.e-6f,
+              "An interleaved cloud phase leaked through foreground geometry");
+      }
+      clouds::quality_preset=0.f;++inputs.revision;clear_inputs(1.f,0.f);
+      cases+=8;
+      std::cout<<"PASS four-phase cloud reconstruction, frozen clock, rounded dimensions and foreground rejection\n";
+    }
+    {
+      clouds::quality_preset=3.f;
+      clouds::View cached_light(&assets,width,height,clouds::quality,target_desc.Format);
+      for(float elevation:{.07f,.13f,.2f}) {
+        auto cache_frame=frame;
+        cache_frame[204][1]=std::sqrt(1.f-elevation*elevation);
+        cache_frame[204][2]=0.f;cache_frame[204][3]=elevation;
+        const auto cache_upload=gpu::Upload(device.Get(),cache_frame.data(),sizeof(cache_frame));
+        inputs.frame=cache_upload.object->GetGPUVirtualAddress();
+        clouds::low_sun_cache=0.f;++inputs.revision;
+        const auto original=render(cached_light,false,false,12.f);
+        clouds::low_sun_cache=1.f;++inputs.revision;
+        const auto cached=render(cached_light,false,false,12.f);
+        if(elevation>.15f) {
+          for(size_t i=0;i<cached.size();++i)
+            Require(std::abs(cached[i]-original[i])<1.e-5f,"Low-sun cache changed ordinary daylight");
+        }
+        clouds::low_sun_cache=0.f;++inputs.revision;
+        const auto restored=render(cached_light,false,false,12.f);
+        for(size_t i=0;i<restored.size();++i)
+          Require(std::abs(restored[i]-original[i])<1.e-5f,"Disabling low-sun cache retained experimental lighting");
+        cases+=3;
+      }
+      inputs.frame=frame_buffer.object->GetGPUVirtualAddress();
+      clouds::quality_preset=0.f;++inputs.revision;
+      std::cout<<"PASS experimental low-sun cache, ordinary daylight parity and reversible toggle\n";
+    }
+    {
       // A persistent GlobalCB address can hold a new native time next frame.
       // Address equality must not classify that frame as an already drawn one.
       clouds::View reused_clock(&assets,width,height,clouds::quality,target_desc.Format);
@@ -1847,7 +1913,8 @@ int main(int argc, char** argv) {
         previous_paused = next;
       }
       std::cout << "Paused cloud frame change early=" << early_change << " late=" << late_change
-                << " confident=" << confidence_count() << " of " << temporal.LowWidth() * temporal.LowHeight() << '\n';
+                << " confident=" << confidence_count() << " of "
+                << temporal.Motion()->GetDesc().Width * temporal.Motion()->GetDesc().Height << '\n';
       Require(late_change == 0. || late_change < early_change * .95,
           "Paused cloud samples did not converge");
       ++inputs.revision;

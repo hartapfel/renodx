@@ -190,12 +190,16 @@ class View {
     const auto level = QualityLevel(quality_value);
     low_width_ = (width + samples[0] - 1) / samples[0];
     low_height_ = (height + samples[0] - 1) / samples[0];
+    const uint32_t resolve_divisor=std::max(1u,samples[0]/2u);
+    resolve_width_=(width+resolve_divisor-1u)/resolve_divisor;
+    resolve_height_=(height+resolve_divisor-1u)/resolve_divisor;
     constexpr std::array<std::array<uint32_t, 2>, 6> shadows{{{384, 32}, {768, 48}, {768, 64}, {1024, 80}, {1536, 112}, {2048, 160}}};
     shadow_size_ = shadows[level][0];
     shadow_steps_ = shadows[level][1];
     auto* device = assets->Device();
     for (uint32_t index = 0; index < images_.size(); ++index)
-      images_[index] = gpu::Image(device, low_width_, low_height_, index % 2 ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_R16G16B16A16_FLOAT);
+      images_[index] = gpu::Image(device,index<2u?low_width_:resolve_width_,index<2u?low_height_:resolve_height_,
+          index % 2 ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_R16G16B16A16_FLOAT);
     environment_[0]=gpu::Image(device,256,128,DXGI_FORMAT_R16G16B16A16_FLOAT);
     environment_[1]=gpu::Image(device,256,128,DXGI_FORMAT_R32_FLOAT);
     environment_header_=gpu::Buffer(device,144,gpu::TextureRead);
@@ -330,7 +334,7 @@ class View {
   Parameters MakeParameters(const Inputs& inputs, float sky_density, uint32_t pass = 0) const {
     const auto samples = Quality(quality);
     Parameters result;
-    result.dimensions = {float(low_width_), float(low_height_), float(width_), float(height_)};
+    result.dimensions = {float(resolve_width_), float(resolve_height_), float(width_), float(height_)};
     result.integration = {float(samples[1]), float(samples[2]), 0.f, 1.f};
     result.appearance = Appearance();
     result.atmosphere = Atmosphere(sky_density);
@@ -383,6 +387,10 @@ class View {
     const auto& to=families::profiles[uint8_t(inputs.family>>8)<std::size(families::profiles)?uint8_t(inputs.family>>8):0];
     const std::array<float,4> family_appearance{from.low[2],from.low[3],to.low[2],to.low[3]};
     std::memcpy(data.data()+416,family_appearance.data(),sizeof(family_appearance));
+    const std::array<float,4> trace_grid=pass==3u
+        ?std::array<float,4>{256.f,128.f,low_sun_cache,0.f}
+        :std::array<float,4>{float(low_width_),float(low_height_),low_sun_cache,0.f};
+    std::memcpy(data.data()+432,trace_grid.data(),sizeof(trace_grid));
     return pool ? pool->Upload(assets_->Device(), data.data(), data.size())
                 : gpu::Upload(assets_->Device(), data.data(), data.size());
   }
@@ -468,7 +476,7 @@ class View {
     Pass(cmd, *banks.trace, assets_->trace.Get(), low_width_, low_height_, false);
     for (uint32_t index : {0u, 1u}) gpu::Transition(cmd, &images_[index], gpu::TextureRead);
     for (uint32_t index : {2u, 3u, 6u}) gpu::Transition(cmd, &images_[index], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    Pass(cmd, *banks.resolve, assets_->resolve.Get(), low_width_, low_height_, false);
+    Pass(cmd, *banks.resolve, assets_->resolve.Get(), resolve_width_, resolve_height_, false);
     for (uint32_t index : {2u, 3u, 6u}) gpu::Transition(cmd, &images_[index], gpu::TextureRead);
     // Keep the exact native sun addition separate from the sky. Its earlier
     // target snapshot was taken immediately before the native sun draw.
@@ -573,7 +581,7 @@ class View {
     cmd->ResourceBarrier(1,&barrier);
   }
   Assets* assets_;
-  uint32_t width_, height_, low_width_, low_height_, shadow_size_, shadow_steps_, volume_width_, volume_depth_;
+  uint32_t width_, height_, low_width_, low_height_, resolve_width_, resolve_height_, shadow_size_, shadow_steps_, volume_width_, volume_depth_;
   std::array<gpu::Resource, 7> images_;
   std::array<gpu::Resource, 2> environment_;
   gpu::Resource environment_header_;

@@ -37,6 +37,8 @@ foreach ($tool in @('cmake', 'ninja', 'clang-cl')) {
 }
 Push-Location -LiteralPath $repoRoot
 try {
+  python (Join-Path $PSScriptRoot 'fog/prepare_ray.py') --check
+  if ($LASTEXITCODE -ne 0) { throw 'Fog ray bytecode is stale.' }
   cmake --preset clang-x64
   if ($LASTEXITCODE -ne 0) { throw 'Clang x64 configuration failed.' }
   if ($CompileOnly) {
@@ -58,6 +60,10 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Settings UI regression test compilation failed.' }
   & (Join-Path $validationDirectory 'settings-ui.exe')
   if ($LASTEXITCODE -ne 0) { throw 'Settings UI regression test failed.' }
+  & clang-cl /nologo /EHsc /std:c++20 /O2 /DNDEBUG /DNOMINMAX /DWIN32=1 /Iexternal/reshade /Iexternal/Detours/include /Iexternal/json/include /Iexternal/frozen/include /Iexternal/gtl/include /Iexternal/Streamline/include /Iexternal/DLSS/include /Ibuild/thewitcher3remastered-hartapfelfx.include (Join-Path $PSScriptRoot 'tests/lighting_integration.cpp') ('/Fe' + (Join-Path $validationDirectory 'lighting-integration.exe')) ('/Fo' + (Join-Path $validationDirectory 'lighting-integration.obj')) /link external/Detours/lib.X64/detours.lib d3d12.lib dxgi.lib user32.lib shell32.lib
+  if ($LASTEXITCODE -ne 0) { throw 'Lighting settings integration compilation failed.' }
+  & (Join-Path $validationDirectory 'lighting-integration.exe')
+  if ($LASTEXITCODE -ne 0) { throw 'Lighting settings migration, ownership or Preset Off regression.' }
   & clang-cl /nologo /EHsc /std:c++20 /O2 /DNDEBUG /DNOMINMAX /DWIN32=1 /Iexternal/reshade /Iexternal/gtl/include (Join-Path $PSScriptRoot 'tests/descriptor_cache.cpp') ('/Fe' + (Join-Path $validationDirectory 'descriptor-cache.exe')) ('/Fo' + (Join-Path $validationDirectory 'descriptor-cache.obj')) /link d3d12.lib dxgi.lib
   if ($LASTEXITCODE -ne 0) { throw 'Descriptor concurrency test compilation failed.' }
   & (Join-Path $validationDirectory 'descriptor-cache.exe')
@@ -77,10 +83,18 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Addon compatibility host compilation failed.' }
   & ./bin/dxc.exe -T cs_6_6 -E main -HV 2021 -Ges -WX -Fo (Join-Path $validationDirectory 'features.cso') (Join-Path $PSScriptRoot 'tests/features.cs.hlsl')
   if ($LASTEXITCODE -ne 0) { throw 'GPU feature validation shader compilation failed.' }
+  & ./bin/dxc.exe -T cs_6_6 -E main -HV 2021 -Ges -WX -Fo (Join-Path $validationDirectory 'local-occlusion.cso') (Join-Path $PSScriptRoot 'tests/local_occlusion.cs.hlsl')
+  if ($LASTEXITCODE -ne 0) { throw 'Local light occlusion validation shader compilation failed.' }
   & ./bin/dxc.exe -T ps_6_6 -E main -HV 2021 -Ges -WX -Fo (Join-Path $validationDirectory 'runtime-probe.cso') (Join-Path $PSScriptRoot 'tests/runtime.ps.hlsl')
   if ($LASTEXITCODE -ne 0) { throw 'Runtime validation shader compilation failed.' }
-  & (Join-Path $validationDirectory 'grid-gpu.exe') 'build/thewitcher3remastered-hartapfelfx.include/embed' (Join-Path $validationDirectory 'features.cso')
+  & (Join-Path $validationDirectory 'grid-gpu.exe') 'build/thewitcher3remastered-hartapfelfx.include/embed' (Join-Path $validationDirectory 'features.cso') (Join-Path $validationDirectory 'local-occlusion.cso')
   if ($LASTEXITCODE -ne 0) { throw 'GPU volume validation failed.' }
+  & ./bin/dxc.exe -T lib_6_6 -HV 2021 -Ges -WX -Fo (Join-Path $validationDirectory 'local-ray-fixture.cso') (Join-Path $PSScriptRoot 'tests/local_ray.lib.hlsl')
+  if ($LASTEXITCODE -ne 0) { throw 'Fog ray fixture compilation failed.' }
+  & clang-cl /nologo /EHsc /std:c++20 /O2 /DNDEBUG /DNOMINMAX (Join-Path $PSScriptRoot 'tests/local_ray_gpu.cpp') ('/Fe' + (Join-Path $validationDirectory 'local-ray-gpu.exe')) ('/Fo' + (Join-Path $validationDirectory 'local-ray-gpu.obj')) /link d3d12.lib dxgi.lib
+  if ($LASTEXITCODE -ne 0) { throw 'Fog ray GPU host compilation failed.' }
+  & (Join-Path $validationDirectory 'local-ray-gpu.exe') (Join-Path $validationDirectory 'local-ray-fixture.cso')
+  if ($LASTEXITCODE -ne 0) { throw 'Production fog world-ray validation failed.' }
   foreach ($shader in Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -File -Filter '0x*.hlsl') {
     if ($shader.Name -match '\.((?:ps|vs|cs)_6_[36])\.hlsl$') {
       & ./bin/dxc.exe -T $Matches[1] -E main -HV 2021 -Ges -WX -enable-16bit-types -Fo (Join-Path $validationDirectory ($shader.BaseName + '.strict.cso')) $shader.FullName
@@ -89,6 +103,8 @@ try {
   }
   $cloudDirectory = Join-Path $validationDirectory 'clouds'
   New-Item -ItemType Directory -Path $cloudDirectory -Force | Out-Null
+  & ./bin/dxc.exe -T lib_6_6 -HV 2021 -Ges -WX -DFOG_TEST_NATIVE_LIB -Fo (Join-Path $cloudDirectory 'local-ray-native.cso') (Join-Path $PSScriptRoot 'tests/local_ray.lib.hlsl')
+  if ($LASTEXITCODE -ne 0) { throw 'Native fog ray fixture compilation failed.' }
   Copy-Item -Path 'build/thewitcher3remastered-hartapfelfx.include/embed/0xF7C*.cso' -Destination $cloudDirectory
   Copy-Item -LiteralPath 'build/thewitcher3remastered-hartapfelfx.include/embed/0xF7F00001.cso' -Destination $cloudDirectory
   foreach($skyHash in @('449D3390','3B15DAAB')) {

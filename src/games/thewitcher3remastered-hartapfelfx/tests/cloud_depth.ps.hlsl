@@ -4,6 +4,7 @@
 Texture2D<float4> cloud:register(t3);
 Texture2D<float> cloud_depth:register(t4);
 float4 main(float4 position:SV_Position):SV_Target {
+  if(frame[340].x==6.f)return float4(position.x<1.f?CloudTraceOffset():trace_grid.xy,0,1);
   if(frame[340].x==5.f) {
     // A world-space density slice separates material evolution from camera,
     // lighting and temporal jitter. Every erosion quality must stay bounded.

@@ -14,6 +14,7 @@
 #include "settings_ui.hpp"
 #include "lighting/graphics/lighting/native.hpp"
 #include "lighting/runtime.hpp"
+#include "fog/ray_runtime.hpp"
 
 namespace {
 ShaderInjectData injection = {1.f, 1.f, 1.f, .5f, 0.f, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, 0.f};
@@ -133,7 +134,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Small Object Shadows",
         .section = "World Lighting & Shadows",
-        .tooltip = "Adds nearby shadows around feet, grass and small objects.",
+        .tooltip = "Adds short sun and moon shadows from visible geometry, including small armor decorations. Texture-only details cannot cast these shadows.",
         .labels = {"Original", "Improved"},
     },
 
@@ -143,7 +144,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Small Shadow Reach",
         .section = "World Lighting & Shadows",
-        .tooltip = "Extends how far nearby objects can cast these shadows.",
+        .tooltip = "Maximum distance searched for nearby objects. Longer searches can miss fine details.",
         .min = .05f, .max = 1.f, .format = "%.2f m",
         .is_enabled = [] { return lighting::contact_shadows != 0.f; },
     },
@@ -157,8 +158,15 @@ renodx::utils::settings::Settings settings = {
         .key = "CloudQualityPresetV1", .binding = &clouds::quality_preset,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 3.f, .label = "Quality Preset", .section = "Clouds & Performance",
-        .tooltip = "Performance is fastest. Balanced keeps smoother clouds at a lower cost. High keeps full detail; Ultra refines it further. Custom keeps your saved quality and sample spacing. Cloud shape and lighting controls stay the same.",
+        .tooltip = "Performance is fastest. Balanced keeps smoother clouds at a lower cost. High balances detail and speed; Ultra refines fine detail further. Custom keeps your saved quality and sample spacing. Cloud shape and lighting controls stay the same.",
         .labels = {"Custom", "Performance", "Balanced", "High", "Ultra"}},
+    new Setting{
+        .key = "CloudLowSunCacheV1", .binding = &clouds::low_sun_cache,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f, .label = "Low Sun Lighting Cache (Experimental)", .section = "Clouds & Performance",
+        .tooltip = "Reuses a shared lighting cache near sunrise and sunset to reduce cloud rendering cost. May soften internal shadows or change cloud brightness. Off keeps the established lighting.",
+        .labels = {"Off", "On"},
+        .is_enabled = [] { return clouds::mode > .5f; }},
     new Setting{
         .key = "CloudQualityV2", .binding = &clouds::quality,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
@@ -362,7 +370,7 @@ renodx::utils::settings::Settings settings = {
         .default_value = 1.f,
         .label = "Fog Rendering",
         .section = "Fog & Performance",
-        .tooltip = "Choose the original fog or HartapfelFX volumetric fog.",
+        .tooltip = "Choose the original fog or HartapfelFX volumetric fog. Volumetric light on the Lighting tab remains independent.",
         .labels = {"Original", "Volumetric"}},
     new Setting{
         .key = "FogQualityPresetV1", .binding = &injection.quality_preset,
@@ -376,7 +384,7 @@ renodx::utils::settings::Settings settings = {
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
         .label = "Volume Detail",
-        .section = "Fog Quality (Advanced)", .tooltip = "Sets the shared lighting detail when using Custom quality.",
+        .section = "Fog Quality (Advanced)", .tooltip = "Sets fog detail when using Custom quality. The shared volume also meets the active volumetric light quality.",
         .labels = {"Balanced", "High"},
         .parse = [](float value) { return value + 1.f; },
         .is_visible = [] { return injection.quality_preset < .5f; }},
@@ -389,8 +397,8 @@ renodx::utils::settings::Settings settings = {
         .key = "FogDensity",
         .binding = &injection.density,
         .default_value = 50.f,
-        .label = "Medium Density",
-        .section = "Fog Medium (Advanced)", .tooltip = "Changes the physical medium for both fog and beams. Use Fog Amount to clear the veil while keeping beams.",
+        .label = "Fog Density",
+        .section = "Fog Medium (Advanced)", .tooltip = "Changes fog density. Volumetric light has its own density on the Lighting tab.",
         .min = 0.f,
         .max = 300.f,
         .parse = [](float value) { return value * .01f; }},
@@ -399,7 +407,7 @@ renodx::utils::settings::Settings settings = {
         .binding = &injection.sunlight,
         .default_value = 35.f,
         .label = "Sun & Moon Beams",
-        .section = "Volumetric Light", .tooltip = "Brightens shadowed sunlight and moonlight in the air, independently of Fog Amount.",
+        .section = "Volumetric Light Appearance", .tooltip = "Brightens shadowed sunlight and moonlight in the air, independently of Fog Amount.",
         .min = 0.f,
         .max = 400.f,
         .parse = [](float value) { return value * .01f; }},
@@ -408,7 +416,7 @@ renodx::utils::settings::Settings settings = {
         .binding = &injection.anisotropy,
         .default_value = 0.65f,
         .label = "Light Focus",
-        .section = "Volumetric Light", .tooltip = "Lower values show beams from more viewing angles. Higher values concentrate brightness toward the light and can create a strong glare.",
+        .section = "Volumetric Light Appearance", .tooltip = "Lower values show beams from more viewing angles. Higher values concentrate brightness toward the light and can create a strong glare.",
         .min = 0.f,
         .max = .85f,
         .format = "%.2f"},
@@ -417,7 +425,7 @@ renodx::utils::settings::Settings settings = {
         .binding = &injection.local_strength,
         .default_value = 100.f,
         .label = "Lamp & Fire Light",
-        .section = "Volumetric Light", .tooltip = "Brightens lamps and fire in the air, independently of Fog Amount.",
+        .section = "Volumetric Light Appearance", .tooltip = "Brightens lamps and fire in the air, independently of Fog Amount.",
         .min = 0.f,
         .max = 200.f,
         .parse = [](float value) { return value * .01f; }},
@@ -426,7 +434,7 @@ renodx::utils::settings::Settings settings = {
         .binding = &injection.start_distance,
         .default_value = -40.f,
         .label = "Clear Distance",
-        .section = "Fog Placement", .tooltip = "Negative values bring fog and beams closer by starting the game's fade earlier. Positive values leave clearer space around the camera.",
+        .section = "Fog Placement", .tooltip = "Negative values bring fog closer by starting the game's fade earlier. Positive values leave clearer space around the camera.",
         .min = -100.f,
         .max = 100.f},
     new Setting{
@@ -458,6 +466,54 @@ renodx::utils::settings::Settings settings = {
         .labels = {"Off", "On"},
         .is_enabled = [] { return injection.quality_preset < 4.5f; }},
     new Setting{
+        .key = "VolumeLightEnabledV1", .binding = &fog::light.enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f, .label = "Volumetric Light", .section = "Volumetric Light & Performance",
+        .tooltip = "Adds shadowed sunlight, moonlight, lamps and fire in the air. Works with Original fog and at zero Fog Density."},
+    new Setting{
+        .key = "VolumeLightQualityV1", .binding = &fog::light.quality,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 0.f, .label = "Light Quality", .section = "Volumetric Light & Performance",
+        .tooltip = "Performance is fastest. Higher choices refine small beams and shadow edges without changing their density or brightness. Fog and light share the higher active volume resolution.",
+        .labels = {"Performance", "Balanced", "High", "Ultra"}, .parse = [](float value) { return value + 1.f; }},
+    new Setting{
+        .key = "VolumeLightDensityV1", .binding = &fog::light.density,
+        .default_value = 50.f, .label = "Light Density", .section = "Volumetric Light Appearance",
+        .tooltip = "Amount of weather-driven air catching light. Zero removes beams; higher values also absorb more incoming light. Does not change the fog veil.",
+        .min = 0.f, .max = 300.f, .parse = [](float value) { return value * .01f; }},
+    new Setting{
+        .key = "VolumeLightStartV1", .binding = &fog::light.start_distance,
+        .default_value = 0.f, .label = "Clear Space", .section = "Volumetric Light Placement (Advanced)",
+        .tooltip = "Distance around the camera without added light scattering. Does not move the fog.",
+        .min = 0.f, .max = 100.f, .format = "%.0f m"},
+    new Setting{
+        .key = "VolumeLightHeightV1", .binding = &fog::light.height_falloff,
+        .default_value = 200.f, .label = "Fade With Height", .section = "Volumetric Light Placement (Advanced)",
+        .tooltip = "Higher values keep light scattering closer to the ground, using the current weather's height profile.",
+        .min = 0.f, .max = 300.f, .parse = [](float value) { return value * .01f; }},
+    new Setting{
+        .key = "VolumeLightIndoorV1", .binding = &fog::light.indoor,
+        .default_value = 0.f, .label = "Indoor Light Density", .section = "Volumetric Light Placement (Advanced)",
+        .tooltip = "Lets light catch the air inside the game's interior volumes while keeping indoor fog excluded. Zero preserves clear interiors; 100% uses the outdoor light density. Native shadows still apply.",
+        .min = 0.f, .max = 100.f, .parse = [](float value) { return value * .01f; }},
+    new Setting{
+        .key = "VolumeLightShadowsV1", .binding = &fog::light.local_shadows,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f, .label = "Lamp & Fire Shadows", .section = "Volumetric Light Quality (Advanced)",
+        .tooltip = "Shadows lamp and fire scattering against world geometry with ray tracing, or the game's shadow maps in raster mode. Off can let light pass through walls. Sun and moon shadows stay enabled."},
+    new Setting{
+        .key = "VolumeLightOcclusionV1", .binding = &fog::light.occlusion_quality,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f, .label = "Lamp Occlusion Quality", .section = "Volumetric Light Quality (Advanced)",
+        .tooltip = "Higher settings smooth ray-traced lamp and fire shadows with more samples and cost more GPU time. Raster mode uses the game's shadow-map quality.",
+        .labels = {"Low", "Balanced", "High", "Ultra"},
+        .is_enabled = [] { return fog::light.local_shadows > .5f; }},
+    new Setting{
+        .key = "VolumeLightTemporalV1", .binding = &fog::light.temporal,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f, .label = "Stabilize Light Over Time", .section = "Volumetric Light Quality (Advanced)",
+        .tooltip = "Smooths light across frames. Off removes history trails from moving lights but can reveal coarser shadow steps."},
+    new Setting{
         .key = "FogStatus",
         .value_type = renodx::utils::settings::SettingValueType::CUSTOM,
         .label = "Integration Status",
@@ -467,6 +523,10 @@ renodx::utils::settings::Settings settings = {
                       static_cast<unsigned long long>(fog::sun_captures.load()),
                       static_cast<unsigned long long>(fog::fog_matches.load()),
                       static_cast<unsigned long long>(fog::fog_fallbacks.load()));
+          ImGui::Text("Local world shadows: %llu inputs | %llu dispatches | %llu missing inputs",
+                      static_cast<unsigned long long>(fog::rays::captures.load()),
+                      static_cast<unsigned long long>(fog::rays::dispatches.load()),
+                      static_cast<unsigned long long>(fog::rays::unavailable.load()));
           return false;
         }},
 
@@ -478,7 +538,7 @@ bool BindReceiver(reshade::api::command_list* cmd, bool night = false, bool wate
   if (state->pipeline_details
       && state->pipeline_details->initialized_replacement
       && state->pipeline_details->replacement_pipeline.handle != 0) {
-    const bool fog_ready = injection.enabled > .5f && fog::runtime::PrepareReceiver(cmd);
+    const bool fog_ready = fog::Active(injection) && fog::runtime::PrepareReceiver(cmd);
     const bool cloud_ready = clouds::runtime::PrepareReceiver(cmd, fog_ready, night || water);
     if (water && !fog_ready)
       return cloud_ready && clouds::runtime::BindWaterControls(cmd, injection.water_enabled, injection.water_murk);
@@ -547,17 +607,17 @@ renodx::mods::shader::CustomShaders shaders = {
                      .code = __0x73E21194,
                      .on_replace = [](auto* cmd) {
                        auto* state = renodx::utils::shader::GetCurrentPixelState(renodx::utils::shader::GetCurrentState(cmd));
-                       const bool ready = injection.enabled > .5f && state->pipeline_details
+                       const bool ready = fog::Active(injection) && state->pipeline_details
                                           && state->pipeline_details->initialized_replacement
                                           && state->pipeline_details->replacement_pipeline.handle != 0
                                           && fog::runtime::Prepare(cmd);
                        ++(ready ? fog::fog_matches : fog::fog_fallbacks);
-                       if (injection.enabled <= .5f || !ready) {
+                       if (!fog::Active(injection) || !ready) {
                          // The engine may omit a redundant SetPipelineState between repeated
                          // fog draws. Explicitly undo any preceding replacement on fallback.
                          return false;
                        }
-                       return injection.enabled > .5f && ready;
+                       return fog::Active(injection) && ready;
                      },
                  }},
 };
@@ -643,6 +703,27 @@ void ImportStandaloneSettings() {
   for (unsigned slot = 1; slot <= 3; ++slot) {
     const auto suffix = "-preset" + std::to_string(slot);
     const auto target = renodx::utils::settings::global_name + suffix;
+    // Migrate only missing keys. Existing presets keep their beam strengths and
+    // weather medium; subsequent edits and tab resets have separate ownership.
+    for(const auto& keys : {std::array{"VolumeLightEnabledV1","FogEnabled"},
+                           std::array{"VolumeLightDensityV1","FogDensity"},
+                           std::array{"VolumeLightHeightV1","FogHeight"},
+                           std::array{"VolumeLightStartV1","FogStart"}}) {
+      float current=0.f, previous=0.f;
+      if(!reshade::get_config_value(nullptr,target.c_str(),keys[0],current)
+          &&reshade::get_config_value(nullptr,target.c_str(),keys[1],previous))
+        reshade::set_config_value(nullptr,target.c_str(),keys[0],std::max(previous,0.f));
+    }
+    int light_quality=0, fog_quality=0;
+    if(!reshade::get_config_value(nullptr,target.c_str(),"VolumeLightQualityV1",light_quality)
+        &&reshade::get_config_value(nullptr,target.c_str(),"FogQualityPresetV1",fog_quality)) {
+      if(fog_quality==0) {
+        int custom=0;
+        reshade::get_config_value(nullptr,target.c_str(),"FogQuality",custom);
+        light_quality=custom>0?2:1;
+      } else light_quality=std::clamp(fog_quality-1,0,3);
+      reshade::set_config_value(nullptr,target.c_str(),"VolumeLightQualityV1",light_quality);
+    }
     int water_enabled = 0;
     if (!reshade::get_config_value(nullptr, target.c_str(), "WaterEnabledV1", water_enabled)) {
       int old_surface = 0;
@@ -664,7 +745,8 @@ void ImportStandaloneSettings() {
     for (auto* setting : settings) {
       if (setting->key.empty() || !setting->binding || setting->is_global) continue;
       const bool night = std::find(nights::ui::settings.begin(), nights::ui::settings.end(), setting) != nights::ui::settings.end();
-      const bool graphics = !night &&hartapfelfx::ui::TabForKey(setting->key)==hartapfelfx::ui::Tab::Lighting;
+      const bool graphics = !night &&hartapfelfx::ui::TabForKey(setting->key)==hartapfelfx::ui::Tab::Lighting
+          &&!setting->section.starts_with("Volumetric Light");
       if (!graphics && !night) continue;
       const char* key = setting->key.c_str();
       char value[64]{};
@@ -682,6 +764,7 @@ void ImportStandaloneSettings() {
 void OnPresetOff() {
   hartapfelfx::sky::emission::enabled.store(false,std::memory_order_relaxed);
   renodx::utils::settings::UpdateSetting("FogEnabled", 0.f);
+  renodx::utils::settings::UpdateSetting("VolumeLightEnabledV1", 0.f);
   renodx::utils::settings::UpdateSetting("WaterEnabledV1", 0.f);
   renodx::utils::settings::UpdateSetting("CloudModeV2", 0.f);
   renodx::utils::settings::UpdateSetting("PlayerLighting", 0.f);
@@ -768,12 +851,22 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
       else if (slot != 1) renodx::utils::settings::LoadSettings(renodx::utils::settings::GetCurrentPresetName());
     }
   }
+  // Local volume dispatches restore the native PSO. Run them before the
+  // shader module selects the contact/PBR replacement for the same dispatch.
+  // Sun observers retain their later position, after native night edits.
+  if (reason == DLL_PROCESS_ATTACH) {
+    for (auto hash : {0xE6A77B56u, 0x9A6F318Eu})
+      renodx::utils::command_action::RegisterCallback(fog::ObserveLocal, {.shader_hash = hash});
+  } else if (reason == DLL_PROCESS_DETACH) {
+    renodx::utils::command_action::Unregister(fog::ObserveLocal);
+  }
   renodx::mods::shader::Use(reason, shaders);
   hartapfelfx::descriptors::Use(reason);
   fog::Use(reason);
   fog::runtime::Use(reason, &injection);
   lighting::Use(reason);
   clouds::runtime::Use(reason, &injection);
+  fog::rays::Use(reason);
   lighting::ray::hits::UseDispatch(reason);
   nights::vegetation::Use(reason);
   if (reason == DLL_PROCESS_DETACH) reshade::unregister_addon(module);

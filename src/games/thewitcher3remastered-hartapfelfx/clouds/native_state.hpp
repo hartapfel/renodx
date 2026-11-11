@@ -37,6 +37,21 @@ class NativeState {
   NativeState(const NativeState&) = delete;
   NativeState& operator=(const NativeState&) = delete;
   bool Valid() const { return valid_; }
+  // The caller owns the recording/submission lifetime and view identity of
+  // these inputs. Replay uses the destination list, never the saved raw list.
+  void BindCompute(api::command_list* target) {
+    auto* native = reinterpret_cast<ID3D12GraphicsCommandList*>(target->get_native());
+    ID3D12DescriptorHeap* heaps[2] = {resource_heap_.Get(), sampler_heap_.Get()};
+    native->SetDescriptorHeaps(sampler_heap_ ? 2 : 1, heaps);
+    native->SetComputeRootSignature(reinterpret_cast<ID3D12RootSignature*>(compute_.layout.handle));
+    RestoreRoots(compute_, compute_layout_, true, target);
+    if (ray_pipeline_.handle) target->bind_pipeline(api::pipeline_stage::all_ray_tracing, ray_pipeline_);
+  }
+  void RetainCompute(std::vector<Microsoft::WRL::ComPtr<IUnknown>>* objects) const {
+    for (IUnknown* object : {static_cast<IUnknown*>(resource_heap_.Get()), static_cast<IUnknown*>(sampler_heap_.Get()),
+             reinterpret_cast<IUnknown*>(compute_.layout.handle), reinterpret_cast<IUnknown*>(ray_pipeline_.handle)})
+      if (object) objects->emplace_back(object);
+  }
   void Changed(bool heaps = true) { changed_ = true; heaps_changed_ = heaps; }
   ~NativeState() { Restore(); }
   void Restore() {
@@ -60,7 +75,9 @@ class NativeState {
   }
 
  private:
-  void RestoreRoots(const fog::BindingState& bindings, const fog::BindingLayout& layout, bool compute) {
+  void RestoreRoots(const fog::BindingState& bindings, const fog::BindingLayout& layout, bool compute, api::command_list* target = nullptr) {
+    auto* command = target ? target : command_;
+    auto* native = reinterpret_cast<ID3D12GraphicsCommandList*>(command->get_native());
     const auto& arguments = compute ? compute_arguments_ : graphics_arguments_;
     const bool native_arguments = reinterpret_cast<uint64_t>(arguments.signature) == bindings.layout.handle;
     for (uint32_t index = 0; index < layout.parameters.size() && index < 64; ++index) {
@@ -69,41 +86,41 @@ class NativeState {
         if (!bindings.tables[index].handle) continue;
         api::descriptor_heap heap{};
         uint32_t offset = 0;
-        command_->get_device()->get_descriptor_heap_offset(bindings.tables[index], 0, 0, &heap, &offset);
+        command->get_device()->get_descriptor_heap_offset(bindings.tables[index], 0, 0, &heap, &offset);
         auto* descriptor_heap = reinterpret_cast<ID3D12DescriptorHeap*>(heap.handle);
         if (!descriptor_heap || (descriptor_heap != resource_heap_.Get() && descriptor_heap != sampler_heap_.Get())) continue;
         auto address = descriptor_heap->GetGPUDescriptorHandleForHeapStart();
-        address.ptr += uint64_t(offset) * reinterpret_cast<ID3D12Device*>(command_->get_device()->get_native())->GetDescriptorHandleIncrementSize(descriptor_heap->GetDesc().Type);
-        if (compute) native_->SetComputeRootDescriptorTable(index, address);
-        else native_->SetGraphicsRootDescriptorTable(index, address);
+        address.ptr += uint64_t(offset) * reinterpret_cast<ID3D12Device*>(command->get_device()->get_native())->GetDescriptorHandleIncrementSize(descriptor_heap->GetDesc().Type);
+        if (compute) native->SetComputeRootDescriptorTable(index, address);
+        else native->SetGraphicsRootDescriptorTable(index, address);
       } else if (parameter.constant_count) {
         for (uint32_t word = 0; word < parameter.constant_count && word < 64; ++word) {
           const bool actual = native_arguments && (arguments.valid_words[index] & (uint64_t(1) << word));
           if (!actual) continue;
           const uint32_t value = arguments.words[index][word];
-          if (compute) native_->SetComputeRoot32BitConstant(index, value, word);
-          else native_->SetGraphicsRoot32BitConstant(index, value, word);
+          if (compute) native->SetComputeRoot32BitConstant(index, value, word);
+          else native->SetGraphicsRoot32BitConstant(index, value, word);
         }
       } else if (!parameter.ranges.empty()) {
         const auto& buffer = bindings.buffers[index];
         switch (parameter.ranges.front().type) {
           case api::descriptor_type::constant_buffer:
             if (native_arguments && arguments.cbvs[index]) {
-              if (compute) native_->SetComputeRootConstantBufferView(index, arguments.cbvs[index]);
-              else native_->SetGraphicsRootConstantBufferView(index, arguments.cbvs[index]);
+              if (compute) native->SetComputeRootConstantBufferView(index, arguments.cbvs[index]);
+              else native->SetGraphicsRootConstantBufferView(index, arguments.cbvs[index]);
             } else if (buffer.buffer.handle) {
-              if (compute) native_->SetComputeRootConstantBufferView(index, reinterpret_cast<ID3D12Resource*>(buffer.buffer.handle)->GetGPUVirtualAddress() + buffer.offset);
-              else native_->SetGraphicsRootConstantBufferView(index, reinterpret_cast<ID3D12Resource*>(buffer.buffer.handle)->GetGPUVirtualAddress() + buffer.offset);
+              if (compute) native->SetComputeRootConstantBufferView(index, reinterpret_cast<ID3D12Resource*>(buffer.buffer.handle)->GetGPUVirtualAddress() + buffer.offset);
+              else native->SetGraphicsRootConstantBufferView(index, reinterpret_cast<ID3D12Resource*>(buffer.buffer.handle)->GetGPUVirtualAddress() + buffer.offset);
             }
             break;
           case api::descriptor_type::buffer_shader_resource_view:
           case api::descriptor_type::acceleration_structure:
-            if (compute) native_->SetComputeRootShaderResourceView(index, bindings.addresses[index]);
-            else native_->SetGraphicsRootShaderResourceView(index, bindings.addresses[index]);
+            if (compute) native->SetComputeRootShaderResourceView(index, bindings.addresses[index]);
+            else native->SetGraphicsRootShaderResourceView(index, bindings.addresses[index]);
             break;
           case api::descriptor_type::buffer_unordered_access_view:
-            if (compute) native_->SetComputeRootUnorderedAccessView(index, bindings.addresses[index]);
-            else native_->SetGraphicsRootUnorderedAccessView(index, bindings.addresses[index]);
+            if (compute) native->SetComputeRootUnorderedAccessView(index, bindings.addresses[index]);
+            else native->SetGraphicsRootUnorderedAccessView(index, bindings.addresses[index]);
             break;
           default: break;
         }

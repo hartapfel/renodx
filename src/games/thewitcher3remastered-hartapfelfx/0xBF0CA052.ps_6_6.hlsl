@@ -151,7 +151,7 @@ float4 main(
 ) : SV_Target {
   if (CloudVisibleMatches(receiver_frame[0].xyz, receiver_frame[17], receiver_frame[18], receiver_frame[23], asuint(receiver_frame[286]), GlobalShaderConsts_000.x)) discard;
   float4 SV_Target = 0;
-  if(ReceiverFrameMatches()) TEXCOORD = ReceiverFogVarying(SV_Position,length(float3(TEXCOORD_1.w,TEXCOORD_3.w,TEXCOORD_4.w)-receiver_frame[0].xyz));
+  if(ReceiverFrameMatches()) TEXCOORD = ReceiverFogVarying(SV_Position,length(float3(TEXCOORD_1.w,TEXCOORD_3.w,TEXCOORD_4.w)-receiver_frame[0].xyz), TEXCOORD);
   float _42 = -0.0f - GlobalShaderConsts_144.z;
   float _43 = dot(float3(GlobalShaderConsts_144.x, GlobalShaderConsts_144.y, _42), float3(GlobalShaderConsts_144.x, GlobalShaderConsts_144.y, _42));
   float _44 = rsqrt(_43);

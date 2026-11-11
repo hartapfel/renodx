@@ -9,7 +9,7 @@ extern "C" __declspec(dllexport) const char* const NAME="HartapfelFX settings te
 int main() {
   using namespace hartapfelfx::ui;
   try {
-    float coverage=0, fog=0, light=0, moon=0, exposure=0, global=0, water=0, murk=0;
+    float coverage=0, fog=0, light=0, moon=0, exposure=0, global=0, water=0, murk=0, beams=0, beam_density=0, beam_strength=0;
     Setting cloud{.key="CloudCoverageV2",.binding=&coverage,.default_value=100.f,
         .parse=[](float value){return value*.01f;}};
     Setting mist{.key="FogDensity",.binding=&fog,.default_value=100.f};
@@ -18,11 +18,16 @@ int main() {
     Setting water_mode{.key="WaterEnabledV1",.binding=&water,.value_type=ValueType::BOOLEAN,.label="Improved Water",.section="Water"};
     Setting water_murk{.key="WaterMurkV1",.binding=&murk,.default_value=150.f,.label="Water Murk",.section="Water",.max=200.f,
         .parse=[](float value){return value*.01f;}};
+    Setting beam_mode{.key="VolumeLightEnabledV1",.binding=&beams,.value_type=ValueType::BOOLEAN,
+        .default_value=1.f,.section="Volumetric Light & Performance"};
+    Setting beam_medium{.key="VolumeLightDensityV1",.binding=&beam_density,.default_value=50.f,
+        .section="Volumetric Light Appearance",.parse=[](float value){return value*.01f;}};
+    Setting beam_sun{.key="FogSunlight",.binding=&beam_strength,.default_value=35.f,.section="Volumetric Light Appearance"};
     Setting hidden{.key="NightExposureBrighteningSpeed",.binding=&exposure,.default_value=35.f,
         .is_visible=[] {return false;}};
     Setting sticky{.key="CloudGlobal",.binding=&global,.default_value=10.f,.is_global=true};
     Setting hint{.value_type=ValueType::TEXT,.label="Not a control"};
-    Settings settings{&cloud,&mist,&surface,&disc,&water_mode,&water_murk,&hidden,&sticky,&hint};
+    Settings settings{&cloud,&mist,&surface,&disc,&water_mode,&water_murk,&hidden,&sticky,&hint,&beam_mode,&beam_medium,&beam_sun};
     for(Tab tab:tabs) {
       for(auto* setting:settings)if(setting->binding)setting->Set(setting->value_type==ValueType::BOOLEAN ? 1.f : 23.f)->Write();
       ResetTab(settings,tab);
@@ -41,7 +46,7 @@ int main() {
     cloud.tooltip="Changes coverage.";mist.tooltip="Changes fog.";disc.tooltip="Changes moon size.";
     hidden.tooltip="Changes exposure speed.";
     Configure(&settings);
-    if(settings.size()!=9 ||cloud.tooltip!="Changes coverage." ||hidden.tooltip!="Changes exposure speed.")
+    if(settings.size()!=12 ||cloud.tooltip!="Changes coverage." ||hidden.tooltip!="Changes exposure speed.")
       throw std::runtime_error("Configuration added inline hints or lost hover help");
     if(renodx::utils::settings::use_presets)throw std::runtime_error("Legacy preset controls would be duplicated");
     for(Tab tab:tabs) {
@@ -59,6 +64,16 @@ int main() {
     water_murk.Set(0.f)->Write();
     if(!water_murk.is_enabled() ||water!=1.f)
       throw std::runtime_error("Murk must follow the master toggle and remain adjustable at zero");
+    selected=Tab::Lighting;
+    beam_mode.Set(0.f)->Write();
+    if(beam_medium.is_enabled() ||beam_sun.is_enabled())throw std::runtime_error("Disabled beams left dependent controls active");
+    beam_mode.Set(1.f)->Write();mist.Set(0.f)->Write();
+    if(!beam_medium.is_enabled() ||!beam_sun.is_enabled() ||!beam_sun.is_visible())throw std::runtime_error("Fog disabled independent light controls");
+    beam_medium.Set(75.f)->Write();beam_sun.Set(70.f)->Write();
+    ResetTab(settings,Tab::Fog);
+    if(beam_density!=.75f ||beam_strength!=70.f)throw std::runtime_error("Fog reset changed light appearance");
+    ResetTab(settings,Tab::Lighting);
+    if(beam_density!=.5f ||beam_strength!=35.f ||fog!=100.f)throw std::runtime_error("Lighting reset crossed fog ownership");
     renodx::utils::settings::settings=&settings;
     renodx::utils::settings::preset_index=1;
     for(auto* setting:settings)if(IsValue(setting))setting->Set(setting->default_value)->Write();
@@ -91,7 +106,7 @@ int main() {
     ImGui::NewFrame();ImGui::Begin("HartapfelFX preview");
     ImGui::LogToBuffer();Draw(settings,nullptr);check_footer();ImGui::LogFinish();
     ImGui::End();ImGui::Render();ImGui::DestroyContext();
-    std::cout<<"PASS five scoped resets, Water master and 150% default, hidden values, parsing, hover-only hints and shared Help/support section with Preset Off\n";
+    std::cout<<"PASS five scoped resets, independent light master and reset ownership, Water master and 150% default, hidden values, parsing, hover-only hints and shared Help/support section with Preset Off\n";
     return 0;
   }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

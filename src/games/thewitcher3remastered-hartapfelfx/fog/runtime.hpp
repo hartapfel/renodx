@@ -17,6 +17,7 @@ using Microsoft::WRL::ComPtr;
 namespace pool = renodx::utils::d3d12_resource_pool;
 inline ShaderInjectData* settings = nullptr;
 struct Job;
+inline bool (*draw_ray_local)(api::command_list*, Job*) = nullptr;
 struct Views {
   std::weak_ptr<Job> job;
   uint32_t recording_owners = 0;
@@ -30,7 +31,9 @@ struct Pipelines {
 };
 struct __declspec(uuid("01a25de0-e89c-7864-a4f1-1790756c20d0")) DeviceData {
   std::mutex mutex;
-  pool::ResourcePool<768ull << 20, 1024> allocations;
+  // Four rotating Ultra fields plus history and the new fog-extinction
+  // sidecars need ~794 MiB. Keep headroom for parameter/interior pages.
+  pool::ResourcePool<896ull << 20, 1024> allocations;
   std::unordered_map<uint64_t, Views> views;
   std::unordered_map<uint64_t, Pipelines> pipelines;
   std::vector<api::command_queue*> queues;
@@ -262,6 +265,7 @@ inline std::shared_ptr<Job> BeginWork(api::command_list* cmd, DeviceData* data, 
   RetainStorage(cmd, storage);
   RetainStorage(cmd, job->history);
   std::memcpy(job->parameters->mapped, settings, sizeof(*settings));
+  std::memcpy(job->parameters->mapped + FOG_LIGHT_CONSTANT_OFFSET, &light, sizeof(light));
   const uint32_t grid[8] = {job->width, job->height, job->slices, 0, 0, uint32_t(++data->sequence & 31u), 1, 0};
   std::memcpy(job->parameters->mapped + 256, grid, sizeof(grid));
   uint32_t integration[8];
@@ -274,7 +278,7 @@ inline std::shared_ptr<Job> BeginWork(api::command_list* cmd, DeviceData* data, 
   return job;
 }
 inline void CaptureInterior(api::command_list* cmd) {
-  if (!settings || settings->enabled < .5f || cmd->get_device()->get_api() != api::device_api::d3d12) return;
+  if (!settings || !Active(*settings) || cmd->get_device()->get_api() != api::device_api::d3d12) return;
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
   if (!data || !bindings || reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native())->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) return;
@@ -318,7 +322,7 @@ inline uint32_t SunTextureFlags(api::command_list* cmd, const BindingState& stat
   return flags;
 }
 inline void Generate(api::command_list* cmd, bool compute) {
-  if (!settings || settings->enabled < .5f || cmd->get_device()->get_api() != api::device_api::d3d12) return;
+  if (!settings || !Active(*settings) || cmd->get_device()->get_api() != api::device_api::d3d12) return;
   if (reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native())->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) return;
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
@@ -358,7 +362,7 @@ inline void Generate(api::command_list* cmd, bool compute) {
     const auto grid=GridQuality(*settings,viewport.width,viewport.height);
     storage->width=grid[0];storage->height=grid[1];storage->slices=grid[2];
     const uint64_t cells = uint64_t(storage->width) * storage->height * storage->slices;
-    if (!AllocateJob(cmd, data, storage, FOG_HEADER_BYTES + (3 * cells + uint64_t(storage->width) * storage->height) * 8 + 128 + 240 * 256 * 8)) return;
+    if (!AllocateJob(cmd, data, storage, FOG_HEADER_BYTES + (3 * cells + uint64_t(storage->width) * storage->height) * 8 + cells * 4 + 128 + 240 * 256 * 8)) return;
     storage->history = std::make_shared<Job>();
     if (!AllocateJob(cmd, data, storage->history, FOG_HEADER_BYTES + 2 * cells * 8)) return;
     auto* native = reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native());
@@ -384,7 +388,7 @@ inline void Generate(api::command_list* cmd, bool compute) {
   for (const auto& interiors : data->interiors) {
     if (interiors->frame.buffer != job->frame.buffer || interiors->frame.offset != job->frame.offset) continue;
     CopyStorage(cmd, data, storage, interiors, 128ull + uint64_t(interiors->width) * interiors->height * 8,
-                FOG_HEADER_BYTES + uint64_t(job->width) * job->height * (3 * job->slices + 1) * 8);
+                FOG_HEADER_BYTES + uint64_t(job->width) * job->height * ((3 * job->slices + 1) * 8 + job->slices * 4));
     flags |= 4u;
     ++fog::interior_matches;
     break;
@@ -488,7 +492,7 @@ inline void ApplyLocal(api::command_list* cmd, bool raster) {
   if (reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native())->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) return;
   auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
-  if (!bindings || !data || !settings || settings->enabled < .5f) return;
+  if (!bindings || !data || !settings || !Active(*settings) || light.enabled <= .5f || settings->local_strength <= 0.f) return;
   const auto frame = Resolve(cmd, bindings->compute, api::descriptor_type::constant_buffer, 12);
   if (frame.type != api::descriptor_type::constant_buffer) return;
   const auto depth = Resolve(cmd, bindings->compute, api::descriptor_type::texture_shader_resource_view, 0);
@@ -503,14 +507,17 @@ inline void ApplyLocal(api::command_list* cmd, bool raster) {
   auto storage = FindVolume(data, frame.buffer_range, &viewport);
   if (!storage) return;
   auto job = BeginWork(cmd, data, storage);
-  if (!job || !DrawVolume(cmd, data, job.get(), true, false, true, raster)) return;
+  if (!job) return;
+  if (!raster && light.local_shadows > .5f) {
+    if (!draw_ray_local || !draw_ray_local(cmd, job.get())) return;
+  } else if (!DrawVolume(cmd, data, job.get(), true, false, true, raster)) return;
   // Mark after the whole dispatch. Every cell sees the same pre-dispatch flag.
   auto* native = reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native());
   D3D12_RESOURCE_BARRIER barrier{};
   barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
   barrier.Transition = {job->allocation->scratch.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST};
   native->ResourceBarrier(1, &barrier);
-  native->CopyBufferRegion(job->allocation->scratch.Get(), 1012, job->parameters->constants.Get(), 0, 4);
+  native->CopyBufferRegion(job->allocation->scratch.Get(), 1012, job->parameters->constants.Get(), FOG_LIGHT_CONSTANT_OFFSET, 4);
   std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
   native->ResourceBarrier(1, &barrier);
 }
@@ -646,6 +653,7 @@ inline void Use(DWORD reason, ShaderInjectData* injection) {
       Generate(cmd, compute);
     };
     sun_enabled = &injection->enabled;
+    light_enabled = &light.enabled;
     water_enabled = &injection->water_enabled;
     on_interior = CaptureInterior;
     on_local = ApplyLocal;
@@ -661,6 +669,7 @@ inline void Use(DWORD reason, ShaderInjectData* injection) {
   } else if (reason == DLL_PROCESS_DETACH) {
     on_sun = nullptr;
     sun_enabled = nullptr;
+    light_enabled = nullptr;
     water_enabled = nullptr;
     on_interior = nullptr;
     on_local = nullptr;

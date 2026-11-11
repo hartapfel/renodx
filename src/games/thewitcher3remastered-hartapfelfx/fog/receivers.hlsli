@@ -42,13 +42,18 @@ float4 ReceiverFog(float4 position, float distance, out float4 desaturation) {
   // scattering field. Keep its medium and incoming-light extinction intact.
   desaturation.a*=FogAmount();
   return float4(weather.rgb * (weather.a*FogAmount())
-      + integrated.rgb * (opacity > 1.e-7f ? weather.a / opacity : 0.f), weather.a*FogAmount());
+      + integrated.rgb * (IndependentVolumeLight() ? 1.f : opacity > 1.e-7f ? weather.a / opacity : 0.f), weather.a*FogAmount());
 }
-float4 ReceiverFogVarying(float4 position, float distance) {
+float4 ReceiverFogVarying(float4 position, float distance, float4 native_fog) {
+  if (fx.enabled <= .5f && IndependentVolumeLight()) {
+    float3 radiance=SampleFogVolume(position.xy,distance).rgb;
+    float coverage=max(native_fog.a,any(radiance>0.f)?1.e-4f:0.f);
+    return float4(coverage>0.f?(native_fog.rgb*native_fog.a+radiance)/coverage:0.f,coverage);
+  }
   float4 desaturation;
   float4 fog = ReceiverFog(position, distance, desaturation);
   // Native forward materials represent fog as colour/coverage. Preserve
   // additive beam radiance at zero veil with negligible residual coverage.
-  float coverage=fx.haze_reduction>0.f?max(fog.a,any(fog.rgb>0.f)?1.e-4f:0.f):fog.a;
+  float coverage=max(fog.a,any(fog.rgb>0.f)?1.e-4f:0.f);
   return float4(coverage>1.e-7f?fog.rgb/coverage:0.f,coverage);
 }

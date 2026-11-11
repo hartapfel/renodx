@@ -9,6 +9,8 @@ param(
   [string]$D3D12SdkPath,
   [string]$AddonPath,
   [ValidateRange(0,200)][int]$WaterMurk=0,
+  [ValidateSet(0,1)][int]$FogRendering=1,
+  [ValidateRange(0,3)][int]$LightQuality=0,
   [ValidateRange(0,4)][int[]]$CloudQualityPresets=@(0),
   [ValidateRange(0,5)][int[]]$FogQualityPresets=@(0)
 )
@@ -28,7 +30,7 @@ $cloudArguments=@()
 if($RayCapturePath){$cloudArguments=@((Resolve-Path -LiteralPath $RayCapturePath).Path,$cloudDirectory)}
 foreach($fogFirst in @($false,$true)) {
   $order=if($fogFirst){'fog-first'}else{'hdr-first'}
-  $testDirectory=Join-Path $repoRoot "tmp/hartapfelfx-validation/startup-$order-nodevkit"
+  $testDirectory=Join-Path $repoRoot "tmp/hartapfelfx-validation/startup-$order-fog$FogRendering-light$LightQuality-nodevkit"
   New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
   if($D3D12SdkPath) {
     $sdkDirectory=Join-Path $testDirectory 'D3D12_0'
@@ -51,9 +53,11 @@ foreach($fogFirst in @($false,$true)) {
       foreach($fogPreset in $FogQualityPresets) {
         foreach ($quality in $(if($fogPreset){@(0)}else{@(0,1)})) {
           # Workspace-only profiles exercise the selected presets with the actual addon.
-          Set-Content -LiteralPath 'ReShade.ini' -Value "[thewitcher3remastered-hartapfelfx-preset1]`nFogDensity=100`nFogStart=0`nFogQuality=$quality`nFogQualityPresetV1=$fogPreset`nCloudQualityPresetV1=$cloudQuality`nSunDiameter=1.3`nWaterMurkV1=$WaterMurk" -Encoding ascii
+          Set-Content -LiteralPath 'ReShade.ini' -Value "[thewitcher3remastered-hartapfelfx-preset1]`nFogEnabled=$FogRendering`nFogDensity=100`nFogStart=0`nFogQuality=$quality`nFogQualityPresetV1=$fogPreset`nVolumeLightEnabledV1=1`nVolumeLightQualityV1=$LightQuality`nCloudQualityPresetV1=$cloudQuality`nSunDiameter=1.3`nWaterMurkV1=$WaterMurk" -Encoding ascii
           Write-Host "Checking $order, fog quality $quality, fog preset $fogPreset, cloud preset $cloudQuality"
           $columns=if($fogPreset){@(0,120,160,240,256,256)[$fogPreset]}elseif($quality){240}else{160}
+          $lightColumns=@(120,160,240,256)[$LightQuality]
+          $columns=if($FogRendering){[Math]::Max($columns,$lightColumns)}else{$lightColumns}
           & ./startup-gpu.exe $NativeCapturePath $embedPath (Join-Path $repoRoot 'tmp/hartapfelfx-validation/runtime-probe.cso') $columns @cloudArguments
           if($LASTEXITCODE -ne 0){throw "Addon compatibility failed in $order order at fog $quality / preset $fogPreset / cloud $cloudQuality (exit $LASTEXITCODE)"}
         }

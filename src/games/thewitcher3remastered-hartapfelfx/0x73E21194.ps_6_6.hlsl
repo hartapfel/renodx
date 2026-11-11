@@ -198,8 +198,9 @@ float4 main(
     float _110 = sqrt(((_102 * _102) + (_103 * _103)) + (_104 * _104));
     float _125 = ((((CustomPixelConsts_000.w - CustomPixelConsts_000.z) * saturate((_110 - CustomPixelConsts_000.x) / (CustomPixelConsts_000.y - CustomPixelConsts_000.x))) + CustomPixelConsts_000.z) * (max(CustomPixelConsts_016.x, _94) + -1.0f)) + 1.0f;
     float _137 = _104 / _110;
-    bool fog_current = ReceiverFrameMatches();
-    float4 volume = fog_current ? SampleFogVolume(SV_Position.xy,_110) : 0.f;
+    bool volume_current = ReceiverFrameMatches();
+    bool fog_current = volume_current && fx.enabled > .5f;
+    float4 volume = volume_current ? SampleFogVolume(SV_Position.xy,_110) : 0.f;
     float _142 = min(cb12_042z, max(0.0f, (_110 - (fog_current ? FogFadeStart(cb12_022z) : cb12_022z))));
     float _143 = _142 * 0.0625f;
     float _144 = _143 * _137;
@@ -289,7 +290,9 @@ float4 main(
     _486 = (lerp(_473, _456, _460));
     _487 = (lerp(_474, _457, _460));
     _488 = (lerp(_475, _458, _460));
-    float3 direct = volume.rgb * (_379 > 1.e-7f ? _459/_379 : 0.f) * _125;
+    // The independent medium already owns indoor density. Native fog masks
+    // must not remove its beams after volume integration.
+    float3 direct = volume.rgb * (IndependentVolumeLight() ? 1.f : (_379 > 1.e-7f ? _459/_379 : 0.f) * _125);
     _486 += direct.x; _487 += direct.y; _488 += direct.z;
   } else {
     _486 = 0.0f;

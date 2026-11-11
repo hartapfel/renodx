@@ -1,0 +1,110 @@
+HartapfelFX Light Alignment 1.1.1
+The Witcher 3 Remastered
+
+Moves supported candle, torch, brazier and fire lights onto their authored flame
+emitters. This helps surface lighting, shadows and volumetric light originate
+at the actual fixture. It preserves the existing lights and their brightness,
+colour, radius, flicker and shadow settings.
+
+REQUIREMENTS
+The Witcher 3 Remastered. Developed against 5.0.16 and its native script
+annotations. Classic and Next-Gen are not supported by this release.
+No RenoDX, ReShade, HartapfelFX addon, BetterCandles, NativeBridge, Python,
+REDkit or manual build is required. The game compiles the scripts at startup.
+
+INSTALL WITH A MOD MANAGER
+1. Close the game before installing or updating.
+2. Import this ZIP with The Witcher 3 Mod Manager and enable the mod.
+3. Check the final path below. If your manager asks for a data directory,
+   select the level containing mod0000_HartapfelLightAlignment inside Mods.
+4. Start the game normally and load your scene. Nearby restored fixtures can
+   take up to five seconds to be aligned.
+
+MANUAL INSTALL
+Extract the ZIP into the game installation folder, alongside bin and content.
+The installed script must be at:
+<game>/Mods/mod0000_HartapfelLightAlignment/content/scripts/local/hf_light_alignment.ws
+Avoid an extra Mods/Mods folder or an extra archive-name folder.
+
+UPDATING FROM THE EARLIER PERSONAL CONTENT PROTOTYPE
+Remove the old mod0000_HartapfelLightAlignment folder first, then install this
+release. The prototype had blob0.bundle and metadata.store tailored to one
+BetterCandles/Flares Off setup. This public release has scripts only. An
+overwrite update can leave those old files behind. If the separate local
+mod0000_HartapfelLightAlignmentWorld test companion is present, remove that
+folder too; its world correction is included in this release's single mod
+folder. Keep only one copy of this mod, and leave your other lighting mods
+installed if you still want them.
+
+COMPATIBILITY AND CONTROLS
+The mod updates native engine positions, so the same correction is available
+to Raster, hybrid RT and Path Tracing. Separate visual acceptance across every
+mode and fixture has not been completed. The candle runtime was accepted by
+the game's compiler and verified through its native light buffer.
+The package also corrects one packed static light in the bathhouse world layer
+levels/novigrad/novigrad/bathhouse/lights.w2l. It moves the lower of two lights
+at the hanging bowl to the existing upper source, about 1.61 m higher. Other
+light properties and the rest of that layer retain their original data.
+Mods replacing this same layer require a content compatibility patch; changing
+load priority selects an entire layer rather than merging its changes. This
+content patch targets the verified Remastered 5.0.16 layer.
+
+Other lighting mods can keep their brightness and shadow changes. Mods that
+replace flame slots, change particle offsets or move lights later may need a
+compatibility update. Unique added scripts and native wrapMethod hooks avoid
+replacing full base-game script files; resolve any reported script conflicts
+with a Remastered-compatible Script Merger, preserving the wrapper chain.
+Do not force this mod's scripts over unrelated merged scripts.
+
+There are no extra sliders. Enable/disable in your mod manager and restart.
+RenoDX Preset Off does not disable this independent engine mod.
+
+SCOPE AND PERFORMANCE
+The catalog contains 337 fixture identities, including hand/long/wall torches,
+lanterns, candle holders and braziers across the base game and expansions. This is a
+catalog of supported templates, not a promise to correct every light instance.
+An offline game-data scan finds supported light-to-flame associations in bulk;
+each mapped fixture applies automatically wherever that template appears.
+Players do not need to run the scanner or find each light individually.
+Native slot matrices resolve the live position, rotation and scale. An
+internally displaced flame particle also includes its verified emission offset;
+the hanging-bowl lamp and standard torch families include their verified flame
+particle's 10 cm upward displacement. Version 1.1.1 corrects torch light origins
+that could sit inside the wrapped torch head and produce a dark volumetric halo.
+Existing lights move to the nearest mapped flame on their own entity, within
+four metres. Multi-flame fixtures keep their original light count.
+Unrelated window/fill lights and unsupported fixtures are left unchanged.
+This is position alignment; it does not implement emissive mesh lighting.
+Animated bone fixtures and separately attached lights are excluded from the
+catalog. Moving fixtures need further tracking support.
+New fixtures are checked at spawn. A bounded fallback checks up to 2,048
+gameplay entities within 60 metres every five seconds, caching completed
+checks. There is no per-frame scan, extra rendering pass or GPU readback.
+CPU overhead and FPS impact have not been benchmarked.
+
+UNINSTALL
+Disable/uninstall this mod with the same manager, or remove only
+Mods/mod0000_HartapfelLightAlignment, then restart the game. No base-game
+files or user graphics settings are replaced by this package.
+
+TROUBLESHOOTING
+Floating light: wait five seconds, then confirm the mod is enabled and the
+installed path above is correct. An unsupported fixture or a separate fill
+light may remain. Report the location and a screenshot of the fixture.
+Compiler error: check the Remastered version and remove duplicate copies of
+this mod. Share the exact compiler message when reporting a conflict.
+
+SOURCES
+CD PROJEKT RED: managing mods and native flame-slot authoring:
+https://cdprojektred.atlassian.net/wiki/spaces/W3REDkit/pages/36339714/Managing+mods
+https://cdprojektred.atlassian.net/wiki/spaces/W3REDkit/pages/53772302/HOW-TO+Add+light+sources
+Native engine entity/component declarations:
+https://github.com/CDPR-Modding-Documentation/Witcher3-Scripts
+Mod manager layout and update behavior:
+https://github.com/Systemcluster/The-Witcher-3-Mod-manager
+
+Package includes original alignment scripts, generated slot associations and
+one modified native bathhouse layer with its bundle/index. It includes no
+third-party lighting settings or native binaries. Game asset rights remain
+with their original owners; the MIT license applies to the alignment code.
+Copyright (C) 2026 Hartapfel. See LICENSE.txt.
