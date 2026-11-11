@@ -239,7 +239,7 @@ even if the animation clock is frozen. Fast travel and time jumps reset invalid
 history while retaining the current weather's cloud formations.
 
 **Lighting > Sun & Moon Appearance > Evening Sunlight Colour** blends native
-world sunlight (0%) with the enhanced sunset colour (100%, default). It fades
+world sunlight (0%) with the enhanced sunset colour (100%); the default blend is 50%. It fades
 in with the evening and low Sun, preserving native light brightness. Cloud
 scattering and the visible Sun retain the full sunset palette independently.
 Morning and Moon lighting retain their existing colours. This controls tint;
@@ -268,20 +268,28 @@ the quality-preset tracing optimization remains active independently.
 ### Fog and volumetric light
 
 **Lighting** now has an independent **Volumetric Light** master and **Light
-Quality** choice below the existing world, Sun/Moon and character controls.
+Quality** choice after the existing world and Sun/Moon controls, followed by character lighting.
 **Sun & Moon Beams**, **Light Focus**, **Lamp & Fire Light** and **Light Density**
 control its appearance. Placement and specialist quality options start collapsed.
 Light scattering works with **Original** fog and at zero Fog Density. Fog keeps
 its own amount, density, placement and quality on the **Fog** tab.
 
-New profiles use Volumetric Light **On**, **Performance** quality, Sun & Moon
-Beams **35%**, Light Focus **0.65**, Lamp & Fire Light **100%**, Light Density
-**50%**, Clear Space **0 m**, Fade With Height **200%**, Indoor Light Density **0%**, Lamp & Fire Shadows **On**
-and Stabilize Light Over Time **On**. Fog defaults remain Performance, Amount
-100%, Medium Density 50%, Clear Distance -40, Fade With Height 200%, Distant Sky
-Haze 150% and Smooth Fog Lighting On. Existing profiles retain their saved
+New profiles use the user's 11 November screenshots: Volumetric Light **On**,
+**Balanced** quality, Light Density **100%**, Sun & Moon Beams **100%**, Lamp &
+Fire Light **100%**, Light Focus **0.50**, Clear Space **0 m**, Fade With Height
+**100%**, Indoor Light Density **100%**, Lamp & Fire Shadows **On**, Lamp
+Occlusion Quality **Low** (the user's subsequent override), and Stabilize Light Over Time **On**. Fog defaults
+are Volumetric, Performance, Amount 35%, Density 100%, Clear Distance -10,
+Fade With Height 100%, Distant Sky Haze 120%, and Smooth Fog Lighting On.
+Sun and Moon Size default to 75%, Sun Glow Size to 125%, and Evening Sunlight
+Colour to 50%. Existing profiles retain their saved
 beam brightness/focus; missing light medium and quality settings migrate from
 saved fog values. Lighting Reset All owns beams; Fog Reset All preserves them.
+Only setting order changes: names, section names, keys, ranges and tooltips stay
+the same. The [layout rationale and full defaults](fog/README.md#settings-order-and-screenshot-defaults)
+describe the sequence and the primary UX sources. Rebuild the addon to display
+the new order; Reset All on the relevant tab applies its new defaults to an
+existing preset.
 
 Light Quality offers **Performance**, **Balanced**, **High** and **Ultra**.
 The light and fog share the higher active grid resolution, while light shadow

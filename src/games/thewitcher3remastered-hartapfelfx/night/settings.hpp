@@ -465,7 +465,7 @@ inline renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
         .key = "SunSize",
         .binding = &witcher::night::sun_size,
-        .default_value = 100.f,
+        .default_value = 75.f,
         .label = "Sun Size",
         .section = "Sun & Moon Appearance",
         .tooltip = "Scales the Sun and its glow from the game's own size. 100% uses the native size.",
@@ -488,17 +488,6 @@ inline renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * .01f; },
     },
     new renodx::utils::settings::Setting{
-        .key = "EveningSunlightColourV1",
-        .binding = &hartapfelfx::sky::evening_sunlight,
-        .default_value = 50.f,
-        .label = "Evening Sunlight Colour",
-        .section = "Sun & Moon Appearance",
-        .tooltip = "Blends original sunlight (0%) with the enhanced sunset colour (100%) on world surfaces. Clouds keep their sunset colours. Light brightness stays the same.",
-        .min = 0.f, .max = 100.f, .format = "%.0f%%",
-        .is_enabled = [] { return hartapfelfx::clouds::mode > .5f; },
-        .parse = [](float value) { return value * .01f; },
-    },
-    new renodx::utils::settings::Setting{
         .key = "MoonSize",
         .binding = &witcher::night::moon_size,
         .default_value = 75.f,
@@ -510,6 +499,18 @@ inline renodx::utils::settings::Settings settings = {
         .format = "%.0f%%",
         .is_enabled = []() { return witcher::night::Supported() && witcher::night::moon_supported; },
     },
+    new renodx::utils::settings::Setting{
+        .key = "EveningSunlightColourV1",
+        .binding = &hartapfelfx::sky::evening_sunlight,
+        .default_value = 50.f,
+        .label = "Evening Sunlight Colour",
+        .section = "Sun & Moon Appearance",
+        .tooltip = "Blends original sunlight (0%) with the enhanced sunset colour (100%) on world surfaces. Clouds keep their sunset colours. Light brightness stays the same.",
+        .min = 0.f, .max = 100.f, .format = "%.0f%%",
+        .is_enabled = [] { return hartapfelfx::clouds::mode > .5f; },
+        .parse = [](float value) { return value * .01f; },
+    },
+
 };
 
 inline void OnPresetOff() {

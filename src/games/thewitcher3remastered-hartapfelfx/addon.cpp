@@ -17,7 +17,7 @@
 #include "fog/ray_runtime.hpp"
 
 namespace {
-ShaderInjectData injection = {1.f, 1.f, 1.f, .5f, 0.f, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, 0.f};
+ShaderInjectData injection = {1.f, 1.f, 1.f, .5f, -10.f, 1.f, 2.f, 1.f, 1.2f, 1.f, .65f, 1.f};
 namespace fog = hartapfelfx::fog;
 namespace clouds = hartapfelfx::clouds;
 namespace nights = witcher::night;
@@ -60,6 +60,17 @@ renodx::utils::settings::Settings settings = {
         .labels = {"Original", "Improved"},
     },
     new Setting{
+        .key = "MatchPlayerLighting",
+        .binding = &match_world,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Match the Environment",
+        .section = "Character Lighting",
+        .tooltip = "Makes character fill light respond to the surrounding light.",
+        .labels = {"Off", "On"},
+        .is_enabled = [] { return player_lighting != 0.f; },
+    },
+    new Setting{
         .key = "GameplayLightStrength",
         .binding = &gameplay_strength,
         .default_value = .2f,
@@ -81,17 +92,6 @@ renodx::utils::settings::Settings settings = {
         .min = 0.f,
         .max = 1.f,
         .format = "%.2f",
-        .is_enabled = [] { return player_lighting != 0.f; },
-    },
-    new Setting{
-        .key = "MatchPlayerLighting",
-        .binding = &match_world,
-        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f,
-        .label = "Match the Environment",
-        .section = "Character Lighting",
-        .tooltip = "Makes character fill light respond to the surrounding light.",
-        .labels = {"Off", "On"},
         .is_enabled = [] { return player_lighting != 0.f; },
     },
     new Setting{
@@ -390,36 +390,32 @@ renodx::utils::settings::Settings settings = {
         .is_visible = [] { return injection.quality_preset < .5f; }},
     new Setting{
         .key = "FogAmountV1", .binding = &injection.haze_reduction,
-        .default_value = 100.f, .label = "Fog Amount", .section = "Fog Appearance",
+        .default_value = 35.f, .label = "Fog Amount", .section = "Fog Appearance",
         .tooltip = "Reduces the scene-wide fog veil without dimming light beams. 100% restores the previous fog amount.",
         .min = 0.f, .max = 100.f, .parse = [](float value) { return 1.f-value*.01f; }},
     new Setting{
         .key = "FogDensity",
         .binding = &injection.density,
-        .default_value = 50.f,
+        .default_value = 100.f,
         .label = "Fog Density",
         .section = "Fog Medium (Advanced)", .tooltip = "Changes fog density. Volumetric light has its own density on the Lighting tab.",
         .min = 0.f,
         .max = 300.f,
         .parse = [](float value) { return value * .01f; }},
     new Setting{
+        .key = "VolumeLightDensityV1", .binding = &fog::light.density,
+        .default_value = 100.f, .label = "Light Density", .section = "Volumetric Light Appearance",
+        .tooltip = "Amount of weather-driven air catching light. Zero removes beams; higher values also absorb more incoming light. Does not change the fog veil.",
+        .min = 0.f, .max = 300.f, .parse = [](float value) { return value * .01f; }},
+    new Setting{
         .key = "FogSunlight",
         .binding = &injection.sunlight,
-        .default_value = 35.f,
+        .default_value = 100.f,
         .label = "Sun & Moon Beams",
         .section = "Volumetric Light Appearance", .tooltip = "Brightens shadowed sunlight and moonlight in the air, independently of Fog Amount.",
         .min = 0.f,
         .max = 400.f,
         .parse = [](float value) { return value * .01f; }},
-    new Setting{
-        .key = "FogAnisotropy",
-        .binding = &injection.anisotropy,
-        .default_value = 0.65f,
-        .label = "Light Focus",
-        .section = "Volumetric Light Appearance", .tooltip = "Lower values show beams from more viewing angles. Higher values concentrate brightness toward the light and can create a strong glare.",
-        .min = 0.f,
-        .max = .85f,
-        .format = "%.2f"},
     new Setting{
         .key = "FogLocalLight",
         .binding = &injection.local_strength,
@@ -430,9 +426,18 @@ renodx::utils::settings::Settings settings = {
         .max = 200.f,
         .parse = [](float value) { return value * .01f; }},
     new Setting{
+        .key = "FogAnisotropy",
+        .binding = &injection.anisotropy,
+        .default_value = .5f,
+        .label = "Light Focus",
+        .section = "Volumetric Light Appearance", .tooltip = "Lower values show beams from more viewing angles. Higher values concentrate brightness toward the light and can create a strong glare.",
+        .min = 0.f,
+        .max = .85f,
+        .format = "%.2f"},
+    new Setting{
         .key = "FogStart",
         .binding = &injection.start_distance,
-        .default_value = -40.f,
+        .default_value = -10.f,
         .label = "Clear Distance",
         .section = "Fog Placement", .tooltip = "Negative values bring fog closer by starting the game's fade earlier. Positive values leave clearer space around the camera.",
         .min = -100.f,
@@ -440,7 +445,7 @@ renodx::utils::settings::Settings settings = {
     new Setting{
         .key = "FogHeight",
         .binding = &injection.height_falloff,
-        .default_value = 200.f,
+        .default_value = 100.f,
         .label = "Fade With Height",
         .section = "Fog Placement", .tooltip = "Higher values keep more fog near the ground.",
         .min = 0.f,
@@ -449,7 +454,7 @@ renodx::utils::settings::Settings settings = {
     new Setting{
         .key = "FogSkyDensity",
         .binding = &injection.sky_density,
-        .default_value = 150.f,
+        .default_value = 120.f,
         .label = "Distant Sky Haze",
         .section = "Fog Appearance", .tooltip = "Fades distant clouds and sky into the atmosphere.",
         .min = 0.f,
@@ -473,14 +478,9 @@ renodx::utils::settings::Settings settings = {
     new Setting{
         .key = "VolumeLightQualityV1", .binding = &fog::light.quality,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 0.f, .label = "Light Quality", .section = "Volumetric Light & Performance",
+        .default_value = 1.f, .label = "Light Quality", .section = "Volumetric Light & Performance",
         .tooltip = "Performance is fastest. Higher choices refine small beams and shadow edges without changing their density or brightness. Fog and light share the higher active volume resolution.",
         .labels = {"Performance", "Balanced", "High", "Ultra"}, .parse = [](float value) { return value + 1.f; }},
-    new Setting{
-        .key = "VolumeLightDensityV1", .binding = &fog::light.density,
-        .default_value = 50.f, .label = "Light Density", .section = "Volumetric Light Appearance",
-        .tooltip = "Amount of weather-driven air catching light. Zero removes beams; higher values also absorb more incoming light. Does not change the fog veil.",
-        .min = 0.f, .max = 300.f, .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "VolumeLightStartV1", .binding = &fog::light.start_distance,
         .default_value = 0.f, .label = "Clear Space", .section = "Volumetric Light Placement (Advanced)",
@@ -488,12 +488,12 @@ renodx::utils::settings::Settings settings = {
         .min = 0.f, .max = 100.f, .format = "%.0f m"},
     new Setting{
         .key = "VolumeLightHeightV1", .binding = &fog::light.height_falloff,
-        .default_value = 200.f, .label = "Fade With Height", .section = "Volumetric Light Placement (Advanced)",
+        .default_value = 100.f, .label = "Fade With Height", .section = "Volumetric Light Placement (Advanced)",
         .tooltip = "Higher values keep light scattering closer to the ground, using the current weather's height profile.",
         .min = 0.f, .max = 300.f, .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "VolumeLightIndoorV1", .binding = &fog::light.indoor,
-        .default_value = 0.f, .label = "Indoor Light Density", .section = "Volumetric Light Placement (Advanced)",
+        .default_value = 100.f, .label = "Indoor Light Density", .section = "Volumetric Light Placement (Advanced)",
         .tooltip = "Lets light catch the air inside the game's interior volumes while keeping indoor fog excluded. Zero preserves clear interiors; 100% uses the outdoor light density. Native shadows still apply.",
         .min = 0.f, .max = 100.f, .parse = [](float value) { return value * .01f; }},
     new Setting{
@@ -504,7 +504,7 @@ renodx::utils::settings::Settings settings = {
     new Setting{
         .key = "VolumeLightOcclusionV1", .binding = &fog::light.occlusion_quality,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f, .label = "Lamp Occlusion Quality", .section = "Volumetric Light Quality (Advanced)",
+        .default_value = 0.f, .label = "Lamp Occlusion Quality", .section = "Volumetric Light Quality (Advanced)",
         .tooltip = "Higher settings smooth ray-traced lamp and fire shadows with more samples and cost more GPU time. Raster mode uses the game's shadow-map quality.",
         .labels = {"Low", "Balanced", "High", "Ultra"},
         .is_enabled = [] { return fog::light.local_shadows > .5f; }},

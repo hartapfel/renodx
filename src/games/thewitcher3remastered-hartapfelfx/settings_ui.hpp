@@ -59,9 +59,9 @@ inline void Configure(Settings* settings) {
       "Clouds & Performance","Cloud Quality (Advanced)","Cloud Appearance","Cloud Formation","Cloud Edges","Cloud Lighting",
       "Cloud Structure (Advanced)","Cloud Detail (Advanced)","Cloud Erosion (Advanced)",
       "Fog & Performance","Fog Appearance","Fog Placement",
-      "Fog Quality (Advanced)","Fog Medium (Advanced)","Diagnostics (Advanced)",
-      "World Lighting & Shadows","Sun & Moon Appearance","Character Lighting",
-      "Volumetric Light & Performance","Volumetric Light Appearance","Volumetric Light Placement (Advanced)","Volumetric Light Quality (Advanced)","Water",
+      "Fog Medium (Advanced)","Fog Quality (Advanced)","Diagnostics (Advanced)",
+      "World Lighting & Shadows","Sun & Moon Appearance",
+      "Volumetric Light & Performance","Volumetric Light Appearance","Volumetric Light Placement (Advanced)","Volumetric Light Quality (Advanced)","Character Lighting","Water",
       "Night Lighting","Night Brightness","Night Atmosphere","Night Colour","Night Schedule",
       "Exposure","Exposure Tuning (Advanced)"};
   std::stable_sort(settings->begin(),settings->end(),[&](auto* left,auto* right) {

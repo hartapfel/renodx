@@ -132,7 +132,7 @@ int main() {
       ||clouds::quality_preset!=2.f) return 6;
   const auto fog_amount=FindSetting("FogAmountV1");
   const auto fog_quality=FindSetting("FogQualityPresetV1");
-  if(!fog_amount ||!fog_quality ||injection.quality_preset!=1.f ||injection.haze_reduction!=0.f)return 17;
+  if(!fog_amount ||!fog_quality ||injection.quality_preset!=1.f ||injection.haze_reduction!=.65f)return 17;
   const auto fog_before=injection;
   UpdateSetting("FogAmountV1",0.f);
   if(injection.haze_reduction!=1.f ||injection.sunlight!=fog_before.sunlight
@@ -153,7 +153,7 @@ int main() {
   if(std::memcmp(&injection,&fog_before,sizeof(injection))!=0 ||clouds::clear_low_sun!=0.f
       ||clouds::quality_preset!=2.f ||clouds::low_sun_cache!=1.f ||gameplay_strength!=.35f)return 20;
   const auto light_before=fog::light;
-  if(FindSetting("VolumeLightOcclusionV1")->default_value!=1.f
+  if(FindSetting("VolumeLightOcclusionV1")->default_value!=0.f
       ||FindSetting("VolumeLightOcclusionV1")->section!="Volumetric Light Quality (Advanced)")return 61;
   for(unsigned quality=0;quality<4;++quality) {
     UpdateSetting("VolumeLightOcclusionV1",float(quality));
@@ -173,7 +173,7 @@ int main() {
   const auto ultra=fog::GridQuality(injection,1920,1080);
   const uint64_t cells=uint64_t(ultra[0])*ultra[1]*ultra[2];
   if(4*(FOG_HEADER_BYTES*2+cells*44+uint64_t(ultra[0])*ultra[1]*8+128+240*256*8+131072)>decltype(fog::runtime::DeviceData::allocations)::LIMIT)return 60;
-  UpdateSetting("VolumeLightQualityV1",0.f);UpdateSetting("VolumeLightEnabledV1",0.f);
+  UpdateSetting("VolumeLightQualityV1",FindSetting("VolumeLightQualityV1")->default_value);UpdateSetting("VolumeLightEnabledV1",0.f);
   if(fog::Active(injection)||FindSetting("FogSunlight")->is_enabled())return 58;
   UpdateSetting("VolumeLightEnabledV1",1.f);
   hartapfelfx::ui::ResetTab(*renodx::utils::settings::settings,hartapfelfx::ui::Tab::Fog);

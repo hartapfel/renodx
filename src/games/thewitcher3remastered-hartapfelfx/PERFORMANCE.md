@@ -1548,3 +1548,8 @@ Live follow-up: native CameraCB b0/space1 row 8, rather than zero RT/PT SharedPi
 Accepted live candidate: 128c9c541ef82b6fc8dd7b274f7c2ffc85d71fd20330a0a3e466a9d0e23a2474. The user confirms the previous bad torch angle looks much better. GPU stages=63, owner=1, 15 lights; native emitter exclusions are 0.25 m default and 0.3 m fallback, with override enabled. All 72 production-ray cases pass. This records PT scene acceptance, not a measured FPS claim, whole-world coverage, or a separate hybrid-RT visual comparison.
 
 Final validation: accepted DLL passes startup13.log in both HDR load orders and both fog quality variants, plus check-runtime13.log Release/integration checks and test-ray9.log 72 GPU cases. HDR addon hash is unchanged. Documentation-only follow-up requires no rebuild.
+
+
+## Screenshot defaults and settings order (2026-11-11)
+
+Fog and Lighting defaults now follow the user screenshots, with the subsequent Lamp Occlusion Quality override to Low (one world-visibility sample). Light Quality defaults to Balanced. Appearance, density and indoor controls use the requested values; names, keys, ranges, tooltips and renderer math are unchanged. The existing sections and controls are reordered by related task, keeping the Advanced disclosures. See fog/README.md for the complete defaults, sequence and NN/g research references. Release object compilation, existing lighting/reset/migration/Preset Off integration, and the real-ImGui five-tab regression pass. All 33 visible screenshot values were reviewed, including Low occlusion. This update does not claim measured frame-time gains.

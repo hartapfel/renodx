@@ -18,23 +18,64 @@ lighting hashes (`E6A77B56`, `9A6F318E`).
 
 ## Controls and ownership
 
-Under **Lighting**, the existing world, celestial and character controls are
-followed by these sections:
+Under **Lighting**, world and celestial controls precede these sections;
+character fill follows the complete volumetric-light workflow:
 
 | Section / control | New-profile default | Behaviour |
 | --- | --- | --- |
 | Volumetric Light & Performance / Volumetric Light | On | Independent master; works with Original fog and zero Fog Density. |
-| Light Quality | Performance | Changes light shadow quadrature and the minimum shared grid resolution. |
-| Volumetric Light Appearance / Sun & Moon Beams | 35% | Directional scattering brightness. Retains the saved `FogSunlight` key. |
-| Light Focus | 0.65 | HG asymmetry, 0–0.85. Higher values concentrate light toward its source. Retains `FogAnisotropy`. |
+| Light Quality | Balanced | Changes light shadow quadrature and the minimum shared grid resolution. |
+| Volumetric Light Appearance / Light Density | 100% | Weather density multiplier for scattering and incoming/view-path attenuation. Independent of Fog Density. |
+| Sun & Moon Beams | 100% | Directional scattering brightness. Retains the saved `FogSunlight` key. |
 | Lamp & Fire Light | 100% | Local scattering brightness. Retains `FogLocalLight`. Zero skips CPU preparation and dispatch. |
-| Light Density | 50% | Weather density multiplier for scattering and incoming/view-path attenuation. Independent of Fog Density. |
+| Light Focus | 0.50 | HG asymmetry, 0–0.85. Higher values concentrate light toward its source. Retains `FogAnisotropy`. |
 | Volumetric Light Placement (Advanced) / Clear Space | 0 m | Near-camera space without added scattering, 0–100 m. |
-| Fade With Height | 200% | Multiplies the current weather's reciprocal height falloff, 0–300%. |
-| Indoor Light Density | 0% | Optional scattering inside authored interior volumes, independent of indoor fog exclusion. |
+| Fade With Height | 100% | Multiplies the current weather's reciprocal height falloff, 0–300%. |
+| Indoor Light Density | 100% | Scattering inside authored interior volumes, independent of indoor fog exclusion. |
 | Volumetric Light Quality (Advanced) / Lamp & Fire Shadows | On | RT/PT traces world visibility; raster uses native atlas/cube maps. Off can leak through walls. |
-| Lamp Occlusion Quality | Balanced | RT fog samples per contributing cell/light: Low (1), Balanced (2), High (3), Ultra (4). Raster follows native shadow-map quality. Disabled with Lamp & Fire Shadows. |
+| Lamp Occlusion Quality | Low | RT fog samples per contributing cell/light: Low (1), Balanced (2), High (3), Ultra (4). Raster follows native shadow-map quality. Disabled with Lamp & Fire Shadows. |
 | Stabilize Light Over Time | On | Off rejects lighting history and uses deterministic current-frame quadrature. |
+
+### Settings order and screenshot defaults
+
+The 11 November 2026 defaults match the user's two screenshots, with their later
+override of Lamp Occlusion Quality to Low (one visibility sample). Fog proceeds
+through Fog & Performance, Fog Appearance, Fog Placement, Fog Medium (Advanced),
+Fog Quality (Advanced), then Diagnostics (Advanced). The medium's physical
+density is adjusted before its reconstruction filter. Fog defaults are:
+
+| Control | Default |
+| --- | --- |
+| Fog Rendering / Quality Preset | Volumetric / Performance |
+| Fog Amount / Distant Sky Haze | 35% / 120% |
+| Clear Distance / Fade With Height | -10 / 100% |
+| Fog Density / Smooth Fog Lighting | 100% / On |
+
+Lighting proceeds through World Lighting & Shadows, Sun & Moon Appearance,
+the four existing Volumetric Light sections, then Character Lighting. Inside
+appearance, density comes first, the two light-source brightness controls stay
+adjacent, and directional Light Focus follows them. Sun Size and its Glow Size
+stay adjacent; Moon Size precedes Evening Sunlight Colour. Character Fill Light
+is followed by Match the Environment, then Gameplay Brightness and Dialogue &
+Cutscene Brightness. This keeps behavior switches before their strength controls.
+
+| Other Lighting controls | Defaults |
+| --- | --- |
+| Surface Lighting / Sun & Moon Shadows / Small Object Shadows | Improved / Improved / Improved |
+| Shadow Softness / Small Shadow Reach | 0.250 degrees / 1.00 m |
+| Sun Size / Sun Glow Size / Moon Size / Evening Sunlight Colour | 75% / 125% / 75% / 50% |
+| Character Fill Light / Match the Environment | Improved / On |
+| Gameplay Brightness / Dialogue & Cutscene Brightness | 0.20 / 0.20 |
+
+The order applies NN/g's [proximity principle](https://www.nngroup.com/articles/gestalt-proximity/)
+by keeping related sources and dependent controls together, and
+[progressive disclosure](https://www.nngroup.com/articles/progressive-disclosure/)
+by retaining the existing Advanced sections and their initial collapsed state.
+This is a task-based design judgment using those principles; no formal user
+study or usage-frequency measurements are claimed. Labels, sections, saved
+keys, tooltips, ranges, tab ownership and rendering algorithms are unchanged.
+Existing saved values remain; a fresh preset or that tab's Reset All uses the
+new defaults. Preset Off retains native/original values.
 
 Changing Fog Amount, Fog Density, Fog Clear Distance or Fog Fade With Height
 does not change the beam medium. Light Density zero removes beams without
@@ -57,7 +98,9 @@ Wronski's AC4 volume pipeline is already the core of this mod. The extension
 separates coefficients and controls rather than duplicating the grid or
 sampling the final displayed scene. Generation evaluates fog extinction and
 beam extinction independently at the same cell and applies the same captured
-exterior fraction to each. Authored interiors remain vacuum for fog. Light has an independent indoor-density multiplier, defaulting to zero to preserve clear interiors.
+exterior fraction to each. Authored interiors remain vacuum for fog. Light has
+an independent indoor-density multiplier, defaulting to 100% to use the outdoor
+light density; zero keeps interiors clear of added scattering.
 
 The existing raw/resolved FP16 RGB + extinction cells now describe the beam
 medium. A four-byte-per-cell sidecar holds current fog extinction. Integrated
