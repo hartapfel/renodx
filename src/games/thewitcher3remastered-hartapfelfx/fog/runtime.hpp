@@ -10,6 +10,7 @@
 #include "bindings.hpp"
 #include "settings.hpp"
 #include "fast_noise.hpp"
+#include "../water/light_layout.h"
 
 namespace hartapfelfx::fog::runtime {
 using Microsoft::WRL::ComPtr;
@@ -34,6 +35,7 @@ struct __declspec(uuid("01a25de0-e89c-7864-a4f1-1790756c20d0")) DeviceData {
   std::unordered_map<uint64_t, Pipelines> pipelines;
   std::vector<api::command_queue*> queues;
   std::deque<std::shared_ptr<Job>> volumes, interiors, active;
+  std::deque<std::shared_ptr<Job>> water_lights;
   uint64_t sequence = 0;
   ComPtr<ID3D12Resource> fast, zero;
 };
@@ -306,6 +308,15 @@ inline void CaptureInterior(api::command_list* cmd) {
   RetainStorage(cmd, job);
   if (DrawVolume(cmd, data, job.get(), false, false, false, false, false, true)) ++fog::interior_captures;
 }
+inline uint32_t SunTextureFlags(api::command_list* cmd, const BindingState& state) {
+  uint32_t flags = 0;
+  for (auto [slot, flag] : {std::pair{19u, 1u}, std::pair{14u, 2u}}) {
+    const auto input = Resolve(cmd, state, api::descriptor_type::texture_shader_resource_view, slot);
+    if (input.HasResourceView() && input.resource_view.handle
+        && cmd->get_device()->get_resource_view_desc(input.resource_view).type == api::resource_view_type::texture_2d_array) flags |= flag;
+  }
+  return flags;
+}
 inline void Generate(api::command_list* cmd, bool compute) {
   if (!settings || settings->enabled < .5f || cmd->get_device()->get_api() != api::device_api::d3d12) return;
   if (reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native())->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) return;
@@ -378,14 +389,50 @@ inline void Generate(api::command_list* cmd, bool compute) {
     ++fog::interior_matches;
     break;
   }
-  const auto& source_bindings = compute ? bindings->compute : bindings->graphics;
-  for (auto [slot, flag] : {std::pair{19u, 1u}, std::pair{14u, 2u}}) {
-    const auto input = Resolve(cmd, source_bindings, api::descriptor_type::texture_shader_resource_view, slot);
-    if (input.HasResourceView() && input.resource_view.handle
-        && cmd->get_device()->get_resource_view_desc(input.resource_view).type == api::resource_view_type::texture_2d_array) flags |= flag;
-  }
+  flags |= SunTextureFlags(cmd, compute ? bindings->compute : bindings->graphics);
   std::memcpy(job->parameters->mapped + 272, &flags, sizeof(flags));
   DrawVolume(cmd, data, job.get(), compute, false);
+}
+inline void GenerateWaterLight(api::command_list* cmd, bool compute) {
+  if (!(settings->water_enabled > .5f) || cmd->get_device()->get_api() != api::device_api::d3d12
+      || reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native())->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) return;
+  auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
+  if (!data || !bindings || !data->zero) return;
+  const uint32_t flags = WATER_LIGHT_CAPTURE | SunTextureFlags(cmd, compute ? bindings->compute : bindings->graphics);
+  std::lock_guard lock(data->mutex);
+  auto job = std::make_shared<Job>();
+  job->frame = bindings->sun.frame;
+  job->width = job->height = WATER_LIGHT_GRID;
+  job->slices = WATER_LIGHT_SLICES;
+  if (!AllocateJob(cmd, data, job, WATER_LIGHT_HEADER + WATER_LIGHT_GRID * WATER_LIGHT_GRID * WATER_LIGHT_SLICES * 4u)) return;
+  std::memcpy(job->allocation->mapped, settings, sizeof(*settings));
+  const uint32_t grid[8] = {job->width, job->height, job->slices, 0, flags, 0, 0, 0};
+  std::memcpy(job->allocation->mapped + 256, grid, sizeof(grid));
+  if (!DrawVolume(cmd, data, job.get(), compute, false)) return;
+  std::erase_if(data->water_lights, [&](const auto& cached) {
+    return cached->frame.buffer == job->frame.buffer && cached->frame.offset == job->frame.offset;
+  });
+  data->water_lights.push_back(job);
+  while (data->water_lights.size() > 4) data->water_lights.pop_front();
+}
+inline bool BindWaterLight(api::command_list* cmd) {
+  const auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
+  auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  if (!bindings || !data || !data->zero || !renodx::utils::data::Get<CommandData>(cmd)) return false;
+  const int root = RootIndex(cmd, bindings->graphics.layout, api::descriptor_type::buffer_shader_resource_view, 0, 71);
+  if (root < 0) return false;
+  const auto frame = Resolve(cmd, bindings->graphics, api::descriptor_type::constant_buffer, 12).buffer_range;
+  std::lock_guard lock(data->mutex);
+  uint64_t address = data->zero->GetGPUVirtualAddress();
+  for (const auto& job : data->water_lights) {
+    if (job->frame.buffer != frame.buffer || job->frame.offset != frame.offset) continue;
+    RetainStorage(cmd, job);
+    address = job->allocation->scratch->GetGPUVirtualAddress();
+    break;
+  }
+  reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native())->SetGraphicsRootShaderResourceView(root, address);
+  return true;
 }
 inline bool Prepare(api::command_list* cmd) {
   if (reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native())->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) return false;
@@ -594,8 +641,12 @@ inline void Use(DWORD reason, ShaderInjectData* injection) {
   settings = injection;
   raster::Use(reason);
   if (reason == DLL_PROCESS_ATTACH) {
-    on_sun = Generate;
+    on_sun = [](auto* cmd, bool compute) {
+      GenerateWaterLight(cmd, compute);
+      Generate(cmd, compute);
+    };
     sun_enabled = &injection->enabled;
+    water_enabled = &injection->water_enabled;
     on_interior = CaptureInterior;
     on_local = ApplyLocal;
     reshade::register_event<reshade::addon_event::init_device>(OnInitDevice);
@@ -610,6 +661,7 @@ inline void Use(DWORD reason, ShaderInjectData* injection) {
   } else if (reason == DLL_PROCESS_DETACH) {
     on_sun = nullptr;
     sun_enabled = nullptr;
+    water_enabled = nullptr;
     on_interior = nullptr;
     on_local = nullptr;
     reshade::unregister_event<reshade::addon_event::init_device>(OnInitDevice);

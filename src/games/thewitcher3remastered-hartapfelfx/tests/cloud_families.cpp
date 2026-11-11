@@ -31,15 +31,15 @@ int main() {
   write(&systems,0xb8,system_handle.data());write(&map,0x110,uint32_t(101));
   family::Update(true);
   for(auto& name:family::names)assert(name.native!=0);
-  for(const auto& profile:family::profiles)
-    assert(profile.low[2]==0.f &&profile.low[3]==0.f);
   for(const auto& row:family::weather) {
     write(&map,0x110,uint32_t(100+row.region));
     write(&weather,0x18,family::names[row.name].native);
     family::Update(true);
     assert(uint8_t(family::current.load())==row.profile);
     if(std::string_view(family::names[row.name].text)=="WT_Light_Clouds")
-      assert(family::profiles[row.profile].low[0]>0.f ||family::profiles[row.profile].low[1]>0.f);
+      assert(family::profiles[row.profile].low[3]==1.f);
+    if(std::string_view(family::names[row.name].text)=="WT_Clear")
+      assert(family::profiles[row.profile].low[2]==1.f &&family::profiles[row.profile].low[3]==0.f);
     if(std::string_view(family::names[row.name].text).find("Rain")!=std::string_view::npos)
       assert(family::profiles[row.profile].high[3]==1.f);
   }

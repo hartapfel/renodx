@@ -34,6 +34,7 @@ groupshared float3 sky_samples[64];
       && all(previous_shadow.Load4(256) == asuint(frame[68]))
       && all(previous_shadow.Load4(272) == asuint(cloud_clock))
       && all(asfloat(previous_shadow.Load3(48)) == frame[0].xyz)
+      && asfloat(previous_shadow.Load(288)) == CloudBase
       && all(asfloat(previous_shadow.Load3(292)) == cloud_low_sun.xyz)
       && all(previous_shadow.Load4(304)==asuint(celestial))
       && previous_shadow.Load(352)==asuint(cloud_low_sun.w)
@@ -59,7 +60,7 @@ groupshared float3 sky_samples[64];
     shadow_data[11]=frame[68];shadow_data[12]=cloud_clock;
   }
   transmission[id.xy]=1.f;
-  if(!valid ||!clock_valid ||integration.x==0.f ||appearance.x==0.f ||appearance.y==0.f)return;
+  if(!valid ||!clock_valid ||integration.x==0.f ||appearance.x==0.f ||appearance.y==0.f||cloud_main_strength<=0.f)return;
   float3 origin=float3(center+((id.xy+.5f)/dimensions.xy-.5f)*dimensions.z,0);
   float2 interval=CloudInterval(origin,sun);
   if(interval.y<=interval.x)return;
@@ -67,11 +68,10 @@ groupshared float3 sky_samples[64];
   float ds=(interval.y-interval.x)/steps;
   // Shadow texels integrate a finite beam: filter its broad density instead
   // of repeatedly resolving sub-texel view-ray erosion in distant shadows.
-  float footprint=max(texel,ds)*scattering.w/min(CloudFormationScale*appearance.z,2800.f);
+  float footprint=max(texel,ds)*scattering.w/min(cloud_formation_period,cloud_vertical_period);
   float lod=clamp(log2(max(footprint,1.f)),0.f,4.f);
   float optical_depth=0.f;
   float weighted_depth=1.f;
-  if(any(cloud_family_low.xy>0.f)) {
   [loop]for(uint i=0;i<steps &&optical_depth<12.f;++i) {
     // March from the sun-facing top. The transmittance-weighted depth is the
     // slide-35 blocker estimate; Beer transmission remains available for
@@ -80,7 +80,6 @@ groupshared float3 sky_samples[64];
     optical_depth+=CloudDirectBeamScale()*CloudOpticalExtinction
         *CloudDensity(p,(uint)scattering.y,lod,texel)*ds;
     weighted_depth=lerp(weighted_depth,(i+.5f)/steps,exp(-4.f*optical_depth));
-  }
   }
   float blocker=CloudBase+CloudThickness()*(1.f-weighted_depth);
   // A half-float ESM needs a smaller exponent than Annen's 32-bit ESM80.

@@ -14,8 +14,31 @@ SamplerState fog_wrap_sampler : register(s14);
 #include "../fog/local_lights.hlsli"
 #define fog_clamp_sampler FogLocalSampler
 #include "../fog/sun.hlsli"
+#include "../water/caustics.hlsli"
 [numthreads(1, 1, 1)] void main() {
   float test_distance=sampling.w!=0u?asfloat(sampling.w):1000.f;
+  const float water_distance = test_distance * .01f;
+  volume.Store4(176, asuint(float4(WaterTransmittance(water_distance, .075f, float3(.25f, .5f, 1.f)), WaterFresnel(1.f, WaterIor))));
+  volume.Store4(192, asuint(float4(WaterFresnel(.5f, rcp(WaterIor)), WaterFresnel(.8f, rcp(WaterIor)),
+                                      WaterFresnel(0.f, WaterIor), WaterFresnel(1.f, rcp(WaterIor)))));
+  const float3 sun = normalize(float3(1.f, 0.f, 1.f));
+  volume.Store4(208, asuint(float4(CausticFocus(0.f, 0.f), CausticFocus(float2(.5f, 0.f), 0.f),
+                                      WaterLightSlope(sun, 1.331f).x < WaterLightSlope(sun, 1.337f).x,
+                                      WaterLightSlope(float3(0.f, 0.f, 1.f), 1.331f).x)));
+  const float3 caustic = WaterCaustics(0.f, 1.2f, 6.f, float3(0.f, 0.f, 1.f), 0.f);
+  volume.Store4(224, asuint(float4(caustic.g > .4f && all(caustic == caustic.g),
+                                      length(ResolvedWaterSlope(0.f, .2f, 0.f)) > .02f,
+                                      length(ResolvedWaterSlope(0.f, .2f, 1.f)), WaterExitFresnel(.5f, .065f))));
+  volume.Store4(240, asuint(float4(WaterExitFresnel(WaterCriticalCosine - .064f, .065f),
+                                      WaterExitFresnel(WaterCriticalCosine, .065f),
+                                      WaterExitFresnel(WaterCriticalCosine + .064f, .065f),
+                                      WaterExitFresnel(.8f, .065f))));
+  const float3 down = float3(0.f, 0.f, -1.f);
+  const float column = WaterColumnLength(3.f, down, down, refract(down, -down, rcp(WaterIor)).z);
+  volume.Store4(256, asuint(float4(WaterTransmittance(0.f, WaterMediumDensity(1.f, .85f), 1.f).g,
+                                  WaterTransmittance(column, WaterMediumDensity(0.f, .85f), 1.f).g,
+                                  WaterTransmittance(column, WaterMediumDensity(1.f, .85f), 1.f).g,
+                                  WaterTransmittance(column, WaterMediumDensity(2.f, .85f), 1.f).g)));
   volume.Store4(144, asuint(float4(ReceiverFrameMatches() ? 1.f : 0.f, 0, 0, 0)));
   volume.Store4(160,asuint(ReceiverFogVarying(float4(960,540,0,1),test_distance)));
   FogLocalLight light = (FogLocalLight)0;

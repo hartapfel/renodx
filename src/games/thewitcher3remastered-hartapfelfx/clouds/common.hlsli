@@ -19,12 +19,14 @@ cbuffer Parameters : register(b2) {
   float4 celestial; // stars, packed Moon offset, sky haze, validity tag
   float4 private_sky[8]; // existing settings/material/size page, bytes256..383
   float4 emission_sun,emission_moon; // same private page as sky/composite
+  float4 family_appearance; // source clear/light weights, target clear/light weights
 }
 cbuffer Previous : register(b3) { float4 previous[341]; }
 cbuffer PreviousParameters : register(b4) {
   float4 previous_dimensions, previous_integration, previous_appearance, previous_atmosphere, previous_scattering;
   uint4 previous_identity;
   uint4 previous_storage;
+  float4 previous_cloud_layer; // base altitude in x
 }
 ByteAddressBuffer cloud_status : register(t9);
 ByteAddressBuffer cloud_shared : register(t8);
@@ -34,6 +36,12 @@ static float4 cloud_family_low=asfloat(cloud_shared.Load4(320));
 static float4 cloud_family_high=asfloat(cloud_shared.Load4(336));
 static float cloud_main_strength=max(cloud_family_low.x,cloud_family_low.y);
 static float cloud_deck=cloud_family_low.y/max(cloud_family_low.x+cloud_family_low.y,.001f);
+static float cloud_light_weather=cloud_family_low.w;
+static const float CloudLowBase=433.f;
+float CloudWeatherBase(float2 clear_light) {
+  return lerp(CloudLowBase,1200.f,saturate(clear_light.x+clear_light.y));
+}
+static float CloudBase=CloudWeatherBase(cloud_family_low.zw);
 #include "low_sun.hlsli"
 // Severe precipitation follows the native weather blend and the same temporal
 // publication as formation weights. Unknown weather is conservatively unedited.
@@ -52,7 +60,7 @@ bool CloudAlreadyRendered() {
       &&all(frame[204]==previous[204]) &&all(frame[205]==previous[205])
       &&all(frame[66]==previous[66]) &&all(frame[67]==previous[67])
       &&all(frame[68]==previous[68]) &&all(frame[286]==previous[286])
-      &&scattering.z==previous_scattering.z;
+      &&scattering.z==previous_scattering.z &&CloudBase==previous_cloud_layer.x;
 }
 Texture3D<float4> shape_noise : register(t0);
 Texture2DArray<float2> weather : register(t1);
@@ -61,11 +69,10 @@ Texture2D<float> scene_depth : register(t2);
 SamplerState wrap_sampler : register(s0);
 SamplerState clamp_sampler : register(s1);
 static const float PlanetRadius = 6371000.f;
-static float CloudBase=morphology.x;
-// Clear-weather native cloud meshes span about 15 km in the captured scene.
-// Use kilometre-scale main billows, with independent metre-scale erosion,
-// rather than the small smoke-like puffs of the initial 2800 m noise tile.
-static const float CloudFormationScale = 7200.f;
+// Restore the former horizontal scale for Light Clouds. Blend the period
+// with the same filtered weather weight that drives the layer height.
+static float cloud_formation_period = lerp(1550.f,3960.f,cloud_light_weather)*appearance.z;
+static float cloud_vertical_period = 2800.f*lerp(1.f,.75f,cloud_light_weather);
 // Native sky 0x449D3390 places its solar lobe at b12[204].yzw. b12[38]
 // drives atmospheric attenuation instead; in the live scene they differ by
 // 4.48 degrees (~460 m at the cloud base). Do not cast through that other gap.
@@ -89,8 +96,8 @@ float3 CloudLightingDirection(bool terrain=false) {
 // Density setting. Use one calibrated direct-beam column for the visible disc
 // and the sunlight reaching terrain; otherwise one can vanish without the other.
 float CloudDirectBeamScale() { return max(1.f,1.f/max(appearance.y,.125f)); }
-float CloudThickness() {return 1200.f*appearance.w;}
-float CloudDetailScale() {return 1200.f*max(atmosphere.z,.2f);}
+float CloudThickness() {return 1200.f*appearance.w*lerp(1.f,.80f,cloud_light_weather);}
+float CloudDetailScale() {return 1200.f*max(atmosphere.z,.2f)*lerp(1.f,.80f,cloud_light_weather);}
 float CloudBaseReliefScale() {return CloudDetailScale()*saturate(atmosphere.y)*lerp(.25f,1.f,atmosphere.w);}
 float CloudMinimum() {return CloudBase-.16f*CloudBaseReliefScale()*microstructure.z;}
 float3 CloudRay(float2 uv) {
@@ -120,13 +127,13 @@ float2 CloudSphere(float3 origin,float3 ray,float height) {
   float a=q, d=abs(q)>1.e-8f ? c/q : -b+root;
   return float2(min(a,d),max(a,d));
 }
-float2 CloudInterval(float3 origin,float3 ray) {
-  float2 outer=CloudSphere(origin,ray,CloudBase+CloudThickness());
-  float2 inner=CloudSphere(origin,ray,CloudMinimum());
+float2 CloudShell(float3 origin,float3 ray,float base,float top) {
+  float2 outer=CloudSphere(origin,ray,top);
+  float2 inner=CloudSphere(origin,ray,base);
   float altitude=CloudAltitude(origin);
-  float start=altitude<CloudMinimum() ? inner.y : max(0.f,outer.x);
+  float start=altitude<base ? inner.y : max(0.f,outer.x);
   float end=outer.y;
-  if(altitude>=CloudMinimum() && inner.x>0.f)end=min(end,inner.x);
+  if(altitude>=base && inner.x>0.f)end=min(end,inner.x);
   if(ray.z<0.f) {
     // Reject the shell on the far side of the solid planet. The old range
     // clamp hid this intersection error for shallow downward environment rays.
@@ -139,6 +146,9 @@ float2 CloudInterval(float3 origin,float3 ray) {
   // 80 km clamp ended grazing rays while they were still below the cloud base,
   // drawing a straight cloud boundary above the geographic horizon.
   return float2(start,end);
+}
+float2 CloudInterval(float3 origin,float3 ray) {
+  return CloudShell(origin,ray,CloudMinimum(),CloudBase+CloudThickness());
 }
 float CloudWeather(float3 p, out float storm_profile) {
   storm_profile=0.f;
@@ -175,12 +185,14 @@ float CloudDensity(float3 p,uint detail,float lod,float footprint=0.f) {
   float coverage=CloudWeather(p,storm_profile);
   coverage=max(coverage,cloud_family_high.z*appearance.x);
   if(coverage<.002f)return 0.f;
-  float3 advected=p+float3(CloudWindOffset(frame[67].xy),0);
+  // Translate the noise with the weather-driven base. Keep the same height
+  // reference for the low deck so it retains its established shape.
+  float3 advected=p+float3(CloudWindOffset(frame[67].xy),CloudLowBase-CloudBase);
   // A separate rotated, wider column field breaks the alignment between the
   // 10 km weather tile and the smaller 3D billow tile without moving either
   // the authored weather front or the shared view/shadow world coordinates.
   float2 column_xy=float2(.8f*advected.x-.6f*advected.y,
-      .6f*advected.x+.8f*advected.y)/(CloudFormationScale*appearance.z*1.7f);
+      .6f*advected.x+.8f*advected.y)/(cloud_formation_period*1.7f);
   // Animate the unused noise axis, not the native weather probability field
   // (Nubis 2017, density-model animation). A 40-minute tile traversal slowly
   // grows/dissolves the column envelope while preserving its XY wind. The
@@ -191,6 +203,12 @@ float CloudDensity(float3 p,uint detail,float lod,float footprint=0.f) {
   // Let high Coverage intentionally close these smaller formation gaps.
   float breakup=lerp(1.f,lerp(.55f,1.3f,column.r),morphology.w);
   coverage=saturate(coverage*lerp(breakup,1.f,saturate(appearance.x-1.f)));
+  // Preserve gaps by weather even when the slider saturates the native
+  // mask. The same column field fills in progressively with heavier weather.
+  float fill=cloud_family_high.x;
+  float minimum_fill=saturate((fill-.30f)/.70f);
+  float maximum_fill=saturate(fill*1.2f+.12f)*smoothstep(0.f,.13f,fill);
+  coverage*=lerp(minimum_fill,maximum_fill,smoothstep(.37f,.76f,column.r));
   float opening = 0.f;
   float strand = 0.f;
   if (cloud_low_sun.w > 0.f) {
@@ -228,10 +246,11 @@ float CloudDensity(float3 p,uint detail,float lod,float footprint=0.f) {
   // bounded displacement turns billows over rather than translating the
   // whole cloud. All view/light/shadow/environment paths share this material.
   float4 side=shape_noise.SampleLevel(wrap_sampler,
-      float3(advected.x/(CloudFormationScale*appearance.z),.625f+cloud_clock.x/1200.f,advected.z/2800.f),lod);
+      float3(advected.x/cloud_formation_period,.625f+cloud_clock.x/1200.f,advected.z/2800.f),lod);
   advected.xz+=(side.gb-.5f)*float2(100.f,60.f)*structure.y;
   float4 body=shape_noise.SampleLevel(wrap_sampler,
-      advected/(float3(CloudFormationScale*appearance.zz,2800.f)*structure.x),clamp(lod-log2(structure.x),0.f,4.f));
+      advected/(float3(cloud_formation_period.xx,cloud_vertical_period)*structure.x),
+      clamp(lod-log2(structure.x),0.f,4.f));
   // A dimensional envelope keeps coverage/connectivity separate from erosion.
   // Unlike the previous weighted average of three narrow-range fields, the
   // full formation range remains available for nested structures at high density.

@@ -4,11 +4,19 @@ Standalone DX12 volumetric clouds, fog and lighting, ported from the working Cla
 implementation using original Remastered captures to decode the native inputs.
 The Night controls and graphics support code are bundled under `night/` and
 `lighting/graphics/`; building this addon does not require the standalone mods.
-The overlay has four tabs: **Clouds**, **Fog**, **Lighting** and **Nights**.
+The overlay has five tabs: **Clouds**, **Fog**, **Lighting**, **Water** and **Nights**.
 A shared preset slider sits above the tabs; a short Help & About section appears
 below every tab.
 Lighting includes independent sun/moon size and character fill; Nights contains
 the night look, schedule, brightness, atmosphere, colour and exposure.
+
+The **Water** tab has one **Improved Water** toggle for the surface and
+underwater replacement. **Water Murk** adjusts visibility through the water
+from both sides of the surface and defaults to 150%. Directional light and
+native shadows illuminate the underwater fog. Existing presets retain their
+saved Murk values. See the
+[water implementation notes](water/README.md) for the shader inputs, research
+and test scenes.
 
 Volumetric clouds include enhanced stars, Sun and Moon in both captured sky
 families, including Toussaint. **Nights > Night Atmosphere > Star Brightness**
@@ -145,19 +153,19 @@ Sample Spacing remain under **Cloud Quality (Advanced)**. Switching back to
 Custom restores those saved manual choices. These cloud quality choices are
 independent of the shared numbered preset slider above the tabs.
 
-New profiles start with **Performance** quality and the cloud defaults below.
+New profiles start with **High** quality and the cloud defaults below.
 Use **Reset All** on the Clouds tab to apply these values to an existing profile.
 
 | Section | Defaults |
 | --- | --- |
-| Performance | Volumetric rendering, Performance quality, Cloud Shadow Strength 100% |
-| Appearance | Coverage 200%, Density 20%, Formation Size 100%, Layer Thickness 100% |
-| Formation | Base Height 433 m, Roundness −64, Height Variation 41%, Gaps Between Formations 200% |
-| Edges | Edge Sharpness 93%, Edge Irregularity 100%, Base Fade Width 165%, Top Fade 74% |
-| Lighting | Sun & Moon Brightness 300%, Ambient Brightness 236%, Internal Shadows 200%, Bright Rim Strength 60% |
-| Structure | Billow Size 300%, Shape Irregularity 245%, Upper Cloud Lean 192%, Core Contrast 196% |
-| Detail | Surface Detail 51%, Detail Size 62%, Underside Softness 38% |
-| Erosion | Erosion Strength 236%, Wispy / Rounded Balance 55, Underside Relief 41%, Top Relief 171% |
+| Performance | Volumetric rendering, High quality, Cloud Shadow Strength 90% |
+| Appearance | Coverage 200%, Clear Sunrises & Sunsets On, Density 30%, Formation Size 189%, Layer Thickness 62% |
+| Formation | Roundness 23, Height Variation 172%, Gaps Between Formations 200% |
+| Edges | Edge Sharpness 93%, Edge Irregularity 100%, Base Fade Width 290%, Top Fade 74% |
+| Lighting | Sun & Moon Brightness 300%, Ambient Brightness 53%, Internal Shadows 88%, Bright Rim Strength 42% |
+| Structure | Billow Size 300%, Shape Irregularity 38%, Upper Cloud Lean 117%, Core Contrast 87% |
+| Detail | Surface Detail 51%, Detail Size 62%, Underside Softness 80% |
+| Erosion | Erosion Strength 236%, Wispy / Rounded Balance 17, Underside Relief 39%, Top Relief 171% |
 
 **Cloud Shadow Strength** under **Clouds & Performance** controls how much
 sunlight and moonlight clouds block from reaching the world. At 50%, clouds
@@ -219,7 +227,7 @@ sampling. Per-Pixel Integration uses the Ultra lighting field and integrates
 it to each receiver's exact depth, including transparent materials. It is very
 expensive and does not trace fresh geometry shadows per pixel. Smooth Fog
 Lighting is disabled in this mode because its prefix filter is bypassed.
-The existing interior exclusion, clouds, wind, HDR addon and four-tab flow remain.
+The existing interior exclusion, clouds, wind and HDR integration remain.
 Local-light injection selects the fog volume matching the current scene depth
 size, so returning from a different photo-mode view keeps lamps and fire in the
 active view. Intervening shadow viewports do not select the light volume.
@@ -271,7 +279,7 @@ hover tooltips, removes the repeated inline hint rows, restores the RenoDX prese
 slider and uses a short standard Help & About section with the Classic support
 links. Tab flow, conditional controls and per-tab resets stay as reviewed.
 
-Validation includes all-key/default/description auditing and four-tab reset tests
+Validation includes all-key/default/description auditing and five-tab reset tests
 covering hidden controls, parsing, independent sun/moon ownership and global
 exclusion. In-game review checks readability, navigation, saving and reset scope.
 
@@ -280,29 +288,30 @@ exclusion. In-game review checks readability, navigation, saving and reset scope
 Native weather selects billowing clouds and flatter volumetric decks. The catalog
 covers 56 regional weather states in Novigrad/Velen, Skellige, Kaer Morhen,
 White Orchard, its winter variant and Toussaint, including mapped quest weather.
-It derives 16 recipes (including the generic fallback) from 27 recognized native
+It derives 22 recipes (including the generic fallback) from 27 recognized native
 cloud effects. Unknown weather/worlds retain the generic fallback.
 
-The added middle sheet, altocumulus patches and high cirrus sheet have all been
-removed at the user's request. Their textures, setup and shading/shadow work are
-gone. **Light Clouds** weather retains a light 3D billow recipe when its native
-appearance used only those removed sheets, so the normal weather blend no longer
-fades the entire cloud field away. The native coverage map still controls its
-gaps. Other former-sheet-only weather keeps its existing clear-sky behavior.
-The main volumetric billows/decks retain their shapes and realtime controls.
+**Clear** is cloudless. **Light Clouds** has separated groups of
+smaller billows. **Medium**, **Heavy**, and **Stormy** weather progressively
+fill the gaps using the game's weather mask and cloud types. Coverage and
+Density still control the result, and the native weather blend carries the
+change smoothly across the sky.
 
-Native source/target weather and its blend drive the remaining families.
-The existing 0.8-second GPU fade prevents recipe changes from popping.
+The cloud base is automatic. Clouds fade in at **1,200 m** as **Clear** gives
+way to **Light**. **Medium**, **Heavy**, and **Stormy** weather start at **433 m**.
+The base follows the native weather blend and the existing 0.8-second GPU
+fade. To see the descent in gameplay, watch the same part of the sky as Light
+gives way to Medium or Heavy.
 Cloud advection uses **35% of the native broad-layer wind speed**, as requested
 after live testing. Direction, changing wind strength and calm weather still
-come from the game. The same scale applies to weather, formations,
+come from the game. The same scale applies to the lower weather field, formations,
 shadows, directional visibility and motion/history reconstruction.
 
 The catalog approximates native silhouettes; it does not copy native textures
 or track individual particles. Optional effect probabilities become expected
 appearance weights. `clouds/family_effects.json` retains the authored effect
 catalog; the offline `tools/generate_cloud_families.py` emits static tables
-with all removed 2D-sheet weights forced to zero.
+with weather coverage and the weights that control the cloud base.
 See [the weather map](clouds/WEATHER_MAP.md) for input and fallback boundaries.
 
 Edge shaping tightens the lower-density region, retaining dense interiors.
@@ -312,20 +321,20 @@ noise, runtime noise fetch or image-sharpening pass is added.
 
 ### Realtime cloud authoring
 
-The 20 additional controls apply while the game is running. They are saved with the
+The 19 additional controls apply while the game is running. They are saved with the
 selected addon preset. The Clouds tab's **Reset All** restores its rendering, performance and appearance controls.
 
 | Group | Controls |
 | --- | --- |
-| Cloud Formation | Base Height, Roundness, Height Variation, Gaps Between Formations |
+| Cloud Formation | Roundness, Height Variation, Gaps Between Formations |
 | Cloud Structure (Advanced) | Billow Size, Shape Irregularity, Upper Cloud Lean, Core Contrast |
 | Cloud Erosion (Advanced) | Erosion Strength, Wispy / Rounded Balance, Underside Relief, Top Relief |
 | Cloud Edges | Edge Sharpness, Edge Irregularity, Base Fade Width, Top Fade |
 | Cloud Lighting | Sun & Moon Brightness, Ambient Brightness, Internal Shadows, Bright Rim Strength |
 
-The cloud defaults above use the appearance values from the 9 November 2026
-Preset #1 screenshot. The underlying material scales use 100% as their
-reference, independently of the chosen starting values.
+The visible defaults above match the Preset #2 reference. The collapsed Cloud
+Detail controls retain their previous defaults.
+Existing presets retain saved values until changed or reset.
 
 For firmer silhouettes, start with Edge Sharpness and Base Fade Width. Use
 Edge Irregularity for coherent contour breakup. Roundness, Billow Size and

@@ -23,7 +23,7 @@ inline float LowSunSchedule(float time) {
 // alter the neutral 100% presentation of this new implementation.
 inline float coverage = 1.f, density = 1.f, size = 1.f, thickness = 1.f;
 inline float detail = 1.f, detail_size = 1.f, base_softness = 0.f;
-inline float base_height=1200.f, roundness=0.f, height_variation=1.f, coverage_breakup=1.f;
+inline float roundness=0.f, height_variation=1.f, coverage_breakup=1.f;
 inline float billow_size=1.f, warp=1.f, shear=1.f, density_contrast=1.f;
 inline float erosion=1.f, wisp_bias=0.f, base_relief=1.f, top_relief=1.f;
 inline float edge_sharpness=1.f, edge_roughness=1.f, base_feather=1.f, top_feather=1.f;
@@ -36,7 +36,7 @@ static_assert(sizeof(AuthoringParameters)==80);
 // One bounded snapshot feeds the view, shadow, reflection and history paths.
 inline AuthoringParameters Authoring() {
   return {
-      {std::clamp(base_height,300.f,5000.f),std::clamp(roundness,-1.f,1.f),
+      {0.f,std::clamp(roundness,-1.f,1.f),
           std::clamp(height_variation,0.f,2.f),std::clamp(coverage_breakup,0.f,2.f)},
       {std::clamp(billow_size,.25f,3.f),std::clamp(warp,0.f,3.f),
           std::clamp(shear,0.f,3.f),std::clamp(density_contrast,.25f,3.f)},

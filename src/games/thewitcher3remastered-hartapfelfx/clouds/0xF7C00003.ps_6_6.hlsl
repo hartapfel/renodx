@@ -39,7 +39,7 @@ void main(float4 position : SV_Position) {
   // The macro weather field and shape noise share this native wind advection.
   p.xy+=CloudWindOffset(frame[67].xy-previous[67].xy);
   float elapsed=cloud_clock.x-previous_cloud_clock.x;
-  p.z+=elapsed*.6f;
+  p.z+=previous_cloud_layer.x-CloudBase+elapsed*.6f;
   float4 view=p.x*previous[1]+p.y*previous[2]+p.z*previous[3]+previous[4];
   float4 clip=view.x*previous[13]+view.y*previous[14]+view.z*previous[15]+view.w*previous[16];
   float2 projected_uv=clip.xy/max(clip.w,1.e-6f)*float2(.5f,-.5f)+.5f;

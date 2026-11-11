@@ -171,6 +171,7 @@ int main(int argc, char** argv) {
           {"0xC4CBD1E4.vs_6_3.cso", "0xB7D286D5"},
           {"0xCCD2CA86.vs_6_3.cso", "0x449D3390"},
           {"0xD7E9A3B4.vs_6_3.cso", "0x57F658BC"},
+          {"0xD684B585.vs_6_3.cso", "0xECE2CD5B"},
           {"0xF20F0978.vs_6_3.cso", "0xBF0CA052"}};
       const DXGI_FORMAT input_formats[3][4] = {
           {DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32G32_UINT, DXGI_FORMAT_R32G32B32_UINT, DXGI_FORMAT_R32G32B32A32_UINT},
@@ -180,6 +181,8 @@ int main(int argc, char** argv) {
       auto water_domain = Read(std::filesystem::path(argv[1]) / "0xFDAA9A66.ds_6_3.cso");
       uint32_t receiver_failures = 0;
       for (const auto& [vertex_name, pixel_hash] : receivers) {
+        // Earlier capture sets predate the submerged composite fixture.
+        if (std::string_view(pixel_hash) == "0xECE2CD5B" && !std::filesystem::exists(std::filesystem::path(argv[1]) / vertex_name)) continue;
         auto vertex = Read(std::filesystem::path(argv[1]) / vertex_name);
         auto original = Read(std::filesystem::path(argv[1]) / (std::string(pixel_hash) + ".ps_6_6.cso"));
         auto replacement = Read(std::filesystem::path(argv[2]) / (std::string(pixel_hash) + ".cso"));
@@ -272,7 +275,7 @@ int main(int argc, char** argv) {
     reshade::unregister_addon(GetModuleHandle(nullptr));
     RemoveVectoredExceptionHandler(exception_observer);
     if (access_violations) throw std::runtime_error("Driver access violations during compatibility test " + std::to_string(access_violations.load()));
-    std::cout << "PASS: actual fog/HDR addons loaded, 12 native receiver pairs and private fog PSOs created, common/near-limit/unrelated/local root layouts survived. Extended=" << extended_layouts << " unrelated=" << unrelated_layouts << '\n';
+    std::cout << "PASS: actual fog/HDR addons loaded, captured receiver pairs and private fog PSOs created, common/near-limit/unrelated/local root layouts survived. Extended=" << extended_layouts << " unrelated=" << unrelated_layouts << '\n';
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
     return 1;

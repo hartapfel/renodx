@@ -1295,7 +1295,7 @@ float4 main(
     float air=SkyFogTransmission(celestial_ray);
     SkyDiscs(celestial_ray,celestial_footprint,air,solar,lunar,moon_mask);
     SV_Target.rgb+=SkyStars(celestial_ray,celestial_footprint,air,moon_mask);
-    if(sky_deferred!=0x534B5943u)SV_Target.rgb+=solar+lunar+SkyGlow(celestial_ray,air);
+    if(fx.sky_deferred!=0x534B5943u)SV_Target.rgb+=solar+lunar+SkyGlow(celestial_ray,air);
   }
   return SV_Target;
 }

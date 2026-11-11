@@ -5,6 +5,7 @@
 #include <DirectXPackedVector.h>
 #include <wrl/client.h>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -14,6 +15,7 @@
 #include <vector>
 #include "../fog/fast_noise.hpp"
 #include "../shared.h"
+#include "../water/light_layout.h"
 using Microsoft::WRL::ComPtr;
 void Check(HRESULT hr) {
   if (FAILED(hr)) throw std::runtime_error("D3D12 HRESULT " + std::to_string(hr));
@@ -466,6 +468,55 @@ int main(int argc, char** argv) {
       cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
       cmd->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
     };
+    // The zero-depth cascade shadows z > 0 and lights z < 0. Validate the
+    // water-only capture with the production Raster and compute shaders.
+    frame_data[0] = {};
+    light_data = {};
+    light_data[0] = {0, 0, 1, 0};
+    light_data[1] = {3, 2, 1, 0};
+    light_data[5][2] = .025f;
+    light_data[9][0] = 1.f;
+    light_data[10] = {.5f, .5f, .5f, 0.f};
+    light_data[14][2] = 1.f;
+    Upload(frame.Get(), frame_data.data(), sizeof(frame_data));
+    Upload(light.Get(), light_data.data(), sizeof(light_data));
+    const uint32_t water_grid[8] = {WATER_LIGHT_GRID, WATER_LIGHT_GRID, WATER_LIGHT_SLICES, 0, WATER_LIGHT_CAPTURE, 0, 0, 0};
+    Upload(grid.Get(), water_grid, sizeof(water_grid));
+    constexpr uint32_t layer = WATER_LIGHT_GRID * WATER_LIGHT_GRID;
+    constexpr uint32_t water_bytes = WATER_LIGHT_HEADER + layer * WATER_LIGHT_SLICES * 4;
+    for (bool compute : {false, true}) {
+      Check(allocator->Reset());
+      Check(cmd->Reset(allocator.Get(), compute ? generate_cs.Get() : generate_ps.Get()));
+      D3D12_RESOURCE_BARRIER barrier{};
+      barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      barrier.Transition = {output.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS};
+      cmd->ResourceBarrier(1, &barrier);
+      bind_inputs(output.Get());
+      if (compute) cmd->Dispatch(WATER_LIGHT_GRID / 4, WATER_LIGHT_GRID / 4, WATER_LIGHT_SLICES / 4);
+      else {
+        const D3D12_VIEWPORT viewport{0, 0, float(WATER_LIGHT_GRID * 8), float(WATER_LIGHT_GRID * WATER_LIGHT_SLICES / 8), 0, 1};
+        const D3D12_RECT scissor{0, 0, LONG(viewport.Width), LONG(viewport.Height)};
+        cmd->RSSetViewports(1, &viewport);
+        cmd->RSSetScissorRects(1, &scissor);
+        cmd->DrawInstanced(3, 1, 0, 0);
+      }
+      std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+      cmd->ResourceBarrier(1, &barrier);
+      cmd->CopyBufferRegion(readback.Get(), 0, output.Get(), 0, water_bytes);
+      finish_commands();
+      void* mapped = nullptr;
+      Check(readback->Map(0, nullptr, &mapped));
+      auto* words = static_cast<const uint32_t*>(mapped);
+      bool correct = words[0] == WATER_LIGHT_VALID && std::bit_cast<float>(words[18]) == 1.f
+                     && std::bit_cast<float>(words[20]) == 3.f;
+      for (uint32_t i = 0; i < layer * WATER_LIGHT_SLICES; ++i) {
+        const float expected = i / layer < WATER_LIGHT_SLICES / 2 ? 1.f : 0.f;
+        correct &= std::bit_cast<float>(words[WATER_LIGHT_HEADER / 4 + i]) == expected;
+      }
+      readback->Unmap(0, nullptr);
+      if (!correct) throw std::runtime_error("Water sunlight capture did not reproduce the native cascade boundary");
+    }
+    std::cout << "PASS water sunlight capture: 9216 cells each in Raster and compute, native radiance and cascade boundary\n";
     struct InteriorCase {
       float entry, exit, optical_length, scale = 128;
       uint32_t rejection = 0;
@@ -804,7 +855,7 @@ int main(int argc, char** argv) {
       barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
       barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
       cmd->ResourceBarrier(1, &barrier);
-      cmd->CopyBufferRegion(readback.Get(), 0, output.Get(), 0, 176);
+      cmd->CopyBufferRegion(readback.Get(), 0, output.Get(), 0, 272);
       Check(cmd->Close());
       ID3D12CommandList* lists[] = {cmd.Get()};
       queue->ExecuteCommandLists(1, lists);
@@ -812,10 +863,10 @@ int main(int argc, char** argv) {
       Check(fence->SetEventOnCompletion(serial, event));
       if (WaitForSingleObject(event, 30000) != WAIT_OBJECT_0) throw std::runtime_error("Feature GPU test timed out");
       void* mapped = nullptr;
-      D3D12_RANGE read{0, 176};
+      D3D12_RANGE read{0, 272};
       Check(readback->Map(0, &read, &mapped));
-      std::array<float, 44> values{};
-      std::memcpy(values.data(), mapped, 176);
+      std::array<float, 68> values{};
+      std::memcpy(values.data(), mapped, sizeof(values));
       readback->Unmap(0, nullptr);
       const float opacity=mode[2]==5.f?std::pow(1.f-std::exp(-Half(uint16_t(pack(0,0,0,.001f)[1]>>16))*(mode[4]>0.f?.5f:1.f)*std::max(0.f,mode[3]-.1f)),saved_frame[42][3])
           *std::clamp((mode[3]-(mode[5]>0.f?mode[5]:saved_frame[22][2]+mode[5])-saved_frame[48][1])*saved_frame[48][2],0.f,1.f):.5f;
@@ -844,6 +895,25 @@ int main(int argc, char** argv) {
       for (uint32_t i = 0; i < 8; ++i)
         if (values[28 + i] != expected_local[i]) throw std::runtime_error("RGB/channel/animated cookie or cube-shadow regression");
       if (values[36] != (reconstruction == 0.f ? 1.f : 0.f)) throw std::runtime_error("Receiver accepted the wrong camera volume");
+      const double water_distance = (mode[3] > 0.f ? mode[3] : 1000.f) * .01;
+      const double transmitted = std::sqrt(1. - 1.333 * 1.333 * (1. - .8 * .8));
+      const double s = (1.333 * .8 - transmitted) / (1.333 * .8 + transmitted);
+      const double p = (.8 - 1.333 * transmitted) / (.8 + 1.333 * transmitted);
+      const double normal_fresnel = std::pow(.333 / 2.333, 2);
+      const double water_expected[] = {std::exp(-water_distance * .075 * 1.4875), std::exp(-water_distance * .075 * 1.325),
+          std::exp(-water_distance * .075), normal_fresnel, 1., .5 * (s * s + p * p), 1., normal_fresnel,
+          0., .45, 1., 0., 1., 1., 0., 1.};
+      for (uint32_t i = 0; i < std::size(water_expected); ++i)
+        if (!std::isfinite(values[44 + i]) || std::abs(values[44 + i] - water_expected[i]) > 2.e-6)
+          throw std::runtime_error("Water extinction, Fresnel, caustic focusing or dispersion regression");
+      if (!(values[60] > .999f && values[60] >= values[61] && values[61] > values[62]
+            && values[62] > values[63] && std::abs(values[63] - values[49]) < 2.e-6f))
+        throw std::runtime_error("Filtered water exit lost its monotonic critical transition or exact interior Fresnel");
+      const float water_three_units = std::exp(-3.f * .23f * (.55f + .45f * .85f));
+      if (!(values[64] == 1.f && values[65] == 1.f
+            && std::abs(values[66] - water_three_units) < 2.e-6f
+            && std::abs(values[67] - water_three_units * water_three_units) < 2.e-6f))
+        throw std::runtime_error("Shared murk no longer follows the near-water optical path and slider");
       std::cout << "HDR reconstruction=" << reconstruction << " haze reduction="<<mode[1]<<" quality="<<mode[2]<<" clear distance="<<mode[5]
           << ", independent beam/veil, per-pixel transport, forward additive energy and native receivers passed\n";
     }

@@ -7,7 +7,7 @@ void main(float4 position : SV_Position) {
   uint3 id = uint3(uint2(position.xy), 0);
   if(any(id.xy>=uint2(dimensions.xy)) || CloudAlreadyRendered())return;
   result[id.xy]=float4(0,0,0,0);cloud_depth[id.xy]=0;
-  if(appearance.x==0.f ||appearance.y==0.f)return;
+  if(appearance.x==0.f ||appearance.y==0.f ||cloud_main_strength<=0.f)return;
   float2 uv=(float2(id.xy)+.5f)/dimensions.xy;
   float3 ray=CloudRay(uv);
   float2 interval=CloudInterval(frame[0].xyz,ray);
@@ -25,7 +25,7 @@ void main(float4 position : SV_Position) {
       length(CloudRay(uv+float2(0,1.f/dimensions.y))-ray));
   float depth=0.f;
   float4 cloud=float4(0,0,0,1);
-  if(interval.y>interval.x &&any(cloud_family_low.xy>0.f))
+  if(interval.y>interval.x)
     cloud=TraceCloud(frame[0].xyz,ray,interval,cone,id.xy,512u,160.f,depth);
   // History stores only intrinsic material radiance and transmission. Camera
   // air and foreground fog are applied after temporal reconstruction.

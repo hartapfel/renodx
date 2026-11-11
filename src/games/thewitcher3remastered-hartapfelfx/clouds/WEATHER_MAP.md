@@ -300,7 +300,7 @@ acceptance of motion and weather transitions remains pending.
 `family_effects.json` maps 27 recognized native cloud-effect filenames to mixtures
 of cumulus, flatter decks, broad thin sheets, altocumulus and cirrus. The offline
 `tools/generate_cloud_families.py <installed-cloud-weather.json>` emits
-`families.hpp`: 16 recipes including the legacy fallback, 56 regional weather
+`families.hpp`: 22 recipes including the legacy fallback, 56 regional weather
 entries and 30 weather names. It includes the six main/winter worlds' mapped
 quest states. Unknown names or unsupported worlds use recipe zero. Local fog,
 rain, snow, lightning and other non-sky effects retain their existing paths.
@@ -318,11 +318,58 @@ The native area and actual source/target weather CNames choose recipes even when
 their fakeShadow IDs coincide, and independently of envBlend or night-normalization
 toggles. One present-thread snapshot feeds the existing parameter page. GPU
 publication fades the complete family vectors on native time in the existing
-history pass. The main volume forms billows or a flatter deck. The added
-middle-sheet/altocumulus and high-cirrus sheets were removed at the user's request.
-Their authored weights remain in the evidence catalog but are zero in generated
-GPU recipes. Weather containing only those effects now produces clear sky and
-has no synthetic sheet shadows. No high-sheet atlas or lookup remains.
+history pass. The main volume forms billows or a flatter deck. The generator
+uses two slots in the low-family vector for the Clear and Light Clouds
+weights that control altitude. The weather fade interpolates both with the
+volume's density and coverage.
+
+## Formation size and weather coverage
+
+Formation Size and Billow Size both multiply the horizontal body period.
+Light Clouds uses the restored 3,960 m period before applying those controls.
+Medium, Heavy and Stormy weather use 1,550 m before scaling. Each noise tile
+contains several formations. The period blends with the Light weather weight.
+Sky, reflections, cloud lighting and shadows sample the same field and use its
+period when choosing a noise mip.
+
+The regional table now carries a formation fill weight through the existing
+native weather blend and GPU fade. After sampling the native weather mask and
+applying the Coverage slider, a broad column field applies that weight locally:
+
+| Weather | Formation behavior | Base |
+| --- | --- | --- |
+| Clear | Cloudless | 1,200 m for the transition into Light |
+| Light | Isolated groups with broad gaps | 1,200 m |
+| Medium | More groups and partial connections | 433 m |
+| Heavy | Broad banks with some openings | 433 m |
+| Stormy | Full native storm mask and storm profile | 433 m |
+
+Weather weights change where the lower layer can form, even with Coverage at
+200%. They do not force a prescribed fraction of any view or fill empty cells
+in the native mask. Storms and unmapped quest states keep full native fill.
+Light rain and ordinary snow use the Heavy fill range where mapped. Shallow
+cumulus with gaps follows [NASA's fair weather observations](https://science.nasa.gov/earth/earth-observatory/fair-weather-clouds-sri-lanka-81833/).
+The progression from few to overcast follows [NOAA's sky-cover categories](https://www.weather.gov/lzk/metar1.htm)
+as a visual guide. The independent coverage and shape fields follow
+[Guerrilla's Nubis production renderer](https://advances.realtimerendering.com/s2017/index.html).
+
+The altitude interpolates with the same published source and target weights as
+the cloud material. Density sampling moves vertically with the base, and motion
+reprojection uses the previous base to follow that movement. Sky, reflections
+and terrain shadows all use the shared altitude. The Base Height slider was
+removed, so a saved value from an earlier build has no effect.
+
+Clear has zero volume density and coverage, including when the native mask
+is saturated and Coverage is set to 200%. The standalone cirrus layer was
+removed from sky rendering, reflections and terrain shadows. Transitions
+fade the main volume in or out through the existing weather blend.
+
+Before the automatic base was added, a D3D12 replay used a captured Kaer Morhen
+camera and uniform weather input. The fraction of the frame with lower-cloud opacity above 20% was 98%
+before and 69% after for Light Clouds. Medium, Heavy and Storm measured 79%,
+97% and 100% in the same frame. In a separate Velen fixture with a spatially
+varying weather mask, the upper half measured 22%, 42%, 98% and 100% across
+those states. The percentages describe the replay fixtures.
 
 ## Low-sun clearing and precipitation
 
@@ -337,8 +384,8 @@ over the first 2.5% of the native precipitation blend, with a separate 0.2-secon
 filter so rain does not wait for the 0.8-second shape fade. Interrupted blends
 retain the filtered tail. A paused clock can acquire protection immediately,
 but cannot release it until time resumes. Full wet weather and unknown weather
-receive the original density field at every solar angle. No weather effect is
-removed or replaced by this control. The generated map now contains 19 unique
+retain their weather coverage at every solar angle. No weather effect is
+removed or replaced by this control. The generated map now contains 22 unique
 profiles across the same 56 regional rows.
 
 ## Light Clouds after fast travel and meditation
@@ -352,8 +399,8 @@ volumetric material regardless of the low-sun switch.
 For `WT_Light_Clouds` records with no retained main layer, the generator now uses
 a 0.45-strength volumetric billow recipe. Existing regional light-cloud recipes
 are retained. Native weather coverage and wind still place the clouds; the
-change adds no coverage floor and restores none of the removed 2D layers.
-Clear, storm and other cloud-family recipes retain their prior mapping.
+original fallback adds no coverage floor. The Light Clouds adjustments above
+use the same recipe and native weather mask.
 
 The duplicate-render cache also compares the visible solar and lunar inputs.
 The cloud-shadow metadata retains the low-sun direction in its existing spare

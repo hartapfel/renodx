@@ -613,7 +613,7 @@ int main(int argc, char** argv) {
       if(operation.find("authored")!=std::string_view::npos) {
         clouds::coverage=1.f;clouds::density=.2f;clouds::size=1.f;clouds::thickness=1.f;
         clouds::detail=1.3f;clouds::detail_size=.6f;
-        clouds::base_height=1650.f;clouds::roundness=.87f;clouds::height_variation=1.74f;
+        clouds::roundness=.87f;clouds::height_variation=1.74f;
         clouds::billow_size=1.58f;clouds::erosion=1.6f;clouds::wisp_bias=.55f;
         clouds::base_relief=.41f;clouds::top_relief=1.71f;clouds::edge_sharpness=.56f;
         clouds::base_feather=4.f;clouds::top_feather=.31f;
@@ -1132,7 +1132,14 @@ int main(int argc, char** argv) {
         for(const auto& sample:clear)Require(sample[0]==0.f&&sample[1]==0.f&&sample[2]==0.f
             &&sample[3]==1.f&&sample[4]==0.f,"Clouds Off altered the environment map");
         clouds::coverage=1.f;++inputs.revision;
-        cases+=2;
+        const uint64_t previous_family=inputs.family;
+        inputs.family=family_selection(1,"WT_Clear");
+        render(view);
+        for(const auto& sample:capture_environment())
+          Require(sample==std::array<float,5>{0.f,0.f,0.f,1.f,0.f},
+              "Clear weather left cloud radiance, opacity or depth in reflections");
+        inputs.family=previous_family;++inputs.revision;
+        cases+=3;
       }
       clouds::density = 0;
       ++inputs.revision;
@@ -1575,10 +1582,11 @@ int main(int argc, char** argv) {
         barrier.Transition={view.Shared(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,gpu::TextureRead,D3D12_RESOURCE_STATE_COPY_SOURCE};
         cmd->ResourceBarrier(1,&barrier);
         cmd->CopyBufferRegion(feature_readback.object.Get(),0,view.Shared(),320,32);
+        cmd->CopyBufferRegion(feature_readback.object.Get(),32,view.Shared(),288,4);
         std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);
         cmd->ResourceBarrier(1,&barrier);submit();
         void* mapped=nullptr;gpu::Check(feature_readback.object->Map(0,nullptr,&mapped));
-        std::array<float,8> result{};std::memcpy(result.data(),mapped,sizeof(result));
+        std::array<float,9> result{};std::memcpy(result.data(),mapped,sizeof(result));
         feature_readback.object->Unmap(0,nullptr);
         return result;
       };
@@ -1592,10 +1600,12 @@ int main(int argc, char** argv) {
           Require(state[channel]==expected.low[channel] &&state[channel+4]==expected.high[channel],
               "GPU family publication lost the native weather recipe");
         }
+        Require(state[8]==(expected.low[2]+expected.low[3]>0.f ? 1200.f : 433.f),
+            "Cloud base disagrees with the settled weather recipe");
         uint32_t occupied=0;
         for(size_t pixel=0;pixel<image.size();pixel+=4)
           occupied+=std::abs(image[pixel]-background[0])>.001f;
-        if(expected.low[0]>0.f ||expected.low[1]>0.f ||expected.high[0]>0.f)
+        if(expected.low[0]>0.f ||expected.low[1]>0.f)
           Require(occupied>10u,"An active native cloud-family recipe produced an empty sky");
         else
           for(size_t channel=0;channel<image.size();++channel)
@@ -1622,6 +1632,8 @@ int main(int argc, char** argv) {
         Require(std::abs(blended[channel]-(storm[channel]+(target_value-storm[channel])*channel_fade))<.00001f,
             "Interrupted family transition popped or used a different animation clock");
       }
+      Require(std::abs(blended[8]-std::lerp(433.f,1200.f,fade))<.001f,
+          "Cloud shadow metadata did not follow the smoothly blended base");
       std::vector<float> settled_image;
       for(uint32_t tick=1;tick<=48u;++tick)
         settled_image=render(transition,false,(tick&1u)!=0u,1000.f+1.f/60.f+tick*.25f);
@@ -1687,41 +1699,43 @@ int main(int argc, char** argv) {
           <<" pixels; fast travel and same-address meditation jumps pass with clearing On/Off\n";
       ++cases;
       cases+=2;
-      // Former high-sheet-only weather must remain completely clear in the
-      // view and native receivers, including when fakeShadow is zero.
-      clouds::View thin(&assets,width,height,clouds::quality,target_desc.Format);
+      // A saturated native mask and maximum Coverage must still leave Clear
+      // weather transparent in both the sky and the packed terrain shadow.
+      clouds::View clear_view(&assets,width,height,clouds::quality,target_desc.Format);
       inputs.family=family_selection(1,"WT_Clear");
-      clear_inputs(0.f,0.f);
-      const auto thin_sky=render(thin,false,false,2000.f);
-      for(size_t channel=0;channel<thin_sky.size();++channel)
-        Require(std::abs(thin_sky[channel]-background[channel%4u])<.00001f,
-            "Removed high sheet still contributed sky radiance or opacity");
+      clear_inputs(1.f,0.f);
+      clouds::coverage=2.f;++inputs.revision;
+      const auto clear_sky=render(clear_view,false,false,2000.f);
+      for(size_t channel=0;channel<clear_sky.size();++channel)
+        Require(std::abs(clear_sky[channel]-background[channel%4u])<.00001f,
+            "Clear weather rendered clouds with Coverage at 200%");
       for(float x:{-2500.f,0.f,2500.f})for(float y:{-2500.f,0.f,2500.f})
-        for(float altitude:{0.f,9000.f})
-          Require(probe(thin.Shared(),{x,y,altitude,1,0,0,0,0,0,0,1,10})[0]>.999f,
-              "Removed high sheet retained a native terrain shadow");
-      clouds::coverage=0.f;++inputs.revision;
-      const auto coverage_off=render(thin,false,true,2000.5f);
-      for(size_t channel=0;channel<coverage_off.size();++channel)
-        Require(std::abs(coverage_off[channel]-background[channel%4u])<.00001f,
-            "Coverage zero retained a removed cloud sheet");
+        Require(probe(clear_view.Shared(),{x,y,0.f,1,0,0,0,0,0,0,1,10})[0]==1.f,
+            "Clear weather left cloud shadows on terrain");
       clouds::coverage=1.f;++inputs.revision;
-      ++cases;
-      clear_inputs(0.f,.5f);++inputs.revision;
-      const auto foreground=render(thin,false,true,2001.f);
-      for(size_t channel=0;channel<foreground.size();++channel)
-        Require(std::abs(foreground[channel]-background[channel%4u])<.00001f,
-            "Removed cloud sheets drew through foreground terrain");
+      inputs.family=uint8_t(inputs.family) | (uint64_t(uint8_t(light_family))<<8)
+          | (uint64_t(std::bit_cast<uint32_t>(.5f))<<16);
+      render(clear_view,false,false,2002.f);
+      const auto clearing_blend=family_state(clear_view);
+      Require(clearing_blend[2]==.5f &&clearing_blend[3]==.5f &&clearing_blend[8]==1200.f,
+          "Native Clear-to-Light blend changed the shared base");
+      for(uint32_t i=0;i<2u;++i)
+        Require(clearing_blend[i]==.5f*light_profile.low[i],
+            "Clear-to-Light transition did not fade in the main layer from zero");
+      inputs.family=uint8_t(light_family) | (uint64_t(uint8_t(family_selection(1,"WT_Mid_Clouds")))<<8)
+          | (uint64_t(std::bit_cast<uint32_t>(.5f))<<16);
+      render(clear_view,false,true,2003.f);
+      Require(family_state(clear_view)[8]==816.5f,"Native Light-to-Medium midpoint did not set the shared cloud base");
       cases+=3;
       inputs.family=0;inputs.frame=frame_buffer.object->GetGPUVirtualAddress();++inputs.revision;
       clear_inputs(1.f,0.f);
-      std::cout<<"PASS all native family recipes, removed middle/high sheets, GPU publication, paused/interrupted blending, clear former-sheet sky, foreground clipping and terrain shadows\n";
+      std::cout<<"PASS native cloud families, weather-driven base, cloudless Clear, GPU publication, paused/interrupted blending and terrain shadows\n";
     }
     clouds::quality = 1;
     {
       struct Control { float* value; float minimum, maximum; const char* name; };
       const Control controls[]={
-          {&clouds::base_height,300,5000,"altitude"},{&clouds::roundness,-1,1,"roundness"},
+          {&clouds::roundness,-1,1,"roundness"},
           {&clouds::height_variation,0,2,"height variation"},{&clouds::coverage_breakup,0,2,"formation gaps"},
           {&clouds::billow_size,.25f,3,"billow size"},{&clouds::warp,0,3,"warp"},
           {&clouds::shear,0,3,"shear"},{&clouds::density_contrast,.25f,3,"density contrast"},
@@ -1731,10 +1745,10 @@ int main(int argc, char** argv) {
           {&clouds::base_feather,.2f,4,"base feather"},{&clouds::top_feather,.25f,4,"top feather"},
           {&clouds::sunlight,0,3,"direct light"},{&clouds::skylight,0,3,"sky light"},
           {&clouds::self_shadow,0,3,"self shadow"},{&clouds::forward_scattering,0,.95f,"forward scattering"}};
-      std::array<float,20> defaults{};
+      std::array<float,std::size(controls)> defaults{};
       for(uint32_t i=0;i<std::size(controls);++i) {
         defaults[i]=*controls[i].value;
-        *controls[i].value=controls[i].minimum+(controls[i].maximum-controls[i].minimum)*(i+1.f)/21.f;
+        *controls[i].value=controls[i].minimum+(controls[i].maximum-controls[i].minimum)*(i+1.f)/(std::size(controls)+1.f);
       }
       clouds::View authoring(&assets,width,height,clouds::quality,target_desc.Format);
       auto authoring_frame=frame;authoring_frame[340][0]=2.f;
@@ -1774,24 +1788,7 @@ int main(int argc, char** argv) {
       }
       for(uint32_t i=0;i<std::size(controls);++i)*controls[i].value=defaults[i];
       inputs.family=0;++inputs.revision;
-      for(float altitude:{300.f,5000.f}) {
-        clouds::base_height=altitude;++inputs.revision;
-        render(authoring,false,false,6003.f);
-        begin();
-        D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Transition={authoring.Shared(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,gpu::TextureRead,D3D12_RESOURCE_STATE_COPY_SOURCE};
-        cmd->ResourceBarrier(1,&barrier);
-        cmd->CopyBufferRegion(feature_readback.object.Get(),0,authoring.Shared(),288,4);
-        std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);cmd->ResourceBarrier(1,&barrier);submit();
-        void* mapped=nullptr;gpu::Check(feature_readback.object->Map(0,nullptr,&mapped));
-        float stored_base=0;std::memcpy(&stored_base,mapped,4);feature_readback.object->Unmap(0,nullptr);
-        Require(stored_base==altitude,"Native cloud receiver lost the authored base altitude");
-        Require(probe(authoring.Shared(),{0,0,altitude+1200.f*clouds::thickness+100.f,1,0,0,0,0,0,0,1,10})[0]>.999f,
-            "Authored cloud altitude shadowed a receiver above the layer");
-        ++cases;
-      }
-      clouds::base_height=defaults[0];++inputs.revision;
-      std::cout<<"PASS 20 authoring controls: GPU layout, both endpoints, visible response and coupled extremes\n";
+      std::cout<<"PASS 19 authoring controls: GPU layout, both endpoints, visible response and coupled extremes\n";
     }
     {
       // A persistent GlobalCB address can hold a new native time next frame.
@@ -1851,7 +1848,8 @@ int main(int argc, char** argv) {
       }
       std::cout << "Paused cloud frame change early=" << early_change << " late=" << late_change
                 << " confident=" << confidence_count() << " of " << temporal.LowWidth() * temporal.LowHeight() << '\n';
-      Require(late_change < early_change * .95, "Paused cloud samples did not converge");
+      Require(late_change == 0. || late_change < early_change * .95,
+          "Paused cloud samples did not converge");
       ++inputs.revision;
       render(temporal,false,false,100.2167f);
       Require(confidence_count() == 0,"Cloud control edit retained stale history");

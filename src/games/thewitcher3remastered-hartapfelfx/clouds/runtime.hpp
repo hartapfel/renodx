@@ -47,6 +47,9 @@ struct Recording {
   std::vector<gpu::ComPtr<ID3D12Resource>> lighting;
   std::vector<gpu::ComPtr<IUnknown>> native_inputs;
   std::vector<pool::Completion> completion;
+  bool NeedsRetirement() const {
+    return !views.empty() || !atlases.empty() || !lighting.empty() || !pages.empty();
+  }
 };
 struct __declspec(uuid("66374d6d-8560-48fd-a617-75cf842e2649")) DeviceData {
   std::mutex mutex;
@@ -54,6 +57,8 @@ struct __declspec(uuid("66374d6d-8560-48fd-a617-75cf842e2649")) DeviceData {
   std::mutex clock_mutex;
   Assets assets;
   gpu::UploadPool uploads;
+  gpu::Resource water_controls;
+  std::array<float, 2> water_values{};
   std::map<std::pair<uint64_t, uint64_t>, std::shared_ptr<Entry>> views;
   std::vector<std::shared_ptr<Entry>> allocated;
   std::vector<std::shared_ptr<AtlasStorage>> atlas_allocations;
@@ -358,6 +363,37 @@ inline bool PrepareReceiver(api::command_list* cmd, bool fog_ready, bool allow_n
   }
   return true;
 }
+inline bool BindWaterControls(api::command_list* cmd, float enabled, float murk) {
+  if (!MainCommand(cmd)) return false;
+  auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
+  auto* command = renodx::utils::data::Get<CommandData>(cmd);
+  const auto* bindings = renodx::utils::data::Get<fog::CommandData>(cmd);
+  if (!data || !command || !bindings) return false;
+  const int root = fog::runtime::RootIndex(cmd, bindings->graphics.layout, api::descriptor_type::constant_buffer, 0, 70);
+  if (root < 0) return false;
+  const std::array values{enabled, murk};
+  std::lock_guard lock(data->mutex);
+  try {
+    if (!data->water_controls.object || data->water_values != values) {
+      ShaderInjectData controls{};
+      controls.water_enabled = enabled;
+      controls.water_murk = murk;
+      data->water_controls = data->uploads.Upload(reinterpret_cast<ID3D12Device*>(cmd->get_device()->get_native()),
+                                                  &controls, sizeof(controls));
+      data->water_values = values;
+    }
+    auto& pages = command->recording.pages;
+    if (std::ranges::none_of(pages, [&](const auto& page) { return page.object.Get() == data->water_controls.object.Get(); })) {
+      pages.push_back(data->water_controls);
+    }
+    reinterpret_cast<ID3D12GraphicsCommandList*>(cmd->get_native())->SetGraphicsRootConstantBufferView(
+        root, data->water_controls.object->GetGPUVirtualAddress());
+    return true;
+  } catch (const std::exception& error) {
+    renodx::utils::log::e("HartapfelFX water settings: ", error.what());
+    return false;
+  }
+}
 inline uint64_t ShadowAddress(api::command_list* cmd, bool compute) {
   if (!MainCommand(cmd)) return 0;
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
@@ -441,7 +477,7 @@ inline void PrepareCelestialSky(api::command_list* cmd, bool replacement_ready) 
         &&description.texture.depth_or_layers==1&&area.width<=description.texture.width&&area.height<=description.texture.height
         &&Buffer(frame,341*16)&&Buffer(clock,16);
     const uint32_t deferred=command->deferred_sky?0x534B5943u:0u;
-    std::memcpy(page.data()+sizeof(ShaderInjectData),&deferred,4);
+    std::memcpy(page.data()+offsetof(ShaderInjectData,sky_deferred),&deferred,4);
     std::memcpy(page.data()+64,data->moon_material[command->toussaint_sky].data(),16);
     std::memcpy(page.data()+80,data->sun_material.data(),16);
     const float glow_size=std::clamp(sky::sun_glow_size,.25f,4.f);
@@ -1177,13 +1213,12 @@ inline void OnResetCommand(api::command_list* cmd) {
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
   if (!data || !command) return;
-  if (command->recording.views.empty() && command->recording.atlases.empty() && command->recording.lighting.empty()
-      && !data->retirement_pending.load(std::memory_order_relaxed)) {
+  if (!command->recording.NeedsRetirement() && !data->retirement_pending.load(std::memory_order_relaxed)) {
     *command = {};
     return;
   }
   std::lock_guard lock(data->mutex);
-  if (!command->recording.views.empty() || !command->recording.atlases.empty() || !command->recording.lighting.empty()) {
+  if (command->recording.NeedsRetirement()) {
     for (const auto& queue : command->queues) {
       uint64_t serial = queue->serial;
       if (queue->native && FAILED(queue->native->Signal(queue->fence.Get(), serial = ++queue->serial))) serial = UINT64_MAX;
@@ -1218,11 +1253,11 @@ inline void OnExecute(api::command_queue* queue, api::command_list* cmd) {
   auto* command = renodx::utils::data::Get<CommandData>(cmd);
   auto* data = renodx::utils::data::Get<DeviceData>(cmd->get_device());
   auto* q = renodx::utils::data::Get<QueueData>(queue);
-  if (!command || !data || (command->recording.views.empty() && command->recording.atlases.empty() && command->recording.lighting.empty())) return;
+  if (!command || !data || !command->recording.NeedsRetirement()) return;
   std::lock_guard lock(data->mutex);
   if (!q || !q->queue) { command->untracked = true; return; }
   if (std::find(command->queues.begin(), command->queues.end(), q->queue) == command->queues.end()) command->queues.push_back(q->queue);
-  // CPU-uploaded lighting pages need retirement fences, not cloud-resource
+  // CPU-uploaded control pages need retirement fences, not cloud-resource
   // dependencies or cross-queue serialization.
   if (command->recording.views.empty() && command->recording.atlases.empty()) return;
   if (data->ready && !q->assets_waited) {

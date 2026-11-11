@@ -88,7 +88,7 @@ float4 main(float4 position:SV_Position):SV_Target {
     [loop]for(uint i=0u;i<samples &&optical_depth<14.f;++i) {
       float sample_distance=interval.x+(i+.5f)*length_step;
       float footprint=max(sample_distance*cone,1.f);
-      float lod=clamp(log2(max(footprint*scattering.w/min(CloudFormationScale*appearance.z,2800.f),1.f)),0.f,4.f);
+      float lod=clamp(log2(max(footprint*scattering.w/min(cloud_formation_period,cloud_vertical_period),1.f)),0.f,4.f);
       optical_depth+=CloudOpticalExtinction*CloudDensity(frame[0].xyz+ray*sample_distance,
           (uint)scattering.y,lod,footprint)*length_step;
     }

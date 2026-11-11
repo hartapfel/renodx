@@ -1,5 +1,6 @@
 // Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #include "../shared.h"
+#include "../water/light_layout.h"
 #include "interior.hlsli"
 #include "math.hlsli"
 cbuffer NativeFrame : register(b12) { float4 fog_frame[341]; }
@@ -56,6 +57,24 @@ float4 UnpackVolume(uint2 value) { return f16tof32(uint4(value & 65535u, value >
 #if !defined(FOG_INTEGRATE_ONLY) && !defined(FOG_LOCAL_PASS)
 void GenerateCell(uint3 id) {
   if (any(id >= dimensions.xyz)) return;
+  if ((sampling.x & WATER_LIGHT_CAPTURE) != 0u) {
+    const float3 origin = floor(fog_frame[0].xyz / WATER_LIGHT_CELL) * WATER_LIGHT_CELL;
+    const float3 world = origin + (float3(id) + .5f - .5f * dimensions.xyz) * WATER_LIGHT_CELL;
+    if (all(id == 0u)) {
+      volume.Store4(0, uint4(WATER_LIGHT_VALID, asuint(origin)));
+      volume.Store4(16, asuint(fog_frame[0]));
+      volume.Store4(32, asuint(fog_frame[15]));
+      volume.Store4(48, asuint(fog_frame[286]));
+      volume.Store4(64, asuint(fog_light[0]));
+      volume.Store4(80, asuint(fog_light[1]));
+      volume.Store4(96, asuint(fog_frame[17]));
+    }
+    float distance = length(world - fog_frame[0].xyz);
+    float visibility = FogSunVisibility(world) * FogTerrainVisibility(world, sampling.x)
+                     * FogCloudVisibility(world, distance, sampling.x);
+    volume.Store(WATER_LIGHT_HEADER + 4u * CellIndex(id), asuint(visibility));
+    return;
+  }
   if (all(id == 0)) {
     float far_distance = max(1000.f, fog_frame[42].z + max(fx.start_distance, fog_frame[22].z));
     volume.Store4(0, asuint(float4(dimensions.xyz, far_distance)));

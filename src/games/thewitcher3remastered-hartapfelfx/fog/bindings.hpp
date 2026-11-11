@@ -14,6 +14,7 @@ inline std::atomic_uint64_t sun_captures = 0, fog_matches = 0, fog_fallbacks = 0
 inline std::atomic_uint64_t interior_captures = 0, interior_matches = 0;
 inline std::function<void(api::command_list*, bool)> on_sun;
 inline const float* sun_enabled = nullptr;
+inline const float* water_enabled = nullptr;
 inline std::function<void(api::command_list*, bool)> before_sun;
 inline std::function<void(api::command_list*, bool)> after_sun;
 inline std::function<uint64_t(api::command_list*, bool)> cloud_source;
@@ -163,7 +164,8 @@ inline void OnBarrier(api::command_list* cmd, uint32_t count, const api::resourc
 inline constexpr auto ObserveSun = []<typename Context>(Context& context)
     -> renodx::utils::command_action::CallbackResult<Context> {
   if (before_sun) before_sun(context.cmd_list, context.IsDispatch());
-  if (sun_enabled && *sun_enabled > .5f && CaptureSun(context.cmd_list, context.IsDispatch())) {
+  if (((sun_enabled && *sun_enabled > .5f) || (water_enabled && *water_enabled > .5f))
+      && CaptureSun(context.cmd_list, context.IsDispatch())) {
     if (on_sun) on_sun(context.cmd_list, context.IsDispatch());
   }
   if (after_sun) after_sun(context.cmd_list, context.IsDispatch());

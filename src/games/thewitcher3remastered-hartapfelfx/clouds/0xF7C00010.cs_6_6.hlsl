@@ -43,7 +43,7 @@ Texture3D<float> previous_visibility : register(t13);
   // changes; the filtered volume follows the same world grid as its source.
   float elapsed=cloud_clock.x-previous_cloud_clock.x;
   if(identity.x==previous_identity.x &&elapsed>=0.f &&elapsed<.5f
-      &&previous[66].x>0.f &&abs(frame[66].x-previous[66].x)<.001f) {
+      &&previous_cloud_layer.x>0.f &&previous[66].x>0.f &&abs(frame[66].x-previous[66].x)<.001f) {
     float2 old_center=floor(previous[0].xy/cell+.5f)*cell;
     float2 old_uv=(p.xy+CloudWindOffset(frame[67].xy-previous[67].xy)-old_center)/extent+.5f;
     if(all(old_uv>=0.f)&&all(old_uv<=1.f)) {

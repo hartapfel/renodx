@@ -45,8 +45,8 @@ for table in sorted(audit["tables"],key=lambda t:t["bundle"].lower().startswith(
         # Native coverage still supplies the gaps, with no new coverage floor.
         if name=="WT_Light_Clouds" and max(weights[:2])==0:
             weights[0]=.45
-        # Native flat/alto/cirrus effects remain catalogued as evidence,
-        # but all added 2D sheets were rejected and are not rendered.
+        clear=float(name=="WT_Clear")
+        light=float(name=="WT_Light_Clouds")
         # Weather texture slots are not precipitation identities. Use the
         # audited native weather/effect record, including regional quest rain.
         effects=[path.lower() for key,path in row.items() if key.endswith("_effect") and path
@@ -55,8 +55,23 @@ for table in sorted(audit["tables"],key=lambda t:t["bundle"].lower().startswith(
         severe=float(row.get("backgroundThunder","").lower()=="true"
             or any(word in name.lower() for word in ("rain","drizzle","storm","blizzard","thunder"))
             or any(any(word in path for word in ("rain","drizzle","storm","blizzard","thunder")) for path in effects))
-        rows[(region,name)]={"low":weights[:2]+[0.,0.],"high":[0.,1.,cover,severe]}
-profiles=[{"low":[1,0,0,0],"high":[0,0,0,0]}]
+        # Formation fill, independent of cloud type. Named photo-mode states
+        # keep their order even with Coverage at 200%.
+        if name=="WT_Clear":
+            fill=0.
+            weights[:2]=[0.,0.]
+            cover=0.
+        elif name=="WT_Light_Clouds":
+            fill=.13
+        elif name.startswith("WT_Mid_Clouds"):
+            fill=.35
+        elif name.startswith("WT_Heavy_") or name in ("WT_Light_Rain","WT_Snow"):
+            fill=.60
+        else:
+            # Storms and other quest weather keep the full native fill.
+            fill=1.
+        rows[(region,name)]={"low":weights[:2]+[clear,light],"high":[fill,1.,cover,severe]}
+profiles=[{"low":[1,0,0,0],"high":[1,0,0,0]}]
 names=sorted({name for _,name in rows})
 entries=[]
 for (region,name),profile in sorted(rows.items()):
@@ -76,7 +91,7 @@ lines=["""// Copyright (C) 2026 Hartapfel. SPDX-License-Identifier: MIT
 #include <cstdint>
 namespace hartapfelfx::clouds::families {
 struct Profile { std::array<float,4> low, high; };
-// low: cumulus, stratus deck, reserved, reserved; high: reserved, known, fallback cover, severe weather.
+// low: cumulus, stratus deck, clear weather, light-cloud weather; high: formation fill, known, fallback cover, severe weather.
 inline constexpr Profile profiles[] = {
 """]
 for profile in profiles:

@@ -25,11 +25,10 @@ RWByteAddressBuffer environment_header : register(u2);
   float2 interval=CloudInterval(frame[0].xyz,ray);
   // The consumer owns geometry occlusion and foreground atmosphere. A lower
   // hemisphere lookup remains clear, matching the main view's ground policy.
-  if(appearance.x>0.f &&appearance.y>0.f) {
+  if(appearance.x>0.f &&appearance.y>0.f &&cloud_main_strength>0.f &&interval.y>interval.x) {
     float cone=max(3.14159265359f/extent.y,
         6.28318530718f*sqrt(max(0.f,1.f-ray.z*ray.z))/extent.x);
-    if(interval.y>interval.x &&any(cloud_family_low.xy>0.f))
-      value=TraceCloud(frame[0].xyz,ray,interval,cone,id.xy,128u,400.f,depth);
+    value=TraceCloud(frame[0].xyz,ray,interval,cone,id.xy,128u,400.f,depth);
     if(value.a>=.999999f)depth=0.f;
   }
   environment[id.xy]=value;

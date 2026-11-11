@@ -9,34 +9,39 @@ extern "C" __declspec(dllexport) const char* const NAME="HartapfelFX settings te
 int main() {
   using namespace hartapfelfx::ui;
   try {
-    float coverage=0, fog=0, light=0, moon=0, exposure=0, global=0;
+    float coverage=0, fog=0, light=0, moon=0, exposure=0, global=0, water=0, murk=0;
     Setting cloud{.key="CloudCoverageV2",.binding=&coverage,.default_value=100.f,
         .parse=[](float value){return value*.01f;}};
     Setting mist{.key="FogDensity",.binding=&fog,.default_value=100.f};
     Setting surface{.key="PBRLighting",.binding=&light,.value_type=ValueType::INTEGER,.default_value=1.f};
     Setting disc{.key="MoonSize",.binding=&moon,.default_value=75.f};
+    Setting water_mode{.key="WaterEnabledV1",.binding=&water,.value_type=ValueType::BOOLEAN,.label="Improved Water",.section="Water"};
+    Setting water_murk{.key="WaterMurkV1",.binding=&murk,.default_value=150.f,.label="Water Murk",.section="Water",.max=200.f,
+        .parse=[](float value){return value*.01f;}};
     Setting hidden{.key="NightExposureBrighteningSpeed",.binding=&exposure,.default_value=35.f,
         .is_visible=[] {return false;}};
     Setting sticky{.key="CloudGlobal",.binding=&global,.default_value=10.f,.is_global=true};
     Setting hint{.value_type=ValueType::TEXT,.label="Not a control"};
-    Settings settings{&cloud,&mist,&surface,&disc,&hidden,&sticky,&hint};
+    Settings settings{&cloud,&mist,&surface,&disc,&water_mode,&water_murk,&hidden,&sticky,&hint};
     for(Tab tab:tabs) {
-      for(auto* setting:settings)if(setting->binding)setting->Set(23.f)->Write();
+      for(auto* setting:settings)if(setting->binding)setting->Set(setting->value_type==ValueType::BOOLEAN ? 1.f : 23.f)->Write();
       ResetTab(settings,tab);
       for(auto* setting:settings) {
         if(!setting->binding)continue;
-        const float expected=!setting->is_global &&TabForKey(setting->key)==tab ? setting->default_value : 23.f;
+        const float dirty=setting->value_type==ValueType::BOOLEAN ? 1.f : 23.f;
+        const float expected=!setting->is_global &&TabForKey(setting->key)==tab ? setting->default_value : dirty;
         if(setting->GetValue()!=expected ||*setting->binding!=setting->parse(expected))
           throw std::runtime_error("Reset crossed tab boundaries or missed a hidden control");
       }
     }
     if(TabForKey("SunSize")!=Tab::Lighting ||TabForKey("MoonSize")!=Tab::Lighting
-        ||TabForKey("NightLightingEnabled")!=Tab::Nights)
+        ||TabForKey("NightLightingEnabled")!=Tab::Nights
+        ||TabForKey(water_mode.key)!=Tab::Water ||TabForKey(water_murk.key)!=Tab::Water)
       throw std::runtime_error("Independent sky-disc controls have incorrect ownership");
     cloud.tooltip="Changes coverage.";mist.tooltip="Changes fog.";disc.tooltip="Changes moon size.";
     hidden.tooltip="Changes exposure speed.";
     Configure(&settings);
-    if(settings.size()!=7 ||cloud.tooltip!="Changes coverage." ||hidden.tooltip!="Changes exposure speed.")
+    if(settings.size()!=9 ||cloud.tooltip!="Changes coverage." ||hidden.tooltip!="Changes exposure speed.")
       throw std::runtime_error("Configuration added inline hints or lost hover help");
     if(renodx::utils::settings::use_presets)throw std::runtime_error("Legacy preset controls would be duplicated");
     for(Tab tab:tabs) {
@@ -47,6 +52,13 @@ int main() {
       }
     }
     if(hidden.is_visible())throw std::runtime_error("Conditional exposure visibility was lost");
+    ResetTab(settings,Tab::Water);
+    if(water_murk.is_enabled() ||murk!=1.5f)
+      throw std::runtime_error("Water reset must disable Improved Water and restore 150% Murk");
+    water_mode.Set(1.f)->Write();
+    water_murk.Set(0.f)->Write();
+    if(!water_murk.is_enabled() ||water!=1.f)
+      throw std::runtime_error("Murk must follow the master toggle and remain adjustable at zero");
     renodx::utils::settings::settings=&settings;
     renodx::utils::settings::preset_index=1;
     for(auto* setting:settings)if(IsValue(setting))setting->Set(setting->default_value)->Write();
@@ -67,7 +79,7 @@ int main() {
       ImGui::NewFrame();
       ImGui::SetNextWindowPos(ImVec2(0,0));ImGui::SetNextWindowSize(ImVec2(760,1100));
       ImGui::Begin("HartapfelFX preview");
-      if(auto* bar=ImGui::GetCurrentContext()->TabBars.GetByKey(ImGui::GetID("HartapfelFXTabs"));bar &&bar->Tabs.Size==4) {
+      if(auto* bar=ImGui::GetCurrentContext()->TabBars.GetByKey(ImGui::GetID("HartapfelFXTabs"));bar &&bar->Tabs.Size==int(tabs.size())) {
         bar->SelectedTabId=bar->Tabs[int(tab)].ID;bar->NextSelectedTabId=bar->SelectedTabId;
       }
       ImGui::LogToBuffer();Draw(settings,nullptr);check_footer();ImGui::LogFinish();
@@ -79,7 +91,7 @@ int main() {
     ImGui::NewFrame();ImGui::Begin("HartapfelFX preview");
     ImGui::LogToBuffer();Draw(settings,nullptr);check_footer();ImGui::LogFinish();
     ImGui::End();ImGui::Render();ImGui::DestroyContext();
-    std::cout<<"PASS four scoped resets, hidden values, parsing, hover-only hints, four ImGui tabs and shared Help/support section with Preset Off\n";
+    std::cout<<"PASS five scoped resets, Water master and 150% default, hidden values, parsing, hover-only hints and shared Help/support section with Preset Off\n";
     return 0;
   }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

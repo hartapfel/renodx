@@ -3,7 +3,7 @@
 // Header 320..351 follows the shadow's authored base height, before texture data.
 void PublishCloudFamilies() {
   float4 recipe=lerp(family_from,family_to,saturate(family_transition.x));
-  float4 low=float4(recipe.xy,0,0);
+  float4 low=float4(recipe.xy,lerp(family_appearance.xy,family_appearance.zw,saturate(family_transition.x)));
   float4 high=float4(recipe.zw,lerp(family_transition.y,family_transition.z,saturate(family_transition.x)),family_transition.w);
   high.w=smoothstep(0.f,.025f,high.w);
   float4 target_low=low,target_high=high;

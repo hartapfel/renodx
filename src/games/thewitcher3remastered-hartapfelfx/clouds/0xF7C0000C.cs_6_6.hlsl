@@ -20,6 +20,7 @@ RWByteAddressBuffer shared_data : register(u2);
   published.Store4(5968, uint4(CloudIdentity(), identity.w & 255u));
   published.Store4(5984, storage);
   if ((identity.w & 255u) == 0) {
+    published.Store(6000,asuint(CloudWeatherBase(asfloat(shared_data.Load2(328)))));
     shared_data.Store4(96, uint4(uint2(dimensions.xy), storage.xy));
     shared_data.Store4(112, asuint(frame[0]));
     shared_data.Store4(128, asuint(frame[286]));

@@ -379,6 +379,10 @@ class View {
     const auto lunar=coherent?sky::emission::Unpack(sky::emission::moon.load(std::memory_order_relaxed)):std::array<float,4>{};
     std::memcpy(data.data()+384,solar.data(),sizeof(solar));
     std::memcpy(data.data()+400,lunar.data(),sizeof(lunar));
+    const auto& from=families::profiles[uint8_t(inputs.family)<std::size(families::profiles)?uint8_t(inputs.family):0];
+    const auto& to=families::profiles[uint8_t(inputs.family>>8)<std::size(families::profiles)?uint8_t(inputs.family>>8):0];
+    const std::array<float,4> family_appearance{from.low[2],from.low[3],to.low[2],to.low[3]};
+    std::memcpy(data.data()+416,family_appearance.data(),sizeof(family_appearance));
     return pool ? pool->Upload(assets_->Device(), data.data(), data.size())
                 : gpu::Upload(assets_->Device(), data.data(), data.size());
   }

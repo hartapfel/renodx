@@ -41,7 +41,7 @@ float4 TraceCloud(float3 origin,float3 ray,float2 interval,float cone,uint2 id,
     // even when the image resolution increased. Depth jitter handles sampling
     // along the ray, with Step Size providing explicit integration control.
     float footprint=max(sample_t*cone,1.f);
-    float lod=clamp(log2(max(footprint*scattering.w/min(CloudFormationScale*appearance.z,2800.f),1.f)),0.f,4.f);
+    float lod=clamp(log2(max(footprint*scattering.w/min(cloud_formation_period,cloud_vertical_period),1.f)),0.f,4.f);
     float sample_density=CloudDensity(p,(uint)scattering.y,lod,footprint);
     // Resolve the first and last occupied segments with two-point quadrature.
     // A midpoint alone turns a finite cloud edge into one entire ray step and
@@ -91,7 +91,7 @@ float4 TraceCloud(float3 origin,float3 ray,float2 interval,float cone,uint2 id,
             float begin=24.f*(exp2(light_scale*j/light_pairs)-1.f);
             float end=24.f*(exp2(light_scale*(j+1.f)/light_pairs)-1.f);
             float beam=max(footprint,(end-begin)*.175f);
-            float light_lod=clamp(log2(max(beam*scattering.w/min(CloudFormationScale*appearance.z,2800.f),1.f)),0.f,4.f);
+            float light_lod=clamp(log2(max(beam*scattering.w/min(cloud_formation_period,cloud_vertical_period),1.f)),0.f,4.f);
             [unroll]for(uint sample=0;sample<2;++sample) {
               float distance=lerp(begin,end,sample==0u?.211324865f:.788675135f);
               float3 transverse=(j%2u==0u?light_tangent:light_bitangent)

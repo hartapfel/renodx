@@ -8,6 +8,7 @@ param(
   [string]$RayCapturePath,
   [string]$D3D12SdkPath,
   [string]$AddonPath,
+  [ValidateRange(0,200)][int]$WaterMurk=0,
   [ValidateRange(0,4)][int[]]$CloudQualityPresets=@(0),
   [ValidateRange(0,5)][int[]]$FogQualityPresets=@(0)
 )
@@ -49,8 +50,8 @@ foreach($fogFirst in @($false,$true)) {
     foreach ($cloudQuality in $CloudQualityPresets) {
       foreach($fogPreset in $FogQualityPresets) {
         foreach ($quality in $(if($fogPreset){@(0)}else{@(0,1)})) {
-          # Workspace-only profiles exercise Balanced and High with the actual addon.
-          Set-Content -LiteralPath 'ReShade.ini' -Value "[thewitcher3remastered-hartapfelfx-preset1]`nFogDensity=100`nFogStart=0`nFogQuality=$quality`nFogQualityPresetV1=$fogPreset`nCloudQualityPresetV1=$cloudQuality" -Encoding ascii
+          # Workspace-only profiles exercise the selected presets with the actual addon.
+          Set-Content -LiteralPath 'ReShade.ini' -Value "[thewitcher3remastered-hartapfelfx-preset1]`nFogDensity=100`nFogStart=0`nFogQuality=$quality`nFogQualityPresetV1=$fogPreset`nCloudQualityPresetV1=$cloudQuality`nSunDiameter=1.3`nWaterMurkV1=$WaterMurk" -Encoding ascii
           Write-Host "Checking $order, fog quality $quality, fog preset $fogPreset, cloud preset $cloudQuality"
           $columns=if($fogPreset){@(0,120,160,240,256,256)[$fogPreset]}elseif($quality){240}else{160}
           & ./startup-gpu.exe $NativeCapturePath $embedPath (Join-Path $repoRoot 'tmp/hartapfelfx-validation/runtime-probe.cso') $columns @cloudArguments

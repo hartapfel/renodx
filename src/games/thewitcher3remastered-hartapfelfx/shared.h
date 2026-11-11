@@ -17,12 +17,15 @@ struct ShaderInjectData {
   float reconstruction;
   float haze_reduction;
   float quality_preset;
+  unsigned int sky_deferred;
+  float water_enabled;
+  float water_murk;
+  float padding;
 };
 #ifndef __cplusplus
 cbuffer HartapfelFX : register(b0, space70) {
   ShaderInjectData fx : packoffset(c0);
 #ifdef HARTAPFEL_SKY_VIEW
-  uint sky_deferred : packoffset(c3);
   float4 sky_moon_material : packoffset(c4);
   float4 sky_sun_material : packoffset(c5);
   float sky_sun_glow_size : packoffset(c6);
@@ -39,6 +42,6 @@ float FogFadeStart(float native_near) {
   return max(fx.start_distance, native_near) + min(fx.start_distance, 0.f);
 }
 #else
-static_assert(sizeof(ShaderInjectData)==48);
+static_assert(sizeof(ShaderInjectData)==64);
 #endif
 #endif

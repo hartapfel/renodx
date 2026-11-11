@@ -30,6 +30,25 @@ float match_world = 1.f;
 using Setting = renodx::utils::settings::Setting;
 renodx::utils::settings::Settings settings = {
     new Setting{
+        .key = "WaterEnabledV1",
+        .binding = &injection.water_enabled,
+        .value_type = renodx::utils::settings::SettingValueType::BOOLEAN,
+        .default_value = 1.f,
+        .label = "Improved Water",
+        .section = "Water",
+        .tooltip = "Enables improved surface and underwater rendering together, including refraction, caustics and fog."},
+    new Setting{
+        .key = "WaterMurkV1",
+        .binding = &injection.water_murk,
+        .default_value = 150.f,
+        .label = "Water Murk",
+        .section = "Water",
+        .tooltip = "Controls how quickly visibility falls through water, both from the surface and while submerged. Zero clears the added murk.",
+        .min = 0.f,
+        .max = 200.f,
+        .format = "%.0f%%",
+        .parse = [](float value) { return value * .01f; }},
+    new Setting{
         .key = "PlayerLighting",
         .binding = &player_lighting,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
@@ -137,7 +156,7 @@ renodx::utils::settings::Settings settings = {
     new Setting{
         .key = "CloudQualityPresetV1", .binding = &clouds::quality_preset,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 1.f, .label = "Quality Preset", .section = "Clouds & Performance",
+        .default_value = 3.f, .label = "Quality Preset", .section = "Clouds & Performance",
         .tooltip = "Performance is fastest. Balanced keeps smoother clouds at a lower cost. High keeps full detail; Ultra refines it further. Custom keeps your saved quality and sample spacing. Cloud shape and lighting controls stay the same.",
         .labels = {"Custom", "Performance", "Balanced", "High", "Ultra"}},
     new Setting{
@@ -172,18 +191,18 @@ renodx::utils::settings::Settings settings = {
         .is_enabled = [] { return clouds::mode > .5f; }},
     new Setting{
         .key = "CloudDensityV3", .binding = &clouds::density,
-        .default_value = 12.f, .label = "Density", .section = "Cloud Appearance",
+        .default_value = 30.f, .label = "Density", .section = "Cloud Appearance",
         .tooltip = "Makes cloud bodies more opaque and solid-looking.",
         .min = 0.f, .max = 400.f,
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudSizeV2", .binding = &clouds::size,
-        .default_value = 30.f, .label = "Formation Size", .section = "Cloud Appearance",
+        .default_value = 189.f, .label = "Formation Size", .section = "Cloud Appearance",
         .tooltip = "Makes whole cloud formations larger or smaller.",
         .min = 25.f, .max = 400.f, .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudThicknessV2", .binding = &clouds::thickness,
-        .default_value = 78.f, .label = "Layer Thickness", .section = "Cloud Appearance",
+        .default_value = 62.f, .label = "Layer Thickness", .section = "Cloud Appearance",
         .tooltip = "Makes the main cloud layer deeper from base to top.",
         .min = 50.f, .max = 300.f,
         .parse = [](float value) { return value * .01f; }},
@@ -204,21 +223,15 @@ renodx::utils::settings::Settings settings = {
         .default_value = 80.f, .label = "Underside Softness", .section = "Cloud Detail (Advanced)", .tooltip = "Softens the density transition along the cloud underside.",
         .min = 0.f, .max = 100.f, .parse = [](float value) { return value * .01f; }},
     new Setting{
-        .key = "CloudBaseAltitudeV1", .binding = &clouds::base_height,
-        .default_value = 433.f, .label = "Base Height", .section = "Cloud Formation",
-        .tooltip = "Raises or lowers the cloud layer above the landscape.",
-        .min = 300.f, .max = 5000.f, .format = "%.0f m",
-        .is_enabled = [] { return clouds::mode > .5f; }},
-    new Setting{
         .key = "CloudRoundnessV1", .binding = &clouds::roundness,
-        .default_value = -64.f, .label = "Roundness", .section = "Cloud Formation",
+        .default_value = 23.f, .label = "Roundness", .section = "Cloud Formation",
         .tooltip = "Higher values make taller clouds; lower values flatten them.",
         .min = -100.f, .max = 100.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudHeightVariationV1", .binding = &clouds::height_variation,
-        .default_value = 41.f, .label = "Height Variation", .section = "Cloud Formation",
+        .default_value = 172.f, .label = "Height Variation", .section = "Cloud Formation",
         .tooltip = "Varies the heights of neighbouring cloud tops.",
         .min = 0.f, .max = 200.f,
         .is_enabled = [] { return clouds::mode > .5f; },
@@ -239,21 +252,21 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudWarpV1", .binding = &clouds::warp,
-        .default_value = 245.f, .label = "Shape Irregularity", .section = "Cloud Structure (Advanced)",
+        .default_value = 38.f, .label = "Shape Irregularity", .section = "Cloud Structure (Advanced)",
         .tooltip = "Bends regular rounded shapes into more varied cloud forms.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudShearV1", .binding = &clouds::shear,
-        .default_value = 192.f, .label = "Upper Cloud Lean", .section = "Cloud Structure (Advanced)",
+        .default_value = 117.f, .label = "Upper Cloud Lean", .section = "Cloud Structure (Advanced)",
         .tooltip = "Bends upper cloud material sideways relative to its base.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudDensityContrastV1", .binding = &clouds::density_contrast,
-        .default_value = 196.f, .label = "Core Contrast", .section = "Cloud Structure (Advanced)",
+        .default_value = 87.f, .label = "Core Contrast", .section = "Cloud Structure (Advanced)",
         .tooltip = "Concentrates material into dense cores with thinner edges.",
         .min = 25.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
@@ -267,14 +280,14 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudWispBiasV1", .binding = &clouds::wisp_bias,
-        .default_value = 55.f, .label = "Wispy / Rounded Balance", .section = "Cloud Erosion (Advanced)",
+        .default_value = 17.f, .label = "Wispy / Rounded Balance", .section = "Cloud Erosion (Advanced)",
         .tooltip = "Higher values favour wisps; lower values favour rounded billows.",
         .min = -100.f, .max = 100.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudBaseReliefV1", .binding = &clouds::base_relief,
-        .default_value = 41.f, .label = "Underside Relief", .section = "Cloud Erosion (Advanced)",
+        .default_value = 39.f, .label = "Underside Relief", .section = "Cloud Erosion (Advanced)",
         .tooltip = "Adds hanging lobes and cavities along the cloud base.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
@@ -302,7 +315,7 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudBaseFeatherV1", .binding = &clouds::base_feather,
-        .default_value = 165.f, .label = "Base Fade Width", .section = "Cloud Edges",
+        .default_value = 290.f, .label = "Base Fade Width", .section = "Cloud Edges",
         .tooltip = "Higher values soften the transition along cloud bases.",
         .min = 20.f, .max = 400.f,
         .is_enabled = [] { return clouds::mode > .5f; },
@@ -323,21 +336,21 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudSkyLightV1", .binding = &clouds::skylight,
-        .default_value = 236.f, .label = "Ambient Brightness", .section = "Cloud Lighting",
+        .default_value = 53.f, .label = "Ambient Brightness", .section = "Cloud Lighting",
         .tooltip = "Brightens cloud areas lit by the surrounding sky.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudSelfShadowV1", .binding = &clouds::self_shadow,
-        .default_value = 200.f, .label = "Internal Shadows", .section = "Cloud Lighting",
+        .default_value = 88.f, .label = "Internal Shadows", .section = "Cloud Lighting",
         .tooltip = "Deepens shadows inside the cloud body.",
         .min = 0.f, .max = 300.f,
         .is_enabled = [] { return clouds::mode > .5f; },
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "CloudForwardScatteringV1", .binding = &clouds::forward_scattering,
-        .default_value = 60.f, .label = "Bright Rim Strength", .section = "Cloud Lighting",
+        .default_value = 42.f, .label = "Bright Rim Strength", .section = "Cloud Lighting",
         .tooltip = "Concentrates brighter cloud lighting toward the sun or moon.",
         .min = 0.f, .max = 95.f,
         .is_enabled = [] { return clouds::mode > .5f; },
@@ -458,7 +471,7 @@ renodx::utils::settings::Settings settings = {
         }},
 
 };
-bool BindReceiver(reshade::api::command_list* cmd, bool night = false) {
+bool BindReceiver(reshade::api::command_list* cmd, bool night = false, bool water = false) {
   auto* state = renodx::utils::shader::GetCurrentPixelState(renodx::utils::shader::GetCurrentState(cmd));
   // A failed initial PSO clone has no retained subobjects for a lazy retry.
   // Gate every replacement before the shared shader module can attempt one.
@@ -466,7 +479,9 @@ bool BindReceiver(reshade::api::command_list* cmd, bool night = false) {
       && state->pipeline_details->initialized_replacement
       && state->pipeline_details->replacement_pipeline.handle != 0) {
     const bool fog_ready = injection.enabled > .5f && fog::runtime::PrepareReceiver(cmd);
-    const bool cloud_ready = clouds::runtime::PrepareReceiver(cmd, fog_ready, night);
+    const bool cloud_ready = clouds::runtime::PrepareReceiver(cmd, fog_ready, night || water);
+    if (water && !fog_ready)
+      return cloud_ready && clouds::runtime::BindWaterControls(cmd, injection.water_enabled, injection.water_murk);
     if (fog_ready || cloud_ready) return true;
   }
   return false;
@@ -516,7 +531,17 @@ renodx::mods::shader::CustomShaders shaders = {
     {0x6208DA88, {.crc32 = 0x6208DA88, .code = __0x6208DA88, .on_replace = [](auto* cmd) { return BindReceiver(cmd); }}},
     {0x449D3390, {.crc32 = 0x449D3390, .code = __0x449D3390, .on_replace = [](auto* cmd) { return BindCelestialSky(cmd,false); }}},
     {0x3B15DAAB, {.crc32 = 0x3B15DAAB, .code = __0x3B15DAAB, .on_replace = [](auto* cmd) { return BindCelestialSky(cmd,true); }}},
-    {0xC60F2B46, {.crc32 = 0xC60F2B46, .code = __0xC60F2B46, .on_replace = [](auto* cmd) { return BindReceiver(cmd); }}},
+    {0xC60F2B46, {.crc32 = 0xC60F2B46, .code = __0xC60F2B46,
+                  .on_replace = [](auto* cmd) { return BindReceiver(cmd, false, injection.water_enabled > .5f); }}},
+    {0xECE2CD5B, {.crc32 = 0xECE2CD5B, .code = __0xECE2CD5B,
+                  .on_replace = [](auto* cmd) {
+                    if (!(injection.water_enabled > .5f)) return false;
+                    auto* state = renodx::utils::shader::GetCurrentPixelState(renodx::utils::shader::GetCurrentState(cmd));
+                    return state && state->pipeline_details && state->pipeline_details->initialized_replacement
+                        && state->pipeline_details->replacement_pipeline.handle
+                        && clouds::runtime::BindWaterControls(cmd, injection.water_enabled, injection.water_murk)
+                        && fog::runtime::BindWaterLight(cmd);
+                  }}},
     {0x73E21194, {
                      .crc32 = 0x73E21194,
                      .code = __0x73E21194,
@@ -618,6 +643,16 @@ void ImportStandaloneSettings() {
   for (unsigned slot = 1; slot <= 3; ++slot) {
     const auto suffix = "-preset" + std::to_string(slot);
     const auto target = renodx::utils::settings::global_name + suffix;
+    int water_enabled = 0;
+    if (!reshade::get_config_value(nullptr, target.c_str(), "WaterEnabledV1", water_enabled)) {
+      int old_surface = 0;
+      float old_murk = 0.f;
+      const bool has_surface = reshade::get_config_value(nullptr, target.c_str(), "WaterSurfaceV1", old_surface);
+      const bool has_murk = reshade::get_config_value(nullptr, target.c_str(), "WaterMurkV1", old_murk);
+      if (has_surface || has_murk) {
+        reshade::set_config_value(nullptr, target.c_str(), "WaterEnabledV1", int(old_surface > 0 || old_murk > 0.f));
+      }
+    }
     float shadow_strength = 0.f;
     int old_shadows = 0;
     if (!reshade::get_config_value(nullptr, target.c_str(), "CloudShadowStrengthV1", shadow_strength)
@@ -647,6 +682,7 @@ void ImportStandaloneSettings() {
 void OnPresetOff() {
   hartapfelfx::sky::emission::enabled.store(false,std::memory_order_relaxed);
   renodx::utils::settings::UpdateSetting("FogEnabled", 0.f);
+  renodx::utils::settings::UpdateSetting("WaterEnabledV1", 0.f);
   renodx::utils::settings::UpdateSetting("CloudModeV2", 0.f);
   renodx::utils::settings::UpdateSetting("PlayerLighting", 0.f);
   renodx::utils::settings::UpdateSetting("GameplayLightStrength", 1.f);
