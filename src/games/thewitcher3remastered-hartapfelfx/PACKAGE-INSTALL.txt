@@ -1,0 +1,59 @@
+HartapfelFX - The Witcher 3 Remastered
+
+INSTALL
+1. Close the game.
+2. Extract this archive directly into the main game installation folder,
+   alongside bin, content and Mods. Do not extract into bin/x64_dx12.
+3. Start the Remastered DX12 game normally. The game compiles the alignment
+   scripts at startup. Nearby fixtures can take five seconds to align.
+4. Press Home to open ReShade, then select the HartapfelFX addon tab.
+
+Requires your existing addon-capable ReShade / Remastered setup. This archive
+contains no ReShade loader. Existing dxgi.dll, ReShade.ini, presets, shaders and
+user graphics settings are not included or replaced.
+
+EXPECTED FILES
+bin/x64_dx12/renodx-thewitcher3remastered-hartapfelfx.addon64
+Mods/mod0000_HartapfelLightAlignment/content/scripts/local/hf_light_alignment.ws
+Mods/mod0000_HartapfelLightAlignment/content/scripts/local/hf_light_alignment_map.ws
+Mods/mod0000_HartapfelLightAlignment/content/blob0.bundle
+Mods/mod0000_HartapfelLightAlignment/content/metadata.store
+
+WHAT IS INCLUDED
+HartapfelFX clouds, fog, independent volumetric light, lighting, water and Nights
+for Raster, hybrid RT and Path Tracing. The alignment companion covers supported
+candle, torch, brazier, lantern and fireplace templates, including verified flame
+particle offsets, plus the native bathhouse hanging-bowl light correction.
+Alignment preserves light brightness, colour and other authored properties.
+
+REQUIREMENTS AND UPDATES
+Targets The Witcher 3 Remastered (developed against 5.0.16), DX12, Windows x64.
+This is not the Classic or standard Next-Gen release. Players need no Python,
+compiler, REDkit, NativeBridge or DevKit. The separate RenoDX HDR addon is
+optional and is not included. Use HartapfelFX in place of the standalone Darker
+Nights and Improved Graphics addons; do not load duplicate versions.
+
+When updating the old personalized alignment prototype, remove its old
+Mods/mod0000_HartapfelLightAlignment folder before extracting. Also remove the
+old separate mod0000_HartapfelLightAlignmentWorld test companion: the archive
+includes that world correction in the single main alignment folder.
+Keep other mods. Mods replacing the same bathhouse lights.w2l layer need a
+compatibility patch; load priority does not merge their content. Resolve any
+reported script conflicts with a Remastered-compatible Script Merger.
+
+DEFAULTS AND CONTROL
+New presets use the authored defaults. Existing presets keep their saved values.
+Reset All restores defaults for the selected tab. Preset Off restores original
+renderer effects, but the independent engine alignment mod remains enabled.
+See the alignment folder's README.txt for fixture scope and compatibility.
+
+UNINSTALL
+Remove renodx-thewitcher3remastered-hartapfelfx.addon64 and the
+Mods/mod0000_HartapfelLightAlignment folder. Keep your ReShade loader, personal
+settings, unrelated mods and the separate HDR addon.
+
+LICENSES AND INTEGRITY
+License notices are under bin/x64_dx12/renodx-hartapfelfx-licenses and in the
+alignment mod folder. HartapfelFX-manifest.json lists SHA-256 payload hashes;
+the download also has a .zip.sha256 checksum for the complete archive.
+Project: https://github.com/hartapfel/renodx

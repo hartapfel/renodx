@@ -25,21 +25,24 @@ character fill follows the complete volumetric-light workflow:
 | --- | --- | --- |
 | Volumetric Light & Performance / Volumetric Light | On | Independent master; works with Original fog and zero Fog Density. |
 | Light Quality | Balanced | Changes light shadow quadrature and the minimum shared grid resolution. |
-| Volumetric Light Appearance / Light Density | 100% | Weather density multiplier for scattering and incoming/view-path attenuation. Independent of Fog Density. |
-| Sun & Moon Beams | 100% | Directional scattering brightness. Retains the saved `FogSunlight` key. |
+| Volumetric Light Appearance / Light Density | 200% | Weather density multiplier for scattering and incoming/view-path attenuation. Independent of Fog Density. |
+| Sun & Moon Beams | 178% | Directional scattering brightness. Retains the saved `FogSunlight` key. |
 | Lamp & Fire Light | 100% | Local scattering brightness. Retains `FogLocalLight`. Zero skips CPU preparation and dispatch. |
-| Light Focus | 0.50 | HG asymmetry, 0–0.85. Higher values concentrate light toward its source. Retains `FogAnisotropy`. |
+| Light Focus | 0.35 | HG asymmetry, 0–0.85. Higher values concentrate light toward its source. Retains `FogAnisotropy`. |
 | Volumetric Light Placement (Advanced) / Clear Space | 0 m | Near-camera space without added scattering, 0–100 m. |
 | Fade With Height | 100% | Multiplies the current weather's reciprocal height falloff, 0–300%. |
 | Indoor Light Density | 100% | Scattering inside authored interior volumes, independent of indoor fog exclusion. |
 | Volumetric Light Quality (Advanced) / Lamp & Fire Shadows | On | RT/PT traces world visibility; raster uses native atlas/cube maps. Off can leak through walls. |
-| Lamp Occlusion Quality | Low | RT fog samples per contributing cell/light: Low (1), Balanced (2), High (3), Ultra (4). Raster follows native shadow-map quality. Disabled with Lamp & Fire Shadows. |
+| Lamp Occlusion Quality | Balanced | RT fog samples per contributing cell/light: Low (1), Balanced (2), High (3), Ultra (4). Raster follows native shadow-map quality. Disabled with Lamp & Fire Shadows. |
 | Stabilize Light Over Time | On | Off rejects lighting history and uses deterministic current-frame quadrature. |
 
 ### Settings order and screenshot defaults
 
-The 11 November 2026 defaults match the user's two screenshots, with their later
-override of Lamp Occlusion Quality to Low (one visibility sample). Fog proceeds
+The 11 November 2026 Fog defaults match the first screenshot. The subsequent
+packaging screenshot updates Lighting to Density 200%, Sun & Moon Beams 178%,
+Light Focus 0.35 and Lamp Occlusion Quality Balanced (two visibility samples),
+superseding the earlier Low selection. Collapsed placement controls retain their
+previous defaults. Fog proceeds
 through Fog & Performance, Fog Appearance, Fog Placement, Fog Medium (Advanced),
 Fog Quality (Advanced), then Diagnostics (Advanced). The medium's physical
 density is adjusted before its reconstruction filter. Fog defaults are:

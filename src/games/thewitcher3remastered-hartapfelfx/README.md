@@ -7,6 +7,10 @@ The Night controls and graphics support code are bundled under `night/` and
 The overlay has five tabs: **Clouds**, **Fog**, **Lighting**, **Water** and **Nights**.
 A shared preset slider sits above the tabs; a short Help & About section appears
 below every tab.
+To create one shareable addon-and-alignment ZIP, double-click
+**package-release.cmd** in this folder. Players extract it into the main game
+folder; no ReShade loader or personal settings are bundled. See
+[packaging instructions](PACKAGING.md) for the `-Build` option and source inputs.
 Lighting includes independent sun/moon size and character fill; Nights contains
 the night look, schedule, brightness, atmosphere, colour and exposure.
 
@@ -275,10 +279,11 @@ Light scattering works with **Original** fog and at zero Fog Density. Fog keeps
 its own amount, density, placement and quality on the **Fog** tab.
 
 New profiles use the user's 11 November screenshots: Volumetric Light **On**,
-**Balanced** quality, Light Density **100%**, Sun & Moon Beams **100%**, Lamp &
-Fire Light **100%**, Light Focus **0.50**, Clear Space **0 m**, Fade With Height
+**Balanced** quality, Light Density **200%**, Sun & Moon Beams **178%**, Lamp &
+Fire Light **100%**, Light Focus **0.35**, Clear Space **0 m**, Fade With Height
 **100%**, Indoor Light Density **100%**, Lamp & Fire Shadows **On**, Lamp
-Occlusion Quality **Low** (the user's subsequent override), and Stabilize Light Over Time **On**. Fog defaults
+Occlusion Quality **Balanced**, and Stabilize Light Over Time **On**. These
+lighting values follow the later packaging screenshot and supersede Low. Fog defaults
 are Volumetric, Performance, Amount 35%, Density 100%, Clear Distance -10,
 Fade With Height 100%, Distant Sky Haze 120%, and Smooth Fog Lighting On.
 Sun and Moon Size default to 75%, Sun Glow Size to 125%, and Evening Sunlight

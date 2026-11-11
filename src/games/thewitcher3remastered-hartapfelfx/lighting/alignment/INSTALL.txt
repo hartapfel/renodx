@@ -29,8 +29,9 @@ Avoid an extra Mods/Mods folder or an extra archive-name folder.
 UPDATING FROM THE EARLIER PERSONAL CONTENT PROTOTYPE
 Remove the old mod0000_HartapfelLightAlignment folder first, then install this
 release. The prototype had blob0.bundle and metadata.store tailored to one
-BetterCandles/Flares Off setup. This public release has scripts only. An
-overwrite update can leave those old files behind. If the separate local
+BetterCandles/Flares Off setup. This release has the generated alignment scripts
+and one bathhouse world-layer correction. An overwrite update can leave old
+prototype files behind. If the separate local
 mod0000_HartapfelLightAlignmentWorld test companion is present, remove that
 folder too; its world correction is included in this release's single mod
 folder. Keep only one copy of this mod, and leave your other lighting mods

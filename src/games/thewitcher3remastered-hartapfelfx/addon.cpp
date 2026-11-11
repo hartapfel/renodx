@@ -17,7 +17,7 @@
 #include "fog/ray_runtime.hpp"
 
 namespace {
-ShaderInjectData injection = {1.f, 1.f, 1.f, .5f, -10.f, 1.f, 2.f, 1.f, 1.2f, 1.f, .65f, 1.f};
+ShaderInjectData injection = {1.f, 1.f, 1.78f, .35f, -10.f, 1.f, 2.f, 1.f, 1.2f, 1.f, .65f, 1.f};
 namespace fog = hartapfelfx::fog;
 namespace clouds = hartapfelfx::clouds;
 namespace nights = witcher::night;
@@ -404,13 +404,13 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "VolumeLightDensityV1", .binding = &fog::light.density,
-        .default_value = 100.f, .label = "Light Density", .section = "Volumetric Light Appearance",
+        .default_value = 200.f, .label = "Light Density", .section = "Volumetric Light Appearance",
         .tooltip = "Amount of weather-driven air catching light. Zero removes beams; higher values also absorb more incoming light. Does not change the fog veil.",
         .min = 0.f, .max = 300.f, .parse = [](float value) { return value * .01f; }},
     new Setting{
         .key = "FogSunlight",
         .binding = &injection.sunlight,
-        .default_value = 100.f,
+        .default_value = 178.f,
         .label = "Sun & Moon Beams",
         .section = "Volumetric Light Appearance", .tooltip = "Brightens shadowed sunlight and moonlight in the air, independently of Fog Amount.",
         .min = 0.f,
@@ -428,7 +428,7 @@ renodx::utils::settings::Settings settings = {
     new Setting{
         .key = "FogAnisotropy",
         .binding = &injection.anisotropy,
-        .default_value = .5f,
+        .default_value = .35f,
         .label = "Light Focus",
         .section = "Volumetric Light Appearance", .tooltip = "Lower values show beams from more viewing angles. Higher values concentrate brightness toward the light and can create a strong glare.",
         .min = 0.f,
@@ -504,7 +504,7 @@ renodx::utils::settings::Settings settings = {
     new Setting{
         .key = "VolumeLightOcclusionV1", .binding = &fog::light.occlusion_quality,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 0.f, .label = "Lamp Occlusion Quality", .section = "Volumetric Light Quality (Advanced)",
+        .default_value = 1.f, .label = "Lamp Occlusion Quality", .section = "Volumetric Light Quality (Advanced)",
         .tooltip = "Higher settings smooth ray-traced lamp and fire shadows with more samples and cost more GPU time. Raster mode uses the game's shadow-map quality.",
         .labels = {"Low", "Balanced", "High", "Ultra"},
         .is_enabled = [] { return fog::light.local_shadows > .5f; }},

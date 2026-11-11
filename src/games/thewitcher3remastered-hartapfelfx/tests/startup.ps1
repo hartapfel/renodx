@@ -53,7 +53,9 @@ foreach($fogFirst in @($false,$true)) {
       foreach($fogPreset in $FogQualityPresets) {
         foreach ($quality in $(if($fogPreset){@(0)}else{@(0,1)})) {
           # Workspace-only profiles exercise the selected presets with the actual addon.
-          Set-Content -LiteralPath 'ReShade.ini' -Value "[thewitcher3remastered-hartapfelfx-preset1]`nFogEnabled=$FogRendering`nFogDensity=100`nFogStart=0`nFogQuality=$quality`nFogQualityPresetV1=$fogPreset`nVolumeLightEnabledV1=1`nVolumeLightQualityV1=$LightQuality`nCloudQualityPresetV1=$cloudQuality`nSunDiameter=1.3`nWaterMurkV1=$WaterMurk" -Encoding ascii
+          # This fixture tests zero indoor scattering; keep that condition explicit
+          # instead of depending on the user-authored indoor-density default.
+          Set-Content -LiteralPath 'ReShade.ini' -Value "[thewitcher3remastered-hartapfelfx-preset1]`nFogEnabled=$FogRendering`nFogDensity=100`nFogStart=0`nFogQuality=$quality`nFogQualityPresetV1=$fogPreset`nVolumeLightEnabledV1=1`nVolumeLightIndoorV1=0`nVolumeLightQualityV1=$LightQuality`nCloudQualityPresetV1=$cloudQuality`nSunDiameter=1.3`nWaterMurkV1=$WaterMurk" -Encoding ascii
           Write-Host "Checking $order, fog quality $quality, fog preset $fogPreset, cloud preset $cloudQuality"
           $columns=if($fogPreset){@(0,120,160,240,256,256)[$fogPreset]}elseif($quality){240}else{160}
           $lightColumns=@(120,160,240,256)[$LightQuality]

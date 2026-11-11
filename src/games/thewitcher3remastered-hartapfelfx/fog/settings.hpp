@@ -6,7 +6,7 @@
 #include <cstdint>
 #include "../shared.h"
 namespace hartapfelfx::fog {
-inline VolumeLightData light{1.f, 1.f, 0.f, 1.f, 2.f, 1.f, 1.f, FOG_LIGHT_VALID, 1.f, 0.f};
+inline VolumeLightData light{1.f, 2.f, 0.f, 1.f, 2.f, 1.f, 1.f, FOG_LIGHT_VALID, 1.f, 1.f};
 inline bool Active(const ShaderInjectData& settings) {
   return settings.enabled > .5f || light.enabled > .5f;
 }

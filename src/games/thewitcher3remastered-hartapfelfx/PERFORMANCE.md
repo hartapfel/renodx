@@ -1553,3 +1553,12 @@ Final validation: accepted DLL passes startup13.log in both HDR load orders and 
 ## Screenshot defaults and settings order (2026-11-11)
 
 Fog and Lighting defaults now follow the user screenshots, with the subsequent Lamp Occlusion Quality override to Low (one world-visibility sample). Light Quality defaults to Balanced. Appearance, density and indoor controls use the requested values; names, keys, ranges, tooltips and renderer math are unchanged. The existing sections and controls are reordered by related task, keeping the Advanced disclosures. See fog/README.md for the complete defaults, sequence and NN/g research references. Release object compilation, existing lighting/reset/migration/Preset Off integration, and the real-ImGui five-tab regression pass. All 33 visible screenshot values were reviewed, including Low occlusion. This update does not claim measured frame-time gains.
+
+
+## Combined package and revised lighting defaults (2026-11-11)
+
+The later packaging screenshot supersedes Low occlusion: Light Density is 200%, Sun and Moon Beams 178%, Light Focus 0.35, and Lamp Occlusion Quality Balanced (two RT visibility samples). Previously authored Fog and collapsed placement defaults remain. The established full Clang Release build and regressions pass.
+
+package-release.cmd/.ps1 create a game-root ZIP with only the Release addon, required license/install notes and one Light Alignment Mods folder. No ReShade loader, HDR addon, DevKit, INI profiles or logs are included. Scripts and the 337-fixture map are regenerated from source; the accepted bathhouse bundle and metadata are pinned and hash checked. Archive hashes, clean-root extraction, invalid-addon rejection and altered-native-content rejection pass; the Windows .cmd launcher is also exercised. See PACKAGING.md.
+
+Final package validation: the rebuilt Release addon is 1e187f4285137e3e675b3beddf20a611b64caa871d3e4bcef90a83e6d9ef3412. Its actual-addon startup checks pass both HDR load orders at Balanced light quality and Performance fog. The indoor-exclusion fixture now explicitly selects indoor density zero rather than assuming it from the authored default of 100%. The shareable ZIP contains 17 files, no loader, and the unchanged accepted alignment offsets.

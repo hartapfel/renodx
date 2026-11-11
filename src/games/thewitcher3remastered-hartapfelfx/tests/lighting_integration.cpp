@@ -153,7 +153,7 @@ int main() {
   if(std::memcmp(&injection,&fog_before,sizeof(injection))!=0 ||clouds::clear_low_sun!=0.f
       ||clouds::quality_preset!=2.f ||clouds::low_sun_cache!=1.f ||gameplay_strength!=.35f)return 20;
   const auto light_before=fog::light;
-  if(FindSetting("VolumeLightOcclusionV1")->default_value!=0.f
+  if(FindSetting("VolumeLightOcclusionV1")->default_value!=1.f
       ||FindSetting("VolumeLightOcclusionV1")->section!="Volumetric Light Quality (Advanced)")return 61;
   for(unsigned quality=0;quality<4;++quality) {
     UpdateSetting("VolumeLightOcclusionV1",float(quality));
