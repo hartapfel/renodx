@@ -12,7 +12,7 @@ import zipfile
 sys.dont_write_bytecode = True
 from build import write_runtime
 
-VERSION = '1.1.1'
+VERSION = '1.1.3'
 MOD = 'mod0000_HartapfelLightAlignment'
 ROOT = Path(__file__).resolve().parent
 

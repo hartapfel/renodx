@@ -13,17 +13,27 @@ public function HFAlignLocalLights()
     var components : array<CComponent>;
     var light : CLightComponent;
     var slotMatrix : Matrix;
-    var worldToLocal : Matrix;
+    var localToWorld : Matrix;
+    var worldOrigin : Vector;
+    var axisX : Vector;
+    var axisY : Vector;
+    var axisZ : Vector;
+    var inverseX : Vector;
+    var inverseY : Vector;
+    var inverseZ : Vector;
+    var delta : Vector;
+    var determinant : float;
     var position : Vector;
     var nearest : Vector;
     var distance : float;
     var best : float;
+    var maxDistance : float;
     var i : int;
     var j : int;
 
     if (hfLightAlignmentChecked || GetComponentsCountByClassName('CLightComponent') == 0)
         return;
-    if (!HFAlignEmitterMap(this, slots, offsets))
+    if (!HFAlignEmitterMap(this, slots, offsets, maxDistance))
     {
         hfLightAlignmentChecked = true;
         return;
@@ -35,7 +45,19 @@ public function HFAlignLocalLights()
     }
     if (positions.Size() == 0)
         return;
-    worldToLocal = MatrixGetInverted(GetLocalToWorld());
+    // Invert the full affine basis. MatrixGetInverted behaves as a rigid
+    // inverse here and shrinks scaled shrine offsets by the scale squared.
+    localToWorld = GetLocalToWorld();
+    worldOrigin = MatrixGetTranslation(localToWorld);
+    axisX = VecTransformDir(localToWorld, Vector(1.0, 0.0, 0.0, 0.0));
+    axisY = VecTransformDir(localToWorld, Vector(0.0, 1.0, 0.0, 0.0));
+    axisZ = VecTransformDir(localToWorld, Vector(0.0, 0.0, 1.0, 0.0));
+    inverseX = VecCross(axisY, axisZ);
+    inverseY = VecCross(axisZ, axisX);
+    inverseZ = VecCross(axisX, axisY);
+    determinant = VecDot(axisX, inverseX);
+    if (AbsF(determinant) < 0.000001)
+        return;
     components = GetComponentsByClassName('CLightComponent');
     for (i = 0; i < components.Size(); i += 1)
     {
@@ -43,7 +65,7 @@ public function HFAlignLocalLights()
         if (!light)
             continue;
         position = light.GetWorldPosition();
-        best = 4.0;
+        best = maxDistance;
         for (j = 0; j < positions.Size(); j += 1)
         {
             distance = VecDistance(position, positions[j]);
@@ -53,14 +75,28 @@ public function HFAlignLocalLights()
                 nearest = positions[j];
             }
         }
-        if (best > 0.001 && best < 4.0)
-            light.SetPosition(VecTransform(worldToLocal, nearest));
+        if (best > 0.001 && best < maxDistance)
+        {
+            delta = nearest - worldOrigin;
+            light.SetPosition(Vector(VecDot(delta, inverseX) / determinant,
+                                     VecDot(delta, inverseY) / determinant,
+                                     VecDot(delta, inverseZ) / determinant, 1.0));
+        }
     }
     hfLightAlignmentChecked = true;
 }
 
 // Newly streamed fixtures are handled as their native components become available.
 @wrapMethod(CGameplayEntity)
+function OnSpawned(spawnData : SEntitySpawnData)
+{
+    wrappedMethod(spawnData);
+    HFAlignLocalLights();
+}
+
+// W3FireSource overrides OnSpawned without calling CGameplayEntity.OnSpawned.
+// Cover streamed braziers even when the player is outside the fallback radius.
+@wrapMethod(W3FireSource)
 function OnSpawned(spawnData : SEntitySpawnData)
 {
     wrappedMethod(spawnData);

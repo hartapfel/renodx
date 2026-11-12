@@ -29,7 +29,7 @@ if ($newerSource) { throw "Release addon is older than $($newerSource.Name). Reb
 if (-not $Version) { $Version = $addon.LastWriteTime.ToString('yyyyMMdd-HHmmss') }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoRoot 'build/Release/packages' }
 if (-not $AlignmentPackage) {
-  $AlignmentPackage = Join-Path $repoRoot 'build/Release/packages/HartapfelFX-Light-Alignment-1.1.1/HartapfelFX-Light-Alignment-Remastered-1.1.1.zip'
+  $AlignmentPackage = Join-Path $repoRoot 'build/Release/packages/HartapfelFX-Light-Alignment-1.1.3/HartapfelFX-Light-Alignment-Remastered-1.1.3.zip'
 }
 if (-not (Test-Path -LiteralPath $AlignmentPackage -PathType Leaf)) {
   throw "Validated light-alignment ZIP missing: $AlignmentPackage. Supply -AlignmentPackage or build it using lighting/alignment/README.md. Alignment is required and is never silently omitted."

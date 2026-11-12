@@ -2,7 +2,7 @@
 
 ## Standalone release
 
-The public **HartapfelFX Light Alignment 1.1.1** is a standalone mod-manager
+The public **HartapfelFX Light Alignment 1.1.3** is a standalone mod-manager
 ZIP, independent of RenoDX, ReShade, BetterCandles and NativeBridge. It contains
 `Mods/mod0000_HartapfelLightAlignment/content/scripts/local` and its metadata,
 one native bathhouse world-light correction, installation notes, license and
@@ -18,8 +18,8 @@ subsequent ZIP packager uses only Python's standard library. From the repository
 
 ```powershell
 python src/games/thewitcher3remastered-hartapfelfx/lighting/alignment/static_lights.py --game '<game root>' --output '<new native candidate>' --w3bundle '<W3Bundle.exe>'
-python src/games/thewitcher3remastered-hartapfelfx/lighting/alignment/package_release.py --static-content '<new native candidate>/content' --output build/Release/packages/HartapfelFX-Light-Alignment-1.1.1
-python src/games/thewitcher3remastered-hartapfelfx/tests/light_alignment_package.py build/Release/packages/HartapfelFX-Light-Alignment-1.1.1/HartapfelFX-Light-Alignment-Remastered-1.1.1.zip '<optional directory containing lz4>'
+python src/games/thewitcher3remastered-hartapfelfx/lighting/alignment/package_release.py --static-content '<new native candidate>/content' --output build/Release/packages/HartapfelFX-Light-Alignment-1.1.3
+python src/games/thewitcher3remastered-hartapfelfx/tests/light_alignment_package.py build/Release/packages/HartapfelFX-Light-Alignment-1.1.3/HartapfelFX-Light-Alignment-Remastered-1.1.3.zip '<optional directory containing lz4>'
 ```
 
 The output directory must be new. The packager includes an explicit set of
@@ -37,6 +37,90 @@ from effective installed templates. Version 1.0.1 adds three verified small wood
 wall-torch variants. Version 1.1.0 adds 71 identities from the automatic installed-data
 scan, including the current fence-mounted long torch. Missing native slots are skipped at runtime.
 The catalog is a supported fixture set, not a whole-world instance count.
+
+### Novigrad shrine bounce lights, version 1.1.3
+
+The current native frame places the camera at `(633.949890, 2028.301514,
+32.056404)`, facing the bridge beside the rich district. The placed fixtures in
+`levels/novigrad/novigrad/_novigrad_rich_district/lights.w2l` import
+`shrine_of_ethernal_fire_altar_spot`. This is an entity-light issue; no new
+cooked world-layer override is needed.
+
+Two independent omissions prevented complete alignment. The base game's
+`game/fireSource.ws` overrides `W3FireSource.OnSpawned` without calling the
+`CGameplayEntity` event. The existing base-event wrapper therefore does not
+handle this class at spawn; it depends on the fallback near the player, which
+does not cover a distant free camera. A direct W3FireSource wrapper now calls
+the same cached alignment method after the original event. The fallback and
+other hooks are preserved, including the original gameplay-light initialization.
+
+Second, the existing four-metre guard skips the large authored bounce offsets.
+The point-to-fire-slot distances are 7.370256 m for `altar_spot`, 5.290257 m for
+`altar_small_spot_bounce`, and 4.974123 m for `altar_wide_bounce`. Stock and the
+active BetterCandles Flares Off variants agree on these positions and their
+owned flame attachments. Only these three identities receive a reviewed
+12 m world-distance bound in `fixture_limits.json`, covering the stock offsets,
+scaled instances and the displaced instance lights in the captured scene.
+The other 334 identities retain the four-metre guard. Each light still moves
+only to a verified flame on its own entity, using the native slot matrix.
+No strength, radius, colour, direction, flicker, shadow or rendering-mode
+settings change. The 337 flame bindings, torch internal offsets and bathhouse
+native content are unchanged.
+
+`city_bouncelight_fire` and `city_bouncelight_fire_bounce` need a different
+treatment: their `fire` effect has no particle tracks and no physical emitter.
+The Novigrad runtime/startup layer scan finds 47 city-fill placements in eleven
+layers, often between multiple fixtures or illuminating broad architecture.
+Their names and unused `fire` slots do not establish an emitter relationship.
+They remain excluded from automatic fixture alignment; assigning them to the
+nearest flame would invent a relationship and can cross rooms/floors. The
+bridge fill at `(634.386719, 2066.934082, 36.519878)` is also separate from the
+shrine fixtures in the supplied view. This release does not claim to realign
+those standalone fills.
+
+This distinction follows the engine's separate entity/component lighting model
+described in [CDPR's REDkit light-source guide](https://cdprojektred.atlassian.net/wiki/spaces/W3REDkit/pages/53772302/HOW-TO+Add+light+sources).
+The source-specific checks and native captures are in
+`tmp/novigrad-alignment-20261111`; `tests/light_alignment_novigrad.py` regresses
+the authored distances, restricted limits and both spawn hooks. Game compiler
+and native-buffer verification follow the user-controlled restart.
+
+The first 1.1.2 test compiled and moved the point/spot pairs, but the user
+reported lost light. Native captures show that their positions are too low:
+the shrine at Z=28.968687 has scale 0.8369298 and fire-slot Z=1.5297432.
+Its corrected light is at Z=29.861715, whereas the flame slot should be at
+Z=30.248975. The measured displacement matches `scale^3 * slotZ` within 4 mm,
+rather than `scale * slotZ`. Inspection of the installed executable confirms
+the cause: the script handler at RVA `0x27abff0` calls RVA `0x360490`, which
+transposes the 3x3 basis and negates its dot products with translation, without
+inverting scale. `MatrixGetInverted` is a rigid inverse in this path, adding
+an erroneous scale-squared factor.
+That places the light about 38 cm inside the bowl and allows its geometry to
+occlude it. The missing brightness is not evidence that the light was deleted.
+
+Version 1.1.3 replaces that conversion with the full affine basis inverse:
+direction-transformed unit axes, cross-product cofactors and a determinant.
+It rejects degenerate transforms and leaves unit-scale behavior equivalent.
+It also covers rotated, nonuniformly scaled, mirrored and sheared bases.
+This follows the general matrix-inverse requirement in
+[PBRT's transformation implementation](https://pbr-book.org/4ed/Geometry_and_Transformations/Transformations);
+the native implementation and before/after measurements are recorded in
+`inverse-handler.txt` and `inverse-math.txt` in the evidence directory. The
+regression evaluates the
+actual shipped cofactor expressions and independently round-trips four bases,
+including the captured shrine scale. Shadow tests and flame locations are
+not weakened to hide the misplaced emitter.
+
+After the second user-controlled restart, the user reports that the scene looks
+good. One ready native light-buffer frame confirms ten shrine point/spot pairs
+at their authored, scaled fire slots; the largest source-to-slot difference is
+8.4 mm, including native flicker. The other requested frame has capture gaps
+and is not used as position evidence. Diagnostics are cleared with zero pending
+readbacks. The installed scripts match the 1.1.3 package, the 337 emitter map
+entries are preserved, and both addon DLLs and native bathhouse content remain
+unchanged by this correction. See `final-verification.json` and
+`final-capture.json` in the evidence directory. The standalone city-fill
+placements above remain an explicit limitation rather than an inferred mapping.
 
 ### Torch self-shadow halo, version 1.1.1
 

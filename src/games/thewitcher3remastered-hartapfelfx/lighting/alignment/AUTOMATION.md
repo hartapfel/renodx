@@ -65,6 +65,13 @@ ambiguity checks and preserving the 266-entry baseline, the catalog contains
 not a light-instance count. Zero bundle errors and baseline conflicts occurred.
 
 The original 5-second, 60 m, 2048-entity sweep and per-entity cache are unchanged.
+Version 1.1.2 also hooks the W3FireSource spawn override directly. Three audited
+large shrine spot/bounce identities use the 12 m bounds in `fixture_limits.json`;
+the remaining identities retain 4 m. Discovery never expands these limits from
+an asset name alone. Standalone `city_bouncelight_fire` templates have no flame
+particle tracks and require a separate, verified world-instance association.
+Version 1.1.3 replaces the rigid world-to-local inverse with a full affine
+inverse, preserving correct flame height on scaled fixtures.
 More names increase the one-time lookup work for newly encountered entities;
 there is no new per-frame scan, GPU pass or readback. Actual game CPU/GPU timings
 have not been measured. Offline DevKit inspection is cleared after use.

@@ -399,6 +399,10 @@ def collect_runtime_fixtures(report):
 
 
 def write_runtime(content, fixtures):
+    limits = json.loads(Path(__file__).with_name('fixture_limits.json').read_text(encoding='utf-8'))
+    if any(not re.fullmatch(r'[a-z0-9_]+', stem) or not math.isfinite(value) or not 4. < value <= 12.
+           for stem, value in limits.items()):
+        raise ValueError('invalid reviewed fixture correction limit')
     scripts = content / 'scripts/local'
     scripts.mkdir(parents=True)
     (scripts / 'hf_light_alignment.ws').write_bytes(Path(__file__).with_name('runtime.ws').read_bytes())
@@ -407,9 +411,11 @@ def write_runtime(content, fixtures):
     shards = []
     for start in range(0, len(rows), 24):
         index = len(shards)
-        lines = [f'function HFAlignEmitterMap{index}(text : string, out slots : array<name>, out offsets : array<Vector>) : bool', '{']
+        lines = [f'function HFAlignEmitterMap{index}(text : string, out slots : array<name>, out offsets : array<Vector>, out maxDistance : float) : bool', '{']
         for stem, targets in rows[start:start + 24]:
             lines.extend([f'    if (HFAlignTemplateMatches(text, "{stem}"))', '    {'])
+            if stem in limits:
+                lines.append(f'        maxDistance = {limits[stem]:.1f};')
             for slot, point in targets:
                 lines.append(f"        slots.PushBack('{slot}');")
                 lines.append('        offsets.PushBack(Vector(' + ', '.join(f'{x:.9f}' for x in point) + ', 1.0));')
@@ -417,11 +423,11 @@ def write_runtime(content, fixtures):
         lines.extend(['    return false;', '}', ''])
         shards.append('\n'.join(lines))
     facade = ['// Generated from effective flame particle/spawner relationships. Do not edit.',
-              'function HFAlignEmitterMap(entity : CEntity, out slots : array<name>, out offsets : array<Vector>) : bool',
+              'function HFAlignEmitterMap(entity : CEntity, out slots : array<name>, out offsets : array<Vector>, out maxDistance : float) : bool',
               '{', '    var text : string;', '    slots.Clear();', '    offsets.Clear();',
-              '    text = StrLower(entity.ToString());']
+              '    maxDistance = 4.0;', '    text = StrLower(entity.ToString());']
     for i in range(len(shards)):
-        facade.extend([f'    if (HFAlignEmitterMap{i}(text, slots, offsets))', '        return true;'])
+        facade.extend([f'    if (HFAlignEmitterMap{i}(text, slots, offsets, maxDistance))', '        return true;'])
     facade.extend(['    return false;', '}', ''])
     (scripts / 'hf_light_alignment_map.ws').write_text('\n'.join(facade) + '\n'.join(shards))
     print(f'Generated engine slot resolution for {len(fixtures)} fixture identities.')

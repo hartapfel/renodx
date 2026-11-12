@@ -1,4 +1,4 @@
-HartapfelFX Light Alignment 1.1.1
+HartapfelFX Light Alignment 1.1.3
 The Witcher 3 Remastered
 
 Moves supported candle, torch, brazier and fire lights onto their authored flame
@@ -73,8 +73,15 @@ the hanging-bowl lamp and standard torch families include their verified flame
 particle's 10 cm upward displacement. Version 1.1.1 corrects torch light origins
 that could sit inside the wrapped torch head and produce a dark volumetric halo.
 Existing lights move to the nearest mapped flame on their own entity, within
-four metres. Multi-flame fixtures keep their original light count.
+four metres. The three verified large shrine spot/bounce variants allow up to
+12 metres to cover their tall authored bounce lights. Multi-flame fixtures keep
+their original light count. Version 1.1.2 also covers the W3FireSource spawn
+override directly, including streamed braziers beyond the player scan radius.
+Version 1.1.3 uses a full affine inverse for world-to-local position conversion;
+scaled fixtures retain the correct flame height instead of sinking into a bowl.
 Unrelated window/fill lights and unsupported fixtures are left unchanged.
+The standalone city_bouncelight_fire fills have no flame effect of their own;
+they cannot be aligned from a template slot alone and are not moved by this mod.
 This is position alignment; it does not implement emissive mesh lighting.
 Animated bone fixtures and separately attached lights are excluded from the
 catalog. Moving fixtures need further tracking support.

@@ -52,7 +52,7 @@ exports without loading its code.
 The default seed is the validated standalone archive:
 
 ```text
-build/Release/packages/HartapfelFX-Light-Alignment-1.1.1/HartapfelFX-Light-Alignment-Remastered-1.1.1.zip
+build/Release/packages/HartapfelFX-Light-Alignment-1.1.3/HartapfelFX-Light-Alignment-Remastered-1.1.3.zip
 ```
 
 Only its pinned, accepted bathhouse cooked files are reused. Each packaging run
